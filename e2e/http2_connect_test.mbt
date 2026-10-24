@@ -291,3 +291,72 @@ async test "h2c: an unmatched CONNECT gets the unmatched response, body included
     })
   })
 }
+
+///|
+async test "h2c: a CONNECT whose :authority is not a host and a port, the authority-form HTTP/1.1 holds a CONNECT's target to, gets 400, followed by RST_STREAM PROTOCOL_ERROR when its HEADERS did not end the stream" {
+  with_definitions([("tunnels.json", tunnels)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      raw.send([Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false)])
+      let out = [raw.frames_until_ping_ack()]
+      let mut stream = 1
+      for
+        connect in [
+          ("proxy example.com:443", false),
+          ("proxy.example.com", false),
+          ("proxy.example.com:https", false),
+          ("[::1", false),
+          ("", false),
+          ("proxy.example.com", true),
+          ("proxy.example.com:443", false),
+        ] {
+        let (authority, end_stream) = connect
+        raw.send([
+          headers_frame(
+            stream,
+            raw.block(connect_fields(authority)),
+            end_stream~,
+          ),
+          Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false),
+        ])
+        let ends = if end_stream { "end" } else { "do not end" }
+        out.push(
+          "\{authority.escape()}, HEADERS that \{ends} the stream: \{raw.frames_until_ping_ack().replace_all(old="\n", new=" | ")}",
+        )
+        stream += 2
+      }
+      out.push("HTTP/1.1, a target that is not a host and a port:")
+      out.push(
+        smock.request("CONNECT", "proxy.example.com", headers=[
+          ("Host", "proxy.example.com"),
+        ]),
+      )
+      out.push("Journal:")
+      out.push(connect_journal(smock))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|"proxy example.com:443", HEADERS that do not end the stream: HEADERS 1 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0] | RST_STREAM 1 PROTOCOL_ERROR
+          #|"proxy.example.com", HEADERS that do not end the stream: HEADERS 3 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0] | RST_STREAM 3 PROTOCOL_ERROR
+          #|"proxy.example.com:https", HEADERS that do not end the stream: HEADERS 5 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0] | RST_STREAM 5 PROTOCOL_ERROR
+          #|"[::1", HEADERS that do not end the stream: HEADERS 7 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0] | RST_STREAM 7 PROTOCOL_ERROR
+          #|"", HEADERS that do not end the stream: HEADERS 9 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0] | RST_STREAM 9 PROTOCOL_ERROR
+          #|"proxy.example.com", HEADERS that end the stream: HEADERS 11 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0]
+          #|"proxy.example.com:443", HEADERS that do not end the stream: HEADERS 13 END_STREAM END_HEADERS [:status: 200, x-tunnel: none, date: <now>]
+          #|HTTP/1.1, a target that is not a host and a port:
+          #|HTTP/1.1 400 Bad Request
+          #|Date: <now>
+          #|Connection: close
+          #|Content-Length: 0
+          #|
+          #|
+          #|Journal:
+          #|HTTP/2 CONNECT "proxy.example.com:443" host="proxy.example.com" mock="proxy" stub="tunnel" status=200 body=0 octets
+        ),
+      )
+    })
+  })
+}

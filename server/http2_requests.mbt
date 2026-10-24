@@ -102,7 +102,9 @@ fn H2Request::new(
 /// - the method is not a token;
 /// - `:path` is not an origin-form target, or `*` for OPTIONS, or holds an
 ///   octet outside 0x21 to 0x7E. A CONNECT has no `:path`, as moonhttp
-///   sees to, so it has none to check;
+///   sees to: its target, `:authority`, is not in authority-form, a host
+///   and a port, as an HTTP/1.1 CONNECT's target must be (RFC 9113,
+///   section 8.5);
 /// - `:authority` is not a valid Host value;
 /// - a field name is not a token, or a field value holds a control
 ///   character other than tab, or DEL;
@@ -118,8 +120,11 @@ fn H2Request::is_malformed(self : H2Request) -> Bool {
   if !@http1.is_token(meth) {
     return true
   }
-  if meth != "CONNECT" &&
-    !(@http1.is_origin_or_asterisk_form(self.target, meth~) &&
+  if meth == "CONNECT" {
+    if !@http1.is_authority_form(self.target) {
+      return true
+    }
+  } else if !(@http1.is_origin_or_asterisk_form(self.target, meth~) &&
     @http1.is_visible_ascii(self.target)) {
     return true
   }
