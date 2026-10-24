@@ -56,7 +56,9 @@ of each GitHub release include its section
   HTTP/1.1 would refuse gets 400 on that stream alone, and the connection's
   other streams go on. The read timeout applies to each stream alone, and
   resets only a stream whose request is late, with `CANCEL`; an idle
-  connection gets GOAWAY before it closes. See
+  connection gets GOAWAY before it closes. A body larger than the client's
+  flow-control windows goes out as the client widens them, so a client with
+  small windows still gets all of it. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,

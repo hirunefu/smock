@@ -13,11 +13,3 @@
 # E's issues are done (#169), no case waits for an issue here.
 
 http2/3.5/2    left-out  On the plain port, octets that are not the HTTP/2 preface start HTTP/1.1 (#133, decision 3), so smock answers h2spec's invalid preface with an HTTP/1.1 400, not GOAWAY PROTOCOL_ERROR. The TLS port, where ALPN h2 starts HTTP/2, passes it (tls.txt).
-
-generic/2/2    #147  h2spec sets the initial window to 0, and smock resets a stream whose body does not fit the windows (RST_STREAM INTERNAL_ERROR) instead of waiting for WINDOW_UPDATE.
-generic/2/3    #147  h2spec sets the initial window to 0, and smock resets a stream whose body does not fit the windows instead of waiting for WINDOW_UPDATE.
-http2/5.1.2/1  #147  h2spec sets the initial window to 0 so that its streams stay open, but smock resets each one, since its body does not fit, so the concurrent limit is never passed.
-http2/6.5.3/1  #147  h2spec sets the initial window to 1, and smock resets a stream whose body does not fit the windows instead of sending what fits.
-http2/6.9.1/1  #147  h2spec sets the initial window to 1, and smock resets a stream whose body does not fit the windows instead of sending what fits.
-http2/6.9.2/1  #147  h2spec sets the initial window to 0, then raises it by SETTINGS, but smock has reset the waiting stream already.
-http2/6.9.2/2  #147  h2spec sets the initial window to 3, and smock resets a stream whose body does not fit the windows instead of sending what fits.
