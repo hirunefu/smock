@@ -92,16 +92,17 @@ jobs:
 
       # h2spec publishes a Linux binary for amd64 only, so it runs there.
       # Every case of its generic, http2 and hpack sections runs against
-      # the plain port (h2c); scripts/h2spec/plain.txt lists the cases that
-      # do not pass, each with its reason, and the log names a listed case
-      # that passes, so that it can come off.
+      # the plain port (h2c) and the TLS port (h2, by ALPN);
+      # scripts/h2spec/plain.txt and tls.txt list the cases that do not pass
+      # on each, with their reasons, and the log names a listed case that
+      # passes, so that it can come off.
       - name: Install h2spec
         if: matrix.arch == 'amd64'
         run: scripts/install-h2spec.sh "$RUNNER_TEMP/bin"
 
-      - name: Run h2spec against the plain port (h2c)
+      - name: Run h2spec against the plain port (h2c) and the TLS port (h2)
         if: matrix.arch == 'amd64'
-        run: scripts/check-h2spec.sh dist/smock plain
+        run: scripts/check-h2spec.sh dist/smock plain tls
 
       # The release workflow builds and smoke-tests the image the same way.
       - name: Build the container image

@@ -1091,8 +1091,9 @@ Autopilot before an integration branch is merged into `main` (see
 [Benchmark](#benchmark)).
 
 `scripts/h2spec/` holds the Definition file that CI serves to h2spec, the
-HTTP/2 conformance tool, and the list of h2spec's cases that do not pass on
-the plain port, each with its reason (see [Build and test](#build-and-test)).
+HTTP/2 conformance tool, and the lists of h2spec's cases that do not pass on
+the plain port and on the TLS port, each with its reason (see
+[Build and test](#build-and-test)).
 
 ## Toolchain
 
@@ -1121,7 +1122,7 @@ dist/smock --version
 scripts/check-schema.sh dist/smock   # the JSON Schema and smock agree
 scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 scripts/install-h2spec.sh      # the pinned h2spec, into ~/.local/bin
-scripts/check-h2spec.sh dist/smock   # h2spec's conformance cases against the plain port (needs h2spec, python3 and jq)
+scripts/check-h2spec.sh dist/smock   # h2spec's conformance cases against the plain and TLS ports (needs h2spec, python3 and jq)
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq and jq)
@@ -1161,12 +1162,14 @@ there says which directory a fixture belongs in.
 
 `scripts/check-h2spec.sh` runs h2spec 2.6.0, the HTTP/2 conformance tool,
 against a smock binary: every case of its `generic`, `http2` and `hpack`
-sections, strict cases included, against the plain port, as h2c. It takes
-about 20 seconds. smock serves `scripts/h2spec/definitions`, where a Stub at
+sections, strict cases included, against the plain port, as h2c, and then
+against the TLS port, as h2 by ALPN, with the self-signed certificate,
+which h2spec does not verify. `scripts/check-h2spec.sh dist/smock tls` runs
+one port alone. It takes about 40 seconds. smock serves `scripts/h2spec/definitions`, where a Stub at
 `/`, the path h2spec requests, answers every method with 200 and a body of
 4 KiB; without a body, h2spec would skip its flow-control cases.
-`scripts/h2spec/plain.txt` lists the cases that do not pass on the plain
-port, each with its reason: a case that h2spec skips, a case left out,
+`scripts/h2spec/plain.txt` and `scripts/h2spec/tls.txt` list the cases that
+do not pass on each port, each with its reason: a case that h2spec skips, a case left out,
 whose outcome does not count, or a case that fails until the issue named
 beside it is done. A case that fails or is skipped without being listed so
 fails the run, and so does a listed case that h2spec no longer has. The

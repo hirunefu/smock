@@ -7,6 +7,8 @@
 # cases included, against one port:
 #
 # - plain: the plain port, HTTP/2 by prior knowledge (h2c).
+# - tls: the TLS port, HTTP/2 by ALPN (h2), with the self-signed
+#   certificate smock generates, which h2spec does not verify.
 #
 # It fails when a case fails or is skipped without being listed so, when a
 # listed case did not run, or when smock stops during a run. It prints
@@ -18,7 +20,7 @@
 # and jq.
 #
 # usage: scripts/check-h2spec.sh <smock> [<port>...]
-#   port: plain (default: every port)
+#   port: plain or tls (default: every port)
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -28,12 +30,12 @@ if [ "$#" -lt 1 ]; then
 fi
 smock=$1
 shift
-[ "$#" -gt 0 ] || set -- plain
+[ "$#" -gt 0 ] || set -- plain tls
 for port in "$@"; do
   case $port in
-  plain) ;;
+  plain | tls) ;;
   *)
-    echo "check-h2spec: unknown port $port, not plain" >&2
+    echo "check-h2spec: unknown port $port, not plain or tls" >&2
     exit 2
     ;;
   esac
@@ -71,6 +73,8 @@ smock_log() {
 failed=0
 for port in "$@"; do
   # smock, on free ports, with no Admin API token: nothing else reaches it.
+  # Without certificate files, the TLS port presents a self-signed
+  # certificate.
   "$smock" serve --dir scripts/h2spec/definitions --port 0 --tls-port 0 --admin-port 0 \
     --admin-auth off 2>"$tmp/$port.log" &
   pid=$!
@@ -97,8 +101,12 @@ for port in "$@"; do
       "$tmp/$port.log")
   done
 
+  # Over TLS, h2spec offers h2 by ALPN and does not verify the certificate.
+  tls=""
+  [ "$port" != tls ] || tls="--tls --insecure"
   group "h2spec $port: h2spec $h2spec_version against port $number"
-  h2spec generic http2 hpack --strict --host 127.0.0.1 --port "$number" \
+  # shellcheck disable=SC2086 # $tls is empty or two flags.
+  h2spec generic http2 hpack --strict $tls --host 127.0.0.1 --port "$number" \
     --junit-report "$tmp/$port.xml" || true
   endgroup
 

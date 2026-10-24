@@ -12,7 +12,7 @@
 # A listed case that passes is reported, so that it can come off. Once spec
 # E's issues are done (#169), no case waits for an issue here.
 
-http2/3.5/2    left-out  On the plain port, octets that are not the HTTP/2 preface start HTTP/1.1 (#133, decision 3), so smock answers h2spec's invalid preface with an HTTP/1.1 400, not GOAWAY PROTOCOL_ERROR. The TLS port, where ALPN h2 starts HTTP/2, runs it (#150).
+http2/3.5/2    left-out  On the plain port, octets that are not the HTTP/2 preface start HTTP/1.1 (#133, decision 3), so smock answers h2spec's invalid preface with an HTTP/1.1 400, not GOAWAY PROTOCOL_ERROR. The TLS port, where ALPN h2 starts HTTP/2, passes it (tls.txt).
 
 generic/2/2    #147  h2spec sets the initial window to 0, and smock resets a stream whose body does not fit the windows (RST_STREAM INTERNAL_ERROR) instead of waiting for WINDOW_UPDATE.
 generic/2/3    #147  h2spec sets the initial window to 0, and smock resets a stream whose body does not fit the windows instead of waiting for WINDOW_UPDATE.
