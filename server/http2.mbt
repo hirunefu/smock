@@ -119,8 +119,9 @@ priv struct H2Connection {
   requests : Map[Int32, H2Request]
   /// The tasks of the streams whose response waits, by stream: from the end
   /// of the request until the response is queued, or the stream is reset.
-  /// There is one only for a stream in progress, so never more than the
-  /// concurrent streams the connection allows.
+  /// A task then lives on only to write what it queued, so each task is
+  /// that of a stream in progress, and the streams waiting are never more
+  /// than the concurrent streams the connection allows.
   waiting : Map[Int32, @async.Task[Unit]]
   /// The task group the connection is served in, where the tasks of
   /// waiting streams run. They end with the connection.
@@ -130,8 +131,8 @@ priv struct H2Connection {
   connection : Connection
   idle_timeout : Int64
   read_timeout : Int64
-  /// The time, as `@async.now()` gives it, read again after each wait: for
-  /// reading, for writing, or for a delay.
+  /// The time, as `@async.now()` gives it, read again after each wait of
+  /// the reader: for reading or for writing.
   mut now : Int64
   /// When the last read returned.
   mut read_at : Int64
@@ -254,17 +255,26 @@ fn[S : @io.Writer] H2Connection::hand(
         if self.requests.contains(stream) {
           self.requests.remove(stream)
           self.end_stream()
-        } else if self.waiting.get(stream) is Some(task) {
-          // Its task commits the Journal entry as it ends.
-          self.waiting.remove(stream)
-          task.cancel()
-          self.end_stream()
+        } else {
+          self.stop_waiting(stream)
         }
       // Trailers are ignored. The `Conn` has acknowledged SETTINGS and
       // answered PING itself, and window updates and the client's GOAWAY
       // ask nothing of a stream that is answered at once.
       _ => ()
     }
+  }
+}
+
+///|
+/// Ends the wait of `stream`, reset while its response waits in a task, if
+/// it does: the task is cancelled at once, and commits the stream's Journal
+/// entry as it ends. Every reset of a waiting stream ends its wait here.
+fn H2Connection::stop_waiting(self : H2Connection, stream : Int32) -> Unit {
+  if self.waiting.get(stream) is Some(task) {
+    self.waiting.remove(stream)
+    task.cancel()
+    self.end_stream()
   }
 }
 
@@ -365,9 +375,9 @@ fn[S : @io.Writer] H2Connection::respond(
 /// are answered meanwhile.
 ///
 /// The task ends with its stream, however the stream ends: when its
-/// response is queued and written, when a reset cancels it (`hand`), from
-/// the client or from moonhttp for the client's frames, or when the
-/// connection ends. Until the response is queued, the Journal entry is
+/// response is queued and written, when a reset cancels it
+/// (`stop_waiting`), from the client or from moonhttp for the client's
+/// frames, or when the connection ends. Until the response is queued, the Journal entry is
 /// committed when the task ends, as for a client that goes away, and the
 /// request is counted then.
 fn[S : @io.Writer] H2Connection::wait(
