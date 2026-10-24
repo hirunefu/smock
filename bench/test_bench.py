@@ -1670,6 +1670,30 @@ class TargetsForSeveralCases(unittest.TestCase):
                          {"small/http-keep-alive/p99": "met", "small/h2c-keep-alive/p99": "not measured",
                           "small/h2-keep-alive/p99": "missed"})
 
+    def test_a_limit_is_refused_when_given_twice_for_one_case_and_not_for_two(self):
+        # Two entries under small, each with its own p99 for its own case:
+        # h2c-keep-alive may be held to 5 ms while http-keep-alive is held
+        # to 3.
+        h2c = {**SMALL, "case": "h2c-keep-alive", "at_most": {"p99_ms": 5}}
+        targets = harness.read_targets(targets_file(self, [SMALL, h2c]))["arm64"]
+        self.assertEqual({t["id"]: t["max"] for t in targets if t["metric"] == "p99"},
+                         {"small/http-keep-alive/p99": 3, "small/h2c-keep-alive/p99": 5})
+        for entries, expected in (
+                # h2c-keep-alive's p99, in an entry of its own and among
+                # the cases of another, or named twice in one entry.
+                ([SEVERAL, h2c], "arm64: small limits p99 for h2c-keep-alive twice"),
+                ([{**SEVERAL, "cases": ["h2c-keep-alive", "h2c-keep-alive"]}],
+                 "arm64: small limits p99 for h2c-keep-alive twice"),
+                # Idle RSS holds for the profile, whatever the cases.
+                ([SMALL, {**h2c, "at_most": {"idle_rss_mib": 20}}], "arm64: small limits idle_rss twice"),
+                ([{**SEVERAL, "case": "http-keep-alive"}], "arm64: small: give case or cases, not both"),
+                ([{**SEVERAL, "cases": []}], "arm64: small: cases must be a list of case names"),
+                ([{**SEVERAL, "cases": "h2c-keep-alive"}], "arm64: small: cases must be a list of case names"),
+                ([{**SEVERAL, "cases": ["h2c-keep-alive", 2]}], "arm64: small: cases must be a list of case names")):
+            with self.assertRaises(harness.BenchError) as raised:
+                harness.read_targets(targets_file(self, entries))
+            self.assertIn(expected, str(raised.exception), entries)
+
 
 def check_targets_command(*args):
     """Runs `bench.py check-targets` with `args`: its exit status, stdout and
