@@ -208,3 +208,82 @@ async test "h2c: a 400 sent while the request still arrives is followed by RST_S
     })
   })
 }
+
+///|
+async test "h2c: a stream refused with 400 counts as rejected traffic, with mock=\"\" and stub=\"\", and is not journaled, while a stream moonhttp resets, such as HEADERS that end the stream with content-length: 5, has no status, no Journal entry, no Scenario move and no metric" {
+  with_definitions([("payments.json", checkout)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let pay = request_fields("POST", "/orders/42/pay", "localhost")
+      pay.push(("content-length", "5"))
+      let pay_malformed = request_fields(
+        "POST", "/orders/42/pay x", "localhost",
+      )
+      pay_malformed.push(("content-length", "5"))
+      let pay_upper_case = request_fields("POST", "/orders/42/pay", "localhost")
+      pay_upper_case.push(("X-Note", "1"))
+      raw.send([
+        headers_frame(
+          1,
+          raw.block(request_fields("GET", "/orders/42 x", "localhost")),
+        ),
+        headers_frame(3, raw.block(pay)),
+        headers_frame(5, raw.block(pay_malformed)),
+        headers_frame(7, raw.block(pay_upper_case)),
+        headers_frame(
+          9,
+          raw.block(request_fields("GET", "/orders/42", "localhost")),
+        ),
+      ])
+      let out = [raw.frames_until_stream_ends(9)]
+      let (_, journal) = smock.journal()
+      guard journal is Object({ "entries": Array(entries), .. }) else {
+        fail("no entries: \{journal.stringify()}")
+      }
+      let shown = entries.map(entry => {
+        guard entry is Object({ "request": Object(request), .. }) else {
+          return entry.stringify()
+        }
+        "\{request.get("method").unwrap().stringify()} \{request.get("target").unwrap().stringify()}"
+      })
+      out.push("Journal: \{shown.join(", ")}")
+      let (text, samples) = smock.metrics()
+      out.push(traffic(text, samples))
+      for line in text.split("\n") {
+        if line.strip_prefix("# HELP ") is Some(rest) &&
+          is_traffic(rest.split(" ").next().unwrap_or("").to_owned()) {
+          out.push(line.to_owned())
+        }
+      }
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0]
+          #|RST_STREAM 3 PROTOCOL_ERROR
+          #|RST_STREAM 5 PROTOCOL_ERROR
+          #|RST_STREAM 7 PROTOCOL_ERROR
+          #|HEADERS 9 END_HEADERS [:status: 200, content-type: application/json, smock-mock: payments; via=default, date: <now>, content-length: 20]
+          #|DATA 9 END_STREAM 20 octets
+          #|Journal: "GET" "/orders/42"
+          #|# TYPE smock_requests_total counter
+          #|# TYPE smock_request_duration_seconds histogram
+          #|# TYPE smock_unmatched_requests_total counter
+          #|smock_request_duration_seconds_count{mock="",stub=""} 1
+          #|smock_request_duration_seconds_count{mock="payments",stub="order-pending"} 1
+          #|smock_requests_total{mock="",stub=""} 1
+          #|smock_requests_total{mock="payments",stub="order-pending"} 1
+          #|labels of smock_requests_total: mock, stub
+          #|labels of smock_request_duration_seconds_bucket: mock, stub, le
+          #|labels of smock_request_duration_seconds_sum: mock, stub
+          #|labels of smock_request_duration_seconds_count: mock, stub
+          #|# HELP smock_requests_total Requests served on the plain and TLS ports, by the Mock that answered (mock="" for none) and the Stub that matched: its ID for a Stub from a Definition file, stub="ephemeral" for every Ephemeral Stub, stub="" for none. A request the protocol layer rejects (HTTP/1.1: 400, 413, 431, 501, 505; HTTP/2: 400, 413, 431 on its stream) counts with mock="" and stub="".
+          #|# HELP smock_request_duration_seconds Time from a request being read in full to the last byte of its response being written, injected delays and Server-Sent Event streams included, in seconds, labelled as smock_requests_total. For a request the protocol layer rejects (HTTP/1.1: 400, 413, 431, 501, 505; HTTP/2: 400, 413, 431 on its stream), the time runs from the read that brought what it rejects.
+          #|# HELP smock_unmatched_requests_total Requests served on the plain and TLS ports that matched no Stub, by the Mock that answered them (mock="" for a Host no Mock answers). A request the protocol layer rejects (HTTP/1.1: 400, 413, 431, 501, 505; HTTP/2: 400, 413, 431 on its stream) is not among them.
+        ),
+      )
+    })
+  })
+}
