@@ -330,3 +330,77 @@ async test "h2c: a delay drawn from a Stub's seed is the same over HTTP/1.1 and 
     )
   })
 }
+
+///|
+/// Mock `m` with a Stub that answers `GET /big` with a body of 65,536
+/// octets after a fixed delay of 300 ms.
+fn big_delayed() -> String {
+  let body = StringBuilder()
+  for _ in 0..<65536 {
+    body.write_char('x')
+  }
+  (
+    #|{ "mocks": [{ "name": "m" }],
+    #|  "stubs": [
+    #|    { "id": "big", "mock": "m", "request": { "path": "/big" },
+    #|      "fault": { "delay": { "fixed": 300 } },
+  ) +
+  "\"response\": { \"status\": 200, \"body\": \"\{body.to_string()}\" } } ] }"
+}
+
+///|
+async test "h2c: 100 delayed streams whose responses are queued at once, while the client reads nothing, all go out through the connection's one writer, and a 101st stream, past the concurrent streams, is refused" {
+  with_definitions([("m.json", big_delayed())], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      // Windows wide open, so that each body fits them and is queued whole
+      // once its delay is over.
+      raw.send([
+        Settings(params=[(0x4, 0x7fffffff)], ack=false),
+        WindowUpdate(stream_id=0, increment=0x7fffffff - 65535),
+      ])
+      let requests = []
+      for i in 0..<101 {
+        requests.push(raw.get(2 * i + 1, "/big"))
+      }
+      raw.send(requests)
+      // The delays end together, and the responses fill the socket long
+      // before the client reads.
+      @async.sleep(1000)
+      let received = Map([])
+      let ended = []
+      let others = []
+      while ended.length() + others.length() < 101 {
+        guard raw.read_frame() is Some(frame) else {
+          others.push("closed")
+          break
+        }
+        match frame {
+          Data(stream_id~, data~, end_stream~, ..) => {
+            received[stream_id] = received.get(stream_id).unwrap_or(0) +
+              data.length()
+            if end_stream {
+              ended.push(stream_id)
+            }
+          }
+          Headers(..) | Settings(..) => ()
+          _ => others.push(raw.render_frame(frame))
+        }
+      }
+      let whole = ended.filter(stream => received.get(stream) == Some(65536))
+      inspect(
+        [
+          "streams answered in full: \{whole.length()}",
+          "the last answered: \{ended.iter().fold(init=0, Int32::max)}",
+          ..others,
+        ].join("\n"),
+        content=(
+          #|streams answered in full: 100
+          #|the last answered: 199
+          #|RST_STREAM 201 REFUSED_STREAM
+        ),
+      )
+    })
+  })
+}
