@@ -607,6 +607,18 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
       late.push(stream)
     }
   }
+  // While the connection window is at zero too, the connection's deadline
+  // decides first.
+  let open = self.conn.window(0) > 0
+  for stream, wait in self.blocked {
+    if wait.deadline <= now {
+      if open {
+        late.push(stream)
+      } else {
+        wait.deadline = self.window_deadline
+      }
+    }
+  }
   if late.length() > 0 {
     for stream in late {
       self.reset(stream, @http2.error_cancel)
@@ -635,6 +647,11 @@ fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   }
   if self.window_deadline < next {
     next = self.window_deadline
+  }
+  for _, wait in self.blocked {
+    if wait.deadline < next {
+      next = wait.deadline
+    }
   }
   next
 }

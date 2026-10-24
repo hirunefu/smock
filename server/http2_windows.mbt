@@ -21,6 +21,9 @@ priv struct WindowWait {
   /// While the task is woken, how much of the connection window is set
   /// aside for it.
   mut claim : Int32
+  /// While the stream's own window is at zero, when the write timeout
+  /// resets the stream; `forever` while it is not (`watch_windows`).
+  mut deadline : Int64
 }
 
 ///|
@@ -45,11 +48,27 @@ fn H2Connection::window_updated(self : H2Connection, stream : Int32) -> Unit {
 /// before each read, by a slow write before it waits, by a stream's task
 /// once it is done, and by the watchdog (`H2Connection::expire`).
 fn H2Connection::watch_windows(self : H2Connection, now : Int64) -> Unit {
-  if self.blocked.is_empty() || self.conn.window(0) > self.claimed {
+  if self.blocked.is_empty() {
+    self.window_deadline = forever
+    return
+  }
+  let timeout = self.watchdog.write_timeout
+  if self.conn.window(0) > self.claimed {
     self.window_deadline = forever
   } else if self.window_deadline == forever {
-    self.window_deadline = now + self.watchdog.write_timeout
+    self.window_deadline = now + timeout
     self.watchdog.read_by(self.window_deadline, now)
+  }
+  // While the connection window is at zero, `Conn::window` tells no
+  // stream's own window apart from it.
+  guard self.conn.window(0) > 0 else { return }
+  for stream, wait in self.blocked {
+    if wait.woken || self.conn.window(stream) > 0 {
+      wait.deadline = forever
+    } else if wait.deadline == forever {
+      wait.deadline = now + timeout
+      self.watchdog.read_by(wait.deadline, now)
+    }
   }
 }
 
@@ -199,6 +218,7 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::trickle(
     rest: 0,
     woken: false,
     claim: 0,
+    deadline: forever,
   }
   let mut rest = rest
   // What was set aside for the task when it was last woken.
