@@ -344,3 +344,130 @@ async test "h2c: an event stream that the client resets, or that moonhttp resets
     })
   })
 }
+
+///|
+/// Mock `m`, for `localhost`, whose Stub streams from `/big` an event of
+/// 20,008 octets, more than a DATA frame carries, then one of 13.
+fn h2_big_event() -> String {
+  let data = "x".repeat(20_000)
+  (
+    $|{ "mocks": [{ "name": "m", "hosts": ["localhost"] }],
+    $|  "stubs": [
+    $|    { "id": "big", "mock": "m", "request": { "path": "/big" },
+    $|      "response": { "status": 200,
+    $|        "events": [{ "data": "\{data}" }, { "data": "small" }] } } ] }
+  )
+}
+
+///|
+async test "h2c: an event larger than the client's frame size goes out in several DATA frames, and one larger than the stream's window waits for the client to widen it" {
+  with_definitions([("m.json", h2_big_event())], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      raw.send([raw.get(1, "/big")])
+      let out = [raw.frames_until_end_of(1)]
+      // A stream window of 10,000 octets holds half the first event.
+      out.push("--- an initial window of 10000")
+      raw.send([
+        Settings(
+          params=[(@http2.settings_initial_window_size, 10_000)],
+          ack=false,
+        ),
+        raw.get(3, "/big"),
+      ])
+      out.push(raw.runs_until(data_seen(3, 10_000)))
+      // Nothing more comes on stream 3 until the client widens its window.
+      raw.send([fence])
+      let before = raw.frames_until_ping_ack()
+      out.push(
+        "before the PING's acknowledgement: \{if before == "" { "nothing" } else { before }}",
+      )
+      out.push("--- the stream's window widened")
+      raw.send([WindowUpdate(stream_id=3, increment=20_000)])
+      out.push(raw.frames_until_end_of(3))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, content-type: text/event-stream, date: <now>]
+          #|DATA 1 16384 octets
+          #|DATA 1 3624 octets
+          #|DATA 1 END_STREAM 13 octets
+          #|--- an initial window of 10000
+          #|SETTINGS ACK
+          #|HEADERS 3 END_HEADERS [:status: 200, content-type: text/event-stream, date: <now>]
+          #|DATA 3: 1 frames, 10000 octets
+          #|before the PING's acknowledgement: nothing
+          #|--- the stream's window widened
+          #|DATA 3 10008 octets
+          #|DATA 3 END_STREAM 13 octets
+        ),
+      )
+    })
+  })
+}
+
+///|
+/// Mock `m`, for `localhost`, with events Stubs whose responses have no
+/// body: `/events` and `/late`, those of `h2_news_late`, when the request
+/// is a HEAD; `/gone`, with status 204; and `/empty`, with no events.
+let h2_no_events : String =
+  #|{ "mocks": [{ "name": "m", "hosts": ["localhost"] }],
+  #|  "stubs": [
+  #|    { "id": "stream", "mock": "m", "request": { "path": "/events" },
+  #|      "response": { "status": 200,
+  #|        "events": [{ "delay": 400, "data": "first" }, { "data": "last" }] } },
+  #|    { "id": "late", "mock": "m", "request": { "path": "/late" },
+  #|      "fault": { "delay": { "fixed": 300 } },
+  #|      "response": { "status": 200,
+  #|        "events": [{ "data": "a" }, { "delay": 200, "data": "b" }] } },
+  #|    { "id": "gone", "mock": "m", "request": { "path": "/gone" },
+  #|      "response": { "status": 204, "events": [{ "delay": 400, "data": "never" }] } },
+  #|    { "id": "empty", "mock": "m", "request": { "path": "/empty" },
+  #|      "response": { "status": 200, "events": [] } } ] }
+
+///|
+async test "h2c: an events response with no body, to HEAD, with status 204 or with no events, is its HEADERS alone, which end the stream at once, or after the Stub's delay, with no content-length" {
+  with_definitions([("m.json", h2_no_events)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let start = @async.now()
+      let head = client.send("HEAD", "/events", authority="localhost")
+      let late = client.send("HEAD", "/late", authority="localhost")
+      let gone = client.send("GET", "/gone", authority="localhost")
+      let empty = client.send("GET", "/empty", authority="localhost")
+      let shown = client.timeline(start~, due=[
+        (head, [0]),
+        (late, [300]),
+        (gone, [0]),
+        (empty, [0]),
+      ])
+      let entries = smock.journal_once(4, within=0)
+      inspect(
+        [shown, "---", ..entries].join("\n"),
+        content=(
+          #|stream 1:
+          #|  HEADERS at 0 ms: :status: 200, content-type: text/event-stream, date: <now>
+          #|  end
+          #|stream 3:
+          #|  HEADERS at 300 ms: :status: 200, content-type: text/event-stream, date: <now>
+          #|  end
+          #|stream 5:
+          #|  HEADERS at 0 ms: :status: 204, content-type: text/event-stream, date: <now>
+          #|  end
+          #|stream 7:
+          #|  HEADERS at 0 ms: :status: 200, content-type: text/event-stream, date: <now>
+          #|  end
+          #|---
+          #|/events: stub "stream", status 200
+          #|/gone: stub "gone", status 204
+          #|/empty: stub "empty", status 200
+          #|/late: stub "late", status 200
+        ),
+      )
+    })
+  })
+}
