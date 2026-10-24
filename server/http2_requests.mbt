@@ -90,10 +90,15 @@ fn H2Request::new(fields : Array[@header.Header]) -> H2Request {
 ///   octet outside 0x21 to 0x7E. A CONNECT has no `:path`, as moonhttp
 ///   sees to, so it has none to check;
 /// - `:authority` is not a valid Host value;
+/// - a field name is not a token, or a field value holds a control
+///   character other than tab, or DEL;
 /// - there is more than one `host` field, or its value is not a valid Host
 ///   value, or it names another host than `:authority` (section 8.3.1),
 ///   compared as Mock Hosts are: in any case, without the port or a
 ///   trailing dot.
+///
+/// moonhttp has already reset the streams that break RFC 9113's own field
+/// rules, so names hold no upper case, and values no NUL, CR or LF.
 fn H2Request::is_malformed(self : H2Request) -> Bool {
   let meth = self.meth
   if !@http1.is_token(meth) {
@@ -109,6 +114,9 @@ fn H2Request::is_malformed(self : H2Request) -> Bool {
   }
   let mut host : String? = None
   for header in self.headers {
+    if !@http1.is_token(header.0) || !@http1.is_field_value(header.1) {
+      return true
+    }
     if header.0 == "host" {
       if host is Some(_) || !@http1.is_host_value(header.1) {
         return true

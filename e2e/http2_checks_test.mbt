@@ -78,6 +78,34 @@ async test "h2c: a stream whose request HTTP/1.1 would refuse gets 400 on its st
             Some(orders),
             [("host", "ORDERS.Example.com.:8080")],
           ),
+          (
+            "a field name that is not a token",
+            "GET",
+            "/x",
+            Some(orders),
+            [("x(note)", "1")],
+          ),
+          (
+            "a field value with 0x01",
+            "GET",
+            "/x",
+            Some(orders),
+            [("x-note", "a\u{01}b")],
+          ),
+          (
+            "a field value with DEL",
+            "GET",
+            "/x",
+            Some(orders),
+            [("x-note", "a\u{7f}b")],
+          ),
+          (
+            "a field value with a tab and characters beyond ASCII inside",
+            "GET",
+            "/x",
+            Some(orders),
+            [("x-note", "a\tcaf\u{e9}")],
+          ),
           ("then a request HTTP/1.1 takes", "GET", "/x", Some(orders), []),
         ] {
         let (label, meth, path, authority, headers) = case
@@ -105,8 +133,12 @@ async test "h2c: a stream whose request HTTP/1.1 would refuse gets 400 on its st
           #|a host field that is not a Host value: 400 [date: <now>, content-length: 0] 0 octets, end
           #|a host field that names another host than :authority: 400 [date: <now>, content-length: 0] 0 octets, end
           #|a host field that names the host of :authority in another case, with a port and a trailing dot: 200 [date: <now>, content-length: 11] 11 octets, end
+          #|a field name that is not a token: 400 [date: <now>, content-length: 0] 0 octets, end
+          #|a field value with 0x01: 400 [date: <now>, content-length: 0] 0 octets, end
+          #|a field value with DEL: 400 [date: <now>, content-length: 0] 0 octets, end
+          #|a field value with a tab and characters beyond ASCII inside: 200 [date: <now>, content-length: 11] 11 octets, end
           #|then a request HTTP/1.1 takes: 200 [date: <now>, content-length: 11] 11 octets, end
-          #|Journal entries: 2
+          #|Journal entries: 3
         ),
       )
     })
