@@ -125,7 +125,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/missing.pem","keyFile":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
         #|---
         #|status 1
@@ -133,7 +133,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-chain.pem","keyFile":"*/missing.pem","error":"cannot read the key file: no such file"}
         #|---
         #|status 1
@@ -141,7 +141,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/secret","keyFile":"*/rsa-key.pem","error":"cannot read the certificate file: is a directory"}
         #|---
         #|status 1
@@ -149,7 +149,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/notes.txt","keyFile":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
         #|---
         #|status 1
@@ -157,7 +157,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-key.pem","keyFile":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
         #|---
         #|status 1
@@ -165,7 +165,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-chain.pem","keyFile":"*/notes.txt","error":"key file: no PEM private key found"}
         #|---
         #|status 1
@@ -173,7 +173,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-chain.pem","keyFile":"*/rsa-chain.pem","error":"key file: no PEM private key found"}
         #|---
         #|status 1
@@ -181,7 +181,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-chain.pem","keyFile":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 1
@@ -189,7 +189,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-chain.pem","keyFile":"*/ecdsa-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 1
@@ -197,7 +197,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/ecdsa-chain.pem","keyFile":"*/rsa-key.pem","error":"the private key does not match the leaf certificate"}
       ),
     )
@@ -227,9 +227,9 @@ async test "the TLS settings can come from SMOCK_ environment variables, and the
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","certFile":"*/ecdsa-chain.pem","keyFile":"*/ecdsa-key.pem"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
+        #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*","protocols":["http/1.1","h2c"]}
+        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["h2","http/1.1"],"certFile":"*/ecdsa-chain.pem","keyFile":"*/ecdsa-key.pem"}
         #|{"level":"info","msg":"drain started","timeoutMs":20000}
         #|{"level":"info","msg":"drain ended","connectionsCut":0}
       ),
@@ -295,33 +295,54 @@ async fn Smock::s_client(
 }
 
 ///|
-async test "ALPN: a client offering h2 and http/1.1 gets http/1.1, and a client that sends no ALPN is served" {
+/// Opens a TLS connection that offers `offer` by ALPN, then sends
+/// `GET /users/1` over the protocol ALPN selected: HTTP/2 for `h2`, else
+/// HTTP/1.1. Returns the protocol selected and the response's status line,
+/// or why the handshake failed.
+async fn Smock::alpn_offer(self : Smock, offer : Array[String]) -> String {
+  let tls = self.tls(alpn=offer) catch {
+    @openssl.Failed(reason) => return "handshake failed: \{reason}"
+    err => raise err
+  }
+  let protocol = tls.protocol()
+  let status = if protocol == "h2" {
+    let client = H2Client::over(Encrypted(tls))
+    defer client.close()
+    "HTTP/2 \{client.request("GET", "/users/1", authority="localhost").status}"
+  } else {
+    defer tls.close()
+    tls.write(@utf8.encode(get_user))
+    status_line(@utf8.decode_lossy(tls.read_all()))
+    .trim_end(chars="\r")
+    .to_owned()
+  }
+  "ALPN \{protocol}, \{status}"
+}
+
+///|
+async test "ALPN: a client offering h2 and http/1.1, or h2 alone, gets h2 and is served over HTTP/2; one offering http/1.1 alone, or no ALPN, gets HTTP/1.1; one offering neither fails the handshake" {
   with_definitions([("users.json", users)], dir => {
     with_certificates(certs => {
       let _ = with_smock(["--dir", dir, "--port", "0", ..certs.args()], smock => {
         let out = []
         let offers = [
-          ("h2 and http/1.1", ["-alpn", "h2,http/1.1"]),
-          ("no ALPN", []),
+          ["h2", "http/1.1"],
+          ["h2"],
+          ["http/1.1"],
+          [],
+          ["spdy/3.1"],
         ]
         for offer in offers {
-          let (label, options) = offer
-          out.push("\{label}:\n" + smock.s_client(certs, options, get_user))
+          out.push("offers [\{offer.join(", ")}]: \{smock.alpn_offer(offer)}")
         }
         inspect(
-          out.join("\n---\n"),
+          out.join("\n"),
           content=(
-            #|h2 and http/1.1:
-            #|status 0
-            #|ALPN protocol: http/1.1
-            #|Verify return code: 0 (ok)
-            #|HTTP/1.1 200 OK
-            #|---
-            #|no ALPN:
-            #|status 0
-            #|No ALPN negotiated
-            #|Verify return code: 0 (ok)
-            #|HTTP/1.1 200 OK
+            #|offers [h2, http/1.1]: ALPN h2, HTTP/2 200
+            #|offers [h2]: ALPN h2, HTTP/2 200
+            #|offers [http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
+            #|offers []: ALPN none, HTTP/1.1 200 OK
+            #|offers [spdy/3.1]: handshake failed: tlsv1 alert no application protocol
           ),
         )
       })

@@ -99,10 +99,10 @@ let startup_only_h2c : String =
   #|{"level":"info","msg":"random seed","seed":"*"}
   #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
   #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-  #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+  #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
   #|{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"*","names":["localhost","127.0.0.1","::1"]}
-  #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-  #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*"}
+  #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*","protocols":["http/1.1","h2c"]}
+  #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["h2","http/1.1"]}
   #|{"level":"info","msg":"drain started","timeoutMs":20000}
   #|{"level":"info","msg":"drain ended","connectionsCut":0}
 
@@ -122,7 +122,8 @@ struct Frames {
 
 ///|
 /// Reads frames from smock until one meets `stop`, or smock ends the
-/// connection, timing the last from `since`, and tells a FIN from a reset.
+/// connection, timing the last from `since`, and, over TCP, tells a FIN
+/// from a reset.
 async fn RawH2::frames_until(
   self : RawH2,
   since : Int64,
@@ -133,12 +134,13 @@ async fn RawH2::frames_until(
     for ;; {
       let (frame, used) = @http2.decode(self.received) catch {
         Incomplete => {
-          let more = past_spurious_eagain(() => self.tcp.read_some()) catch {
+          let n = self.wire.read(self.buf) catch {
             @os_error.OSError(_, ..) as err if is_reset(err) => break "an RST"
             err => break "an error: \{err}"
           }
-          guard more is Some(more) else { break "a FIN" }
-          self.received = self.received + more
+          guard n > 0 else { break "a FIN" }
+          self.received = self.received +
+            self.buf.unsafe_reinterpret_as_bytes()[:n].to_owned()
           continue
         }
         err => fail("smock sent a frame that does not decode: \{err}")

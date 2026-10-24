@@ -1,6 +1,9 @@
 ///|
-/// The protocols the TLS port accepts by ALPN: HTTP/1.1 only.
-let alpn : Array[String] = ["http/1.1"]
+/// The protocols the TLS port accepts by ALPN, for every certificate, in
+/// order of preference: HTTP/2, then HTTP/1.1. The protocol selected
+/// decides how a connection is served: `h2` is HTTP/2, and `http/1.1`, or
+/// no ALPN, is HTTP/1.1 (`TlsStream::is_http2`).
+let alpn : Array[String] = ["h2", "http/1.1"]
 
 ///|
 /// Reads the certificate and key files: their bytes, or what keeps them
@@ -40,9 +43,10 @@ fn load_pair(
 
 ///|
 /// One TLS connection on top of a TCP connection: the byte stream that
-/// `serve_connection` reads requests from and writes responses to. OpenSSL
-/// works on memory buffers only, so this moves the bytes between it and the
-/// socket.
+/// the HTTP/1.1 loop (`serve_connection`) or the HTTP/2 loop
+/// (`MockPorts::serve_http2`) reads requests from and writes responses to.
+/// OpenSSL works on memory buffers only, so this moves the bytes between it
+/// and the socket.
 priv struct TlsStream {
   tcp : @socket.Tcp
   tls : @openssl.Connection
@@ -50,6 +54,12 @@ priv struct TlsStream {
   // create, so this one uses the buffer of a pipe that is never read.
   buffer : @io.PipeRead
   input : FixedArray[Byte]
+  /// Whether a read leaves the records OpenSSL writes for the client while
+  /// it reads to the connection's writer (`ReadOutput`), as on an HTTP/2
+  /// connection, rather than send them itself.
+  mut holds_read_output : Bool
+  /// Whether a read may have left output that nothing has sent since.
+  mut read_output_left : Bool
 }
 
 ///|
@@ -83,7 +93,14 @@ async fn TlsStream::accept(
     }
   }
   let (buffer, _) = @io.pipe()
-  let self = { tcp, tls: select(server_name).accept(), buffer, input, }
+  let self = {
+    tcp,
+    tls: select(server_name).accept(),
+    buffer,
+    input,
+    holds_read_output: false,
+    read_output_left: false,
+  }
   self.tls.receive(hello.to_bytes()[:])
   // A failed handshake still sends its alert.
   errdefer self.try_flush()
@@ -100,11 +117,31 @@ async fn TlsStream::accept(
 }
 
 ///|
+/// Whether ALPN selected HTTP/2: the connection is then served as HTTP/2,
+/// and otherwise as HTTP/1.1, which never looks for the HTTP/2 preface
+/// (RFC 9113, section 3.3).
+fn TlsStream::is_http2(self : TlsStream) -> Bool {
+  self.tls.alpn_protocol() is Some("h2")
+}
+
+///|
 /// Sends what OpenSSL has written for the client.
 async fn TlsStream::flush(self : TlsStream) -> Unit {
   let output = self.tls.take_output()
+  self.read_output_left = false
   if output.length() > 0 {
     self.tcp.write(output)
+  }
+}
+
+///|
+/// After a read: sends what OpenSSL wrote for the client while it read, or
+/// leaves it for the connection's writer.
+async fn TlsStream::after_read(self : TlsStream) -> Unit {
+  if self.holds_read_output {
+    self.read_output_left = true
+  } else {
+    self.flush()
   }
 }
 
@@ -149,13 +186,13 @@ impl @io.Reader for TlsStream with fn _direct_read(self, buf, offset~, max_len~)
   for ;; {
     match self.tls.read(buf, offset~, max_len~) {
       Data(n) => {
-        // A read can make OpenSSL answer, such as to a key update.
-        self.flush()
+        // A read can make OpenSSL write for the client, such as an alert.
+        self.after_read()
         return n
       }
       Closed => return 0
       NeedInput => {
-        self.flush()
+        self.after_read()
         if !self.fill() {
           return 0
         }
@@ -165,9 +202,28 @@ impl @io.Reader for TlsStream with fn _direct_read(self, buf, offset~, max_len~)
 }
 
 ///|
+/// Each write sends what OpenSSL holds for the client, in the order it
+/// wrote it: what reads left first, then the record of `data`.
 impl @io.Writer for TlsStream with fn write_once(self, data, offset~, len~) {
   let len = if len > MAX_WRITE { MAX_WRITE } else { len }
   self.tls.write(data[offset:offset + len])
   self.flush()
   len
+}
+
+///|
+impl ReadOutput for TlsStream with fn hold_read_output(self) {
+  self.holds_read_output = true
+}
+
+///|
+impl ReadOutput for TlsStream with fn has_read_output(self) {
+  self.read_output_left
+}
+
+///|
+impl ReadOutput for TlsStream with fn write_read_output(self, watchdog) {
+  watchdog.writing(@async.now())
+  self.flush()
+  watchdog.stop_writing()
 }

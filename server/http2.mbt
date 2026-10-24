@@ -1,9 +1,9 @@
-// HTTP/2 connections, served through the `http2` package of
-// moonbitstack/moonhttp (ADR 0005). Each connection has one moonhttp
-// `Conn`, which keeps its frames, stream states, flow control, settings,
-// field validation and header compression; smock owns the I/O, the mapping
-// onto the engine and the timeouts. The loop here ties together parts that
-// change apart:
+// HTTP/2 connections, h2c on the plain port and h2 on the TLS port, served
+// through the `http2` package of moonbitstack/moonhttp (ADR 0005). Each
+// connection has one moonhttp `Conn`, which keeps its frames, stream
+// states, flow control, settings, field validation and header compression;
+// smock owns the I/O, the mapping onto the engine and the timeouts. The
+// loop here ties together parts that change apart:
 //
 // - the frame reader (`FrameReader`, http2_frames.mbt), with
 //   `H2Connection::judge`, where each frame is judged before it reaches
@@ -58,9 +58,13 @@ fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
 
 ///|
 /// Serves one HTTP/2 connection, `stream`, whose client has sent the octets
-/// `read`, the connection preface first, and returns whether `stream` can
-/// still be written to: not after a write timed out. `connection` is kept
-/// told whether the connection is idle, so that a drain can close it.
+/// `read` so far, and returns whether `stream` can still be written to: not
+/// after a write timed out. `connection` is kept told whether the
+/// connection is idle, so that a drain can close it. On the plain port,
+/// `read` starts with the connection preface, which told the connection
+/// apart from HTTP/1.1; on the TLS port, where ALPN did, it is empty, and
+/// the `Conn` checks the preface as it comes (a wrong one gets GOAWAY
+/// PROTOCOL_ERROR).
 ///
 /// One task reads, a frame at a time, hands each frame to the connection's
 /// `Conn`, and handles the events it produced, in order; before it reads
@@ -72,12 +76,15 @@ fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
 /// it ends never reaches the engine, nor does one whose request HTTP/1.1's
 /// rules refuse, which gets 400 instead, or whose body is over
 /// `--body-limit`, which gets 413.
-async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
+async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
   self : MockPorts,
   stream : S,
   connection : Connection,
   read : Bytes,
 ) -> Bool {
+  // Its streams' tasks write while it reads, so every write goes through
+  // its writer, even what a read writes.
+  ReadOutput::hold_read_output(stream)
   let mut writable = true
   @async.with_task_group(group => {
     let watchdog = Watchdog::new(
@@ -204,7 +211,7 @@ priv struct H2Connection {
 /// hands each to the `Conn` and handles its events, until the connection
 /// ends. A frame larger than smock advertises, or a connection error the
 /// `Conn` raises, ends it with GOAWAY.
-async fn[S : @io.Reader + @io.Writer] H2Connection::serve(
+async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
   self : H2Connection,
   stream : S,
   out : WatchedStream[S],
@@ -278,7 +285,7 @@ fn H2Connection::judge(
 /// the events they produce, in order, until the `Conn` needs more. Returns
 /// false when they break the connection: the `Conn` has then queued its
 /// GOAWAY, and the connection ends. A stream's task writes to `out`.
-fn[S : @io.Writer] H2Connection::hand(
+fn[S : @io.Writer + ReadOutput] H2Connection::hand(
   self : H2Connection,
   octets : BytesView,
   out : WatchedStream[S],
@@ -439,7 +446,7 @@ fn H2Connection::idle(self : H2Connection) -> Bool {
 /// with NO_ERROR, once what the client sends after it has been read and
 /// discarded (`discard`). The read has no deadline of its own: the
 /// connection's watchdog keeps them all (`expire`).
-async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
+async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::read_more(
   self : H2Connection,
   stream : S,
   out : WatchedStream[S],
@@ -516,7 +523,7 @@ async fn[S : @io.Reader] H2Connection::discard(
 ///   the connection gets GOAWAY with NO_ERROR and closes.
 ///
 /// Neither is logged.
-fn[S : @io.Writer] H2Connection::expire(
+fn[S : @io.Writer + ReadOutput] H2Connection::expire(
   self : H2Connection,
   now : Int64,
   out : WatchedStream[S],
@@ -591,7 +598,7 @@ fn H2Connection::block_deadline(self : H2Connection) -> Int64 {
 /// Queues a GOAWAY with NO_ERROR, naming the highest stream the client has
 /// opened, then closes the connection once the client has read it
 /// (`close_after_goaway`).
-fn[S : @io.Writer] H2Connection::go_away(
+fn[S : @io.Writer + ReadOutput] H2Connection::go_away(
   self : H2Connection,
   out : WatchedStream[S],
 ) -> Unit {
@@ -610,7 +617,7 @@ fn[S : @io.Writer] H2Connection::go_away(
 /// the kernel send a reset, which can discard the GOAWAY before the client
 /// reads it. moonbitlang/async offers no half-close, so smock does not shut
 /// down its sending side first.
-fn[S : @io.Writer] H2Connection::close_after_goaway(
+fn[S : @io.Writer + ReadOutput] H2Connection::close_after_goaway(
   self : H2Connection,
   out : WatchedStream[S],
 ) -> Unit {
@@ -628,7 +635,7 @@ fn[S : @io.Writer] H2Connection::close_after_goaway(
 /// steps every request to the Mocks takes. A response with no delay is
 /// queued at once, while the event is handled, with no task. One with a
 /// delay waits in a task of its own (`wait`), which writes to `out`.
-fn[S : @io.Writer] H2Connection::respond(
+fn[S : @io.Writer + ReadOutput] H2Connection::respond(
   self : H2Connection,
   stream : Int32,
   request : H2Request,
@@ -662,7 +669,7 @@ fn[S : @io.Writer] H2Connection::respond(
 /// frames or from smock (`reset`), or when the connection ends. Until the response is queued, the
 /// Journal entry is committed when the task ends, as for a client that goes
 /// away, and the request is counted then.
-fn[S : @io.Writer] H2Connection::wait(
+fn[S : @io.Writer + ReadOutput] H2Connection::wait(
   self : H2Connection,
   stream : Int32,
   outcome : @engine.Outcome,

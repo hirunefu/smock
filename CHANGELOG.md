@@ -87,9 +87,25 @@ of each GitHub release include its section
   lists every module the build resolves, with the licence of its own module
   file, and CI fails on every push when NOTICE leaves out such a module or
   gives it another version.
+- HTTP/2 over TLS (h2) on the TLS port: a connection whose client chooses
+  `h2` by ALPN is served over HTTP/2, by the same Mocks and Stubs as h2c,
+  with any certificate: the certificate files, the self-signed certificate
+  or a Mock's own. SNI still only chooses the certificate, and each
+  stream's Mock comes from its own `:authority`, so one connection can
+  carry streams for several Mock Hosts. See
+  [h2 on the TLS port](docs/http2.md#h2-on-the-tls-port).
+- Each `listening` log entry names the protocols its port serves, as
+  `protocols`: `["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]`
+  on the TLS port and `["http/1.1"]` on the admin port.
 
 ### Changed
 
+- A client that offers both `h2` and `http/1.1` by ALPN, as most HTTPS
+  clients do, now gets HTTP/2 on the TLS port instead of HTTP/1.1: ALPN
+  offers `h2`, then `http/1.1`, where it offered `http/1.1` alone. A client
+  that offers only `h2`, such as oha with `--http2`, now completes the
+  handshake instead of failing it. A client that offers only `http/1.1`, or
+  no ALPN, still gets HTTP/1.1.
 - `scripts/verify-image.sh` requires the runtime, mimalloc and simdutf in
   each SBOM, so it refuses the images of 0.3.0 and earlier. Check one of
   those with the script from its own tag, such as

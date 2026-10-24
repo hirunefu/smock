@@ -115,6 +115,7 @@ pub async fn serve(
   logger.info("listening", fields={
     "listener": "admin",
     "address": Json::string("0.0.0.0:\{admin_listener.addr.port()}"),
+    "protocols": ["http/1.1"],
   })
   // The runtime cancels the whole program on SIGTERM, the one cancellation
   // signal set above. The watcher below notices that and starts the drain,
@@ -273,13 +274,17 @@ async fn run(
       return 1
     }
     lifecycle.serving()
+    // Each port names the protocols it serves: the plain port HTTP/1.1, and
+    // HTTP/2 by prior knowledge; the TLS port those ALPN offers.
     logger.info("listening", fields={
       "listener": "plain",
       "address": Json::string("0.0.0.0:\{plain.addr.port()}"),
+      "protocols": ["http/1.1", "h2c"],
     })
     let tls_fields : Map[String, Json] = {
       "listener": "tls",
       "address": Json::string("0.0.0.0:\{tls_listener.addr.port()}"),
+      "protocols": Json::array(alpn.map(protocol => Json::string(protocol))),
     }
     if settings.tls is Some(files) {
       add_file_fields(tls_fields, files)
@@ -322,7 +327,13 @@ async fn run(
                 TlsStream::accept(conn, name => certificates.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
-              let writable = ports.serve(stream, conn, connection, h2c=false)
+              // ALPN chose the protocol: HTTP/2, whose loop reads the
+              // preface itself, or HTTP/1.1, which never looks for it.
+              let writable = if stream.is_http2() {
+                ports.serve_http2(stream, connection, b"")
+              } else {
+                ports.serve(stream, conn, connection, h2c=false)
+              }
               // A reset sends no close_notify: the RST alone ends the
               // connection. Nor does a connection whose client takes nothing
               // more, as after a write timed out: the write would wait.
@@ -422,7 +433,8 @@ priv struct MockPorts {
 ///
 /// With `h2c`, as on the plain port, a connection that starts with the
 /// HTTP/2 connection preface is served as HTTP/2 (`MockPorts::serve_http2`),
-/// and any other over HTTP/1.1, as below. Without it, every connection is
+/// and any other over HTTP/1.1, as below. Without it, as on the TLS port
+/// for a connection that did not choose `h2` by ALPN, every connection is
 /// HTTP/1.1.
 ///
 /// Each request takes the steps every request to the Mocks takes
@@ -458,7 +470,7 @@ priv struct MockPorts {
 ///
 /// While smock drains, a response says `Connection: close`, and the
 /// connection closes after it.
-async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
+async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve(
   self : MockPorts,
   stream : S,
   tcp : @socket.Tcp,
