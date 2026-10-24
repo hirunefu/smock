@@ -50,11 +50,11 @@ test "the visible-ASCII rule accepts the octets 0x21 to 0x7e alone, wherever the
 }
 
 ///|
-/// Whether the parser takes out a GET request whose target is `target`,
-/// written as one byte per character.
-fn parses_target(target : String) -> Bool {
+/// Whether the parser takes out a request with the method `meth`, GET by
+/// default, whose target is `target`, written as one byte per character.
+fn parses_target(target : String, meth~ : String = "GET") -> Bool {
   let head = @buffer.Buffer()
-  head.write_bytes(b"GET ")
+  head.write_bytes(@utf8.encode("\{meth} "))
   for i in 0..<target.length() {
     head.write_byte(target[i].to_byte())
   }
@@ -123,6 +123,43 @@ test "the origin-form check takes a path and query, or `*` alone for OPTIONS, an
       #|"[::1]:8080": GET false, OPTIONS false, CONNECT false
       #|"a.example": GET false, OPTIONS false, CONNECT false
       #|"urn:x": GET false, OPTIONS false, CONNECT false
+    ),
+  )
+}
+
+///|
+test "the authority-form check takes a host and a port, as the parser does for a CONNECT's target, and refuses the other forms" {
+  let targets = [
+    "a.example:443", "127.0.0.1:8080", "[::1]:80", "[v1.x]:80", "a.example:", ":443",
+    "a.example", "[::1]", "a.example:https", "a.example:443/", "/a.example:443",
+    "http://a.example:443", "*", "", "a example:443", "a@b.example:443", "a.example:80:80",
+    "caf\u{e9}.example:443",
+  ]
+  inspect(
+    targets
+    .map(target => {
+      "\{shown(target)}: \{@http1.is_authority_form(target)}, parser \{parses_target(target, meth="CONNECT")}"
+    })
+    .join("\n"),
+    content=(
+      #|"a.example:443": true, parser true
+      #|"127.0.0.1:8080": true, parser true
+      #|"[::1]:80": true, parser true
+      #|"[v1.x]:80": true, parser true
+      #|"a.example:": true, parser true
+      #|":443": true, parser true
+      #|"a.example": false, parser false
+      #|"[::1]": false, parser false
+      #|"a.example:https": false, parser false
+      #|"a.example:443/": false, parser false
+      #|"/a.example:443": false, parser false
+      #|"http://a.example:443": false, parser false
+      #|"*": false, parser false
+      #|"": false, parser false
+      #|"a example:443": false, parser false
+      #|"a@b.example:443": false, parser false
+      #|"a.example:80:80": false, parser false
+      #|"caf\u{e9}.example:443": false, parser false
     ),
   )
 }

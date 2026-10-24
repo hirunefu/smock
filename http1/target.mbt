@@ -23,7 +23,7 @@ fn is_request_target(target : StringView, meth~ : StringView) -> Bool {
   if target.contains_char('#') {
     return false
   }
-  let authority_form = is_host_and_port(target, port_required=true)
+  let authority_form = is_authority_form(target)
   if meth == "CONNECT" || authority_form {
     return meth == "CONNECT" && authority_form
   }
@@ -66,6 +66,25 @@ pub fn is_origin_or_asterisk_form(
   } else {
     target == "*" && meth == "OPTIONS"
   }
+}
+
+///|
+/// Whether `target` is a request target in authority-form, `uri-host ":"
+/// port` (RFC 9112, section 3.2.3), where an IPv6 address is in brackets:
+/// the one form of a CONNECT's target, and the form of HTTP/2's
+/// `:authority` in a CONNECT (RFC 9113, section 8.5). The host and the port
+/// may be empty, as the parser allows; the port may not be left out.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.is_authority_form("a.example:443"), content="true")
+///   inspect(@http1.is_authority_form("[::1]:8080"), content="true")
+///   inspect(@http1.is_authority_form("a.example"), content="false")
+///   inspect(@http1.is_authority_form("a.example:https"), content="false")
+/// }
+/// ```
+pub fn is_authority_form(target : StringView) -> Bool {
+  is_host_and_port(target, port_required=true)
 }
 
 ///|

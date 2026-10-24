@@ -62,7 +62,7 @@ port and `["http/1.1"]` on the admin port.
 ## What a Stub sees
 
 Each HTTP/2 stream carries one request, which reaches the Mocks once the
-client has sent all of it:
+client has sent all of it, except a CONNECT ([below](#connect)):
 
 - `:method` is the method, and `:path` is the target, as sent. The path
   and the query come from it as from an HTTP/1.1 request target, and `*`
@@ -97,6 +97,24 @@ and CRUD Stubs work as over HTTP/1.1.
 A stream that the client resets before it has sent all of its request
 never reaches the Mocks: it has no Journal entry, and it moves no Scenario.
 
+### CONNECT
+
+A CONNECT carries `:authority` and no `:path`. It reaches the Mocks as soon
+as its HEADERS arrive, without waiting for the client to end the stream:
+it is the one request that does not. Its target is `:authority`, as the
+authority-form target of an HTTP/1.1 CONNECT is, and so is its Host. So a
+CONNECT to `proxy.example.com:443` goes to the Mock for
+`proxy.example.com`, and a Stub matches it with `"method": "CONNECT"` and
+a path pattern, such as `{ "pattern": "proxy\\.example\\.com:443" }`.
+
+smock opens no tunnel. The response ends the stream, as any other does. A
+2xx carries no `content-length` and no body, as RFC 9110, section 9.3.6,
+requires, since after a 2xx the stream would carry the tunnel. Any other
+status is sent as for any request, with its length and body, and an
+unmatched CONNECT gets the same 404 as over HTTP/1.1. DATA the client
+sends after the HEADERS is discarded, and its octets are handed back, so
+the connection's window stays open.
+
 ## Requests smock refuses
 
 smock refuses on a stream what it refuses over HTTP/1.1, with the HTTP/1.1
@@ -107,6 +125,9 @@ codec's own checks. Such a stream gets `400 Bad Request`, with no body:
   an absolute URI gets 400, and so does a fragment (`#`);
 - a `:path` with a space, a control octet, DEL or an octet above 0x7E;
 - an `:authority` that is not a valid Host;
+- a CONNECT whose `:authority` is not a host and a port, such as
+  `proxy.example.com:443`, which an HTTP/1.1 CONNECT's target must be (RFC
+  9113, section 8.5);
 - more than one `host` field, or a `host` that is not a valid Host;
 - a `host` that names another host than `:authority` (RFC 9113, section
   8.3.1). Hosts are compared as Mock Hosts are: in any case, without the
@@ -162,7 +183,8 @@ HTTP/1.1 response does, adapted to the rules of HTTP/2:
   `connection` field.
 - `date` and `content-length` are sent as over HTTP/1.1. A Stub that gives
   its own Date sends that one alone. A response to HEAD carries the length
-  of the body but not the body, and a 204 or 304 carries neither.
+  of the body but not the body, and a 204 or 304 carries neither, nor does
+  a 2xx to a [CONNECT](#connect).
 - Templates, several responses, body files and Range requests work as over
   HTTP/1.1, with the same statuses and bytes.
 
@@ -195,11 +217,11 @@ is in the Journal, as a request whose client goes away is.
 ## The Journal
 
 An HTTP/2 request is in the Journal like any other, with `version`
-`HTTP/2`. Its `target` is `:path`, its `host` is the Host from
-`:authority` or the `host` field, and its `headers` are the regular fields
-as the Stubs saw them, cookies joined. So an HTTP/1.1 request and an
-HTTP/2 request for the same call read alike, and Journal queries,
-verification and the unmatched requests count both.
+`HTTP/2`. Its `target` is `:path`, or `:authority` for a CONNECT, its
+`host` is the Host from `:authority` or the `host` field, and its
+`headers` are the regular fields as the Stubs saw them, cookies joined. So
+an HTTP/1.1 request and an HTTP/2 request for the same call read alike,
+and Journal queries, verification and the unmatched requests count both.
 The request metrics count HTTP/2 requests with the same `mock` and `stub`
 labels as HTTP/1.1 ones.
 

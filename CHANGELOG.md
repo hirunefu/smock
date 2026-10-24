@@ -32,9 +32,10 @@ of each GitHub release include its section
   A client that reads slowly but steadily still gets the whole response,
   and delays do not count. It is not logged, like the read and idle
   timeouts. See [Run](README.md#run).
-- The `smock/http1` module makes public two checks of a request target that
-  its parser makes: `is_origin_or_asterisk_form`, for a path and query, or
-  `*` for OPTIONS, and `is_visible_ascii`, for characters from 0x21 to 0x7E
+- The `smock/http1` module makes public three checks of a request target
+  that its parser makes: `is_origin_or_asterisk_form`, for a path and query,
+  or `*` for OPTIONS, `is_authority_form`, for a host and a port, the target
+  of a CONNECT, and `is_visible_ascii`, for characters from 0x21 to 0x7E
   alone. With `is_token`, `is_field_value` and `is_host_value`, they let
   another protocol, such as HTTP/2, refuse what HTTP/1.1 refuses.
 - The Helm chart's `service.appProtocol.plain` and `service.appProtocol.tls`
@@ -60,8 +61,10 @@ of each GitHub release include its section
   flow-control windows goes out as the client widens them, so a client with
   small windows still gets all of it. `--body-limit` applies to each stream
   too: a body over it gets 413 on that stream alone, and
-  `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. See
-  [docs/http2.md](docs/http2.md).
+  `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. A CONNECT
+  reaches the Mocks as soon as its HEADERS arrive, with `:authority` as its
+  target, and smock opens no tunnel: a 2xx to it ends the stream with no
+  body. See [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
   `Upgrade`, `Proxy-Connection` and `TE` left out. HEAD, 204 and 304 are
