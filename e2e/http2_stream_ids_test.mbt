@@ -4,13 +4,26 @@
 // the shapes of h2spec's http2/5.1.1/2 and http2/5.1/12.
 
 ///|
+/// The fields of a request with the method `meth` for `path` to
+/// `authority`.
+fn request_fields(
+  meth : String,
+  path : String,
+  authority : String,
+) -> Array[(String, String)] {
+  [
+    (":method", meth),
+    (":scheme", "http"),
+    (":path", path),
+    (":authority", authority),
+  ]
+}
+
+///|
 /// The fields of a request for `GET /x` to `orders.example.com`.
-let get_x : Array[(String, String)] = [
-  (":method", "GET"),
-  (":scheme", "http"),
-  (":path", "/x"),
-  (":authority", "orders.example.com"),
-]
+let get_x : Array[(String, String)] = request_fields(
+  "GET", "/x", "orders.example.com",
+)
 
 ///|
 /// A HEADERS frame on `stream` that carries all of `block`, and ends the
@@ -69,6 +82,28 @@ async test "h2c: HEADERS on a stream ID already used, whose stream smock did not
         3,
       )
       reuse(
+        "A stream whose field block came in HEADERS and CONTINUATION",
+        raw => {
+          let block = raw.block(get_x)
+          [
+            Headers(
+              stream_id=1,
+              fragment=block[:4].to_owned(),
+              end_stream=true,
+              end_headers=false,
+              priority=None,
+              padding=0,
+            ),
+            Continuation(
+              stream_id=1,
+              fragment=block[4:].to_owned(),
+              end_headers=true,
+            ),
+          ]
+        },
+        1,
+      )
+      reuse(
         "A stream the client reset",
         raw => {
           [
@@ -97,12 +132,21 @@ async test "h2c: HEADERS on a stream ID already used, whose stream smock did not
           #|GOAWAY last=5 PROTOCOL_ERROR
           #|closed
           #|then a fresh connection: 200 end
+          #|A stream whose field block came in HEADERS and CONTINUATION:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, date: <now>, content-length: 11]
+          #|DATA 1 END_STREAM 11 octets
+          #|GOAWAY last=1 PROTOCOL_ERROR
+          #|closed
+          #|then a fresh connection: 200 end
           #|A stream the client reset:
           #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
           #|SETTINGS ACK
           #|GOAWAY last=1 PROTOCOL_ERROR
           #|closed
           #|then a fresh connection: 200 end
+
         ),
       )
     })
@@ -140,6 +184,56 @@ async test "h2c: HEADERS on a stream that moonhttp refused at open, or reset aft
           #|DATA 5 END_STREAM 11 octets
         ),
       )
+    })
+  })
+}
+
+///|
+async test "h2c: HEADERS on a stream still open are its trailers, and the stream is answered" {
+  with_definitions([("files.json", uploads)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let upload = request_fields("POST", "/upload", "localhost")
+      raw.send([
+        headers_frame(1, raw.block(upload), end_stream=false),
+        Data(stream_id=1, data=b"abc", end_stream=false, padding=0),
+        headers_frame(1, raw.block([("x-checksum", "abc")])),
+        headers_frame(3, raw.block(upload)),
+      ])
+      inspect(raw.frames_until_stream_ends(3), content=(
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+        #|SETTINGS ACK
+        #|HEADERS 1 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+        #|DATA 1 END_STREAM 6 octets
+        #|HEADERS 3 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+        #|DATA 3 END_STREAM 6 octets
+      ))
+    })
+  })
+}
+
+///|
+async test "h2c: HEADERS on a stream that a reset Fault ended are ignored, and the connection serves the next stream" {
+  with_definitions([("faults.json", faults)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      raw.send([
+        headers_frame(
+          1,
+          raw.block(request_fields("GET", "/reset", "localhost")),
+        ),
+        headers_frame(1, raw.block(request_fields("GET", "/fast", "localhost"))),
+        headers_frame(3, raw.block(request_fields("GET", "/fast", "localhost"))),
+      ])
+      inspect(raw.frames_until_stream_ends(3), content=(
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+        #|SETTINGS ACK
+        #|RST_STREAM 1 INTERNAL_ERROR
+        #|HEADERS 3 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+        #|DATA 3 END_STREAM 4 octets
+      ))
     })
   })
 }
