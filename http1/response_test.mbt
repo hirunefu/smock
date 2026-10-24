@@ -113,3 +113,78 @@ test "a response whose headers give a Date field, in any case, carries that one 
     content="HTTP/1.1 204 No Content|Dates: a|X-Date: b|Date: Thu, 22 Oct 2026 14:37:10 GMT||",
   )
 }
+
+///|
+/// The text of one code unit, `unit`, which may be half of a surrogate
+/// pair.
+fn code_unit(unit : Int32) -> String {
+  String::from_array([unit.unsafe_to_char()])
+}
+
+///|
+test "field_octets writes a surrogate that is not part of a pair as the three bytes of its code unit" {
+  let texts = [
+    "a" + code_unit(0xD800) + "b",
+    code_unit(0xDC00),
+    code_unit(0xDE00) + code_unit(0xD83D),
+    code_unit(0xD83D) + code_unit(0xDE00),
+    "",
+  ]
+  inspect(
+    texts.map(text => "\{@http1.field_octets(text)}").join("\n"),
+    content=(
+      #|b"a\xed\xa0\x80b"
+      #|b"\xed\xb0\x80"
+      #|b"\xed\xb8\x80\xed\xa0\xbd"
+      #|b"\xf0\x9f\x98\x80"
+      #|b""
+    ),
+  )
+}
+
+///|
+test "field_octets gives the octets encode_response writes for a field value, for every text of up to three pieces of one to four bytes, tabs, spaces and lone surrogates" {
+  let pieces = [
+    "a",
+    " ",
+    "\t",
+    "\u{7f}",
+    "\u{80}",
+    "é",
+    "\u{7ff}",
+    "\u{800}",
+    "€",
+    "\u{ffff}",
+    "😀",
+    "\u{10ffff}",
+    code_unit(0xD800),
+    code_unit(0xDBFF),
+    code_unit(0xDC00),
+    code_unit(0xDFFF),
+  ]
+  let texts = [""]
+  let mut from = 0
+  for _ in 0..<3 {
+    let to = texts.length()
+    for i in from..<to {
+      for piece in pieces {
+        texts.push(texts[i] + piece)
+      }
+    }
+    from = to
+  }
+  let prefix = b"HTTP/1.1 200 OK\r\nX: "
+  let suffix = b"\r\nContent-Length: 0\r\n\r\n"
+  let mut differ = 0
+  for text in texts {
+    let response = @http1.encode_response(200, [("X", text)], b"")
+    let written = response[prefix.length():response.length() - suffix.length()]
+    if @http1.field_octets(text) != written.to_owned() {
+      differ += 1
+    }
+  }
+  inspect(
+    "\{texts.length()} texts, \{differ} differ",
+    content="4369 texts, 0 differ",
+  )
+}
