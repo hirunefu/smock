@@ -64,7 +64,10 @@ of each GitHub release include its section
   `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. A CONNECT
   reaches the Mocks as soon as its HEADERS arrive, with `:authority` as its
   target, and smock opens no tunnel: a 2xx to it ends the stream with no
-  body. See [docs/http2.md](docs/http2.md).
+  body. The HPACK table smock encodes responses with stays at 4,096 octets,
+  however large a table the client allows, and a header block that does not
+  decode ends the connection with GOAWAY `COMPRESSION_ERROR`. See
+  [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
   `Upgrade`, `Proxy-Connection` and `TE` left out. HEAD, 204 and 304 are

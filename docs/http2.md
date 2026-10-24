@@ -414,6 +414,7 @@ connection.
 | Pattern | Bound | Past it |
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
+| HPACK bomb: a small header block that decodes to a large list, such as one that names a large table entry over and over | moonhttp keeps no more of a decoded list than twice `--header-size-limit`, counted as RFC 7541 counts it. smock then holds the list to `--header-size-limit` and `--header-count-limit` ([Header lists](#header-lists)). The table smock decodes header blocks with is 4,096 octets. So is the one it encodes responses with, however large a table the client allows: smock lowers a larger SETTINGS_HEADER_TABLE_SIZE to 4,096 before moonhttp sees it, since an encoder may use any table up to the size the client allows (RFC 7541, section 4.2). | 431 for a list over `--header-size-limit` or with too many fields. RST_STREAM `ENHANCE_YOUR_CALM`, with no status, for a list over twice it. GOAWAY `COMPRESSION_ERROR` for a block that does not decode ([Connection errors](#connection-errors)). |
 | Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. A client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
 | Header fields with empty names (CVE-2019-9516) | moonhttp refuses an empty field name. | RST_STREAM `PROTOCOL_ERROR` on that stream. |
 | Request bodies | `--body-limit` per stream, under the concurrent-streams limit. | 413, then RST_STREAM `NO_ERROR` on that stream ([Request bodies](#request-bodies)). |
@@ -429,6 +430,10 @@ opens a new connection for the rest.
   gets `FRAME_SIZE_ERROR`.
 - A header block over twice `--header-size-limit` as received gets
   `ENHANCE_YOUR_CALM` ([Header lists](#header-lists)).
+- A header block that does not decode gets `COMPRESSION_ERROR`: one with a
+  Huffman code that holds EOS or is badly padded, an index that names no
+  entry, or a table size update past 4,096 octets, the size of the table
+  smock decodes with.
 - HEADERS on a stream ID that the client has already used get
   `PROTOCOL_ERROR` (RFC 9113, section 5.1.1). That covers a stream that
   has ended, one the client reset, and an ID the client skipped when it

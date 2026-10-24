@@ -1,7 +1,15 @@
 // Seam 2 tests of header compression over HTTP/2, over h2c on the plain
-// port, sent as raw frames. smock's HPACK encoding table stays at 4,096
-// octets however large a table the client allows: smock lowers the
-// client's SETTINGS_HEADER_TABLE_SIZE to 4,096 before moonhttp sees it.
+// port, sent as raw frames: the HPACK bomb row of the defences.
+//
+// - smock's HPACK encoding table stays at 4,096 octets however large a
+//   table the client allows: smock lowers the client's
+//   SETTINGS_HEADER_TABLE_SIZE to 4,096 before moonhttp sees it.
+// - A block that names a large table entry over and over is held to the
+//   header limits (431), and past moonhttp's bound, twice
+//   `--header-size-limit`, to RST_STREAM ENHANCE_YOUR_CALM. moonhttp keeps
+//   no fields past that bound.
+// - A block that does not decode, or that asks for a decoding table larger
+//   than 4,096 octets, ends the connection with GOAWAY COMPRESSION_ERROR.
 
 ///|
 /// A Mock that answers every Host, with a Stub for `GET /hello` and one for
