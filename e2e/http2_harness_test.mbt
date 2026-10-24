@@ -38,18 +38,21 @@ async fn Smock::tls(
   )
   errdefer tcp.close()
   let client = { tcp, tls, input: FixedArray::make(16 * 1024, b'\x00'), }
-  for ;; {
-    let done = tls.handshake()
-    client.flush()
-    if done {
-      break
+  let handshake = @async.with_timeout_opt(patience_ms, () => {
+    for ;; {
+      let done = tls.handshake()
+      client.flush()
+      if done {
+        break
+      }
+      let n = past_spurious_eagain(() => tcp.read(client.input))
+      if n == 0 {
+        fail("smock closed the connection during the handshake")
+      }
+      tls.receive(client.input.unsafe_reinterpret_as_bytes()[:n])
     }
-    let n = past_spurious_eagain(() => tcp.read(client.input))
-    if n == 0 {
-      fail("smock closed the connection during the handshake")
-    }
-    tls.receive(client.input.unsafe_reinterpret_as_bytes()[:n])
-  }
+  })
+  guard handshake is Some(_) else { fail("no TLS handshake in time") }
   client
 }
 
