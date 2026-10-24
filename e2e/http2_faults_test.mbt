@@ -414,3 +414,151 @@ async test "h2c: a partial Fault whose half body is larger than the client's win
     })
   })
 }
+
+///|
+/// Mock `m` with Stubs whose connection Faults apply to half of the
+/// matched requests: `/flaky` resets, as its own generator, seeded with
+/// 2026, draws, and `/coin-partial` and `/coin-close` send half the body
+/// and close, as the process generator draws, which `--seed` seeds.
+let coin_faults : String =
+  #|{ "mocks": [{ "name": "m" }],
+  #|  "stubs": [
+  #|    { "id": "flaky", "mock": "m", "request": { "path": "/flaky" },
+  #|      "response": { "status": 200, "body": "answered" },
+  #|      "fault": { "connection": { "kind": "reset", "probability": 0.5 },
+  #|        "seed": 2026 } },
+  #|    { "id": "coin-partial", "mock": "m", "request": { "path": "/coin-partial" },
+  #|      "response": { "status": 200, "body": "0123456789" },
+  #|      "fault": { "connection": { "kind": "partial", "probability": 0.5 } } },
+  #|    { "id": "coin-close", "mock": "m", "request": { "path": "/coin-close" },
+  #|      "response": { "status": 200, "body": "heads" },
+  #|      "fault": { "connection": { "kind": "close", "probability": 0.5 } } } ] }
+
+///|
+/// What became of `GET <path>`, sent over HTTP/1.1 on a connection of its
+/// own: `reset` for an RST with nothing written, `close` for a FIN with
+/// nothing written, `cut: <body>` for a body shorter than its
+/// `Content-Length`, else the body.
+async fn http1_fault_outcome(smock : Smock, path : String) -> String {
+  let conn = smock.connect()
+  defer conn.close()
+  conn.write(
+    "GET \{path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+  )
+  let (received, ending) = sent_until_end(conn, within=patience_ms)
+  let text = @utf8.decode_lossy(received)
+  match ending {
+    "an RST" if received.length() == 0 => "reset"
+    "a FIN" if received.length() == 0 => "close"
+    "a FIN" => {
+      guard text.find("\r\n\r\n") is Some(end) &&
+        text.find("Content-Length: ") is Some(at) else {
+        return "no head: \{text.escape()}"
+      }
+      let length = text[at + 16:].split("\r\n").to_array()[0].to_owned()
+      let body = text[end + 4:].to_owned()
+      if body.length().to_string() == length {
+        body
+      } else {
+        "cut: \{body}"
+      }
+    }
+    _ => "\{received.length()} bytes, then \{ending}"
+  }
+}
+
+///|
+/// What became of `GET <path>`, sent on `stream` of `raw`: `reset` for
+/// RST_STREAM with no HEADERS, `close` for GOAWAY, `cut: <body>` for
+/// RST_STREAM after HEADERS, else the body.
+async fn h2_fault_outcome(raw : RawH2, stream : Int32, path : String) -> String {
+  raw.send([raw.get(stream, path)])
+  let body = @buffer.Buffer()
+  let mut headers = false
+  for ;; {
+    guard raw.read_frame() is Some(frame) else { return "closed" }
+    // Every header block is decoded, to keep the decoder in step.
+    let _ = raw.render_frame(frame)
+    match frame {
+      Headers(stream_id~, ..) if stream_id == stream => headers = true
+      Data(stream_id~, data~, end_stream~, ..) if stream_id == stream => {
+        body.write_bytes(data)
+        if end_stream {
+          return @utf8.decode_lossy(body.to_bytes())
+        }
+      }
+      RstStream(stream_id~, ..) if stream_id == stream =>
+        return if headers {
+          "cut: \{@utf8.decode_lossy(body.to_bytes())}"
+        } else {
+          "reset"
+        }
+      GoAway(..) => return "close"
+      _ => ()
+    }
+  }
+}
+
+///|
+async test "h2c: Fault probabilities and seeds replay the same over HTTP/2 as over HTTP/1.1: with the same --seed, and a Stub's own seed, the same requests get the same Faults" {
+  with_definitions([("m.json", coin_faults)], dir => {
+    let paths = []
+    for _ in 0..<6 {
+      paths.push("/flaky")
+      paths.push("/coin-partial")
+      paths.push("/coin-close")
+    }
+    let args = ["--dir", dir, "--port", "0", "--seed", "7"]
+    let http1 = []
+    let _ = with_smock(args, smock => {
+      for path in paths {
+        http1.push(http1_fault_outcome(smock, path))
+      }
+    })
+    let http2 = []
+    let _ = with_smock(args, smock => {
+      let mut raw = smock.raw_h2()
+      let mut stream = 1
+      for path in paths {
+        let outcome = h2_fault_outcome(raw, stream, path)
+        http2.push(outcome)
+        stream += 2
+        // A close Fault ends the connection: the next request opens one.
+        if outcome == "close" {
+          raw.close()
+          raw = smock.raw_h2()
+          stream = 1
+        }
+      }
+      raw.close()
+    })
+    let out = []
+    for i, path in paths {
+      out.push("\{path}: \{http1[i]} | \{http2[i]}")
+    }
+    inspect(
+      [..out, "the same over both: \{http1 == http2}"].join("\n"),
+      content=(
+        #|/flaky: answered | answered
+        #|/coin-partial: cut: 01234 | cut: 01234
+        #|/coin-close: heads | heads
+        #|/flaky: reset | reset
+        #|/coin-partial: cut: 01234 | cut: 01234
+        #|/coin-close: heads | heads
+        #|/flaky: reset | reset
+        #|/coin-partial: cut: 01234 | cut: 01234
+        #|/coin-close: close | close
+        #|/flaky: answered | answered
+        #|/coin-partial: 0123456789 | 0123456789
+        #|/coin-close: heads | heads
+        #|/flaky: reset | reset
+        #|/coin-partial: cut: 01234 | cut: 01234
+        #|/coin-close: heads | heads
+        #|/flaky: reset | reset
+        #|/coin-partial: 0123456789 | 0123456789
+        #|/coin-close: close | close
+        #|the same over both: true
+      ),
+    )
+  })
+}
