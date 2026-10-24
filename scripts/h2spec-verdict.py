@@ -10,14 +10,17 @@ in what this prints. <report> is the JUnit report of h2spec 2.6.0
 
 Each line of the list names a case, why it is listed, and the reason in
 words, separated by spaces; a line that starts with # is a comment. Why is
+one of
 
+  skipped   h2spec skips the case.
   #<issue>  the case fails until that issue is done.
 
 It prints how many cases passed, every listed case with its outcome and
 reason, the listed cases that passed, which can come off the list, and
-every case that failed and is not listed, with what h2spec expected and
-got. On GitHub Actions, a listed case that passed is also a notice on its
-line of the list. It exits with 1 when a case that is not listed failed,
+every case that failed or was skipped without being listed with that
+outcome, with what h2spec expected and got. On GitHub Actions, a listed
+case that passed is also a notice on its line of the list. It exits with 1
+when a case failed or was skipped without being listed with that outcome,
 and with 2 when it cannot read the list or the report.
 """
 
@@ -30,6 +33,23 @@ from pathlib import Path
 
 class ListError(Exception):
     """A line of the list that cannot be read."""
+
+
+class Entry:
+    """A case on the list: why it is listed, the reason, and its line."""
+
+    def __init__(self, why, reason, line):
+        self.why = why
+        self.reason = reason
+        self.line = line
+
+    def expects(self):
+        """The outcome the case is listed with."""
+        return "skipped" if self.why == "skipped" else "failed"
+
+    def how(self):
+        """How the case is listed, in words."""
+        return "as skipped" if self.why == "skipped" else f"until {self.why}"
 
 
 def cases(report):
@@ -60,7 +80,7 @@ def cases(report):
 
 
 def read_list(path):
-    """The entries of a list, by case: {ID: (why, reason, line number)}."""
+    """The entries of a list, by case ID."""
     entries = {}
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip() or line.startswith("#"):
@@ -69,10 +89,15 @@ def read_list(path):
         if len(fields) < 3:
             raise ListError(f"{path.name}:{number}: give the case, why it is listed, and the reason")
         case, why, reason = fields
-        if not re.fullmatch(r"#[0-9]+", why):
-            raise ListError(f"{path.name}:{number}: {case} is listed as {why!r}, not as #<issue>")
-        entries[case] = (why, reason.strip(), number)
+        if why != "skipped" and not re.fullmatch(r"#[0-9]+", why):
+            raise ListError(f"{path.name}:{number}: {case} is listed as {why!r}, not as skipped or #<issue>")
+        entries[case] = Entry(why, reason.strip(), number)
     return entries
+
+
+def plural(count, one, more):
+    """<count> <one>, or <count> <more> when count is not 1."""
+    return f"{count} {one if count == 1 else more}"
 
 
 def main(argv):
@@ -91,38 +116,43 @@ def main(argv):
     print(f"h2spec {port}: {len(run)} cases, {counts['passed']} passed, {counts['skipped']} skipped, "
           f"{counts['failed']} failed")
 
+    # Every listed case, with its outcome and reason.
     if listed:
         print(f"h2spec {port}: listed in {path.name}, with the reason:")
     passing = []
-    for case, description, outcome, detail in run:
-        if case not in listed:
+    for case, _, outcome, _ in run:
+        entry = listed.get(case)
+        if entry is None:
             continue
-        why, reason, line = listed[case]
+        print(f"  {case} {outcome}, listed {entry.how()}: {entry.reason}")
         if outcome == "passed":
-            passing.append((case, line))
-            print(f"  {case} passed, listed until {why}: {reason}")
-        else:
-            print(f"  {case} {outcome}, as listed until {why}: {reason}")
+            passing.append((case, entry))
     if passing:
-        print(f"h2spec {port}: {len(passing)} listed {'case' if len(passing) == 1 else 'cases'} passed, "
+        print(f"h2spec {port}: {plural(len(passing), 'listed case', 'listed cases')} passed, "
               f"so {'it' if len(passing) == 1 else 'they'} can come off {path.name}: "
               + " ".join(case for case, _ in passing))
         if os.environ.get("GITHUB_ACTIONS") == "true":
-            for case, line in passing:
-                print(f"::notice file={path},line={line},title=h2spec {port}::"
+            for case, entry in passing:
+                print(f"::notice file={path},line={entry.line},title=h2spec {port}::"
                       f"{case} passes now, so it can come off the list")
 
-    unlisted = 0
+    # The cases that failed or were skipped without being listed so.
+    wrong = 0
     for case, description, outcome, detail in run:
-        if outcome == "passed" or case in listed:
+        entry = listed.get(case)
+        if outcome == "passed" or (entry is not None and entry.expects() == outcome):
             continue
-        unlisted += 1
-        print(f"h2spec {port}: {case} {outcome}, and is not listed: {description}")
+        wrong += 1
+        if entry is None:
+            print(f"h2spec {port}: {case} {outcome}, and is not listed: {description}")
+        else:
+            print(f"h2spec {port}: {case} {outcome}, but is listed {entry.how()}: {description}")
         for line in detail.splitlines():
             print(f"    {line}")
-    if unlisted:
-        print(f"h2spec {port}: {unlisted} {'case' if unlisted == 1 else 'cases'} failed or was skipped "
-              f"without being listed in {path.name}")
+    if wrong:
+        print(f"h2spec {port}: {plural(wrong, 'case', 'cases')} failed or "
+              f"{'was' if wrong == 1 else 'were'} skipped, and {path.name} does not list "
+              f"{'it' if wrong == 1 else 'them'} with that outcome")
         return 1
     print(f"h2spec {port}: every case passed or is listed")
     return 0

@@ -115,7 +115,7 @@ says unlisted-failure "h2spec plain: 4 cases, 3 passed, 0 skipped, 1 failed"
 says unlisted-failure "h2spec plain: http2/3.5/2 failed, and is not listed: Sends invalid connection preface"
 says unlisted-failure "    GOAWAY Frame (Error Code: PROTOCOL_ERROR)"
 says unlisted-failure "    Error: unexpected EOF"
-says unlisted-failure "h2spec plain: 1 case failed or was skipped without being listed in plain.txt"
+says unlisted-failure "h2spec plain: 1 case failed or was skipped, and plain.txt does not list it with that outcome"
 
 # A case listed with the issue that fixes it may fail, and the run lists it
 # with its issue and reason.
@@ -124,7 +124,7 @@ list "http2/3.5/2  #150  The TLS port does not serve HTTP/2 yet."
 verdict listed-failure
 exits listed-failure 0
 says listed-failure "h2spec plain: listed in plain.txt, with the reason:"
-says listed-failure "  http2/3.5/2 failed, as listed until #150: The TLS port does not serve HTTP/2 yet."
+says listed-failure "  http2/3.5/2 failed, listed until #150: The TLS port does not serve HTTP/2 yet."
 says listed-failure "h2spec plain: every case passed or is listed"
 
 # A listed case that passes is reported, so that it can come off the list,
@@ -139,6 +139,35 @@ says listed-pass "h2spec plain: 2 listed cases passed, so they can come off plai
 says listed-pass "h2spec plain: every case passed or is listed"
 verdict listed-pass-on-github github
 says listed-pass-on-github "::notice file=$tmp/plain.txt,line=3,title=h2spec plain::http2/3.5/2 passes now, so it can come off the list"
+
+# --- Cases that h2spec skips -------------------------------------------------
+
+# A case that h2spec skips needs a reason on the list too.
+report pass pass pass skip
+list
+verdict unlisted-skip
+exits unlisted-skip 1
+says unlisted-skip "h2spec plain: 4 cases, 3 passed, 1 skipped, 0 failed"
+says unlisted-skip "h2spec plain: http2/6.9.1/1 skipped, and is not listed: Sends SETTINGS frame to set the initial window size to 1 and sends HEADERS frame"
+
+list "http2/6.9.1/1  skipped  The Stub answers with an empty body."
+verdict listed-skip
+exits listed-skip 0
+says listed-skip "  http2/6.9.1/1 skipped, listed as skipped: The Stub answers with an empty body."
+says listed-skip "h2spec plain: every case passed or is listed"
+
+# A listed case must have the outcome it is listed with.
+list "http2/6.9.1/1  #147  Not yet."
+verdict skip-listed-as-failing
+exits skip-listed-as-failing 1
+says skip-listed-as-failing "h2spec plain: http2/6.9.1/1 skipped, but is listed until #147: Sends SETTINGS frame to set the initial window size to 1 and sends HEADERS frame"
+
+report pass pass fail pass
+list "http2/3.5/2  skipped  The Stub answers with an empty body."
+verdict failure-listed-as-skipped
+exits failure-listed-as-skipped 1
+says failure-listed-as-skipped "h2spec plain: http2/3.5/2 failed, but is listed as skipped: Sends invalid connection preface"
+says failure-listed-as-skipped "    Error: unexpected EOF"
 
 echo
 echo "$passed passed, $failed failed"
