@@ -112,10 +112,15 @@ fn plan_response(
       headers
     }
     Templated(fields) => {
-      let rendering = match context {
-        Some(rendering) => rendering
-        None => first_context(incoming, now~, draw~, vars~, data~, copies~)
-      }
+      let rendering = rendering_for(
+        incoming,
+        context,
+        now~,
+        draw~,
+        vars~,
+        data~,
+        copies~,
+      )
       context = Some(rendering)
       let headers = Array(capacity=fields.length() + room)
       for i in 0..<fields.length() {
@@ -137,20 +142,30 @@ fn plan_response(
       { status, headers, body: Events(events), delay_ms: 0, fault: None, }
     }
     Template(template) => {
-      let rendering = match context {
-        Some(rendering) => rendering
-        None => first_context(incoming, now~, draw~, vars~, data~, copies~)
-      }
+      let rendering = rendering_for(
+        incoming,
+        context,
+        now~,
+        draw~,
+        vars~,
+        data~,
+        copies~,
+      )
       render_body(status, headers, template, rendering)
     }
     Llm(llm) => {
       let strings = match llm.strings {
         Written(strings) => strings
         Templated(templates) => {
-          let rendering = match context {
-            Some(rendering) => rendering
-            None => first_context(incoming, now~, draw~, vars~, data~, copies~)
-          }
+          let rendering = rendering_for(
+            incoming,
+            context,
+            now~,
+            draw~,
+            vars~,
+            data~,
+            copies~,
+          )
           render_strings(templates, rendering)
         }
       }
@@ -194,14 +209,8 @@ fn render_strings(
   templates : @definitions.LlmTemplates,
   context : @template.Context,
 ) -> @llm.Strings raise @template.RenderError {
-  let id = match templates.id {
-    Some(id) => Some(id.render(context))
-    None => None
-  }
-  let model = match templates.model {
-    Some(model) => Some(model.render(context))
-    None => None
-  }
+  let id = render_given(templates.id, context)
+  let model = render_given(templates.model, context)
   let mut text = ""
   let mut chunks = None
   match templates.text {
@@ -242,10 +251,7 @@ fn render_strings(
     }
     tool_calls.push(@llm.ToolCall::from_text(name~, arguments~, id?=call_id))
   }
-  let error_message = match templates.error_message {
-    Some(message) => Some(message.render(context))
-    None => None
-  }
+  let error_message = render_given(templates.error_message, context)
   @llm.Strings(
     text~,
     chunks?,
@@ -254,6 +260,21 @@ fn render_strings(
     tool_calls=ReadOnlyArray::from_array(tool_calls),
     error_message?,
   )
+}
+
+///|
+/// `template` rendered in `context`, or `None` when it is `None`: a string
+/// of an LLM reply that may be left out.
+///
+/// Raises `RenderError` when the template cannot be rendered.
+fn render_given(
+  template : @template.Text?,
+  context : @template.Context,
+) -> String? raise @template.RenderError {
+  match template {
+    Some(template) => Some(template.render(context))
+    None => None
+  }
 }
 
 ///|
@@ -384,6 +405,27 @@ fn first_context(
     data~,
     copies?,
   )
+}
+
+///|
+/// The rendering every template of a response for the request `incoming`
+/// renders in: `context`, the one the Stub's Variables or the response's
+/// header values left, or, without one, the request's first rendering,
+/// made from `now`, `draw`, `vars`, `data` and `copies` as `first_context`
+/// makes it.
+fn rendering_for(
+  incoming : Incoming,
+  context : @template.Context?,
+  now~ : Int64,
+  draw~ : UInt64,
+  vars~ : Map[String, Json]?,
+  data~ : Map[String, Json],
+  copies~ : Map[String, Json]?,
+) -> @template.Context {
+  match context {
+    Some(rendering) => rendering
+    None => first_context(incoming, now~, draw~, vars~, data~, copies~)
+  }
 }
 
 ///|
