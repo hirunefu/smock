@@ -6,9 +6,10 @@
 // and DATA the client sends after the HEADERS is discarded.
 
 ///|
-/// A Mock for the Host `proxy.example.com`, with a Stub that answers a
-/// CONNECT to its port 443 with 200, a header and a body, and the Default
-/// Mock, with a Stub for `POST /upload`.
+/// A Mock for the Host `proxy.example.com`, with Stubs that answer a
+/// CONNECT to its port 443 with 200, a header and a body, one to its port
+/// 8000 with the same after a delay, and one to its port 8080 with 407 and
+/// a body; and the Default Mock, with a Stub for `POST /upload`.
 let tunnels : String =
   #|{ "mocks": [{ "name": "proxy", "hosts": ["proxy.example.com"] },
   #|            { "name": "fallback", "default": true }],
@@ -18,6 +19,17 @@ let tunnels : String =
   #|        "path": { "pattern": "proxy\\.example\\.com:443" } },
   #|      "response": { "status": 200, "headers": { "X-Tunnel": "none" },
   #|        "body": "no tunnel opens" } },
+  #|    { "id": "slow-tunnel", "mock": "proxy",
+  #|      "request": { "method": "CONNECT",
+  #|        "path": { "pattern": "proxy\\.example\\.com:8000" } },
+  #|      "response": { "status": 200, "body": "no tunnel opens" },
+  #|      "fault": { "delay": { "fixed": 200 } } },
+  #|    { "id": "proxy-auth", "mock": "proxy",
+  #|      "request": { "method": "CONNECT",
+  #|        "path": { "pattern": "proxy\\.example\\.com:8080" } },
+  #|      "response": { "status": 407,
+  #|        "headers": { "Proxy-Authenticate": "Basic realm=proxy" },
+  #|        "body": "proxy authentication required" } },
   #|    { "id": "upload", "mock": "fallback",
   #|      "request": { "method": "POST", "path": "/upload" },
   #|      "response": { "status": 201, "body": "stored" } } ] }
@@ -136,6 +148,38 @@ async test "h2c: a CONNECT reaches its Stub when its HEADERS arrive, even when t
           #|HTTP/2 CONNECT "proxy.example.com:443" host="proxy.example.com" mock="proxy" stub="tunnel" status=200 body=0 octets
           #|HTTP/2 CONNECT "proxy.example.com:443" host="proxy.example.com" mock="proxy" stub="tunnel" status=200 body=0 octets
           #|HTTP/1.1 CONNECT "proxy.example.com:443" host="proxy.example.com" mock="proxy" stub="tunnel" status=200 body=0 octets
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: a CONNECT's 2xx after a delay also ends the stream with no content-length and no DATA, and a status other than 2xx is framed as any response's, with its length and body" {
+  with_definitions([("tunnels.json", tunnels)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      raw.send([
+        headers_frame(
+          1,
+          raw.block(connect_fields("proxy.example.com:8000")),
+          end_stream=false,
+        ),
+        headers_frame(
+          3,
+          raw.block(connect_fields("proxy.example.com:8080")),
+          end_stream=false,
+        ),
+      ])
+      inspect(
+        raw.frames_until_stream_ends(1),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 3 END_HEADERS [:status: 407, proxy-authenticate: Basic realm=proxy, date: <now>, content-length: 29]
+          #|DATA 3 END_STREAM 29 octets
+          #|HEADERS 1 END_STREAM END_HEADERS [:status: 200, date: <now>]
         ),
       )
     })
