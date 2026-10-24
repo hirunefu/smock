@@ -58,7 +58,9 @@ of each GitHub release include its section
   resets only a stream whose request is late, with `CANCEL`; an idle
   connection gets GOAWAY before it closes. A body larger than the client's
   flow-control windows goes out as the client widens them, so a client with
-  small windows still gets all of it. See
+  small windows still gets all of it. `--body-limit` applies to each stream
+  too: a body over it gets 413 on that stream alone, and
+  `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
@@ -67,6 +69,10 @@ of each GitHub release include its section
 - The `smock/http1` module makes public `field_octets`: the octets
   `encode_response` writes for a field name or value, so that another
   protocol, such as HTTP/2, can send the same ones.
+- The `smock/http1` module makes public `expects_continue`, which tells
+  whether an Expect field value asks for `100 Continue`, as its parser
+  reads it, so that another protocol, such as HTTP/2, reads it the same
+  way.
 - `--http2-max-concurrent-streams` (`SMOCK_HTTP2_MAX_CONCURRENT_STREAMS`),
   100 by default, from 1 to 1000: the most streams an HTTP/2 connection may
   have in progress at once. smock advertises it in its SETTINGS and holds

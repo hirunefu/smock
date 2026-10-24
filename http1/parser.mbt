@@ -660,10 +660,8 @@ fn parse_head(
         }
       }
     } else if is_name(name, "expect") {
-      for expectation in list_elements(header.value) {
-        if expectation.to_lower() == "100-continue" {
-          expect_continue = true
-        }
+      if expects_continue(@utf8.decode_lossy(header.value)) {
+        expect_continue = true
       }
     }
   }
@@ -706,6 +704,68 @@ fn parse_head(
     version is Http11 &&
     !(framing is Length(0)),
   })
+}
+
+///|
+/// Whether the Expect field value `value` asks for `100 Continue`: one of
+/// the elements of its comma-separated list (RFC 9110, section 5.6.1),
+/// without the spaces and tabs around it, is `100-continue`, in any case
+/// (section 10.1.1). HTTP/2's `expect` field reads the same way.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.expects_continue("100-continue"), content="true")
+///   inspect(@http1.expects_continue("x, 100-Continue "), content="true")
+///   inspect(@http1.expects_continue("100-continue; x"), content="false")
+/// }
+/// ```
+pub fn expects_continue(value : StringView) -> Bool {
+  let length = value.length()
+  let mut start = 0
+  while start <= length {
+    let mut end = start
+    while end < length && value[end] != ',' {
+      end += 1
+    }
+    // The element from `start` to `end`, without the white space around
+    // it.
+    let mut first = start
+    let mut last = end
+    while first < last && is_space_or_tab(value[first]) {
+      first += 1
+    }
+    while last > first && is_space_or_tab(value[last - 1]) {
+      last -= 1
+    }
+    if last - first == 12 && is_100_continue(value, first) {
+      return true
+    }
+    start = end + 1
+  }
+  false
+}
+
+///|
+/// Whether the 12 code units of `value` from `at` spell `100-continue`, in
+/// any case.
+fn is_100_continue(value : StringView, at : Int32) -> Bool {
+  let expected = "100-continue"
+  for i in 0..<12 {
+    let c = value[at + i]
+    // An ASCII letter in upper case differs from its lower case in bit
+    // 0x20 alone.
+    let lower = if c >= 'A' && c <= 'Z' { c | 0x20 } else { c }
+    if lower != expected[i] {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// Whether the code unit `c` is a space or a tab.
+fn is_space_or_tab(c : UInt16) -> Bool {
+  c == ' ' || c == '\t'
 }
 
 ///|
