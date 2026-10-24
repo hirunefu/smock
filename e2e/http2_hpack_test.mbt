@@ -142,3 +142,108 @@ async test "h2c: a SETTINGS_HEADER_TABLE_SIZE over 4,096, read as unsigned, reac
     })
   })
 }
+
+///|
+async test "h2c: with a header table of 2^31-1 allowed, a few thousand responses with distinct templated header values all decode with an HPACK decoder held to 4,096 octets, and none has a table size update past it" {
+  with_definitions([("files.json", hello_and_echo)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      raw.send([
+        Settings(
+          params=[(@http2.settings_header_table_size, 0x7FFF_FFFF)],
+          ack=false,
+        ),
+      ])
+      // RawH2's decoder is held to 4,096 octets: a table size update past
+      // it does not decode.
+      let batches = 30
+      let batch = 100
+      let mut blocks = 0
+      let mut decoded = 0
+      let mut matched = 0
+      let mut data = 0
+      let mut ended = 0
+      let failures = []
+      let updates = []
+      let mut stream = 1
+      for _ in 0..<batches {
+        let frames = []
+        let first = stream
+        for _ in 0..<batch {
+          frames.push(
+            headers_frame(
+              stream,
+              raw.block(request_fields("GET", "/echo?n=\{stream}", "localhost")),
+            ),
+          )
+          stream += 2
+        }
+        raw.send(frames)
+        let mut open = batch
+        while open > 0 {
+          guard raw.read_frame() is Some(frame) else {
+            fail("smock closed the connection")
+          }
+          match frame {
+            Headers(stream_id~, fragment~, end_stream~, ..) => {
+              blocks += 1
+              for update in table_size_updates(fragment) {
+                updates.push(update)
+              }
+              let fields = raw.fields(fragment) catch {
+                err => {
+                  failures.push("stream \{stream_id}: \{err}")
+                  []
+                }
+              }
+              if fields.length() > 0 {
+                decoded += 1
+              }
+              if fields.contains(("x-n", stream_id.to_string())) {
+                matched += 1
+              }
+              if end_stream {
+                open -= 1
+                ended += 1
+              }
+            }
+            Data(stream_id~, end_stream~, ..) => {
+              guard stream_id >= first && stream_id < stream else {
+                fail("DATA on stream \{stream_id}")
+              }
+              data += 1
+              if end_stream {
+                open -= 1
+                ended += 1
+              }
+            }
+            Settings(..) => ()
+            other => fail("an unexpected frame: \{raw.render_frame(other)}")
+          }
+        }
+      }
+      let shown = if failures.length() > 3 {
+        [..failures[:3], "..."]
+      } else {
+        failures
+      }
+      inspect(
+        (
+          $|Requests: \{batches * batch}, streams ended: \{ended}, DATA frames: \{data}
+          $|Response blocks: \{blocks}, decoded: \{decoded}, with the stream's own x-n: \{matched}
+          $|Table size updates: \{updates}
+          $|Blocks that do not decode: \{failures.length()}
+          $|\{shown.join("\n")}
+        ),
+        content=(
+          #|Requests: 3000, streams ended: 3000, DATA frames: 3000
+          #|Response blocks: 3000, decoded: 3000, with the stream's own x-n: 3000
+          #|Table size updates: []
+          #|Blocks that do not decode: 0
+          #|
+        ),
+      )
+    })
+  })
+}
