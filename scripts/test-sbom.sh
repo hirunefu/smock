@@ -1,11 +1,13 @@
 #!/bin/sh
 # Tests of scripts/add-smock-to-sbom.sh and scripts/check-sbom-notice.sh.
-# They run on a small SBOM in the shape syft makes of the image, and on a
-# small NOTICE that a test changes to disagree with the SBOM. The check
-# must find each such disagreement about the software that comes with the
-# MoonBit toolchain. A last test makes and checks the SBOM with this
-# repository's NOTICE. CI makes and checks the real image's SBOM in
-# build-test.yml.
+# They run on a small SBOM in the shape syft makes of the image, with a
+# small modules file in the shape scripts/resolved-modules.sh --json
+# prints, and on a small NOTICE that a test changes to disagree with the
+# SBOM. The check must find each such disagreement about the software that
+# comes with the MoonBit toolchain and about the modules. A last test makes
+# and checks the SBOM with this repository's NOTICE and the modules it
+# names. CI makes and checks the real image's SBOM, with the modules the
+# build resolves, in build-test.yml.
 #
 # It needs jq.
 #
