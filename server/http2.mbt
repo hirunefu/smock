@@ -128,6 +128,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       writer: H2Writer::new(conn),
       requests: Map([]),
       streams: StreamRecord::new(),
+      no_work_frames: NoWorkFrames::new(),
       refused: 0,
       refused_status: 0,
       continuing: 0,
@@ -174,6 +175,8 @@ priv struct H2Connection {
   /// The client's streams: the highest ID seen, the streams open, and the
   /// streams this side reset.
   streams : StreamRecord
+  /// The frames that do no work the client has sent lately.
+  no_work_frames : NoWorkFrames
   /// The stream whose request smock refuses with `refused_status` for the
   /// frame being handled, or 0: 400 for a request HTTP/1.1's rules refuse,
   /// 413 for a body over `--body-limit`, 431 for a header list over
@@ -259,17 +262,14 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
   for ;; {
     let octets = match self.reader.next() {
       Preface(preface) => preface
-      Frame(head, frame) =>
-        match self.judge(head, frame) {
-          None => frame
-          Some(code) => {
-            self.conn.goaway(code~) catch {
-              _ => ()
-            }
-            self.writer.write_last(out)
-            return
-          }
+      Frame(head, frame) => {
+        if !self.judge(head, frame) {
+          // The GOAWAY the judge queued goes out first.
+          self.writer.write_last(out)
+          return
         }
+        frame
+      }
       TooLarge => {
         self.conn.goaway(code=@http2.error_frame_size_error) catch {
           _ => ()
@@ -295,29 +295,40 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
 ///|
 /// Judges `frame`, a whole frame from the client whose header is `head`,
 /// against the stream state the frames before it left, before the `Conn`
-/// sees it: `None` hands it to the `Conn`, and `Some(code)` ends the
-/// connection with GOAWAY `code` instead. HEADERS on a client stream ID
-/// already used, whose stream is neither open nor reset by this side, get
-/// `PROTOCOL_ERROR` (RFC 9113, section 5.1.1); the `Conn` enforces the rest
-/// of RFC 9113's rules.
+/// sees it, and returns whether it goes to the `Conn`. When it does not,
+/// the judge has queued a GOAWAY, and the connection ends:
+///
+/// - HEADERS on a client stream ID already used, whose stream is neither
+///   open nor reset by this side, get `PROTOCOL_ERROR` (RFC 9113, section
+///   5.1.1); the `Conn` enforces the rest of RFC 9113's rules.
+/// - A frame that does no work, past `no_work_bound` of them in one second,
+///   gets `ENHANCE_YOUR_CALM`, and the connection's one log line
+///   (`H2Connection::calm`).
 ///
 /// HEADERS that begin a field block start the read timeout of its stream's
 /// request: its first frame.
 fn H2Connection::judge(
   self : H2Connection,
   head : @http2.FrameHeader,
-  _frame : BytesView,
-) -> Int32? {
+  frame : BytesView,
+) -> Bool {
   if head.ftype == @http2.frame_headers && !self.streams.in_block {
     self.header_at = self.read_at
     self.header_stream = head.stream_id
     self.watchdog.read_by(self.read_at + self.read_timeout, self.now)
   }
-  if self.streams.see(head) {
-    None
-  } else {
-    Some(@http2.error_protocol_error)
+  if self.no_work(head, frame) is Some(kind) &&
+    self.no_work_frames.count(self.read_at) {
+    self.calm("frames that do no work", frame=Some(kind))
+    return false
   }
+  if !self.streams.see(head) {
+    self.conn.goaway(code=@http2.error_protocol_error) catch {
+      _ => ()
+    }
+    return false
+  }
+  true
 }
 
 ///|
