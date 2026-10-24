@@ -483,7 +483,7 @@ pub fn reply(
   now~ : Int64,
   ids~ : @prng.Generator,
 ) -> Reply {
-  let ids = draw_ids(ids, strings.tool_calls.length())
+  let ids = draw_ids(ids, declaration.api, strings)
   let created = now / 1000L
   let model = match strings.model {
     Some(model) => model
@@ -841,7 +841,8 @@ fn call_id(call : ToolCall, prefix : String, drawn : String) -> String {
 /// call, the Responses function call's item id and then its call id, and
 /// the request-id header's, last. Every slot draws, whether or not the
 /// reply's API uses it or the Stub fixes its id, so that fixing one id
-/// changes no other and an id keeps its draws whatever the API.
+/// changes no other and an id keeps its draws whatever the API. The id of
+/// a slot that is not sent is not written out: it is empty.
 priv struct Ids {
   /// The reply's id, without its prefix.
   reply : String
@@ -869,27 +870,35 @@ fn Ids::request_id(self : Ids, name : String) -> (String, String) {
 let no_calls : FixedArray[String] = []
 
 ///|
-/// Draws the ids of one reply with `tool_calls` tool calls from `ids`, slot
-/// by slot.
-fn draw_ids(ids : @prng.Generator, tool_calls : Int32) -> Ids {
-  let reply = draw_id(ids)
-  let message = draw_id(ids)
-  let functions = if tool_calls == 0 {
+/// Draws the ids of one reply of `api` with the strings `strings` from
+/// `ids`, slot by slot. Only the ids the reply sends are written out: the
+/// reply's unless the strings fix it, the message item's and the function
+/// call item ids for `openai-responses` alone, each call id the strings do
+/// not fix, and the request id. The others take their draws all the same.
+fn draw_ids(ids : @prng.Generator, api : Api, strings : Strings) -> Ids {
+  let responses = api is OpenaiResponses
+  let tool_calls = strings.tool_calls
+  let reply = draw_id(ids, sent=strings.id is None)
+  let message = draw_id(ids, sent=responses && strings.has_content())
+  let functions = if tool_calls.length() == 0 || !responses {
     no_calls
   } else {
-    FixedArray::make(tool_calls, "")
+    FixedArray::make(tool_calls.length(), "")
   }
-  let calls = if tool_calls == 0 {
+  let calls = if tool_calls.length() == 0 {
     no_calls
   } else {
-    FixedArray::make(tool_calls, "")
+    FixedArray::make(tool_calls.length(), "")
   }
-  for i in 0..<tool_calls {
+  for i in 0..<tool_calls.length() {
     // The Responses function call's item id, then the call id.
-    functions[i] = draw_id(ids)
-    calls[i] = draw_id(ids)
+    let function = draw_id(ids, sent=responses)
+    if responses {
+      functions[i] = function
+    }
+    calls[i] = draw_id(ids, sent=tool_calls[i].id is None)
   }
-  let request = draw_id(ids)
+  let request = draw_id(ids, sent=true)
   { reply, message, functions, calls, request, }
 }
 
@@ -903,12 +912,19 @@ let id_length : Int32 = 24
 
 ///|
 /// One id without its prefix: `id_length` characters, each drawn from
-/// `ids` with every one of `id_alphabet` equally likely.
-fn draw_id(ids : @prng.Generator) -> String {
+/// `ids` with every one of `id_alphabet` equally likely. An id that is not
+/// `sent` takes the same draws, and is the empty string.
+fn draw_id(ids : @prng.Generator, sent~ : Bool) -> String {
+  let alphabet = id_alphabet.length().to_uint64()
+  if !sent {
+    for _ in 0..<id_length {
+      let _ = ids.below(alphabet)
+    }
+    return ""
+  }
   let out = StringBuilder(size_hint=id_length)
   for _ in 0..<id_length {
-    let i = ids.below(id_alphabet.length().to_uint64()).to_int()
-    out.write_char(id_alphabet[i])
+    out.write_char(id_alphabet[ids.below(alphabet).to_int()])
   }
   out.to_string()
 }
