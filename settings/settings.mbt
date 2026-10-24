@@ -25,6 +25,10 @@ pub(all) struct ServeSettings {
   /// The certificate and key files of single Mocks, by Mock name: a
   /// handshake whose SNI is a Host of one of these Mocks gets its pair.
   tls_mock_certs : Map[String, TlsFiles]
+  /// Whether the TLS port offers HTTP/2 by ALPN, `h2` before `http/1.1`,
+  /// with every certificate. Off, it offers `http/1.1` alone. It does not
+  /// change the plain port.
+  tls_http2 : Bool
   /// The admin port, where the Admin API, the probes and the metrics are
   /// served. 0 asks the system for a free port.
   admin_port : Int32
@@ -270,6 +274,11 @@ let serve_settings : Array[Setting] = [
     name: "tls-mock-certs",
     about: "Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {\"users\":{\"certFile\":\"/certs/users/tls.crt\",\"keyFile\":\"/certs/users/tls.key\"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets the default certificate: --tls-cert-file, or without it the self-signed one. Empty by default.",
     default: None,
+  },
+  {
+    name: "tls-http2",
+    about: "Whether the HTTPS port offers HTTP/2 by ALPN: on or off. On, it offers h2, then http/1.1, with every certificate; off, http/1.1 alone. The plain port serves h2c either way.",
+    default: Some("on"),
   },
   {
     name: "admin-port",
@@ -590,6 +599,7 @@ pub fn ServeSettings::from_matches(
       )
   }
   let tls_mock_certs = mock_certs_value(matches, "tls-mock-certs")
+  let tls_http2 = on_off_value(matches, "tls-http2")
   let admin_port = int_value(matches, "admin-port", min=0, max=65535)
   if admin_port != 0 && admin_port == port {
     raise invalid(
@@ -624,6 +634,7 @@ pub fn ServeSettings::from_matches(
     tls_port,
     tls,
     tls_mock_certs,
+    tls_http2,
     admin_port,
     admin_auth,
     admin_token_file,
