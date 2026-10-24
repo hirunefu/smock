@@ -289,3 +289,73 @@ async test "h2c: an unmatched request gets the Near miss header, and a Default M
     })
   })
 }
+
+///|
+/// A Mock that answers every Host, with a Stub whose header value is
+/// templated from the query.
+let templated_header : String =
+  #|{ "mocks": [{ "name": "shop", "hosts": ["localhost"] }],
+  #|  "stubs": [{ "id": "greet", "mock": "shop",
+  #|    "request": { "method": "GET", "path": "/greet" },
+  #|    "response": { "status": 200, "template": true,
+  #|      "headers": { "X-Name": "${query.name}" }, "body": "hi" } }] }
+
+///|
+/// The octets of the value of the first field named `name` in `head`, the
+/// octets of an HTTP/1.1 response head, up to the CRLF that ends it.
+fn http1_field_octets(head : Bytes, name : Bytes) -> Bytes? {
+  let line = b"\r\n" + name + b": "
+  for i in 0..<(head.length() - line.length()) {
+    if head[i:i + line.length()] == line[:] {
+      let start = i + line.length()
+      let mut end = start
+      while end < head.length() && head[end] != b'\r' {
+        end += 1
+      }
+      return Some(head[start:end].to_owned())
+    }
+  }
+  None
+}
+
+///|
+async test "h2c: a non-ASCII templated header value goes out as the octets of the HTTP/1.1 response's" {
+  with_definitions([("shop.json", templated_header)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      // Zoë, a hiragana あ and an emoji, of two, three and four octets.
+      let target = "/greet?name=Zo%C3%AB%20%E3%81%82%F0%9F%98%80"
+      let client = smock.h2c()
+      defer client.close()
+      let stream = client.send("GET", target, authority="localhost")
+      guard client.stream_event(stream) is Response(fields~, ..) else {
+        fail("no response on stream \{stream}")
+      }
+      let mut h2 = None
+      for field in fields {
+        if field.name == b"x-name" {
+          h2 = Some(field.value)
+        }
+      }
+      let conn = smock.connect()
+      defer conn.close()
+      conn.write(
+        raw_request("GET", target, host="localhost", headers=[
+          ("Connection", "close"),
+        ]),
+      )
+      let (_, _, received) = received_until_end(conn, @async.now())
+      guard h2 is Some(h2) &&
+        http1_field_octets(received, b"X-Name") is Some(http1) else {
+        fail("no X-Name over one of the protocols")
+      }
+      inspect(
+        "HTTP/2: \{h2}\nHTTP/1.1: \{http1}\nthe same: \{h2 == http1}",
+        content=(
+          #|HTTP/2: b"Zo\xc3\xab \xe3\x81\x82\xf0\x9f\x98\x80"
+          #|HTTP/1.1: b"Zo\xc3\xab \xe3\x81\x82\xf0\x9f\x98\x80"
+          #|the same: true
+        ),
+      )
+    })
+  })
+}
