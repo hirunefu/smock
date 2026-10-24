@@ -66,16 +66,55 @@ fn NoWorkFrames::count(self : NoWorkFrames, at : Int64) -> Bool {
 ///   estimate its bandwidth, does no harm while answers stream to it;
 /// - a PING acknowledgement that answers no PING smock sent;
 /// - a PRIORITY frame, since smock ignores priority signals;
+/// - a DATA frame that carries no data, padded or not, and ends no stream;
+/// - a DATA, WINDOW_UPDATE or RST_STREAM frame on a stream already closed,
+///   and HEADERS on a stream this side reset, which the `Conn` ignores, as
+///   the record of the client's streams (`StreamRecord`) tells them;
 /// - a frame of a type RFC 9113 does not define, which is ignored.
+///
+/// `frame` is the whole frame, its header included. It runs before
+/// `StreamRecord::see` takes the frame into the record.
 fn H2Connection::no_work(
   self : H2Connection,
   head : @http2.FrameHeader,
-  _frame : BytesView,
+  frame : BytesView,
 ) -> String? {
   let ftype = head.ftype
   let ack = (head.flags & @http2.flag_ack) != 0
   let counted = self.no_work_frames
-  if ftype == @http2.frame_settings {
+  if ftype == @http2.frame_data {
+    if (head.flags & @http2.flag_end_stream) == 0 && carries(head, frame) == 0 {
+      Some("empty DATA")
+    } else if self.closed(head.stream_id) {
+      Some("DATA on a closed stream")
+    } else {
+      None
+    }
+  } else if ftype == @http2.frame_window_update {
+    if self.closed(head.stream_id) {
+      Some("WINDOW_UPDATE on a closed stream")
+    } else {
+      None
+    }
+  } else if ftype == @http2.frame_rst_stream {
+    // Spec F's exception goes here: a client reset of a gRPC call that smock
+    // ended with DEADLINE_EXCEEDED does not count, once per stream.
+    if self.closed(head.stream_id) {
+      Some("RST_STREAM on a closed stream")
+    } else {
+      None
+    }
+  } else if ftype == @http2.frame_headers {
+    // HEADERS on a stream closed otherwise end the connection
+    // (`StreamRecord::see`).
+    if !self.streams.in_block &&
+      head.stream_id % 2 == 1 &&
+      self.streams.state(head.stream_id) is Reset {
+      Some("HEADERS on a stream smock reset")
+    } else {
+      None
+    }
+  } else if ftype == @http2.frame_settings {
     if !ack {
       Some("SETTINGS")
     } else if counted.settings_owed > 0 {
@@ -104,6 +143,27 @@ fn H2Connection::no_work(
     Some("unknown type")
   } else {
     None
+  }
+}
+
+///|
+/// Whether `stream` is a client stream that is already closed: used, and
+/// neither open nor idle, whether this side reset it or not.
+fn H2Connection::closed(self : H2Connection, stream : Int32) -> Bool {
+  stream % 2 == 1 && self.streams.state(stream) is (Closed | Reset)
+}
+
+///|
+/// How many octets of data the DATA frame `frame`, whose header is `head`,
+/// carries: its payload less its padding. A padded frame too short for its
+/// padding, which the `Conn` refuses, carries some.
+fn carries(head : @http2.FrameHeader, frame : BytesView) -> Int32 {
+  if (head.flags & @http2.flag_padded) == 0 {
+    head.length
+  } else if head.length == 0 || frame[9].to_int() >= head.length {
+    1
+  } else {
+    head.length - 1 - frame[9].to_int()
   }
 }
 

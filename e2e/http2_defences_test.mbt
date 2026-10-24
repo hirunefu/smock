@@ -313,3 +313,141 @@ async test "h2c: floods of PRIORITY frames, frames of unknown types, PING acknow
     )
   })
 }
+
+///|
+async test "h2c: floods of empty DATA frames, padded or not, of WINDOW_UPDATE, RST_STREAM and DATA frames on a closed stream, and of HEADERS on a stream smock reset each get GOAWAY ENHANCE_YOUR_CALM and one log line, and a fresh connection is served" {
+  with_definitions([("faults.json", faults)], dir => {
+    let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let out = []
+      // A request whose body is still to come keeps stream 1 open.
+      out.push(
+        smock.flood(
+          "DATA frames that carry no data and end no stream",
+          setup=raw => {
+            [
+              headers_frame(
+                1,
+                raw.block(request_fields("POST", "/fast", "localhost")),
+                end_stream=false,
+              ),
+            ]
+          },
+          _ => {
+            let frames = []
+            for i in 0..<100 {
+              frames.push(
+                @http2.Frame::Data(
+                  stream_id=1,
+                  data=b"",
+                  end_stream=false,
+                  padding=i % 2 * 4,
+                ),
+              )
+            }
+            frames
+          },
+        ),
+      )
+      // Stream 1 is closed once its response has ended it.
+      let closed = (label, frame) => {
+        smock.flood(
+          label,
+          setup=raw => [raw.get(1, "/fast")],
+          ready=frame => ends_stream(frame, 1),
+          _ => times(frame, 100),
+        )
+      }
+      out.push(
+        closed(
+          "WINDOW_UPDATE on a closed stream",
+          WindowUpdate(stream_id=1, increment=1),
+        ),
+      )
+      out.push(
+        closed(
+          "RST_STREAM on a closed stream",
+          RstStream(stream_id=1, error_code=@http2.error_cancel),
+        ),
+      )
+      out.push(
+        closed(
+          "DATA on a closed stream",
+          Data(stream_id=1, data=b"x", end_stream=false, padding=0),
+        ),
+      )
+      // A reset Fault ends stream 1 with RST_STREAM.
+      out.push(
+        smock.flood(
+          "HEADERS on a stream smock reset",
+          setup=raw => [raw.get(1, "/reset")],
+          ready=frame => ends_stream(frame, 1),
+          raw => {
+            let frames = []
+            for _ in 0..<100 {
+              frames.push(raw.get(1, "/fast"))
+            }
+            frames
+          },
+        ),
+      )
+      inspect(
+        out.join("\n"),
+        content=(
+          #|DATA frames that carry no data and end no stream:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|flood:
+          #|GOAWAY last=1 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+          #|WINDOW_UPDATE on a closed stream:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+          #|DATA 1 END_STREAM 4 octets
+          #|flood:
+          #|GOAWAY last=1 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+          #|RST_STREAM on a closed stream:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+          #|DATA 1 END_STREAM 4 octets
+          #|flood:
+          #|GOAWAY last=1 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+          #|DATA on a closed stream:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+          #|DATA 1 END_STREAM 4 octets
+          #|flood:
+          #|RST_STREAM 1 STREAM_CLOSED x99
+          #|GOAWAY last=1 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+          #|HEADERS on a stream smock reset:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|RST_STREAM 1 INTERNAL_ERROR
+          #|flood:
+          #|GOAWAY last=1 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+        ),
+      )
+    })
+    inspect(
+      defence_entries(stopped.logs),
+      content=(
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"empty DATA"}
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"WINDOW_UPDATE on a closed stream"}
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"RST_STREAM on a closed stream"}
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"DATA on a closed stream"}
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"HEADERS on a stream smock reset"}
+      ),
+    )
+  })
+}
