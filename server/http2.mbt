@@ -11,22 +11,22 @@
 // - the mapping from a stream onto the engine's request (`H2Request`,
 //   http2_requests.mbt);
 // - the response encoding (`response_fields`, http2_responses.mbt);
-// - the writing of what the `Conn` queues (`write_queued`,
-//   http2_output.mbt).
+// - the writing of what the `Conn` queues, through the connection's one
+//   writer (`H2Writer`, http2_output.mbt);
+// - the tasks of the streams whose responses wait (`H2Connection::wait`).
 //
 // Each stream's request takes the steps every request to the Mocks takes
 // (requests.mbt). Until they get forms of their own, some cases are served
 // in an interim way, so that a client's run ends rather than hangs:
 //
-// - a delay is waited in the reader, so the connection's other streams
-//   wait too;
 // - a Fault, a stream of Server-Sent Events, or a body larger than the open
 //   windows ends its stream with RST_STREAM INTERNAL_ERROR, its Journal
 //   entry committed as the engine made it;
 // - one watch for the whole connection, as on HTTP/1.1: the idle timeout
-//   while no stream is in progress, and the read timeout while one is,
-//   from the read that brought its HEADERS; past it, the connection closes
-//   without GOAWAY;
+//   while no stream is in progress, and the read timeout while a request
+//   is arriving, from the read that brought the HEADERS of the first one
+//   in progress; none while only responses wait, since a delay is smock's
+//   own wait; past it, the connection closes without GOAWAY;
 // - for the drain, the connection is idle while no stream is in progress,
 //   and while smock drains, it closes, without GOAWAY, as soon as none is;
 // - no body or header limit applies beyond moonhttp's own.
@@ -56,8 +56,10 @@ let h2_settings : @http2.Settings = @http2.Settings::new(
 /// `Conn`, and handles the events it produced, in order; before it reads
 /// again, it writes what the `Conn` queued. A stream's request reaches the
 /// engine when the client ends the stream, and its response is queued
-/// while that event is handled. A stream the client resets before it ends
-/// never reaches the engine.
+/// while that event is handled, unless it waits: a response with a delay
+/// is queued by a task of its own, once the delay is over, so that the
+/// other streams are answered meanwhile. A stream the client resets before
+/// it ends never reaches the engine.
 async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
   self : MockPorts,
   stream : S,
@@ -76,11 +78,15 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
     }
     let now = @async.now()
     let idle_timeout = self.settings.idle_timeout_ms.to_int64()
+    let conn = @http2.Conn::new(Server, settings=h2_settings)
     let h2 : H2Connection = {
       ports: self,
-      conn: @http2.Conn::new(Server, settings=h2_settings),
+      conn,
       reader: FrameReader::new(read),
+      writer: H2Writer::new(conn),
       requests: Map([]),
+      waiting: Map([]),
+      group,
       watchdog,
       connection,
       idle_timeout,
@@ -90,6 +96,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
       idle_deadline: now + idle_timeout,
       read_deadline: now,
       became_idle: false,
+      reading: false,
       last_read: Stopwatch::start(),
     }
     h2.serve(stream, { stream, watchdog, })
@@ -105,9 +112,19 @@ priv struct H2Connection {
   ports : MockPorts
   conn : @http2.Conn
   reader : FrameReader
+  /// Every write to the client goes through it.
+  writer : H2Writer
   /// The requests in progress, by stream: begun, and neither ended nor
   /// reset by the client.
   requests : Map[Int32, H2Request]
+  /// The tasks of the streams whose response waits, by stream: from the end
+  /// of the request until the response is queued, or the stream is reset.
+  /// There is one only for a stream in progress, so never more than the
+  /// concurrent streams the connection allows.
+  waiting : Map[Int32, @async.Task[Unit]]
+  /// The task group the connection is served in, where the tasks of
+  /// waiting streams run. They end with the connection.
+  group : @async.TaskGroup[Unit]
   /// The timeouts of the connection's waits on its client.
   watchdog : Watchdog
   connection : Connection
@@ -120,12 +137,14 @@ priv struct H2Connection {
   mut read_at : Int64
   /// While no stream is in progress, when the connection times out.
   mut idle_deadline : Int64
-  /// While a stream is in progress, when the connection times out.
+  /// While a request is arriving, when the connection times out.
   mut read_deadline : Int64
   /// Whether the last stream in progress has ended since the connection
   /// last read, so that the idle timeout starts again once what was queued
   /// is written.
   mut became_idle : Bool
+  /// Whether the reader waits for more from the client.
+  mut reading : Bool
   /// Started at the last read.
   mut last_read : Stopwatch
 }
@@ -150,7 +169,7 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::serve(
             self.conn.goaway(code~) catch {
               _ => ()
             }
-            let _ = write_queued(self.conn, out)
+            self.writer.write_last(out)
             return
           }
         }
@@ -158,7 +177,7 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::serve(
         self.conn.goaway(code=@http2.error_frame_size_error) catch {
           _ => ()
         }
-        let _ = write_queued(self.conn, out)
+        self.writer.write_last(out)
         return
       }
       NeedMore => {
@@ -168,9 +187,9 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::serve(
         continue
       }
     }
-    if !self.hand(octets) {
+    if !self.hand(octets, out) {
       // The GOAWAY of the `Conn`'s connection error goes out first.
-      let _ = write_queued(self.conn, out)
+      self.writer.write_last(out)
       return
     }
   }
@@ -194,8 +213,12 @@ fn H2Connection::judge(
 /// Hands the `Conn` `octets`, the preface or one whole frame, and handles
 /// the events they produce, in order, until the `Conn` needs more. Returns
 /// false when they break the connection: the `Conn` has then queued its
-/// GOAWAY, and the connection ends.
-async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
+/// GOAWAY, and the connection ends. A stream's task writes to `out`.
+fn[S : @io.Writer] H2Connection::hand(
+  self : H2Connection,
+  octets : BytesView,
+  out : WatchedStream[S],
+) -> Bool {
   self.conn.receive(octets) catch {
     _ => return false
   }
@@ -222,12 +245,19 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
       End(stream~) =>
         if self.requests.get(stream) is Some(request) {
           self.requests.remove(stream)
-          self.respond(stream, request)
+          self.respond(stream, request, out)
           self.end_stream()
         }
+      // A reset from the client, or one moonhttp sent for the client's
+      // frames.
       Reset(stream~, ..) =>
         if self.requests.contains(stream) {
           self.requests.remove(stream)
+          self.end_stream()
+        } else if self.waiting.get(stream) is Some(task) {
+          // Its task commits the Journal entry as it ends.
+          self.waiting.remove(stream)
+          task.cancel()
           self.end_stream()
         }
       // Trailers are ignored. The `Conn` has acknowledged SETTINGS and
@@ -242,9 +272,16 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
 /// A stream is no longer in progress. Once none is, the idle timeout runs
 /// again, from when what was queued is written.
 fn H2Connection::end_stream(self : H2Connection) -> Unit {
-  if self.requests.is_empty() {
+  if self.requests.is_empty() && self.waiting.is_empty() {
     self.became_idle = true
   }
+}
+
+///|
+/// Whether no stream is in progress: no request arriving, no response
+/// waiting, and none being written.
+fn H2Connection::idle(self : H2Connection) -> Bool {
+  self.requests.is_empty() && self.waiting.is_empty() && !self.writer.busy
 }
 
 ///|
@@ -257,10 +294,10 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
   stream : S,
   out : WatchedStream[S],
 ) -> Bool {
-  if write_queued(self.conn, out) {
+  if self.writer.write(out) {
     self.now = @async.now()
   }
-  let idle = self.requests.is_empty()
+  let idle = self.idle()
   if idle && self.became_idle {
     self.idle_deadline = self.now + self.idle_timeout
     self.became_idle = false
@@ -268,16 +305,26 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
   if idle && self.ports.lifecycle.is_draining() {
     return false
   }
-  let deadline = if idle { self.idle_deadline } else { self.read_deadline }
+  // While only responses wait, the read has no deadline: the task that
+  // ends the last of them gives it the idle timeout (`answered`).
+  let deadline = if !self.requests.is_empty() {
+    self.read_deadline
+  } else if idle {
+    self.idle_deadline
+  } else {
+    forever
+  }
   if deadline - self.now <= 0L {
     return false
   }
   self.connection.idle = idle
   // Past the deadline, the watchdog ends the task group, and with it this
   // read and the connection.
+  self.reading = true
   self.watchdog.reading(deadline, self.now)
   let n = self.reader.read(stream)
-  self.watchdog.stop()
+  self.watchdog.stop_reading()
+  self.reading = false
   self.connection.idle = false
   guard n > 0 else { return false }
   self.last_read = Stopwatch::start()
@@ -288,20 +335,14 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
 
 ///|
 /// Answers the request that has arrived in full on `stream`, through the
-/// steps every request to the Mocks takes. A response with a body that
-/// fits the stream's windows is queued at once: its HEADERS, then its body
-/// as DATA, which ends the stream. The Journal entry is committed just
-/// before the frame that ends the stream is queued.
-///
-/// For now, a delay is waited here, so the connection's other streams wait
-/// too; and a Fault, a stream of Server-Sent Events, a body that does not
-/// fit, or header fields HTTP/2 does not allow end the stream with
-/// RST_STREAM INTERNAL_ERROR instead, the entry committed first, as the
-/// engine made it.
-async fn H2Connection::respond(
+/// steps every request to the Mocks takes. A response with no delay is
+/// queued at once, while the event is handled, with no task. One with a
+/// delay waits in a task of its own (`wait`), which writes to `out`.
+fn[S : @io.Writer] H2Connection::respond(
   self : H2Connection,
   stream : Int32,
   request : H2Request,
+  out : WatchedStream[S],
 ) -> Unit {
   let ports = self.ports
   let outcome = ports.decide(
@@ -309,26 +350,104 @@ async fn H2Connection::respond(
     authority?=request.authority,
     now=self.now,
   )
-  defer ports.done(outcome, self.last_read)
-  let plan = outcome.plan
-  if plan.delay_ms > 0 {
-    @async.sleep(plan.delay_ms)
-    self.now = @async.now()
+  if outcome.plan.delay_ms > 0 {
+    self.wait(stream, outcome, out)
+    return
   }
+  self.queue(stream, outcome.plan, outcome.journal, now=self.now)
+  ports.done(outcome, self.last_read)
+}
+
+///|
+/// Answers `stream`, whose request the engine decided `outcome` for, in a
+/// task of its own: once the plan's delay is over, the task queues the
+/// response and writes it to `out`, while the connection's other streams
+/// are answered meanwhile.
+///
+/// The task ends with its stream, however the stream ends: when its
+/// response is queued and written, when a reset cancels it (`hand`), from
+/// the client or from moonhttp for the client's frames, or when the
+/// connection ends. Until the response is queued, the Journal entry is
+/// committed when the task ends, as for a client that goes away, and the
+/// request is counted then.
+fn[S : @io.Writer] H2Connection::wait(
+  self : H2Connection,
+  stream : Int32,
+  outcome : @engine.Outcome,
+  out : WatchedStream[S],
+) -> Unit {
+  // The read that brought the request in full.
+  let stopwatch = self.last_read
+  let task = self.group.spawn(no_wait=true, () => {
+    let ports = self.ports
+    let mut entry = outcome.journal
+    defer {
+      ports.commit(entry)
+      ports.done(outcome, stopwatch)
+    }
+    @async.sleep(outcome.plan.delay_ms)
+    // From here on the response ends the stream, and commits the entry.
+    self.waiting.remove(stream)
+    entry = None
+    self.queue(stream, outcome.plan, outcome.journal, now=@async.now())
+    let _ = self.writer.write(out)
+    self.answered()
+  })
+  self.waiting[stream] = task
+}
+
+///|
+/// A stream's task has queued its response and asked the writer to write
+/// it: the stream is no longer in progress. When none is, and the reader
+/// already waits on the client with no deadline, as it does while only
+/// responses wait, the wait gets the idle timeout from now, and the
+/// connection becomes idle; while smock drains, it closes instead.
+async fn H2Connection::answered(self : H2Connection) -> Unit {
+  self.end_stream()
+  guard self.became_idle && self.reading && self.idle() else { return }
+  if self.ports.lifecycle.is_draining() {
+    self.group.return_immediately(())
+    return
+  }
+  let now = @async.now()
+  self.became_idle = false
+  self.idle_deadline = now + self.idle_timeout
+  self.connection.idle = true
+  self.watchdog.reading(self.idle_deadline, now)
+}
+
+///|
+/// Queues on `stream`, at `now`, the response `plan` describes, and commits
+/// the Journal entry `entry` just before the frame that ends the stream. A
+/// response with a body that fits the stream's windows is queued whole: its
+/// HEADERS, then its body as DATA, which ends the stream.
+///
+/// For now, a Fault, a stream of Server-Sent Events, a body that does not
+/// fit, or header fields HTTP/2 does not allow end the stream with
+/// RST_STREAM INTERNAL_ERROR instead, the entry committed first, as the
+/// engine made it.
+fn H2Connection::queue(
+  self : H2Connection,
+  stream : Int32,
+  plan : @engine.ResponsePlan,
+  entry : @engine.JournalEntry?,
+  now~ : Int64,
+) -> Unit {
+  let ports = self.ports
   guard plan.fault is None &&
     plan.body is Bytes(body) &&
     body.length() <= self.conn.window(stream) else {
-    self.reset_after(stream, outcome.journal)
+    self.reset_after(stream, entry)
     return
   }
   let fields = response_fields(
     plan.status,
     plan.headers,
     body.length(),
-    date=ports.dates.at(self.now),
+    date=ports.dates.at(now),
   )
   if body.length() == 0 {
-    ports.commit(outcome.journal)
+    ports.commit(entry)
     self.conn.headers(stream, fields, end=true) catch {
       _ => self.reset_after(stream, None)
     }
@@ -336,11 +455,11 @@ async fn H2Connection::respond(
   }
   self.conn.headers(stream, fields) catch {
     _ => {
-      self.reset_after(stream, outcome.journal)
+      self.reset_after(stream, entry)
       return
     }
   }
-  ports.commit(outcome.journal)
+  ports.commit(entry)
   // The body fits the windows, so the `Conn` takes it.
   self.conn.data(stream, body, end=true) catch {
     _ => ()

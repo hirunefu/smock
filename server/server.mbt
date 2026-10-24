@@ -506,7 +506,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
             offset=written,
             len=response.length() - written,
           )
-          watchdog.stop()
+          watchdog.stop_writing()
           if written == response.length() {
             break
           }
@@ -708,7 +708,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           // it this read and the connection.
           state.watchdog.reading(deadline, state.now)
           let n = @io.Reader::read(stream, state.buf)
-          state.watchdog.stop()
+          state.watchdog.stop_reading()
           if state.connection is Some(connection) {
             connection.idle = false
           }

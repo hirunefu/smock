@@ -53,7 +53,7 @@ async fn[S : @io.Reader] ConnectionLoop::read_preface(
     }
     self.watchdog.reading(deadline, self.now)
     let n = @io.Reader::read(stream, self.buf, offset=held)
-    self.watchdog.stop()
+    self.watchdog.stop_reading()
     if self.connection is Some(connection) {
       connection.idle = false
     }
