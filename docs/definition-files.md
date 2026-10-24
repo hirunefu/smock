@@ -988,8 +988,8 @@ nor can `Smock-Mock`, which smock adds when the Default Mock answers.
 Over HTTP/2, header names go out in lower case, and spaces and tabs around
 a value are trimmed. `Keep-Alive`, `Upgrade`, `Proxy-Connection` and `TE`
 are left out, since HTTP/2 forbids them in a response (RFC 9113, section
-8.2.2); over HTTP/1.1 they are sent as written. See
-[HTTP/2](http2.md#responses).
+8.2.2); over HTTP/1.1 they are sent as written. A 2xx to an HTTP/2 CONNECT
+has no `content-length` and no body. See [HTTP/2](http2.md#responses).
 
 smock sends a `Date` header with the current time on every final
 response, such as `Date: Thu, 22 Oct 2026 14:37:10 GMT`, and none on an
