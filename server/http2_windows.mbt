@@ -115,6 +115,9 @@ fn H2Connection::unblock(self : H2Connection, stream : Int32) -> Unit {
 /// not fit the windows when it was queued, in a task of its own, a slow
 /// write, which writes to `out` (`trickle`). `outcome` is what the engine
 /// decided for the request; its request is counted when the task ends.
+/// With a partial Fault, `rest` is the rest of the half that Fault sends,
+/// and once it is queued the task resets the stream with RST_STREAM
+/// INTERNAL_ERROR (`reset_after`).
 ///
 /// The task ends with its stream, as the task of a delay does (`wait`):
 /// when the body is queued in full and written, when a reset cancels it,
@@ -147,9 +150,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
 /// entry `entry` just before the DATA frame that ends the stream, or when
 /// the task is cancelled before it. Returns whether all of `rest` was
 /// queued: not when a reset of the stream, or the end of the connection,
-/// came first. With `end` false, `rest` is one event of a stream of
-/// Server-Sent Events that is not the last (`send_events`): it does not
-/// end the stream, and `entry` is `None`.
+/// came first. With `end` false, the last DATA does not end the stream,
+/// and `entry` is committed just before it: `rest` is one event of a stream of Server-Sent Events that is not the
+/// last, or the last a partial Fault sends, with `entry` `None`
+/// (`send_events`), or the rest of the half of a body that a partial Fault
+/// sends, which the caller then resets.
 ///
 /// Each time, it sends what the windows allow, in DATA frames no larger
 /// than the client's frame size, and has the writer write them to `out`.

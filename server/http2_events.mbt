@@ -2,9 +2,11 @@
 // stream. Its HEADERS go out as soon as the response is due, and its events
 // from a task of its own, each after its delay, so that the connection's
 // other streams, other event streams among them, go on meanwhile. The DATA
-// of the last event ends the HTTP/2 stream. A reset of the stream, from the
-// client or by moonhttp for the client's frames, cancels the task at once
-// (`H2Connection::stop_waiting`, http2.mbt), as it does a delay.
+// of the last event ends the HTTP/2 stream; with a partial Fault, half the
+// events go out, rounded down, and RST_STREAM ends it instead. A reset of
+// the stream, from the client or by moonhttp for the client's frames,
+// cancels the task at once (`H2Connection::stop_waiting`, http2.mbt), as it
+// does a delay.
 
 ///|
 /// Answers `stream`, whose request the engine decided `outcome` for, a
@@ -13,7 +15,8 @@
 /// HEADERS are queued at once, while the event is handled, and its events
 /// go out from a task of its own, which writes to `out` (`send_events`). A
 /// response with no body is its HEADERS alone, and needs no task
-/// (`open_events`).
+/// (`open_events`). With a partial Fault, the task sends half the events,
+/// then resets the stream with RST_STREAM INTERNAL_ERROR (`reset_after`).
 ///
 /// The task ends with its stream, as the task of a delay does
 /// (`H2Connection::wait`): when its last event is queued and written, when
@@ -71,6 +74,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_events(
 /// events, is its HEADERS alone, which end the stream, with `entry`
 /// committed just before: no event is waited for, as over HTTP/1.1. So is
 /// a 2xx to a CONNECT, which has no content over HTTP/2 (`has_content`).
+///
+/// With a partial Fault, the events to follow are half of the `count`,
+/// rounded down. When there are none, or the response has no body, its
+/// HEADERS do not end the stream: RST_STREAM INTERNAL_ERROR does, at once,
+/// with `entry` committed just before (`reset_after`).
 ///
 /// It runs while the event is handled, or in the stream's own task after a
 /// delay, which goes on once it returns: so a reset here leaves the task
@@ -133,7 +141,14 @@ fn H2Connection::open_events(
 /// client's frame size (`trickle`). Each event is written to `out` before
 /// the next one's delay; the DATA of the last one ends the stream, and the
 /// caller writes it. The Journal entry `entry` is committed just before
-/// the last event, or when the task is cancelled before it.
+/// the last event, or when the task is cancelled before it. Returns
+/// whether every event was queued: not when a reset of the stream came
+/// first.
+///
+/// With `partial`, as for a partial Fault, only the first half of `events`
+/// go out, rounded down, and the last of them does not end the stream: the
+/// caller resets it, and the entry is committed as this returns, just
+/// before.
 ///
 /// A reset of the stream cancels the task at once, during a delay or while
 /// an event waits for window; one while the task writes ends it as soon as
