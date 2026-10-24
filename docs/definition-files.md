@@ -3307,8 +3307,10 @@ seed:
 ### Delays
 
 A `delay` makes smock wait before it writes the status line. Meanwhile it
-keeps serving other connections. The delay is drawn from one distribution,
-in whole milliseconds:
+keeps serving other connections. Over HTTP/2, it waits before the stream's
+HEADERS and delays only that stream: the other streams of the connection
+are answered meanwhile ([HTTP/2](http2.md#streams-that-wait)). The delay is
+drawn from one distribution, in whole milliseconds:
 
 | Distribution | Delay |
 |---|---|
