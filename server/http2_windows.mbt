@@ -130,7 +130,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
   let stopwatch = self.last_read
   let task = self.group.spawn(no_wait=true, () => {
     defer self.ports.done(outcome, stopwatch)
-    self.trickle(stream, rest, outcome.journal, out)
+    let _ = self.trickle(stream, rest, outcome.journal, out)
     self.waiting.remove(stream)
     let _ = self.writer.write(out)
     self.answered()
@@ -142,7 +142,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
 /// Sends `rest`, the part of the body of the response on `stream` that did
 /// not fit the windows, from the stream's task, and commits the Journal
 /// entry `entry` just before the DATA frame that ends the stream, or when
-/// the task is cancelled before it.
+/// the task is cancelled before it. Returns whether all of `rest` was
+/// queued: not when a reset of the stream, or the end of the connection,
+/// came first. With `end` false, `rest` is one event of a stream of
+/// Server-Sent Events that is not the last (`send_events`): it does not
+/// end the stream, and `entry` is `None`.
 ///
 /// Each time, it sends what the windows allow, in DATA frames no larger
 /// than the client's frame size, and has the writer write them to `out`.
@@ -150,6 +154,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
 /// stream's window, the connection's, or every stream's with SETTINGS
 /// (`widened`). So a client that grants window a few octets at a time gets
 /// one small DATA frame for each grant, and its whole response in the end.
+/// What it queues last is left for the caller to write.
 ///
 /// A reset of the stream cancels the task at once while it waits. While it
 /// writes, the reset leaves it be (`H2Writer::write_for`), and it ends as
@@ -160,16 +165,14 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::trickle(
   rest : BytesView,
   entry : @engine.JournalEntry?,
   out : WatchedStream[S],
-) -> Unit {
+  end~ : Bool = true,
+) -> Bool {
   let ports = self.ports
   let mut entry = entry
   defer ports.commit(entry)
-  let wait : WindowWait = {
-    ready: @async.CondVar::Cond(),
-    rest: 0,
-    woken: false,
-    claim: 0,
-  }
+  // Made when the task first waits for window, so that an event that fits
+  // the windows costs none.
+  let mut held : WindowWait? = None
   let mut rest = rest
   // What was set aside for the task when it was last woken.
   let mut claim = 0
@@ -182,8 +185,8 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::trickle(
       entry = None
     }
     if n > 0 {
-      self.conn.data(stream, rest[0:n], end=last) catch {
-        _ => return
+      self.conn.data(stream, rest[0:n], end=last && end) catch {
+        _ => return false
       }
       rest = rest[n:]
     }
@@ -194,22 +197,37 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::trickle(
     }
     claim = 0
     if last {
-      self.streams.ended_by_smock(stream)
-      return
+      if end {
+        self.streams.ended_by_smock(stream)
+      }
+      return true
     }
     // What is queued, the HEADERS included, goes out before the task waits;
     // the windows may widen while the writer writes.
     let wrote = self.writer.write_for(out, stream)
     // A reset while the task wrote did not cancel it: it ends now.
-    guard self.waiting.contains(stream) else { return }
+    guard self.waiting.contains(stream) else { return false }
     if wrote || n > 0 {
       continue
+    }
+    let wait = match held {
+      Some(wait) => wait
+      None => {
+        let wait : WindowWait = {
+          ready: @async.CondVar::Cond(),
+          rest: 0,
+          woken: false,
+          claim: 0,
+        }
+        held = Some(wait)
+        wait
+      }
     }
     wait.rest = rest.length()
     self.blocked[stream] = wait
     wait.ready.wait()
     // A reset since the task was woken has taken it out of `blocked`.
-    guard wait.woken else { return }
+    guard wait.woken else { return false }
     wait.woken = false
     claim = wait.claim
     self.claimed -= claim

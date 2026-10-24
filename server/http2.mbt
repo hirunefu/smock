@@ -682,6 +682,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
     self.wait(stream, outcome, head~, out)
     return
   }
+  if outcome.plan.fault is None && outcome.plan.body is Events(events) {
+    self.start_events(stream, outcome, events, head~, out)
+    return
+  }
   let rest = self.queue(
     stream,
     outcome.plan,
@@ -729,15 +733,24 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
     @async.sleep(outcome.plan.delay_ms)
     // From here on the response ends the stream, and commits the entry.
     entry = None
-    let rest = self.queue(
-      stream,
-      outcome.plan,
-      outcome.journal,
-      head~,
-      now=@async.now(),
-    )
-    if rest.length() > 0 {
-      self.trickle(stream, rest, outcome.journal, out)
+    let now = @async.now()
+    if outcome.plan.fault is None && outcome.plan.body is Events(events) {
+      let more = self.open_events(
+        stream,
+        outcome.plan,
+        outcome.journal,
+        events.length(),
+        head~,
+        now~,
+      )
+      if more {
+        self.send_events(stream, events, outcome.journal, out)
+      }
+    } else {
+      let rest = self.queue(stream, outcome.plan, outcome.journal, head~, now~)
+      if rest.length() > 0 {
+        let _ = self.trickle(stream, rest, outcome.journal, out)
+      }
     }
     self.waiting.remove(stream)
     let _ = self.writer.write(out)
