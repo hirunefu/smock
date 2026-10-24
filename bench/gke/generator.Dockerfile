@@ -1,10 +1,11 @@
 # The load generator's image for the GKE Autopilot run of the release
 # benchmark (scripts/gke-bench.sh): Python, which reads oha's databases as
 # bench/bench.py does, the pinned oha of the target architecture
-# (scripts/install-oha.sh), and the harness with the plan of the run. The
-# build context holds oha, and bench/ with bench.py, requests.json and the
-# CRUD variant's mix, requests-crud.json, the plan as plan.json, gke/gke.py
-# and gke/generator.py. The base is
+# (scripts/install-oha.sh), its only tool, which sends the load and the
+# traffic check's HTTP/2 requests, and the harness with the plan of the
+# run. The build context holds oha, and bench/ with bench.py,
+# requests.json and the CRUD variant's mix, requests-crud.json, the plan as
+# plan.json, gke/gke.py and gke/generator.py. The base is
 # python:3.13-slim (3.13.16 on Debian trixie), pinned by the digest of its
 # multi-architecture index. It only copies, with no RUN, so that a machine
 # of another architecture builds it with no emulation (bench/test_gke.py

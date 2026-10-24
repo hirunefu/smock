@@ -9,7 +9,10 @@
 /// `connect` is true: `:status`, then each of `headers` with its name in
 /// lower case and its value trimmed of spaces and tabs, then `date` with
 /// the value `date`, unless `headers` give one, and `content-length`,
-/// unless the response has no content (`has_content`).
+/// unless the response has no content (`has_content`). With `streamed`,
+/// the body is a stream of Server-Sent Events, whose length is not known
+/// when the HEADERS go out, so there is no `content-length`, and `length`
+/// is not used.
 ///
 /// Names and values are the octets the HTTP/1.1 encoder writes. The fields
 /// HTTP/2 forbids in a response (RFC 9113, section 8.2.2) are left out:
@@ -21,6 +24,7 @@ fn response_fields(
   length : Int32,
   date~ : String,
   connect~ : Bool = false,
+  streamed~ : Bool = false,
 ) -> Array[@header.Header] {
   let fields = Array(capacity=headers.length() + 3)
   fields.push(@header.Header::{ name: b":status", value: decimal(status), })
@@ -38,7 +42,7 @@ fn response_fields(
   if !has_date {
     fields.push({ name: b"date", value: @http1.field_octets(date), })
   }
-  if has_content(status, connect~) {
+  if has_content(status, connect~) && !streamed {
     fields.push({ name: b"content-length", value: decimal(length), })
   }
   fields

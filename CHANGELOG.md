@@ -64,9 +64,12 @@ of each GitHub release include its section
   `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. A CONNECT
   reaches the Mocks as soon as its HEADERS arrive, with `:authority` as its
   target, and smock opens no tunnel: a 2xx to it ends the stream with no
-  body. The HPACK table smock encodes responses with stays at 4,096 octets,
-  however large a table the client allows, and a header block that does not
-  decode ends the connection with GOAWAY `COMPRESSION_ERROR`. See
+  body. An events Stub streams one event stream per HTTP/2 stream, several
+  at once on one connection: the DATA of its last event ends the HTTP/2
+  stream, and a client that resets the HTTP/2 stream ends the event stream
+  at once. The HPACK table smock encodes responses with stays at 4,096
+  octets, however large a table the client allows, and a header block that
+  does not decode ends the connection with GOAWAY `COMPRESSION_ERROR`. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
@@ -113,6 +116,12 @@ of each GitHub release include its section
   of the TLS port's ALPN, for every certificate, so that it offers
   `http/1.1` alone, as before HTTP/2. The plain port still serves h2c. See
   [Turning h2 off](docs/http2.md#turning-h2-off).
+- The release benchmark measures HTTP/2: `bench/plan-autopilot.json` has
+  `h2c-keep-alive`, to the plain port, and `h2-keep-alive`, to the TLS
+  port, which are `http-keep-alive` over HTTP/2, sent by oha with
+  `--http2`, locally and on GKE. They make each run of the plan about 22
+  minutes longer, so `scripts/gke-bench.sh`'s default time limit is now 100
+  minutes. See [HTTP/2 cases](bench/README.md#http2-cases).
 
 ### Changed
 

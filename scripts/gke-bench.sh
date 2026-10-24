@@ -46,7 +46,7 @@
 #    variants in same-node.json and same-node.md, also as summary.md;
 # 5. always deletes the cluster and the repository: when it ends, fails or
 #    is interrupted, and from a watchdog in its own session when the time
-#    limit (80 minutes by default) has passed, even if this script was
+#    limit (100 minutes by default) has passed, even if this script was
 #    killed; then lists clusters, repositories, VM instances, disks,
 #    addresses and forwarding rules, and fails if anything the run made is
 #    left.
@@ -67,7 +67,7 @@
 #   --cases A,B      only these cases of the plan
 #   --targets FILE   the targets to check, those of --arch (default: bench/targets.json)
 #   --out DIR        where the results go (default: bench/results/gke-<date>-<time>)
-#   --time-limit T   when the watchdog deletes the cluster, with its unit: 80m (default), 4800s; at most 240m
+#   --time-limit T   when the watchdog deletes the cluster, with its unit: 100m (default), 6000s; at most 240m
 #   --arch ARCH      the nodes' architecture, amd64 or arm64 (default: this machine's)
 #   --smock FILE     use this release binary, built from the commit checked out, instead of
 #                    building one; needed for another architecture than this machine's:
@@ -231,13 +231,14 @@ DELETE_LIMIT_S=1800
 # file, before it stops the run at the time limit, so that the run says
 # why it was stopped.
 TIME_LIMIT_PASSED=.time-limit-passed
-# The longest time limit: a full run takes under an hour, and a limit far
-# beyond it, such as 4800 taken as minutes, would keep a stuck run billed.
+# The longest time limit: a full run takes about 75 minutes, and a limit
+# far beyond it, such as 6000 taken as minutes, would keep a stuck run
+# billed.
 MAX_TIME_LIMIT_S=14400
 
 dry_run=0 yes=0 enable_apis=0
 plan="$ROOT/bench/plan-autopilot.json" targets="$ROOT/bench/targets.json"
-profiles="" cases="" out="" time_limit=80m smock_binary="" oha_binary="" arch="" smock_sha256=""
+profiles="" cases="" out="" time_limit=100m smock_binary="" oha_binary="" arch="" smock_sha256=""
 # The variants of a run that compares them (--variant), in the order given,
 # the first the baseline, and how many rounds the load generator measures
 # them in (--rounds); none in a run of one smock. Each variant's binary,
@@ -587,13 +588,13 @@ if ! [[ $PROJECT =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || ! [[ $REGION =~ ^[a-z]+
   exit 2
 fi
 if ! [[ $time_limit =~ ^0*([1-9][0-9]{0,5})(m|s)$ ]]; then
-  say "--time-limit takes minutes or seconds with their unit, such as 80m or 4800s"
+  say "--time-limit takes minutes or seconds with their unit, such as 100m or 6000s"
   exit 2
 fi
 time_limit_s=${BASH_REMATCH[1]}
 [ "${BASH_REMATCH[2]}" = s ] || time_limit_s=$((time_limit_s * 60))
 if [ "$time_limit_s" -gt "$MAX_TIME_LIMIT_S" ]; then
-  say "--time-limit is at most $((MAX_TIME_LIMIT_S / 60))m: a full run takes under an hour"
+  say "--time-limit is at most $((MAX_TIME_LIMIT_S / 60))m: a full run takes about 75 minutes"
   exit 2
 fi
 if ! [[ $NEEDED_CPUS =~ ^[1-9][0-9]{0,3}$ ]]; then

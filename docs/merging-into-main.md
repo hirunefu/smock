@@ -39,7 +39,7 @@ pre-merge run compares with them.
   moonhttp version the build resolves is such an upgrade, and CI fails on
   it until `moon.mod` names the new version.
 - [ ] **Run the local Autopilot plan** on the usual machine, the full plan
-  (about 20 minutes), as the benchmark's
+  (about 43 minutes), as the benchmark's
   [GKE Autopilot profiles](../bench/README.md#gke-autopilot-profiles) section
   says: plugged in, other programs closed, the CPU frequency governor at
   `performance`.
@@ -69,7 +69,10 @@ pre-merge run compares with them.
   p99.9 only where both runs measured at least 10,000 requests at the
   step: the rest swing from run to run, and the report shows them for
   reference without failing
-  ([Comparing runs](../bench/README.md#comparing-runs)). Its first lines say
+  ([Comparing runs](../bench/README.md#comparing-runs)). A previous run from
+  before the [HTTP/2 cases](../bench/README.md#http2-cases) has no steps
+  for them: they are listed as only in the newer run, and the HTTP/1.1
+  cases are compared as usual. Its first lines say
   whether the machine, the plan or anything else besides smock differed,
   and which steps count. A change to the plan's `about` alone is no
   difference, but a run from before runs recorded the plan's hash without
@@ -121,11 +124,11 @@ pre-merge run compares with them.
   and more can be asked for on the console's Quotas page), and that nothing is
   left from an earlier run, and prints every
   command it would run and the cost estimate. A full amd64 run is
-  expected to cost about $0.22, and at most about $0.63 if it ran until
-  its time limit of 80 minutes, before tax (about $0.26 and $0.77 in
+  expected to cost about $0.40, and at most about $0.78 if it ran until
+  its time limit of 100 minutes, before tax (about $0.48 and $0.95 in
   asia-northeast1); the free tier usually covers the cluster's management
   fee. When the checks pass
-  and the estimate is acceptable, run it (about 50 minutes), with the
+  and the estimate is acceptable, run it (about 75 minutes), with the
   machine kept awake, on power and online for the whole run, since the
   watchdog that deletes the cluster at the time limit runs on it:
 
