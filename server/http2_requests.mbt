@@ -163,6 +163,15 @@ fn H2Request::is_malformed(self : H2Request) -> Bool {
 }
 
 ///|
+/// How many octets of the body have arrived.
+fn H2Request::received(self : H2Request) -> Int32 {
+  match self.parts {
+    Some(parts) => parts.length()
+    None => self.body.length()
+  }
+}
+
+///|
 /// Adds `data`, the next DATA octets of the stream, to the body.
 fn H2Request::receive(self : H2Request, data : Bytes) -> Unit {
   match self.parts {

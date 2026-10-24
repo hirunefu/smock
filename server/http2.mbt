@@ -302,7 +302,14 @@ fn[S : @io.Writer] H2Connection::hand(
       }
       Data(stream~, data~) => {
         if self.requests.get(stream) is Some(request) {
-          request.receive(data)
+          // A body that passes the limit is refused before it is kept.
+          if data.length() > self.ports.settings.body_limit - request.received() {
+            self.requests.remove(stream)
+            self.refused = stream
+            self.refused_status = 413
+          } else {
+            request.receive(data)
+          }
         }
         // Handed back as it is taken, so that the windows reopen as the
         // body arrives.

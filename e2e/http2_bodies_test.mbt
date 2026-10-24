@@ -96,3 +96,63 @@ async test "h2c: a content-length over --body-limit gets 413 at once, then RST_S
     })
   })
 }
+
+///|
+async test "h2c: a body that passes --body-limit gets 413, then RST_STREAM NO_ERROR, or 413 alone when the DATA that passes it ends the stream, while the other streams go on" {
+  with_definitions([("files.json", uploads)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0", "--body-limit", "10"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let out = [raw.acknowledge_settings()]
+      let upload = request_fields("POST", "/upload", "localhost")
+      raw.send([
+        headers_frame(1, raw.block(upload), end_stream=false),
+        headers_frame(3, raw.block(upload), end_stream=false),
+        Data(stream_id=1, data=b"abcdef", end_stream=false, padding=0),
+        Data(stream_id=3, data=b"0123", end_stream=false, padding=0),
+        Data(stream_id=1, data=b"ghijkl", end_stream=false, padding=0),
+        Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false),
+      ])
+      out.push(
+        "Two uploads with no content-length, the first past the limit by its second DATA:",
+      )
+      out.push(raw.frames_until_ping_ack())
+      raw.send([
+        // Sent before the client learnt of the 413, as a client does:
+        // ignored.
+        Data(stream_id=1, data=b"late", end_stream=true, padding=0),
+        Data(stream_id=3, data=b"456789", end_stream=true, padding=0),
+      ])
+      out.push("More of stream 1, and the rest of stream 3, the limit:")
+      out.push(raw.frames_until_stream_ends(3))
+      raw.send([
+        headers_frame(5, raw.block(upload), end_stream=false),
+        Data(stream_id=5, data=b"0123456789a", end_stream=true, padding=0),
+      ])
+      out.push("An upload whose one DATA passes the limit and ends it:")
+      out.push(raw.frames_until_stream_ends(5))
+      out.push("Journal:")
+      out.push(uploads_journaled(smock))
+      out.push(requests_counted(smock))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|Two uploads with no content-length, the first past the limit by its second DATA:
+          #|SETTINGS ACK
+          #|HEADERS 1 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
+          #|RST_STREAM 1 NO_ERROR
+          #|More of stream 1, and the rest of stream 3, the limit:
+          #|HEADERS 3 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 3 END_STREAM 6 octets
+          #|An upload whose one DATA passes the limit and ends it:
+          #|HEADERS 5 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
+          #|Journal:
+          #|POST /upload 0123456789 201
+          #|smock_requests_total{mock="",stub=""} 2
+          #|smock_requests_total{mock="files",stub="upload"} 1
+        ),
+      )
+    })
+  })
+}
