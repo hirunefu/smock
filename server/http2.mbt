@@ -13,8 +13,9 @@
 //   open against `--http2-max-concurrent-streams`, and which every
 //   RST_STREAM smock sends goes into, through `H2Connection::reset`;
 // - the mapping from a stream onto the engine's request (`H2Request`,
-//   http2_requests.mbt), with the checks of HTTP/1.1's rules, which refuse
-//   a stream with 400 (`H2Connection::refuse`);
+//   http2_requests.mbt), with the checks of HTTP/1.1's rules and of
+//   `--body-limit`, which refuse a stream with 400 or 413
+//   (`H2Connection::refuse`);
 // - the response encoding (`response_fields`, http2_responses.mbt);
 // - the writing of what the `Conn` queues, through the connection's one
 //   writer (`H2Writer`, http2_output.mbt);
@@ -34,7 +35,7 @@
 //   own wait; past it, the connection closes without GOAWAY;
 // - for the drain, the connection is idle while no stream is in progress,
 //   and while smock drains, it closes, without GOAWAY, as soon as none is;
-// - no body or header limit applies beyond moonhttp's own.
+// - no header limit applies beyond moonhttp's own.
 
 ///|
 /// The settings smock advertises on every HTTP/2 connection of a process
@@ -72,7 +73,8 @@ fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
 /// is queued by a task of its own, once the delay is over, so that the
 /// other streams are answered meanwhile. A stream the client resets before
 /// it ends never reaches the engine, nor does one whose request HTTP/1.1's
-/// rules refuse, which gets 400 instead.
+/// rules refuse, which gets 400 instead, or whose body is over
+/// `--body-limit`, which gets 413.
 async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
   self : MockPorts,
   stream : S,
