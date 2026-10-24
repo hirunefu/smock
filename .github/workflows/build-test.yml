@@ -43,6 +43,12 @@ jobs:
 
       - run: moon version --all
 
+      # moon takes the version moon.mod gives an import as a minimum, so a
+      # module that needs a later moonhttp would raise it. This fails on any
+      # difference, which is what pins moonhttp exactly (ADR 0005).
+      - name: Check that the build resolves the moonhttp that moon.mod names
+        run: scripts/check-moonhttp-pin.sh
+
       - name: Check formatting
         if: inputs.toolchain == 'pinned'
         run: moon fmt --check
@@ -53,8 +59,14 @@ jobs:
       - name: Check that the protocol modules and the packages that decide a response do no I/O
         run: scripts/check-no-io.sh
 
-      - name: Check the C boundary (ADR 0001)
+      # It also scans the modules the build resolves outside moonbitlang,
+      # which moon check downloaded: moonhttp and the modules it imports, so
+      # that an upgrade brings no C (ADR 0005).
+      - name: Check the C boundary (ADR 0001), in smock and in its resolved modules
         run: scripts/check-no-c.sh
+
+      - name: Test the moonhttp pin check and the C check of the resolved modules
+        run: scripts/test-dependency-checks.sh
 
       - name: Test every module natively
         run: moon test --target native
