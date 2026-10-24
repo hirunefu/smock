@@ -98,6 +98,20 @@ exits all-pass 0
 says all-pass "h2spec plain: 4 cases, 4 passed, 0 skipped, 0 failed"
 says all-pass "h2spec plain: every case passed or is listed"
 
+# --- Cases that fail ---------------------------------------------------------
+
+# A case that fails and is not listed fails the run, with what h2spec
+# expected and got.
+report pass pass fail pass
+list
+verdict unlisted-failure
+exits unlisted-failure 1
+says unlisted-failure "h2spec plain: 4 cases, 3 passed, 0 skipped, 1 failed"
+says unlisted-failure "h2spec plain: http2/3.5/2 failed, and is not listed: Sends invalid connection preface"
+says unlisted-failure "    GOAWAY Frame (Error Code: PROTOCOL_ERROR)"
+says unlisted-failure "    Error: unexpected EOF"
+says unlisted-failure "h2spec plain: 1 case failed or was skipped without being listed in plain.txt"
+
 echo
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]
