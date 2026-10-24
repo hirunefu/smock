@@ -194,3 +194,50 @@ async test "h2c: a stream reset during its delay, by the client or by smock for 
     })
   })
 }
+
+///|
+async test "h2c: when the connection ends during its streams' delays, their tasks end with it: each entry is committed then, and smock goes on serving" {
+  with_definitions([("m.json", delays)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      let start = @async.now()
+      let _ = client.send("GET", "/slow", authority="localhost")
+      let _ = client.send("GET", "/slow?again", authority="localhost")
+      // What smock sent so far is read, so that the client's close is a
+      // FIN, not a reset.
+      for ;; {
+        if client.read_event() is SettingsAcked(_) {
+          break
+        }
+      }
+      client.flush()
+      @async.sleep(200)
+      client.close()
+      let entries = smock.journal_once(2, within=600)
+      let committed_ms = @async.now() - start
+      let next = smock.h2c()
+      defer next.close()
+      let fast = next.request("GET", "/fast", authority="localhost")
+      inspect(
+        [
+          "both committed before the delay was over: \{entries.length() == 2 && committed_ms < 1000}",
+          ..entries,
+          "---",
+          fast.render(),
+        ].join("\n"),
+        content=(
+          #|both committed before the delay was over: true
+          #|/slow: stub "slow", status 200
+          #|/slow?again: stub "slow", status 200
+          #|---
+          #|200
+          #|smock-mock: m; via=default
+          #|date: <now>
+          #|content-length: 4
+          #|
+          #|fast
+        ),
+      )
+    })
+  })
+}
