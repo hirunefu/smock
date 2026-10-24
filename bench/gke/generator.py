@@ -337,7 +337,7 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics, first_second=True):
     can run without it, to see whether it costs smock CPU."""
     work = Path(tempfile.mkdtemp(prefix="step-"))
     run = SimpleNamespace(mix=mix, tmp=work)
-    port = ports["tls" if spec["protocol"] == "https" else "plain"]
+    port = ports[harness.traffic_port(spec["protocol"])]
     weights = [request["weight"] for request in mix]
     total_s = spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]
     metrics_before, scraped_before = scrape_metrics(), time.monotonic()

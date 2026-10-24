@@ -1563,20 +1563,21 @@ class Generator(Helper):
 
     def generator_plan(self, rates=(200,)):
         """The small plan with short steps, at `rates`, over plain HTTP and
-        then TLS."""
+        then TLS, and over h2c and h2."""
         plan = json.loads(small_plan(self.directory(), rates=rates).read_text())
         plan.update(ramp_s=0.5, duration_s=2, tail_s=1, cooldown_s=0, idle_rss={"settle_s": 0.5})
-        plan["cases"].append({**plan["cases"][0], "name": "https-keep-alive", "protocol": "https"})
+        for name, protocol in (("https-keep-alive", "https"), ("h2c-keep-alive", "h2c"), ("h2-keep-alive", "h2")):
+            plan["cases"].append({**plan["cases"][0], "name": name, "protocol": protocol})
         path = self.directory() / "plan.json"
         path.write_text(json.dumps(plan))
         return path
 
-    def generate(self, plan_path, smock, **ports):
+    def generate(self, plan_path, smock, cases="http-keep-alive,https-keep-alive", **ports):
         """Runs the load generator for profile small against `smock`, with
-        `ports` instead of smock's own; returns its exit status, its JSON
-        lines and its output."""
+        `ports` instead of smock's own, for `cases`; returns its exit
+        status, its JSON lines and its output."""
         environment = {**os.environ, "TARGET": "localhost", "PROFILE": "small",
-                       "CASES": "http-keep-alive,https-keep-alive", "PLAN": str(plan_path),
+                       "CASES": cases, "PLAN": str(plan_path),
                        "PLAIN_PORT": str(ports.get("plain", smock.ports["plain"])),
                        "TLS_PORT": str(ports.get("tls", smock.ports["tls"])),
                        "ADMIN_PORT": smock.ports["admin"], "OHA": shutil.which(OHA) or OHA, "TRAFFIC_CHECK_S": "2"}
@@ -1649,6 +1650,22 @@ class Generator(Helper):
         self.assertIn(f"Idle RSS: {idle['rss_kib'] / 1024:.1f} MiB, 0.5 s after startup", markdown)
         self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
         self.assertIsNone(conditions["gke"]["profiles"]["small"]["ended_early"])
+
+    def test_the_http2_steps_go_over_h2c_to_the_plain_port_and_over_h2_to_the_tls_port(self):
+        plan_path = self.generator_plan()
+        with LocalSmock() as smock:
+            status, lines, output = self.generate(plan_path, smock, cases="h2c-keep-alive,h2-keep-alive")
+        self.assertEqual(status, 0, output)
+        steps = [line["result"] for line in lines if line["kind"] == "step"]
+        self.assertEqual([(step["id"], step["protocol"]) for step in steps],
+                         [("h2c-keep-alive@small", "h2c"), ("h2-keep-alive@small", "h2")])
+        for step in steps:
+            # Every request got the status the mix expects, h2 over TLS
+            # included, which oha offers alone by ALPN.
+            self.assertEqual((step["errors"], step["smock_ready"]), (0, True), step["id"])
+            self.assertEqual(step["requests"]["ok"], step["requests"]["scheduled"], step["id"])
+            self.assertGreater(step["requests"]["scheduled"], 350, step["id"])
+            self.assert_smock_use(step)
 
     def assert_smock_use(self, step):
         """What a step says smock used, from its /metrics around the step,
