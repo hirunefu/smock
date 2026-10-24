@@ -1139,8 +1139,10 @@ change, with the command that the failing test prints. Adding a fixture
 file under `schema/v1/fixtures/` adds it to the cross-check; the README
 there says which directory a fixture belongs in.
 
-CI runs all of these on linux/amd64 and linux/arm64
-(`.github/workflows/build-test.yml`).
+CI runs all of these but `moon bench` (`.github/workflows/ci.yml`). The
+tests on wasm-gc and the scripts from `scripts/check-release-workflow.sh`
+to `scripts/test-helm-chart.sh` run on linux/amd64; the rest run on
+linux/amd64 and linux/arm64 (`.github/workflows/build-test.yml`).
 
 The native build links OpenSSL 3 (on Debian and Ubuntu, `libssl-dev`).
 `prebuild.py`, which `moon` runs with `python3` before every native build,
