@@ -29,12 +29,34 @@ Each HTTP/2 stream carries one request, which reaches the Mocks once the
 client has sent all of it:
 
 - `:method` is the method, and `:path` is the target, as sent. The path
-  and the query come from it as from an HTTP/1.1 request target.
+  and the query come from it as from an HTTP/1.1 request target, and `*`
+  with OPTIONS is the asterisk form.
 - `:authority` is the Host, which chooses the Mock, as the Host header does
-  over HTTP/1.1. Without `:authority`, the `host` field gives the Host.
+  over HTTP/1.1. Without `:authority`, the `host` field gives the Host. A
+  request with neither has no Host, and the Default Mock answers it.
 - The header fields are the regular fields, in the order sent, with their
-  names in lower case, as HTTP/2 sends them. The pseudo-header fields
-  (`:method`, `:path`, `:scheme` and `:authority`) are not among them.
+  names in lower case, as HTTP/2 sends them. Header conditions and
+  `header.NAME` compare names in any case, so they match as over HTTP/1.1.
+  The pseudo-header fields (`:method`, `:path`, `:scheme` and
+  `:authority`) are not among them. `:scheme` must be sent, but its value
+  is not checked.
+- No `host` field is added for `:authority`. `header.host` and a `host`
+  header condition see only a `host` field the client sent, so tell Hosts
+  apart with each Mock's `hosts`.
+- Several `cookie` fields are joined into one with `; `, in their order, at
+  the place of the first, as RFC 9113 requires. So cookie conditions,
+  `cookie.NAME`, `header.cookie` and a header condition on `cookie` see
+  what the one Cookie line of an HTTP/1.1 client gives.
+- Request trailers are accepted and ignored, as HTTP/1.1 chunked trailers
+  are.
+
+Each stream of a connection is a request of its own. It goes to the Mock
+its own `:authority` names, and its
+[Session](../README.md#sessions-and-ephemeral-stubs) comes from its own
+`baggage` field. So a browser that sends requests for several Hosts over one
+connection reaches each Host's Mock, and tests that share a pooled
+connection stay apart. Ephemeral Stubs, Scenarios, Variables, Data buckets
+and CRUD Stubs work as over HTTP/1.1.
 
 A stream that the client resets before it has sent all of its request
 never reaches the Mocks: it has no Journal entry, and it moves no Scenario.
@@ -45,8 +67,11 @@ lower case, and its body.
 ## The Journal
 
 An HTTP/2 request is in the Journal like any other, with `version`
-`HTTP/2`. Its `target` is `:path`, and its `host` comes from `:authority`,
-so an HTTP/1.1 request and an HTTP/2 request for the same call read alike.
+`HTTP/2`. Its `target` is `:path`, its `host` is the Host from
+`:authority` or the `host` field, and its `headers` are the regular fields
+as the Stubs saw them, cookies joined. So an HTTP/1.1 request and an
+HTTP/2 request for the same call read alike, and Journal queries,
+verification and the unmatched requests count both.
 The request metrics count HTTP/2 requests with the same `mock` and `stub`
 labels as HTTP/1.1 ones.
 
