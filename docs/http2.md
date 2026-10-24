@@ -80,3 +80,9 @@ labels as HTTP/1.1 ones.
 smock's HTTP/2 framing, header compression and connection state come from
 the `http2` package of moonbitstack/moonhttp 0.14.0, a MoonBit module with
 no I/O and no C ([ADR 0005](adr/0005-http2-comes-from-moonhttp.md)).
+
+CI runs h2spec 2.6.0, which checks a server against RFC 7540 and RFC 7541,
+against the plain port on every push.
+[`scripts/h2spec/plain.txt`](../scripts/h2spec/plain.txt) lists the cases
+that do not pass yet, each with its reason
+([Build and test](../README.md#build-and-test)).

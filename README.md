@@ -1087,6 +1087,10 @@ runs it when started by hand; `scripts/gke-bench.sh` runs it on GKE
 Autopilot before an integration branch is merged into `main` (see
 [Benchmark](#benchmark)).
 
+`scripts/h2spec/` holds the Definition file that CI serves to h2spec, the
+HTTP/2 conformance tool, and the list of h2spec's cases that do not pass on
+the plain port, each with its reason (see [Build and test](#build-and-test)).
+
 ## Toolchain
 
 The MoonBit toolchain version is pinned in `.moonbit-version`, and CI installs
@@ -1109,11 +1113,14 @@ scripts/build-release.sh       # dist/smock
 dist/smock --version
 scripts/check-schema.sh dist/smock   # the JSON Schema and smock agree
 scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
+scripts/install-h2spec.sh      # the pinned h2spec, into ~/.local/bin
+scripts/check-h2spec.sh dist/smock   # h2spec's conformance cases against the plain port (needs h2spec, python3 and jq)
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq and jq)
 scripts/test-release-notes.sh        # the release notes, with CHANGELOG.md's links at the release's tag
 scripts/test-sbom.sh                 # the SBOM scripts, and the check that the SBOM and NOTICE agree (needs jq)
+scripts/test-h2spec-verdict.sh       # how a run of h2spec is judged against its list of cases
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
 scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture (needs yq and jq)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
@@ -1145,10 +1152,41 @@ change, with the command that the failing test prints. Adding a fixture
 file under `schema/v1/fixtures/` adds it to the cross-check; the README
 there says which directory a fixture belongs in.
 
+`scripts/check-h2spec.sh` runs h2spec 2.6.0, the HTTP/2 conformance tool,
+against a smock binary: every case of its `generic`, `http2` and `hpack`
+sections, strict cases included, against the plain port, as h2c. It takes
+about 20 seconds. smock serves `scripts/h2spec/definitions`, where a Stub at
+`/`, the path h2spec requests, answers every method with 200 and a body of
+4 KiB; without a body, h2spec would skip its flow-control cases.
+`scripts/h2spec/plain.txt` lists the cases that do not pass on the plain
+port, each with its reason: a case that h2spec skips, a case left out,
+whose outcome does not count, or a case that fails until the issue named
+beside it is done. A case that fails or is skipped without being listed so
+fails the run, and so does a listed case that h2spec no longer has. The
+output lists every listed case with its outcome and reason, and names each
+listed case that passed, so that it can come off the list. h2spec checks
+RFC 7540 and RFC 7541 only; the e2e tests cover what RFC 9113 adds to the
+rules for header fields.
+
+h2spec publishes a Linux binary for amd64 only. `scripts/install-h2spec.sh`
+installs h2spec 2.6.0 into a directory, `~/.local/bin` unless one is given:
+on amd64, the release binary, checked against its SHA-256; on arm64, a
+build from h2spec's `v2.6.0` tag, checked against the tag's commit, with Go
+1.27.3, which it downloads, checks against its SHA-256 and removes again.
+The build needs `git` and downloads about 70 MB. `scripts/check-h2spec.sh`
+runs the h2spec it finds on `PATH`. On either architecture, then:
+
+```sh
+scripts/install-h2spec.sh
+scripts/build-release.sh
+scripts/check-h2spec.sh dist/smock
+```
+
 CI runs all of these but `moon bench` (`.github/workflows/ci.yml`). The
-tests on wasm-gc and the scripts from `scripts/check-release-workflow.sh`
-to `scripts/test-helm-chart.sh` run on linux/amd64; the rest run on
-linux/amd64 and linux/arm64 (`.github/workflows/build-test.yml`).
+tests on wasm-gc, h2spec and the scripts from
+`scripts/check-release-workflow.sh` to `scripts/test-helm-chart.sh` run on
+linux/amd64; the rest run on linux/amd64 and linux/arm64
+(`.github/workflows/build-test.yml`).
 
 The native build links OpenSSL 3 (on Debian and Ubuntu, `libssl-dev`).
 `prebuild.py`, which `moon` runs with `python3` before every native build,

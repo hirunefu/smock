@@ -24,6 +24,13 @@ pre-merge run compares with them.
 ## Checklist
 
 - [ ] **CI is green on the integration branch**, and its issues are done.
+  CI also runs h2spec, the HTTP/2 conformance tool, against the plain
+  port, on linux/amd64
+  ([Build and test](../README.md#build-and-test)). Before the merge, its
+  list of the cases that do not pass, `scripts/h2spec/plain.txt`, names no
+  case that waits for an issue, and each listed case that the run reports
+  as passing has come off it. On a branch that raises moonhttp, this run is
+  part of the checks the upgrade needs.
 - [ ] **Run the local Autopilot plan** on the usual machine, the full plan
   (about 20 minutes), as the benchmark's
   [GKE Autopilot profiles](../bench/README.md#gke-autopilot-profiles) section
