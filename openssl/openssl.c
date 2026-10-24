@@ -450,15 +450,17 @@ MOONBIT_FFI_EXPORT void smock_openssl_ssl_shutdown(smock_ssl *self) {
 
 // Updates the keys this side sends with and asks the peer to update its own
 // (TLS 1.3), and writes the KeyUpdate message at once. Returns 1, or 0 on
-// failure (see smock_openssl_take_error). Only tests ask (see client.mbt).
+// failure (see smock_openssl_take_error). Only the e2e tests and the
+// bindings' tests ask (see client.mbt).
 MOONBIT_FFI_EXPORT int32_t smock_openssl_ssl_update_keys(smock_ssl *self) {
   ERR_clear_error();
   return SSL_key_update(self->ssl, SSL_KEY_UPDATE_REQUESTED) == 1 &&
          SSL_do_handshake(self->ssl) == 1;
 }
 
-// The protocol ALPN selected, or empty when none was. Only the bindings'
-// tests ask (see client.mbt).
+// The protocol ALPN selected, or empty when none was. smock's server asks it
+// of each connection of its TLS port, and the e2e tests and the bindings'
+// tests of their clients (see client.mbt).
 MOONBIT_FFI_EXPORT moonbit_bytes_t smock_openssl_ssl_alpn(smock_ssl *self) {
   const unsigned char *protocol = NULL;
   unsigned int length = 0;

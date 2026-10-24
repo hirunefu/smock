@@ -327,6 +327,8 @@ async fn run(
                 TlsStream::accept(conn, name => certificates.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
+              // ALPN chose the protocol: HTTP/2, whose loop reads the
+              // preface itself, or HTTP/1.1, which never looks for it.
               let writable = if stream.is_http2() {
                 ports.serve_http2(stream, connection, b"")
               } else {
@@ -431,7 +433,8 @@ priv struct MockPorts {
 ///
 /// With `h2c`, as on the plain port, a connection that starts with the
 /// HTTP/2 connection preface is served as HTTP/2 (`MockPorts::serve_http2`),
-/// and any other over HTTP/1.1, as below. Without it, every connection is
+/// and any other over HTTP/1.1, as below. Without it, as on the TLS port
+/// for a connection that did not choose `h2` by ALPN, every connection is
 /// HTTP/1.1.
 ///
 /// Each request takes the steps every request to the Mocks takes

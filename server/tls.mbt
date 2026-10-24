@@ -43,9 +43,10 @@ fn load_pair(
 
 ///|
 /// One TLS connection on top of a TCP connection: the byte stream that
-/// `serve_connection` reads requests from and writes responses to. OpenSSL
-/// works on memory buffers only, so this moves the bytes between it and the
-/// socket.
+/// the HTTP/1.1 loop (`serve_connection`) or the HTTP/2 loop
+/// (`MockPorts::serve_http2`) reads requests from and writes responses to.
+/// OpenSSL works on memory buffers only, so this moves the bytes between it
+/// and the socket.
 priv struct TlsStream {
   tcp : @socket.Tcp
   tls : @openssl.Connection

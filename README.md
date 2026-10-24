@@ -14,8 +14,8 @@ reads it. The guides for people who use smock:
   format of Definition files: how Stubs match requests, what they
   answer, templates, Variables, Data buckets, CRUD Stubs and Faults.
 - [docs/http2.md](docs/http2.md) says how a client reaches smock over
-  HTTP/2, starting with h2c on the plain port, and what a Stub and the
-  Journal see of an HTTP/2 request.
+  HTTP/2, h2c on the plain port and h2 on the TLS port, and what a Stub and
+  the Journal see of an HTTP/2 request.
 - [docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
   document into a Definition file.
 - [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
@@ -57,6 +57,9 @@ SMOCK_ADMIN_TOKEN=change-me _build/native/debug/build/smock/smock/cmd/smock/smoc
 
 `smock serve` listens on the admin port, reads the Definition files in the
 definitions directory, then listens on the plain port and on the TLS port.
+Each port's `listening` log entry names the protocols it serves:
+`["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]` on the TLS
+port and `["http/1.1"]` on the admin port.
 It watches the directory and swaps in the new definition set when the files
 change, ConfigMap updates included; an invalid set is reported and the
 current one keeps serving
@@ -163,8 +166,12 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
   usable PEM, or a key that does not belong to the certificate stops
   `smock serve` with a log entry that says why, and exit status 1 (2 for a
   missing partner setting).
-- ALPN offers only `http/1.1`. TLS 1.2 and 1.3 are accepted.
-- The Host header chooses the Mock, as on the plain port; SNI does not.
+- ALPN offers `h2`, then `http/1.1`, for every certificate. A client that
+  offers `h2` gets HTTP/2, and one that offers only `http/1.1`, or no ALPN,
+  gets HTTP/1.1 ([h2 on the TLS port](docs/http2.md#h2-on-the-tls-port)).
+  TLS 1.2 and 1.3 are accepted.
+- The Host header, or `:authority` over HTTP/2, chooses the Mock, as on the
+  plain port; SNI does not.
 - The `listening` log entry of the TLS port names the certificate and key
   files.
 
@@ -1050,8 +1057,10 @@ Packages of `smock/smock`:
   that arrive from the peer and hands out the bytes to send, and `server`
   carries them over the socket. It also generates self-signed certificates
   in memory. Its C is `openssl/openssl.c`. The client side
-  (`openssl/client.mbt`) is there for the bindings' own tests, which run a
-  client and a server in memory under the sanitizers.
+  (`openssl/client.mbt`) offers ALPN: the e2e tests speak HTTP/2 over the
+  TLS port with it, and the bindings' own tests run a client and a server
+  in memory under the sanitizers. That file also tells which protocol ALPN
+  selected, which `server` asks of each TLS connection.
 - `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
   leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
   `users.example.com` and `orders.example.com`, each leaf with its own fixed
@@ -1218,8 +1227,11 @@ its own temporary definitions directory and port 0 for each port, so they
 run in parallel (`e2e/harness_test.mbt`). They need `moon`, `moonc`, `git`,
 `kill`, `mkfifo` and `openssl` on `PATH`. The HTTPS tests use clients that
 trust only the root CA of `testcerts`, and the HTTP/1.1 tests run on both
-the plain and the TLS port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
-read it from the handshake with `openssl s_client` and then trust only it.
+the plain and the TLS port. The HTTP/2 tests use moonhttp's client side
+over TCP to the plain port, or over TLS to the TLS port through the OpenSSL
+bindings' client side, which offers ALPN (`e2e/http2_harness_test.mbt`).
+The tests of the generated certificate (`e2e/self_signed_test.mbt`) read it
+from the handshake with `openssl s_client` and then trust only it.
 The test of the Journal's byte bound under a memory limit
 (`e2e/journal_bound_test.mbt`) starts smock in a systemd user scope with
 `MemoryMax`, as the benchmark does, so it needs `systemd-run` and a systemd

@@ -1,5 +1,5 @@
-// HTTP/2 connections, served through the `http2` package of
-// moonbitstack/moonhttp (ADR 0005). Each connection has one moonhttp
+// HTTP/2 connections, h2c on the plain port and h2 on the TLS port, served
+// through the `http2` package of moonbitstack/moonhttp (ADR 0005). Each connection has one moonhttp
 // `Conn`, which keeps its frames, stream states, flow control, settings,
 // field validation and header compression; smock owns the I/O, the mapping
 // onto the engine and the timeouts. The loop here ties together parts that
@@ -60,9 +60,13 @@ fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
 
 ///|
 /// Serves one HTTP/2 connection, `stream`, whose client has sent the octets
-/// `read`, the connection preface first, and returns whether `stream` can
-/// still be written to: not after a write timed out. `connection` is kept
-/// told whether the connection is idle, so that a drain can close it.
+/// `read` so far, and returns whether `stream` can still be written to: not
+/// after a write timed out. `connection` is kept told whether the
+/// connection is idle, so that a drain can close it. On the plain port,
+/// `read` starts with the connection preface, which told the connection
+/// apart from HTTP/1.1; on the TLS port, where ALPN did, it is empty, and
+/// the `Conn` checks the preface as it comes (a wrong one gets GOAWAY
+/// PROTOCOL_ERROR).
 ///
 /// One task reads, a frame at a time, hands each frame to the connection's
 /// `Conn`, and handles the events it produced, in order; before it reads

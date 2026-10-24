@@ -1,8 +1,11 @@
-// The client side of the bindings. smock's server never uses it: e2e
-// drives the TLS port with moonbitlang/async's own client. The bindings'
-// tests use it to run a client and a server Connection against each other
-// in memory, with no I/O, so that scripts/test-openssl-asan.sh can check
-// both sides under AddressSanitizer and LeakSanitizer.
+// The client side of the bindings, and the protocol ALPN selected. smock's
+// server asks the protocol ALPN selected on each connection of its TLS port,
+// to serve HTTP/2 when it is h2. The e2e tests drive HTTP/2 over the TLS
+// port with the client side, since it offers ALPN and moonbitlang/async's
+// own TLS client offers none. The bindings' tests use it to run a client
+// and a server Connection against each other in memory, with no I/O, so
+// that scripts/test-openssl-asan.sh can check both sides under
+// AddressSanitizer and LeakSanitizer.
 
 ///|
 #borrow(ctx, pem)
@@ -67,7 +70,9 @@ pub fn ClientConfig::connect(
 }
 
 ///|
-/// The protocol ALPN selected, if any.
+/// The protocol ALPN selected, if any, on either side. smock's server asks
+/// it of each connection of its TLS port, and the e2e tests of their
+/// client's.
 pub fn Connection::alpn_protocol(self : Connection) -> String? {
   let protocol = ssl_alpn_ffi(self.ssl)
   if protocol.length() == 0 {
