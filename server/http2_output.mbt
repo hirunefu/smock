@@ -5,8 +5,42 @@
 // through its `WatchedStream`, so each write has the write timeout.
 
 ///|
+/// What a read of a connection's byte stream may write besides what it
+/// reads: on the TLS port, the records OpenSSL writes for the client while
+/// it reads, such as an alert. Plain TCP has none. An HTTP/2 connection's
+/// reader reads while its streams' tasks write, so its reads leave that
+/// output to the connection's one writer (`H2Writer`), as every other
+/// write. OpenSSL keeps it in order with what is written after it: each
+/// later write sends it first.
+priv trait ReadOutput {
+  /// From now on, a read leaves the output it produces for the writer,
+  /// rather than send it itself.
+  fn hold_read_output(Self) -> Unit
+  /// Whether reads may have left output that nothing has sent since.
+  fn has_read_output(Self) -> Bool
+  /// Sends the output reads left, with the write timeout of `watchdog`.
+  async fn write_read_output(Self, Watchdog) -> Unit
+}
+
+///|
+impl ReadOutput for @socket.Tcp with fn hold_read_output(_) {
+
+}
+
+///|
+impl ReadOutput for @socket.Tcp with fn has_read_output(_) {
+  false
+}
+
+///|
+impl ReadOutput for @socket.Tcp with fn write_read_output(_, _) {
+
+}
+
+///|
 /// The one writer of an HTTP/2 connection: every octet written to its
-/// socket goes through it, in the order its `Conn` queued it. Each task
+/// socket goes through it, in the order its `Conn` queued it, and on the
+/// TLS port the output its reads left too (`ReadOutput`). Each task
 /// that queues something then asks the writer to write it: the connection's
 /// reader before each read, and a stream's task once its response is
 /// queued. Only one task writes at a time; while it does, a task that asks
@@ -35,11 +69,11 @@ fn H2Writer::new(conn : @http2.Conn) -> H2Writer {
 }
 
 ///|
-/// Writes to `out` what the `Conn` has queued, and returns whether there
-/// was anything to write. While another task is writing, it leaves what is
-/// queued to that task, which writes it before it stops, and returns
-/// false.
-async fn[S : @io.Writer] H2Writer::write(
+/// Writes to `out` what the `Conn` has queued, and the output reads left,
+/// and returns whether there was anything to write. While another task is
+/// writing, it leaves what is queued to that task, which writes it before
+/// it stops, and returns false.
+async fn[S : @io.Writer + ReadOutput] H2Writer::write(
   self : H2Writer,
   out : WatchedStream[S],
 ) -> Bool {
@@ -48,17 +82,14 @@ async fn[S : @io.Writer] H2Writer::write(
     return false
   }
   let queued = self.conn.take()
-  if queued.length() == 0 {
+  if queued.length() == 0 && !ReadOutput::has_read_output(out.stream) {
     return false
   }
   self.busy = true
-  @io.Writer::write(out, queued)
+  write_queued(out, queued)
   while self.more {
     self.more = false
-    let queued = self.conn.take()
-    if queued.length() > 0 {
-      @io.Writer::write(out, queued)
-    }
+    write_queued(out, self.conn.take())
   }
   self.busy = false
   self.done.broadcast()
@@ -66,10 +97,25 @@ async fn[S : @io.Writer] H2Writer::write(
 }
 
 ///|
+/// Writes `queued` to `out`, then the output reads left that the write
+/// did not send.
+async fn[S : @io.Writer + ReadOutput] write_queued(
+  out : WatchedStream[S],
+  queued : Bytes,
+) -> Unit {
+  if queued.length() > 0 {
+    @io.Writer::write(out, queued)
+  }
+  if ReadOutput::has_read_output(out.stream) {
+    ReadOutput::write_read_output(out.stream, out.watchdog)
+  }
+}
+
+///|
 /// Waits until no other task is writing, then writes to `out` what the
 /// `Conn` has queued: the last frames of a connection that ends, such as
 /// its GOAWAY, which would be lost if it ended while another task wrote.
-async fn[S : @io.Writer] H2Writer::write_last(
+async fn[S : @io.Writer + ReadOutput] H2Writer::write_last(
   self : H2Writer,
   out : WatchedStream[S],
 ) -> Unit {

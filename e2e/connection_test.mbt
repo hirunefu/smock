@@ -29,9 +29,9 @@ let startup_only : String =
   #|{"level":"info","msg":"random seed","seed":"*"}
   #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
   #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-  #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-  #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-  #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","certFile":"*/rsa-chain.pem","keyFile":"*/rsa-key.pem"}
+  #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
+  #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*","protocols":["http/1.1","h2c"]}
+  #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["h2","http/1.1"],"certFile":"*/rsa-chain.pem","keyFile":"*/rsa-key.pem"}
   #|{"level":"info","msg":"drain started","timeoutMs":20000}
   #|{"level":"info","msg":"drain ended","connectionsCut":0}
 

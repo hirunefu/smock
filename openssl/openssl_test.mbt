@@ -227,6 +227,29 @@ test "ALPN: a server accepting http/1.1 picks it from h2 and http/1.1, serves a 
 }
 
 ///|
+test "a key update the client asks for is answered with the server's next write, not by the read that brings it, and both sides go on with the new keys" {
+  let server = server_config(@testcerts.rsa_chain, @testcerts.rsa_key).accept()
+  let client = client()
+  handshake(client, server)
+  client.update_keys()
+  server.receive(client.take_output())
+  let buf = FixedArray::make(16, b'\x00')
+  let read = server.read(buf, offset=0, max_len=16)
+  inspect(
+    (
+      $|server reads data: \{!(read is NeedInput)}
+      $|server's read writes: \{server.take_output().length()} bytes
+      $|then: \{send(server, client, "pong")} \{send(client, server, "ping")}
+    ),
+    content=(
+      #|server reads data: false
+      #|server's read writes: 0 bytes
+      #|then: pong ping
+    ),
+  )
+}
+
+///|
 test "a close_notify from the peer reads as Closed" {
   let server = server_config(@testcerts.rsa_chain, @testcerts.rsa_key).accept()
   let client = client()
