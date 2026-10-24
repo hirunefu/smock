@@ -222,3 +222,72 @@ async test "h2c: DATA sent on a CONNECT's stream after its HEADERS is discarded 
     })
   })
 }
+
+///|
+/// Opens a stream with a CONNECT to `authority`, which moonhttp's client
+/// sends with no `:scheme` and no `:path`, and leaves it open. Returns the
+/// stream's ID.
+async fn H2Client::connect(self : H2Client, authority : String) -> Int32 {
+  let stream = self.conn.next_stream()
+  self.conn.headers(stream, [
+    @header.Header::of(":method", "CONNECT"),
+    @header.Header::of(":authority", authority),
+  ])
+  self.flush()
+  stream
+}
+
+///|
+async test "h2c: an unmatched CONNECT gets the unmatched response, body included, that HTTP/1.1 gives it, from the Mock its Host chooses or the Default Mock" {
+  with_definitions([("tunnels.json", tunnels)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let out = []
+      for authority in ["proxy.example.com:8443", "elsewhere.example.com:443"] {
+        out.push(client.response(client.connect(authority)).render())
+        out.push(
+          smock.request("CONNECT", authority, headers=[("Host", authority)]),
+        )
+      }
+      inspect(
+        out.join("\n---\n"),
+        content=(
+          #|404
+          #|content-type: application/json
+          #|smock-near-miss: tunnel; failed=path
+          #|date: <now>
+          #|content-length: 27
+          #|
+          #|{"error":"no Stub matched"}
+          #|---
+          #|HTTP/1.1 404 Not Found
+          #|Content-Type: application/json
+          #|Smock-Near-Miss: tunnel; failed=path
+          #|Date: <now>
+          #|Content-Length: 27
+          #|
+          #|{"error":"no Stub matched"}
+          #|---
+          #|404
+          #|content-type: application/json
+          #|smock-near-miss: upload; failed=method,path
+          #|smock-mock: fallback; via=default
+          #|date: <now>
+          #|content-length: 27
+          #|
+          #|{"error":"no Stub matched"}
+          #|---
+          #|HTTP/1.1 404 Not Found
+          #|Content-Type: application/json
+          #|Smock-Near-Miss: upload; failed=method,path
+          #|Smock-Mock: fallback; via=default
+          #|Date: <now>
+          #|Content-Length: 27
+          #|
+          #|{"error":"no Stub matched"}
+        ),
+      )
+    })
+  })
+}
