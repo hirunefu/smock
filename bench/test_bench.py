@@ -1638,6 +1638,38 @@ class TargetsForSeveralCases(unittest.TestCase):
         self.assertEqual(harness.read_targets(targets_file(self, [alone])),
                          harness.read_targets(targets_file(self, [SMALL])))
 
+    def test_each_case_is_checked_against_its_own_step_at_the_entrys_rate(self):
+        # h2c-keep-alive misses p99 and p99.9 where http-keep-alive meets
+        # them, and the run did not run h2-keep-alive. The steps at other
+        # rates are far worse, and do not count.
+        verdicts = checked(self, SEVERAL, idle=[idle_measured()], steps=[
+            step_measured(p99=1.9, p99_9=2.1, peak_mib=20),
+            step_measured(case_name="h2c-keep-alive", p99=3.5, p99_9=12, peak_mib=21),
+            step_measured(case_name="h2c-keep-alive", rate=2000, p99=50, p99_9=80, peak_mib=40)])
+        self.assertEqual({target_id: verdict[:2] for target_id, verdict in verdicts.items()}, {
+            "small/http-keep-alive/p99": ("met", 1.9),
+            "small/http-keep-alive/p99_9": ("met", 2.1),
+            "small/http-keep-alive/oom_kills": ("met", 0),
+            "small/http-keep-alive/peak_memory": ("met", 20.0),
+            "small/h2c-keep-alive/p99": ("missed", 3.5),
+            "small/h2c-keep-alive/p99_9": ("missed", 12),
+            "small/h2c-keep-alive/oom_kills": ("met", 0),
+            "small/h2c-keep-alive/peak_memory": ("met", 21.0),
+            "small/h2-keep-alive/p99": ("not measured", None),
+            "small/h2-keep-alive/p99_9": ("not measured", None),
+            "small/h2-keep-alive/oom_kills": ("not measured", None),
+            "small/h2-keep-alive/peak_memory": ("not measured", None),
+            "small/idle_rss": ("met", 16.0),
+        })
+        self.assertEqual(verdicts["small/h2-keep-alive/p99"][2], "the run did not run h2-keep-alive@small")
+        # An OOM kill misses the targets of its own case's step alone.
+        verdicts = checked(self, SEVERAL, steps=[step_measured(),
+                                                 step_measured(case_name="h2-keep-alive", oom_kills=1)])
+        self.assertEqual({target_id: verdict[0] for target_id, verdict in verdicts.items()
+                          if target_id.endswith("/p99")},
+                         {"small/http-keep-alive/p99": "met", "small/h2c-keep-alive/p99": "not measured",
+                          "small/h2-keep-alive/p99": "missed"})
+
 
 def check_targets_command(*args):
     """Runs `bench.py check-targets` with `args`: its exit status, stdout and
@@ -1708,6 +1740,19 @@ class CheckTargets(unittest.TestCase):
         self.assertIn("| small (250m CPU, 512Mi) | p99 latency, http-keep-alive at 1,000 requests/s | 1.5 ms | 1.9 ms "
                       "| missed |", stdout)
         self.assertEqual(snapshot(out), before)
+
+    def test_a_miss_on_one_case_of_an_entry_that_names_several_is_shown_and_fails_the_check(self):
+        # h2-keep-alive's p99 of 3.4 ms misses the 3 ms that
+        # http-keep-alive's 1.9 ms meets.
+        out = self.results(steps=[step_measured(), step_measured(case_name="h2-keep-alive", p99=3.4)])
+        status, stdout, stderr = check_targets_command(out, "--targets", targets_file(self, [SEVERAL]))
+        self.assertEqual(status, 1, stderr)
+        verdicts = {row["Target"]: row["Verdict"] for row in markdown_table(stdout.splitlines())}
+        self.assertEqual(verdicts["p99 latency, http-keep-alive at 1,000 requests/s"], "met")
+        self.assertEqual(verdicts["p99 latency, h2-keep-alive at 1,000 requests/s"], "missed")
+        self.assertEqual(verdicts["p99 latency, h2c-keep-alive at 1,000 requests/s"],
+                         "not measured: the run did not run h2c-keep-alive@small")
+        self.assertEqual(len(verdicts), 13)
 
     def test_the_targets_of_the_architecture_the_run_ran_on_are_checked_and_none_for_another(self):
         # amd64's p99 is at most 1.5 ms, which the run's 1.9 ms misses;
