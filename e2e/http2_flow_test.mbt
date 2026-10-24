@@ -23,9 +23,14 @@ fn numbered(lines : Int32) -> String {
 let big_body : String = numbered(18_750)
 
 ///|
+/// The body of `GET /medium`: 65,544 octets, nine more than the connection
+/// window a client starts with.
+let medium_body : String = numbered(8193)
+
+///|
 /// Mock `m`, for `localhost`, with Stubs that answer `GET /big` with
-/// `big_body`, `GET /item` with a short body, and `GET /slow-big` with
-/// `big_body` after a delay of 300 ms.
+/// `big_body`, `GET /medium` with `medium_body`, `GET /item` with a short
+/// body, and `GET /slow-big` with `big_body` after a delay of 300 ms.
 fn flow_definitions() -> Array[(String, String)] {
   [
     (
@@ -35,6 +40,8 @@ fn flow_definitions() -> Array[(String, String)] {
         #|  "stubs": [
         #|    { "id": "big", "mock": "m", "request": { "path": "/big" },
         #|      "response": { "status": 200, "bodyFile": "big.txt" } },
+        #|    { "id": "medium", "mock": "m", "request": { "path": "/medium" },
+        #|      "response": { "status": 200, "bodyFile": "medium.txt" } },
         #|    { "id": "item", "mock": "m", "request": { "path": "/item" },
         #|      "response": { "status": 200, "body": "hello" } },
         #|    { "id": "slow-big", "mock": "m", "request": { "path": "/slow-big" },
@@ -43,6 +50,7 @@ fn flow_definitions() -> Array[(String, String)] {
       ),
     ),
     ("files/big.txt", big_body),
+    ("files/medium.txt", medium_body),
   ]
 }
 
@@ -73,6 +81,244 @@ async test "h2c: a response body larger than both of the client's windows goes o
           #|content-length: 150000
           #|
           #|body: 150000 octets, as the Stub gives it: true
+          #|/big: stub "big", status 200
+        ),
+      )
+    })
+  })
+}
+
+///|
+/// Reads frames until `stop` holds for one, or smock ends the connection,
+/// and shows each as `render_frame` does, one per line, except that DATA
+/// frames in a row on one stream show as one line: how many there are,
+/// their octets, and whether the last ends the stream.
+async fn RawH2::runs_until(
+  self : RawH2,
+  stop : (@http2.Frame) -> Bool,
+) -> String {
+  let out = []
+  // The stream, frame count and octets of the DATA frames in a row so far.
+  let mut run = (0, 0, 0)
+  let flush = (end : Bool) => {
+    let (stream, frames, octets) = run
+    if frames > 0 {
+      let ended = if end { " END_STREAM" } else { "" }
+      out.push("DATA \{stream}\{ended}: \{frames} frames, \{octets} octets")
+    }
+    run = (0, 0, 0)
+  }
+  for ;; {
+    guard self.read_frame() is Some(frame) else {
+      flush(false)
+      out.push("closed")
+      break
+    }
+    match frame {
+      Data(stream_id~, data~, end_stream~, ..) => {
+        if run.0 != stream_id {
+          flush(false)
+        }
+        run = (stream_id, run.1 + 1, run.2 + data.length())
+        if end_stream {
+          flush(true)
+        }
+      }
+      _ => {
+        flush(false)
+        out.push(self.render_frame(frame))
+      }
+    }
+    if stop(frame) {
+      flush(false)
+      break
+    }
+  }
+  out.join("\n")
+}
+
+///|
+/// Whether `frame` ends `stream`: DATA or HEADERS with END_STREAM, or
+/// RST_STREAM.
+fn ends_stream(frame : @http2.Frame, stream : Int32) -> Bool {
+  match frame {
+    Data(stream_id~, end_stream=true, ..)
+    | Headers(stream_id~, end_stream=true, ..)
+    | RstStream(stream_id~, ..) => stream_id == stream
+    _ => false
+  }
+}
+
+///|
+/// A PING from the client, whose acknowledgement shows where smock's
+/// answers to the frames before it end.
+let fence : @http2.Frame = Ping(
+  payload=b"\x00\x00\x00\x00\x00\x00\x00\x01",
+  ack=false,
+)
+
+///|
+async test "h2c: a client SETTINGS frame that raises the initial window resumes a stream waiting for window, as h2spec's http2/6.9.2/1 checks" {
+  with_definitions(flow_definitions(), dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      let out = []
+      // A window of 0: the HEADERS go out, and the body waits.
+      raw.send([
+        Settings(params=[(@http2.settings_initial_window_size, 0)], ack=false),
+        raw.get(1, "/item"),
+        fence,
+      ])
+      out.push(raw.frames_until_ping_ack())
+      out.push("--- the initial window raised to 3")
+      raw.send([
+        Settings(params=[(@http2.settings_initial_window_size, 3)], ack=false),
+      ])
+      out.push(raw.runs_until(frame => frame is Data(..)))
+      out.push("--- the initial window raised to 100")
+      raw.send([
+        Settings(params=[(@http2.settings_initial_window_size, 100)], ack=false),
+      ])
+      out.push(raw.runs_until(frame => ends_stream(frame, 1)))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, date: <now>, content-length: 5]
+          #|--- the initial window raised to 3
+          #|SETTINGS ACK
+          #|DATA 1: 1 frames, 3 octets
+          #|--- the initial window raised to 100
+          #|SETTINGS ACK
+          #|DATA 1 END_STREAM: 1 frames, 2 octets
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: a client that grants window one octet at a time, on the stream or on the connection, gets one small DATA frame for each grant, and its whole response" {
+  with_definitions(flow_definitions(), dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      let out = []
+      // On the stream: a window of 1 for "hello".
+      raw.send([
+        Settings(params=[(@http2.settings_initial_window_size, 1)], ack=false),
+        raw.get(1, "/item"),
+      ])
+      let body = @buffer.Buffer()
+      let mut frames = 0
+      while raw.read_frame() is Some(frame) {
+        if frame is Data(data~, end_stream~, ..) {
+          frames += 1
+          body.write_bytes(data)
+          out.push(raw.render_frame(frame))
+          if end_stream {
+            break
+          }
+          raw.send([WindowUpdate(stream_id=1, increment=1)])
+        }
+      }
+      out.push(
+        "on the stream: \{frames} DATA frames, body \{@utf8.decode_lossy(body.to_bytes())}",
+      )
+      // On the connection: the stream's window wide open, and a body nine
+      // octets larger than the connection window.
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      raw.send([
+        Settings(
+          params=[(@http2.settings_initial_window_size, 0x7fffffff)],
+          ack=false,
+        ),
+        raw.get(1, "/medium"),
+      ])
+      let body = @buffer.Buffer()
+      let granted = []
+      while raw.read_frame() is Some(frame) {
+        if frame is Data(data~, end_stream~, ..) {
+          body.write_bytes(data)
+          if body.length() > 65535 {
+            granted.push(raw.render_frame(frame))
+          }
+          if end_stream {
+            break
+          }
+          if body.length() >= 65535 {
+            raw.send([WindowUpdate(stream_id=0, increment=1)])
+          }
+        }
+      }
+      out.push("---")
+      out.append(granted)
+      out.push(
+        "on the connection: \{granted.length()} DATA frames after the first 65535 octets, body as the Stub gives it: \{@utf8.decode_lossy(body.to_bytes()) == medium_body}",
+      )
+      inspect(
+        out.join("\n"),
+        content=(
+          #|DATA 1 1 octets
+          #|DATA 1 1 octets
+          #|DATA 1 1 octets
+          #|DATA 1 1 octets
+          #|DATA 1 END_STREAM 1 octets
+          #|on the stream: 5 DATA frames, body hello
+          #|---
+          #|DATA 1 1 octets
+          #|DATA 1 1 octets
+          #|DATA 1 1 octets
+          #|DATA 1 1 octets
+          #|DATA 1 1 octets
+          #|DATA 1 1 octets
+          #|DATA 1 1 octets
+          #|DATA 1 1 octets
+          #|DATA 1 END_STREAM 1 octets
+          #|on the connection: 9 DATA frames after the first 65535 octets, body as the Stub gives it: true
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: two bodies larger than the windows, on one connection, both arrive in full" {
+  with_definitions(flow_definitions(), dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let first = client.send("GET", "/big", authority="localhost")
+      let second = client.send("GET", "/big", authority="localhost")
+      let second_response = client.response(second)
+      let first_response = client.response(first)
+      inspect(
+        [
+          first_response.checked(big_body),
+          "---",
+          second_response.checked(big_body),
+          "---",
+          ..smock.journal_once(2, within=1000),
+        ].join("\n"),
+        content=(
+          #|200
+          #|accept-ranges: bytes
+          #|date: <now>
+          #|content-length: 150000
+          #|
+          #|body: 150000 octets, as the Stub gives it: true
+          #|---
+          #|200
+          #|accept-ranges: bytes
+          #|date: <now>
+          #|content-length: 150000
+          #|
+          #|body: 150000 octets, as the Stub gives it: true
+          #|---
+          #|/big: stub "big", status 200
           #|/big: stub "big", status 200
         ),
       )
