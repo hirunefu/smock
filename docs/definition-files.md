@@ -87,7 +87,12 @@ mocks:
 
 - A request's Host is the authority of an absolute-form target, such as
   `GET http://orders.example.com/orders/1 HTTP/1.1`, or else its `Host`
-  header.
+  header. Over [HTTP/2](http2.md), it is `:authority`, or else the `host`
+  field.
+- No `host` field is added for `:authority`: `header.host` and a `host`
+  header condition see only a `host` field the client sent. An HTTP/2
+  client that gives its Host by `:authority` alone sends none, so tell
+  Hosts apart with each Mock's `hosts`.
 - Hosts are exact names, with no wildcards. They are compared
   case-insensitively, without the port and without a trailing dot, so
   `Users.Example.com.:8080` is the Host `users.example.com`. An IPv6 address
@@ -99,8 +104,8 @@ mocks:
 - Each Host belongs to at most one Mock. The same Host repeated within one
   Mock is fine.
 
-A request whose Host no Mock lists, or that has none (HTTP/1.0 allows that),
-goes to the Default Mock:
+A request whose Host no Mock lists, or that has none (HTTP/1.0 and HTTP/2
+allow that), goes to the Default Mock:
 
 - the Mock marked `default: true`; at most one Mock may be marked;
 - otherwise the only Mock, when the definition set declares exactly one, so
@@ -420,7 +425,10 @@ that has no `debug` cookie with the value `1`.
 smock reads cookies from the `Cookie` header like this:
 
 - Every `Cookie` field of the request is read, so cookies that a client or
-  a proxy splits over several lines still match.
+  a proxy splits over several lines still match. Over
+  [HTTP/2](http2.md#what-a-stub-sees), a request's `cookie` fields are
+  first joined into one, so `header.cookie` and a `headers` condition on
+  `cookie` see the one line an HTTP/1.1 client sends.
 - Each field is split on `;`, and each part is trimmed of spaces and tabs.
 - The first `=` of a part separates the name from the value, so `a=b=c` is
   the cookie `a` with the value `b=c`. A part without `=` is skipped.

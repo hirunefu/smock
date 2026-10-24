@@ -47,8 +47,11 @@ of each GitHub release include its section
   HTTP/2 preface, as `curl --http2-prior-knowledge` sends it, is served over
   HTTP/2, by the same Mocks and Stubs, and any other is HTTP/1.1, as before.
   HTTP/2 comes from moonbitstack/moonhttp 0.14.0
-  ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)). See
-  [docs/http2.md](docs/http2.md).
+  ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)). Each stream is
+  a request of its own, with the Host from `:authority`, else from the
+  `host` field, and its Session from its own `baggage`. Several `cookie`
+  fields are joined into one, so conditions see what an HTTP/1.1 client's
+  one Cookie line gives. See [docs/http2.md](docs/http2.md).
 
 ### Changed
 
