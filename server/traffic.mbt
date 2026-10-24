@@ -68,18 +68,18 @@ fn Traffic::register(metrics : @metrics.Registry) -> Traffic {
   {
     requests: metrics.counter(
       "smock_requests_total",
-      help="Requests served on the plain and TLS ports, by the Mock that answered (mock=\"\" for none) and the Stub that matched: its ID for a Stub from a Definition file, stub=\"ephemeral\" for every Ephemeral Stub, stub=\"\" for none. Requests the HTTP/1.1 codec rejects (400, 413, 431, 501, 505) count with mock=\"\" and stub=\"\".",
+      help="Requests served on the plain and TLS ports, by the Mock that answered (mock=\"\" for none) and the Stub that matched: its ID for a Stub from a Definition file, stub=\"ephemeral\" for every Ephemeral Stub, stub=\"\" for none. A request the protocol layer rejects (HTTP/1.1: 400, 413, 431, 501, 505; HTTP/2: 400, 413, 431 on its stream) counts with mock=\"\" and stub=\"\".",
       labels=["mock", "stub"],
     ),
     latency: metrics.histogram(
       "smock_request_duration_seconds",
-      help="Time from a request being read in full (for a request the HTTP/1.1 codec rejects, from the read that brought what it rejects) to the last byte of its response being written, injected delays and Server-Sent Event streams included, in seconds, labelled as smock_requests_total.",
+      help="Time from a request being read in full to the last byte of its response being written, injected delays and Server-Sent Event streams included, in seconds, labelled as smock_requests_total. For a request the protocol layer rejects (HTTP/1.1: 400, 413, 431, 501, 505; HTTP/2: 400, 413, 431 on its stream), the time runs from the read that brought what it rejects.",
       labels=["mock", "stub"],
       buckets=latency_buckets,
     ),
     unmatched: metrics.counter(
       "smock_unmatched_requests_total",
-      help="Requests served on the plain and TLS ports that matched no Stub, by the Mock that answered them (mock=\"\" for a Host no Mock answers). Requests the HTTP/1.1 codec rejects are not among them.",
+      help="Requests served on the plain and TLS ports that matched no Stub, by the Mock that answered them (mock=\"\" for a Host no Mock answers). A request the protocol layer rejects (HTTP/1.1: 400, 413, 431, 501, 505; HTTP/2: 400, 413, 431 on its stream) is not among them.",
       labels=["mock"],
     ),
     series: Map([]),
@@ -119,9 +119,10 @@ fn Traffic::record(
 }
 
 ///|
-/// Counts bytes the HTTP/1.1 codec rejected as a request, with `mock=""`
-/// and `stub=""`, which took `seconds` from the read that brought them to
-/// the last byte of the error response. They are not an unmatched request:
+/// Counts a request the protocol layer rejected, with `mock=""` and
+/// `stub=""`, which took `seconds` from the read that brought it to the
+/// last byte of the error response: bytes the HTTP/1.1 codec rejected, or
+/// an HTTP/2 stream refused with a status. It is not an unmatched request:
 /// no Mock or Stub was tried.
 fn Traffic::record_rejected(self : Traffic, seconds : Double) -> Unit {
   self.count("", "", seconds)
