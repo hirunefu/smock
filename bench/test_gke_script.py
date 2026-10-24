@@ -791,6 +791,16 @@ class BeforeAnything(Script):
         self.assertIn("Nothing was made. To make these and run the benchmark, run it again with --yes.", output)
         self.assertEqual(self.changing_calls(), [])
 
+    def test_the_whole_autopilot_plan_fits_in_the_default_time_limit(self):
+        # Its four cases, the HTTP/2 ones included: about 74 minutes from
+        # the cluster's creation to its deletion, and the 10 minutes before
+        # the time limit that the estimate keeps.
+        status, output = self.run_script("--plan", BENCH / "plan-autopilot.json")
+        self.assertEqual(status, 0, output)
+        self.assertRegex(output, r"Expected: about \$0\.\d\d, the cluster existing for about 7\d minutes\.")
+        self.assertIn("if it ran until the time limit (100 minutes)", output)
+        self.assertEqual(self.changing_calls(), [])
+
     def test_a_time_limit_without_its_unit_or_past_four_hours_is_refused(self):
         # 4800 meant as seconds would be 80 hours as minutes.
         for limit, expected in (("4800", "with their unit"), ("241m", "at most 240m"), ("14401s", "at most 240m")):
@@ -1035,12 +1045,12 @@ class Run(Script):
             if "status" in " ".join(call["argv"]):
                 self.assertIn("--region=us-central1", call["argv"])
         self.assertTrue(self.made(["compute", "instances", "list"]))
-        # smock runs in a Pod that ends by itself by the time limit (80
+        # smock runs in a Pod that ends by itself by the time limit (100
         # minutes by default), as the load generator's Job does.
         [apply] = [call for call in self.made(["apply"]) if call["argv"][-1].endswith("smock.json")]
         [pod] = [item for item in apply["document"]["items"] if item["kind"] == "Pod"]
-        self.assertGreater(pod["spec"]["activeDeadlineSeconds"], 70 * 60)
-        self.assertLessEqual(pod["spec"]["activeDeadlineSeconds"], 80 * 60)
+        self.assertGreater(pod["spec"]["activeDeadlineSeconds"], 90 * 60)
+        self.assertLessEqual(pod["spec"]["activeDeadlineSeconds"], 100 * 60)
         self.assertEqual(self.made(["wait"])[0]["words"][1:], ["pod/smock-small"])
 
     def test_kubectl_uses_its_own_kubeconfig_with_an_access_token_deleted_at_the_end(self):

@@ -170,10 +170,11 @@ class Manifests(Helper):
         [pod] = objects(rendered, "Pod")
         [job] = objects(rendered, "Job")
         self.assertEqual(job["spec"]["backoffLimit"], 0)
-        # 8 steps of plain HTTP and 6 of TLS, each of 2 + 20 + 3 s, with a
-        # pause of 2 s between them: the deadline leaves room for each
-        # step's analysis and the start, but not for a run left behind.
-        load_s = 14 * 25 + 13 * 2
+        # 8 steps of plain HTTP, 6 of TLS, 8 of h2c and 8 of h2, each of 2 +
+        # 20 + 3 s, with a pause of 2 s between them: the deadline leaves
+        # room for each step's analysis and the start, but not for a run
+        # left behind.
+        load_s = 30 * 25 + 29 * 2
         self.assertGreaterEqual(job["spec"]["activeDeadlineSeconds"], load_s + 300)
         self.assertLessEqual(job["spec"]["activeDeadlineSeconds"], load_s + 900)
         spec = pod_spec(job)
@@ -185,7 +186,8 @@ class Manifests(Helper):
         self.assertEqual(container["image"], GENERATOR_IMAGE)
         self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
         env = {variable["name"]: variable["value"] for variable in container["env"]}
-        self.assertEqual((env["PROFILE"], env["CASES"]), ("chart-default", "http-keep-alive,https-keep-alive"))
+        self.assertEqual((env["PROFILE"], env["CASES"]),
+                         ("chart-default", "http-keep-alive,https-keep-alive,h2c-keep-alive,h2-keep-alive"))
 
     def test_the_load_generator_has_6_vcpus_on_amd64_and_4_on_arm64_and_fits_an_8_vcpu_node(self):
         # An x86 vCPU is a hyperthread: 4 of them fell behind the schedule
@@ -606,7 +608,7 @@ class Plan(Helper):
         self.assertEqual(status, 0, stderr)
         lines = [line.split() for line in stdout.splitlines()]
         self.assertEqual([line[:2] for line in lines],
-                         [["autopilot-burst-min", "14"], ["autopilot-min", "14"], ["chart-default", "14"]])
+                         [["autopilot-burst-min", "30"], ["autopilot-min", "30"], ["chart-default", "30"]])
         deadlines = {line[0]: int(line[2]) for line in lines}
         [job] = objects(self.manifests("chart-default"), "Job")
         self.assertEqual(deadlines["chart-default"], job["spec"]["activeDeadlineSeconds"])
@@ -1351,7 +1353,7 @@ class Estimate(Helper):
                       *args)
 
     def test_it_states_the_expected_cost_and_the_most_a_run_cut_off_at_the_time_limit_costs(self):
-        status, stdout, stderr = self.estimate(time_limit_s=3600)
+        status, stdout, stderr = self.estimate(time_limit_s=6000)
         self.assertEqual(status, 0, stderr)
         self.assertIn("Cost estimate for arm64 Pods (us-central1, on-demand prices of 2026-10-16, before tax", stdout)
         self.assertRegex(stdout, r"Expected: about \$0\.\d\d, the cluster existing for about \d+ minutes\.")
@@ -1359,8 +1361,8 @@ class Estimate(Helper):
         # minutes the deletion takes: the cluster's fee ($0.10 an hour), the
         # load generator (4 vCPU and 4Gi at $0.0445 and $0.0049225 an hour,
         # 2Gi of ephemeral storage at $0.0001389) and the largest smock (1
-        # vCPU, 1Gi, 64Mi), $0.3474 an hour for 65 minutes.
-        self.assertIn("At most: $0.38, if it ran until the time limit (60 minutes)", stdout)
+        # vCPU, 1Gi, 64Mi), $0.3474 an hour for 105 minutes.
+        self.assertIn("At most: $0.61, if it ran until the time limit (100 minutes)", stdout)
         self.assertIn("Arm Pods are priced as x86 ones: autopilot-arm runs them on Autopilot's container-optimized "
                       "compute platform, which the pricing page bills at one rate for both architectures.", stdout)
         self.assertNotIn("Scale-Out", stdout)
@@ -1369,14 +1371,14 @@ class Estimate(Helper):
                       "$0.10 an hour", stdout)
 
     def test_x86_pods_in_tokyo_are_estimated_at_tokyos_prices(self):
-        status, stdout, stderr = self.estimate(region="asia-northeast1", arch="amd64", time_limit_s=3600)
+        status, stdout, stderr = self.estimate(region="asia-northeast1", arch="amd64", time_limit_s=6000)
         self.assertEqual(status, 0, stderr)
         self.assertIn("Cost estimate for amd64 (x86) Pods (asia-northeast1, on-demand prices of 2026-10-16", stdout)
         # The fee ($0.10 an hour), the load generator on amd64 (6 vCPU and
         # 6Gi at $0.0571 and $0.0063215 an hour, 2Gi of ephemeral storage at
         # $0.0001784) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.5443 an
-        # hour for 65 minutes.
-        self.assertIn("At most: $0.59, if it ran until the time limit (60 minutes)", stdout)
+        # hour for 105 minutes.
+        self.assertIn("At most: $0.95, if it ran until the time limit (100 minutes)", stdout)
         self.assertIn("The load generator's Pod (6 vCPU, 6Gi)", stdout)
         self.assertNotIn("Arm", stdout)
 
@@ -1384,33 +1386,33 @@ class Estimate(Helper):
         # amd64 in us-central1: the fee, the load generator (6 vCPU and 6Gi
         # at $0.0445 and $0.0049225 an hour, 2Gi of ephemeral storage at
         # $0.0001389) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.4462 an
-        # hour for 65 minutes, as before Arm Pods were priced apart.
-        status, stdout, stderr = self.estimate(arch="amd64", time_limit_s=3600)
+        # hour for 105 minutes, as before Arm Pods were priced apart.
+        status, stdout, stderr = self.estimate(arch="amd64", time_limit_s=6000)
         self.assertEqual(status, 0, stderr)
         self.assertIn("Cost estimate for amd64 (x86) Pods (us-central1, on-demand prices of 2026-10-16", stdout)
-        self.assertIn("At most: $0.48, if it ran until the time limit (60 minutes)", stdout)
+        self.assertIn("At most: $0.78, if it ran until the time limit (100 minutes)", stdout)
         self.assertNotIn("Arm", stdout)
         # The same run on arm64 costs less only for its smaller load
         # generator (4 vCPU, 4Gi): $0.3474 an hour.
-        _, stdout, _ = self.estimate(arch="arm64", time_limit_s=3600)
-        self.assertIn("At most: $0.38, if it ran until the time limit (60 minutes)", stdout)
+        _, stdout, _ = self.estimate(arch="arm64", time_limit_s=6000)
+        self.assertIn("At most: $0.61, if it ran until the time limit (100 minutes)", stdout)
         # Every region with Arm Pods at its own rates, such as Singapore's:
         # the load generator at $0.0549 and $0.0060729 an hour, ephemeral
         # storage at $0.0001713, and the fee, $0.4052 an hour.
         for region in ("us-central1", "us-east1", "us-west1", "europe-west1", "europe-west2", "europe-west4",
                        "asia-southeast1"):
-            _, stdout, _ = self.estimate(region=region, arch="arm64", time_limit_s=3600)
+            _, stdout, _ = self.estimate(region=region, arch="arm64", time_limit_s=6000)
             self.assertIn(f"Cost estimate for arm64 Pods ({region}, on-demand prices of 2026-10-16", stdout)
             if region == "asia-southeast1":
-                self.assertIn("At most: $0.44, if it ran until the time limit (60 minutes)", stdout)
+                self.assertIn("At most: $0.71, if it ran until the time limit (100 minutes)", stdout)
 
     def test_a_region_without_prices_here_is_estimated_from_us_central1s_with_a_margin(self):
         # An amd64 run in Frankfurt: us-central1's Pod prices plus 30% and
-        # the fee, $0.5501 an hour for 65 minutes.
-        status, stdout, _ = self.estimate(region="europe-west3", arch="amd64", time_limit_s=3600)
+        # the fee, $0.5501 an hour for 105 minutes.
+        status, stdout, _ = self.estimate(region="europe-west3", arch="amd64", time_limit_s=6000)
         self.assertEqual(status, 0)
         self.assertIn("europe-west3: us-central1's prices plus 30%", stdout)
-        self.assertIn("At most: $0.60, if it ran until the time limit (60 minutes)", stdout)
+        self.assertIn("At most: $0.96, if it ran until the time limit (100 minutes)", stdout)
 
     def test_a_run_longer_than_the_time_limit_is_refused(self):
         status, stdout, stderr = self.estimate(time_limit_s=1200)

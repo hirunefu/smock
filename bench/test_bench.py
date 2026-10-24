@@ -1192,6 +1192,24 @@ class AutopilotProfiles(unittest.TestCase):
         for target in idle_targets:
             self.assertIn(target["verdict"], ("met", "missed"), target["id"])
 
+    def test_the_http2_cases_send_the_mix_over_h2c_and_over_h2_on_keep_alive_connections(self):
+        out = bench(self, "--plan", self.PLAN, "--cases", "h2c-keep-alive,h2-keep-alive", "--profiles",
+                    "chart-default", "--rate", "100", *SHORT)
+        cases = {c["case"]: c for c in read(out, "summary.json")["cases"]}
+        self.assertEqual({name: (c["protocol"], c["connection"], c["connections"]) for name, c in cases.items()}, {
+            "h2c-keep-alive": ("h2c", "keep-alive", 64),
+            "h2-keep-alive": ("h2", "keep-alive", 64),
+        })
+        for name, result in cases.items():
+            # Every request got the status the mix expects, h2 over TLS
+            # included, which oha offers alone by ALPN.
+            self.assertEqual(result["errors"], 0, name)
+            self.assertEqual(result["requests"]["ok"], result["requests"]["scheduled"], name)
+            self.assertGreaterEqual(result["requests"]["ok"], 390, name)
+            # Over the load generator's few connections.
+            self.assertLess(result["tcp_passive_opens"], result["connections"] + result["requests"]["scheduled"] / 4,
+                            name)
+
     def test_each_case_climbs_a_ladder_scaled_to_the_cpu_limit_through_the_rate_of_each_profiles_targets(self):
         plan = read(BENCH, "plan-autopilot.json")
         profiles = {profile["name"]: profile for profile in plan["profiles"]}
@@ -1201,10 +1219,18 @@ class AutopilotProfiles(unittest.TestCase):
             "chart-default": ("1", "1Gi"),
         })
         cases = {c["name"]: c for c in plan["cases"]}
-        self.assertEqual({name: (c["protocol"], c["connection"]) for name, c in cases.items()}, {
-            "http-keep-alive": ("http", "keep-alive"),
-            "https-keep-alive": ("https", "keep-alive"),
+        self.assertEqual({name: (c["protocol"], c["connection"], c["connections"]) for name, c in cases.items()}, {
+            "http-keep-alive": ("http", "keep-alive", 64),
+            "https-keep-alive": ("https", "keep-alive", 64),
+            "h2c-keep-alive": ("h2c", "keep-alive", 64),
+            "h2-keep-alive": ("h2", "keep-alive", 64),
         })
+        # The HTTP/2 cases differ from http-keep-alive in the protocol
+        # alone: its ladders included.
+        for name in ("h2c-keep-alive", "h2-keep-alive"):
+            self.assertEqual({key: value for key, value in cases[name].items() if key not in ("name", "protocol")},
+                             {key: value for key, value in cases["http-keep-alive"].items()
+                              if key not in ("name", "protocol")}, name)
         for case in cases.values():
             for name, rates in case["rates"].items():
                 self.assertEqual(rates, sorted(rates), (case["name"], name))
