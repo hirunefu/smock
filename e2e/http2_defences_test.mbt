@@ -202,3 +202,114 @@ async test "h2c: a client that sends a PING after each DATA frame it receives is
     )
   })
 }
+
+///|
+/// Opens a connection, sends the frames `setup` makes, and reads smock's
+/// answers until `ready` holds for one; then sends the frames `flood`
+/// makes, in one write, and shows, after `label`, what smock sends until
+/// it ends the connection, then what a fresh connection gets. The client's
+/// SETTINGS is one frame that does no work, so a flood that comes to 100
+/// more passes the bound with its last frame.
+async fn Smock::flood(
+  self : Smock,
+  label : String,
+  setup~ : (RawH2) -> Array[@http2.Frame] = _ => [],
+  ready~ : (@http2.Frame) -> Bool = frame => frame is Settings(ack=true, ..),
+  flood : (RawH2) -> Array[@http2.Frame],
+) -> String {
+  let raw = self.raw_h2()
+  defer raw.close()
+  raw.send(setup(raw))
+  let before = raw.frames_until(@async.now(), frame => {
+    ready(frame) || is_goaway(frame)
+  })
+  raw.send(flood(raw))
+  [
+    "\{label}:",
+    runs(before.shown),
+    "flood:",
+    raw.runs_until_closed(),
+    self.fresh(),
+  ].join("\n")
+}
+
+///|
+async test "h2c: floods of PRIORITY frames, frames of unknown types, PING acknowledgements and SETTINGS acknowledgements past those smock is owed each get GOAWAY ENHANCE_YOUR_CALM and one log line, and a fresh connection is served" {
+  with_definitions([("faults.json", faults)], dir => {
+    let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let out = []
+      out.push(
+        smock.flood("PRIORITY on a stream not yet used", _ => {
+          times(
+            Priority(stream_id=3, priority={
+              exclusive: false,
+              stream_dependency: 0,
+              weight: 16,
+            }),
+            100,
+          )
+        }),
+      )
+      out.push(
+        smock.flood("frames of an unknown type", _ => {
+          times(Unknown(ftype=0xfa, flags=0, stream_id=0, payload=b"x"), 100)
+        }),
+      )
+      out.push(
+        smock.flood("PING acknowledgements, while smock sent no PING", _ => {
+          times(
+            Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x07", ack=true),
+            100,
+          )
+        }),
+      )
+      out.push(
+        smock.flood("SETTINGS acknowledgements, while smock is owed one", _ => {
+          times(Settings(params=[], ack=true), 101)
+        }),
+      )
+      inspect(
+        out.join("\n"),
+        content=(
+          #|PRIORITY on a stream not yet used:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|flood:
+          #|GOAWAY last=0 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+          #|frames of an unknown type:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|flood:
+          #|GOAWAY last=0 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+          #|PING acknowledgements, while smock sent no PING:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|flood:
+          #|GOAWAY last=0 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+          #|SETTINGS acknowledgements, while smock is owed one:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|flood:
+          #|GOAWAY last=0 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+        ),
+      )
+    })
+    inspect(
+      defence_entries(stopped.logs),
+      content=(
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PRIORITY"}
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"unknown type"}
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING acknowledgement"}
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"SETTINGS acknowledgement"}
+      ),
+    )
+  })
+}

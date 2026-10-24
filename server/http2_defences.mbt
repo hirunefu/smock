@@ -23,12 +23,18 @@ priv struct NoWorkFrames {
   /// Once `times` is full, the index of its oldest time, which the next
   /// frame counted replaces.
   mut oldest : Int32
+  /// How many SETTINGS acknowledgements smock is owed: one for the SETTINGS
+  /// frame it opens the connection with, until it comes.
+  mut settings_owed : Int32
+  /// How many PING acknowledgements smock is owed: one for each PING it
+  /// sends, until it comes. A PING smock sends adds one.
+  mut pings_owed : Int32
 }
 
 ///|
 /// The count of a connection that has had no frame yet.
 fn NoWorkFrames::new() -> NoWorkFrames {
-  { times: [], oldest: 0, }
+  { times: [], oldest: 0, settings_owed: 1, pings_owed: 0, }
 }
 
 ///|
@@ -52,27 +58,53 @@ fn NoWorkFrames::count(self : NoWorkFrames, at : Int64) -> Bool {
 /// What kind of frame that does no work the frame whose header is `head`
 /// is, as the log names it, or `None` for a frame that does some work:
 ///
+/// - a SETTINGS frame that is not an acknowledgement, and an
+///   acknowledgement that smock is not owed;
 /// - a PING that asks for an acknowledgement, when smock has sent no
 ///   HEADERS or DATA since the client's last PING. gRPC counts PINGs so,
 ///   so that a client that sends one after each DATA frame it receives, to
-///   estimate its bandwidth, does no harm while answers stream to it.
+///   estimate its bandwidth, does no harm while answers stream to it;
+/// - a PING acknowledgement that answers no PING smock sent;
+/// - a PRIORITY frame, since smock ignores priority signals;
+/// - a frame of a type RFC 9113 does not define, which is ignored.
 fn H2Connection::no_work(
   self : H2Connection,
   head : @http2.FrameHeader,
   _frame : BytesView,
 ) -> String? {
+  let ftype = head.ftype
   let ack = (head.flags & @http2.flag_ack) != 0
-  if head.ftype == @http2.frame_ping && !ack {
-    if self.writer.responded {
-      self.writer.responded = false
-      return None
+  let counted = self.no_work_frames
+  if ftype == @http2.frame_settings {
+    if !ack {
+      Some("SETTINGS")
+    } else if counted.settings_owed > 0 {
+      counted.settings_owed -= 1
+      None
+    } else {
+      Some("SETTINGS acknowledgement")
     }
-    return Some("PING")
+  } else if ftype == @http2.frame_ping {
+    if ack {
+      if counted.pings_owed > 0 {
+        counted.pings_owed -= 1
+        None
+      } else {
+        Some("PING acknowledgement")
+      }
+    } else if self.writer.responded {
+      self.writer.responded = false
+      None
+    } else {
+      Some("PING")
+    }
+  } else if ftype == @http2.frame_priority {
+    Some("PRIORITY")
+  } else if ftype > @http2.frame_continuation {
+    Some("unknown type")
+  } else {
+    None
   }
-  if head.ftype == @http2.frame_settings && !ack {
-    return Some("SETTINGS")
-  }
-  None
 }
 
 ///|
