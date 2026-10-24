@@ -320,3 +320,92 @@ async test "h2c: a 431 sent while the request still arrives is followed by RST_S
     })
   })
 }
+
+///|
+async test "h2c: a decoded header list over twice --header-size-limit, moonhttp's bound, gets RST_STREAM ENHANCE_YOUR_CALM from moonhttp, with no status, no Journal entry and no metric, while one at the bound gets 431 and a concurrent stream is answered" {
+  with_definitions([("files.json", hello_and_uploads)], dir => {
+    let args = ["--dir", dir, "--port", "0", "--header-size-limit", "1000"]
+    let _ = with_smock(args, smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      // Blocks are made in the order they are sent, as the client's and
+      // smock's HPACK tables must stay in step.
+      let upload = raw.block(request_fields("POST", "/upload", "localhost"))
+      let hello = request_fields("GET", "/hello", "localhost")
+      let at_bound = raw.block(padded(hello, 2000))
+      let over = raw.block(padded(hello, 2001))
+      let out = [
+        "Stream 1 uploads; stream 3 sends a list of 2000 octets, stream 5 one of 2001, each in a block under 2000 octets (\{at_bound.length() <= 2000 && over.length() <= 2000}):",
+      ]
+      raw.send([
+        headers_frame(1, upload, end_stream=false),
+        headers_frame(3, at_bound),
+        headers_frame(5, over),
+        Data(stream_id=1, data=b"abc", end_stream=true, padding=0),
+      ])
+      out.push(raw.frames_until_stream_ends(1))
+      out.push("Journal:")
+      out.push(journaled(smock))
+      out.push(smock.metric("smock_requests_total"))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|Stream 1 uploads; stream 3 sends a list of 2000 octets, stream 5 one of 2001, each in a block under 2000 octets (true):
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=2000]
+          #|SETTINGS ACK
+          #|HEADERS 3 END_STREAM END_HEADERS [:status: 431, date: <now>, content-length: 0]
+          #|RST_STREAM 5 ENHANCE_YOUR_CALM
+          #|HEADERS 1 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 1 END_STREAM 6 octets
+          #|Journal:
+          #|POST /upload
+          #|smock_requests_total{mock="",stub=""} 1
+          #|smock_requests_total{mock="files",stub="upload"} 1
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: a header block over twice --header-size-limit as received gets GOAWAY ENHANCE_YOUR_CALM, which ends every stream of the connection, and a fresh connection is served" {
+  with_definitions([("files.json", hello_and_uploads)], dir => {
+    let args = ["--dir", dir, "--port", "0", "--header-size-limit", "1000"]
+    let _ = with_smock(args, smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let upload = raw.block(request_fields("POST", "/upload", "localhost"))
+      let block = raw.block(
+        padded(request_fields("GET", "/hello", "localhost"), 3500),
+      )
+      let out = [
+        "Stream 1 uploads, then stream 3 sends a header block over 2000 octets (\{block.length() > 2000}):",
+      ]
+      raw.send([
+        headers_frame(1, upload, end_stream=false),
+        headers_frame(3, block),
+        Data(stream_id=1, data=b"abc", end_stream=true, padding=0),
+      ])
+      out.push(raw.frames_until_end())
+      let client = smock.h2c()
+      defer client.close()
+      let response = client.request("GET", "/hello", authority="localhost")
+      out.push("A fresh connection: \{response.line()}")
+      out.push("Journal:")
+      out.push(journaled(smock))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|Stream 1 uploads, then stream 3 sends a header block over 2000 octets (true):
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=2000]
+          #|SETTINGS ACK
+          #|GOAWAY last=1 ENHANCE_YOUR_CALM
+          #|closed
+          #|A fresh connection: 200 [smock-mock: files; via=default, date: <now>, content-length: 2] 2 octets, end
+          #|Journal:
+          #|GET /hello
+        ),
+      )
+    })
+  })
+}
