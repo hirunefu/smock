@@ -104,6 +104,9 @@ moves no Scenario. A stream refused with 400 counts in the request metrics
 with `mock=""` and `stub=""`, as a request the HTTP/1.1 codec rejects does.
 A stream that moonhttp resets is not counted.
 
+A body over `--body-limit` gets `413 Content Too Large` on its stream
+instead ([Request bodies](#request-bodies)).
+
 ## Responses
 
 A stream's response carries the Stub's status, headers and body, as an
@@ -175,6 +178,36 @@ defaults, against 10 MiB for an HTTP/1.1 connection. For a small Pod, lower
 either flag, such as `--http2-max-concurrent-streams 10` or a smaller
 `--body-limit`.
 
+### Request bodies
+
+`--body-limit` applies to each stream alone, as it applies to each request
+over HTTP/1.1.
+
+- A `content-length` over the limit gets `413 Content Too Large` at once,
+  before any of the body is read.
+- A body that passes the limit as it arrives gets 413 then. smock keeps
+  none of it past the limit.
+- When the client has not sent all of the request yet, the 413 is followed
+  by RST_STREAM `NO_ERROR`, which tells the client to stop sending the body
+  (RFC 9113, section 8.1). Frames that still arrive on that stream are
+  ignored. A request the client has sent in full gets the 413 alone.
+- The 413 has no body, and ends only its stream: the connection's other
+  streams go on. The stream never reaches the Mocks: it has no Journal
+  entry, and it moves no Scenario. It counts in the request metrics with
+  `mock=""` and `stub=""`, as a 400 does.
+
+smock hands back to the client's flow-control windows every DATA octet it
+takes, whether it keeps it or not. That covers the part of a body past the
+limit, and what still arrives on a stream smock has answered. So refused
+uploads do not use up the window that all the streams of a connection
+share, and the next upload on the connection goes through.
+
+A request whose HEADERS carry `expect: 100-continue` and do not end the
+stream gets `100 Continue` at once, as over HTTP/1.1, so a client that
+waits for it sends its body. One whose `content-length` is over the limit
+gets 413 instead. One with a `content-length` of 0 has no body to send, so
+it gets no `100 Continue`, as over HTTP/1.1.
+
 ### Timeouts
 
 Over HTTP/2, the read and idle timeouts work per stream and per connection.
@@ -214,6 +247,7 @@ connection.
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
 | Header fields with empty names (CVE-2019-9516) | moonhttp refuses an empty field name. | RST_STREAM `PROTOCOL_ERROR` on that stream. |
+| Request bodies | `--body-limit` per stream, under the concurrent-streams limit. | 413, then RST_STREAM `NO_ERROR` on that stream ([Request bodies](#request-bodies)). |
 
 ## Connection errors
 
