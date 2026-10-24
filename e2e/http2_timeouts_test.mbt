@@ -89,3 +89,255 @@ async test "h2c: a stream whose request does not arrive within the read timeout 
     )
   })
 }
+
+///|
+/// The log lines of a smock process started with `--port 0` and no
+/// certificate, that wrote nothing between starting and draining when it
+/// was stopped: timeouts are not logged.
+let startup_only_h2c : String =
+  #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+  #|{"level":"info","msg":"random seed","seed":"*"}
+  #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+  #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+  #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+  #|{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"*","names":["localhost","127.0.0.1","::1"]}
+  #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
+  #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*"}
+  #|{"level":"info","msg":"drain started","timeoutMs":20000}
+  #|{"level":"info","msg":"drain ended","connectionsCut":0}
+
+///|
+/// The frames smock sent, as `RawH2::frames_until` read them.
+struct Frames {
+  /// Each frame, as `render_frame` shows it.
+  shown : Array[String]
+  /// How they ended: `open` when a frame met the condition, else how
+  /// smock ended the connection, `a FIN` for a clean end of stream or `an
+  /// RST` for a reset.
+  how : String
+  /// When the last frame came or the connection ended, in milliseconds
+  /// after the time the caller gave.
+  end_ms : Int64
+}
+
+///|
+/// Reads frames from smock until one meets `stop`, or smock ends the
+/// connection, timing the last from `since`, and tells a FIN from a reset.
+async fn RawH2::frames_until(
+  self : RawH2,
+  since : Int64,
+  stop : (@http2.Frame) -> Bool,
+) -> Frames {
+  let shown = []
+  let result = @async.with_timeout_opt(patience_ms, () => {
+    for ;; {
+      let (frame, used) = @http2.decode(self.received) catch {
+        Incomplete => {
+          let more = past_spurious_eagain(() => self.tcp.read_some()) catch {
+            @os_error.OSError(_, ..) as err if is_reset(err) => break "an RST"
+            err => break "an error: \{err}"
+          }
+          guard more is Some(more) else { break "a FIN" }
+          self.received = self.received + more
+          continue
+        }
+        err => fail("smock sent a frame that does not decode: \{err}")
+      }
+      self.received = self.received[used:].to_owned()
+      shown.push(self.render_frame(frame))
+      if stop(frame) {
+        break "open"
+      }
+    }
+  })
+  guard result is Some(how) else { fail("no frame and no end in time") }
+  { shown, how, end_ms: @async.now() - since, }
+}
+
+///|
+/// Whether `frame` is a GOAWAY.
+fn is_goaway(frame : @http2.Frame) -> Bool {
+  frame is GoAway(..)
+}
+
+///|
+async test "h2c: a field block still open at the read timeout, after HEADERS and a CONTINUATION, gets GOAWAY NO_ERROR, unlogged; smock then reads and discards what the client sends, and closes with a FIN a second later" {
+  with_definitions([("m.json", slow_uploads)], dir => {
+    let stopped = with_smock(
+      [
+        "--dir", dir, "--port", "0", "--read-timeout-ms", "600", "--idle-timeout-ms",
+        "10000",
+      ],
+      smock => {
+        let raw = smock.raw_h2()
+        defer raw.close()
+        // A stream answered first, so that the GOAWAY names it.
+        raw.send([
+          headers_frame(
+            1,
+            raw.block(request_fields("GET", "/fast", "localhost")),
+          ),
+        ])
+        let answered = raw.frames_until_stream_ends(1)
+        let block = raw.block(request_fields("GET", "/fast", "localhost"))
+        let half = block.length() / 2
+        let start = @async.now()
+        raw.send([
+          Headers(
+            stream_id=3,
+            fragment=block[:half].to_owned(),
+            end_stream=true,
+            end_headers=false,
+            priority=None,
+            padding=0,
+          ),
+        ])
+        // More of the block, but not its end: the deadline still counts
+        // from the HEADERS.
+        @async.sleep(300)
+        raw.send([
+          Continuation(
+            stream_id=3,
+            fragment=block[half:half + 1].to_owned(),
+            end_headers=false,
+          ),
+        ])
+        let goaway = raw.frames_until(start, is_goaway)
+        // The rest of the block, and a PING, as a client might send before
+        // it reads the GOAWAY: neither is answered.
+        raw.send([
+          Continuation(
+            stream_id=3,
+            fragment=block[half + 1:].to_owned(),
+            end_headers=true,
+          ),
+          Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false),
+        ])
+        let after = raw.frames_until(start, _ => false)
+        inspect(
+          [
+            answered,
+            "---",
+            ..goaway.shown,
+            "GOAWAY after at least 600 ms: \{goaway.end_ms >= 600}, before 900 ms: \{goaway.end_ms < 900}",
+            "then: \{after.shown.length()} frames, \{after.how}, about a second after the GOAWAY: \{after.end_ms - goaway.end_ms >= 800 && after.end_ms - goaway.end_ms < 2000}",
+          ].join("\n"),
+          content=(
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS ACK
+            #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+            #|DATA 1 END_STREAM 4 octets
+            #|---
+            #|GOAWAY last=1 NO_ERROR
+            #|GOAWAY after at least 600 ms: true, before 900 ms: true
+            #|then: 0 frames, a FIN, about a second after the GOAWAY: true
+          ),
+        )
+      },
+    )
+    inspect(log_entries(stopped.logs), content=startup_only_h2c)
+  })
+}
+
+///|
+async test "h2c: a connection with no stream gets GOAWAY NO_ERROR at the idle timeout, although its client sends PING, SETTINGS and WINDOW_UPDATE all along; a PING after it is read and not answered, and the connection ends with a FIN a second later" {
+  with_definitions([("m.json", slow_uploads)], dir => {
+    let stopped = with_smock(
+      [
+        "--dir", dir, "--port", "0", "--read-timeout-ms", "10000", "--idle-timeout-ms",
+        "1000",
+      ],
+      smock => {
+        // Timed from before smock can have started its idle timeout.
+        let start = @async.now()
+        let raw = smock.raw_h2()
+        defer raw.close()
+        let ping = b"\x00\x00\x00\x00\x00\x00\x00\x02"
+        // Every 200 ms, until the GOAWAY comes: each round is answered.
+        let mut rounds = 0
+        let goaway = for ;; {
+          raw.send([
+            Settings(params=[], ack=false),
+            WindowUpdate(stream_id=0, increment=1),
+            Ping(payload=ping, ack=false),
+          ])
+          let frames = raw.frames_until(start, frame => {
+            frame is Ping(ack=true, ..) || is_goaway(frame)
+          })
+          if frames.shown is [.., last] && last.has_prefix("GOAWAY") {
+            break frames
+          }
+          rounds += 1
+          @async.sleep(200)
+        }
+        raw.send([Ping(payload=ping, ack=false)])
+        let after = raw.frames_until(start, _ => false)
+        guard goaway.shown is [.., shown] else { fail("no GOAWAY") }
+        inspect(
+          [
+            "rounds answered before it: \{rounds >= 3}",
+            "\{shown}, after at least 1000 ms: \{goaway.end_ms >= 1000}, before 2000 ms: \{goaway.end_ms < 2000}",
+            "then: \{after.shown.length()} frames, \{after.how}, about a second after the GOAWAY: \{after.end_ms - goaway.end_ms >= 800 && after.end_ms - goaway.end_ms < 2000}",
+          ].join("\n"),
+          content=(
+            #|rounds answered before it: true
+            #|GOAWAY last=0 NO_ERROR, after at least 1000 ms: true, before 2000 ms: true
+            #|then: 0 frames, a FIN, about a second after the GOAWAY: true
+          ),
+        )
+      },
+    )
+    inspect(log_entries(stopped.logs), content=startup_only_h2c)
+  })
+}
+
+///|
+async test "h2c: a new stream restarts the idle timeout: a request still arriving at the idle deadline holds it off, and the idle timeout then runs from its response" {
+  with_definitions([("m.json", slow_uploads)], dir => {
+    let _ = with_smock(
+      [
+        "--dir", dir, "--port", "0", "--read-timeout-ms", "10000", "--idle-timeout-ms",
+        "1000",
+      ],
+      smock => {
+        let start = @async.now()
+        let raw = smock.raw_h2()
+        defer raw.close()
+        @async.sleep(600)
+        // An upload that begins before the idle deadline and ends after it.
+        raw.send([
+          headers_frame(
+            1,
+            raw.block(request_fields("POST", "/upload", "localhost")),
+            end_stream=false,
+          ),
+        ])
+        @async.sleep(700)
+        raw.send([Data(stream_id=1, data=b"body", end_stream=true, padding=0)])
+        let answered = raw.frames_until_stream_ends(1)
+        let answered_ms = @async.now() - start
+        let goaway = raw.frames_until(start, is_goaway)
+        let after = raw.frames_until(start, _ => false)
+        inspect(
+          [
+            answered,
+            "---",
+            ..goaway.shown,
+            "a second after the response, not after the connection opened: \{goaway.end_ms >= 2300 && goaway.end_ms - answered_ms >= 900}",
+            "then \{after.how}",
+          ].join("\n"),
+          content=(
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS ACK
+            #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 8]
+            #|DATA 1 END_STREAM 8 octets
+            #|---
+            #|GOAWAY last=1 NO_ERROR
+            #|a second after the response, not after the connection opened: true
+            #|then a FIN
+          ),
+        )
+      },
+    )
+  })
+}
