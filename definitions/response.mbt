@@ -20,7 +20,7 @@ priv enum BodyField {
 ///|
 /// A Server-Sent Event as written.
 priv struct EventDecl {
-  delay_ms : Int
+  delay_ms : Int32
   /// The event type and its JSON Pointer.
   event : (String, String)?
   /// The event ID and its JSON Pointer.
@@ -81,7 +81,7 @@ fn File::read_responses(
   pointer : String,
   json : Json,
   buckets~ : @template.Buckets,
-) -> (Array[WeightedResponse], Int) {
+) -> (Array[WeightedResponse], Int32) {
   let items = self.array(pointer, json)
   if json is Array(_) && (items.length() < 1 || items.length() > max_responses) {
     self.error(pointer, "must hold 1 to \{max_responses} responses")

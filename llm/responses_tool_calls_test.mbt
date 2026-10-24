@@ -12,9 +12,9 @@ fn responses_calls(
   text : String,
   tool_calls : ReadOnlyArray[@llm.ToolCall],
   chunks? : ReadOnlyArray[String],
-  request? : Json? = Some({ "model": "gpt-6-astra" }),
-  draw? : UInt64 = 7,
-  chunk_size? : Int,
+  request~ : Json? = Some({ "model": "gpt-6-astra" }),
+  draw~ : UInt64 = 7,
+  chunk_size? : Int32,
   stop_reason? : String,
 ) -> @llm.Reply {
   @llm.reply(
@@ -211,8 +211,8 @@ fn call_checks(reply : @llm.Reply) -> String raise {
   if base != "ok" {
     out.push(base)
   }
-  let added : Map[Int, (String, String)] = Map([])
-  let joined : Map[Int, String] = Map([])
+  let added : Map[Int32, (String, String)] = Map([])
+  let joined : Map[Int32, String] = Map([])
   let done_items : Array[Json] = []
   let call_ids : Array[String] = []
   let arguments = []

@@ -12,7 +12,7 @@ pub struct JournalSettings {
   /// Whether the engine records requests at all.
   enabled : Bool
   /// The most entries the Journal holds.
-  max_entries : Int
+  max_entries : Int32
   /// The most bytes its entries take, as each entry counts them: 256 for
   /// its fixed fields, two for each UTF-16 code unit of the text it holds
   /// (the request line, the header fields, the Session, Host, Mock and
@@ -20,21 +20,21 @@ pub struct JournalSettings {
   /// buckets written, why a data write failed, the CRUD operation and its
   /// key, and the Near miss), 32 for each value its Near miss keeps from a
   /// form or an XML body, and the bytes of its truncated body.
-  max_bytes : Int
+  max_bytes : Int32
   /// The most bytes of a request body an entry keeps, and of the values its
   /// Near miss keeps from a form or an XML body, in total, each value
   /// counting 32 bytes more.
-  body_limit : Int
+  body_limit : Int32
 } derive(Debug)
 
 ///|
 /// Journal settings: on by default, with at most 10,000 entries and
 /// 64 MiB, and request bodies truncated to 4 KiB.
 pub fn JournalSettings::JournalSettings(
-  enabled? : Bool = true,
-  max_entries? : Int = 10_000,
-  max_bytes? : Int = 64 * 1024 * 1024,
-  body_limit? : Int = 4 * 1024,
+  enabled~ : Bool = true,
+  max_entries~ : Int32 = 10_000,
+  max_bytes~ : Int32 = 64 * 1024 * 1024,
+  body_limit~ : Int32 = 4 * 1024,
 ) -> JournalSettings {
   { enabled, max_entries, max_bytes, body_limit, }
 }
@@ -69,7 +69,7 @@ pub struct JournalEntry {
   /// first bytes, as many as the Journal keeps.
   request : Request
   /// The length of the whole body, in bytes.
-  body_size : Int
+  body_size : Int32
   /// The ID of the Stub that matched, if any.
   stub : String?
   /// Where the Stub that matched comes from, if one did.
@@ -81,7 +81,7 @@ pub struct JournalEntry {
   /// when no Stub matched, and when no response was picked: a value failed
   /// to render, a data write could not be applied, or the state bound
   /// refused the writes.
-  response_index : Int?
+  response_index : Int32?
   /// The names of the Variables the request wrote, in the order written:
   /// none when the Stub that matched writes none, when no Stub matched,
   /// when a value failed to render, when a data write could not be
@@ -103,14 +103,14 @@ pub struct JournalEntry {
   near_miss : NearMiss?
   /// The response status, or `None` when a connection Fault ended the
   /// request before a status was written.
-  status : Int?
+  status : Int32?
   /// The connection Fault injected instead of the response, if any.
   fault : @definitions.ConnectionKind?
   /// Why the Stub's template could not be rendered, when it could not: the
   /// client then got a 500.
   template_error : TemplateError?
   /// The bytes the entry counts against the Journal's byte bound.
-  priv size : Int
+  priv size : Int32
 } derive(Debug)
 
 ///|
@@ -128,10 +128,10 @@ priv struct Journal {
   /// The entries, oldest first.
   entries : @deque.Deque[JournalEntry]
   /// The bytes the entries take, as they count them.
-  mut bytes : Int
+  mut bytes : Int32
   /// How many entries the bound has evicted, per Session (`None` for the
   /// no-Session space), since that Session's last reset.
-  evicted : Map[String?, Int]
+  evicted : Map[String?, Int32]
   /// How many entries the bound has evicted since the process started.
   mut evictions : Int64
   /// The sequence number of the last entry committed, 0 before the first.
@@ -167,7 +167,7 @@ fn Journal::entry(
   resolution~ : Resolution,
   matched~ : MatchedStub?,
   scenario~ : ScenarioMove?,
-  response_index~ : Int?,
+  response_index~ : Int32?,
   variables_written~ : ReadOnlyArray[String],
   data_written~ : ReadOnlyArray[String],
   data_error~ : DataError?,
@@ -287,7 +287,7 @@ fn Journal::entry(
 /// What each value taken from a form or an XML body costs an entry, besides
 /// its text: towards the values it keeps, and towards the Journal's byte
 /// bound. So even empty values add up.
-let value_overhead : Int = 32
+let value_overhead : Int32 = 32
 
 ///|
 /// How many bytes an entry keeps of a value taken from a form or an XML
@@ -296,7 +296,7 @@ let value_overhead : Int = 32
 /// left when they do not, or -1, to leave the value out, once the values
 /// have taken the whole limit. Each value kept costs its bytes and
 /// `value_overhead` more. `needs_cut` and `cut` both follow this rule.
-fn value_room(length : Int, kept~ : Int, limit~ : Int) -> Int {
+fn value_room(length : Int32, kept~ : Int32, limit~ : Int32) -> Int32 {
   if kept >= limit {
     -1
   } else if length > limit - kept {
@@ -312,7 +312,7 @@ fn value_room(length : Int, kept~ : Int, limit~ : Int) -> Int {
 fn NearMiss::needs_cut(
   self : NearMiss,
   truncated~ : Bool,
-  limit~ : Int,
+  limit~ : Int32,
 ) -> Bool {
   let mut kept = 0
   for i in 0..<self.failed.length() {
@@ -343,7 +343,7 @@ fn NearMiss::cut(
   self : NearMiss,
   body : Bytes,
   truncated~ : Bool,
-  limit~ : Int,
+  limit~ : Int32,
 ) -> NearMiss {
   let failed = []
   let mut kept = 0
@@ -375,7 +375,7 @@ fn NearMiss::cut(
 ///|
 /// The length of `text` in UTF-8, in bytes. A surrogate that is not part of
 /// a pair counts as U+FFFD does.
-fn utf8_length(text : String) -> Int {
+fn utf8_length(text : String) -> Int32 {
   let mut length = 0
   let mut i = 0
   while i < text.length() {
@@ -401,7 +401,7 @@ fn utf8_length(text : String) -> Int {
 
 ///|
 /// The UTF-16 code units of `name`, 0 for none.
-fn text_length(name : String?) -> Int {
+fn text_length(name : String?) -> Int32 {
   match name {
     Some(name) => name.length()
     None => 0
@@ -410,7 +410,7 @@ fn text_length(name : String?) -> Int {
 
 ///|
 /// `text` cut to at most `limit` bytes of UTF-8, as `truncate` cuts a body.
-fn truncate_text(text : String, limit : Int) -> String {
+fn truncate_text(text : String, limit : Int32) -> String {
   // A UTF-16 code unit takes at most three bytes of UTF-8.
   if text.length() <= limit / 3 {
     return text
@@ -427,7 +427,7 @@ fn truncate_text(text : String, limit : Int) -> String {
 /// The first bytes of `body`, at most `limit` of them. A cut that would
 /// split a UTF-8 sequence is moved back to its start, so that a body in
 /// UTF-8 stays UTF-8 when truncated.
-fn truncate(body : Bytes, limit : Int) -> Bytes {
+fn truncate(body : Bytes, limit : Int32) -> Bytes {
   if body.length() <= limit {
     return body
   }
@@ -506,7 +506,7 @@ fn Journal::count_eviction(self : Journal, entry : JournalEntry) -> Unit {
 fn Journal::remove_where(
   self : Journal,
   remove : (JournalEntry) -> Bool,
-) -> Int {
+) -> Int32 {
   let before = self.entries.length()
   self.entries.retain(entry => {
     if remove(entry) {
@@ -523,7 +523,7 @@ fn Journal::remove_where(
 ///|
 /// Removes the entries of `session`, or of the no-Session space for
 /// `None`, and its eviction count. Returns how many entries it removed.
-fn Journal::reset_session(self : Journal, session : String?) -> Int {
+fn Journal::reset_session(self : Journal, session : String?) -> Int32 {
   self.evicted.remove(session)
   self.remove_where(entry => entry.session == session)
 }
@@ -531,7 +531,7 @@ fn Journal::reset_session(self : Journal, session : String?) -> Int {
 ///|
 /// Removes every entry and every eviction count. Returns how many entries
 /// it removed.
-fn Journal::reset_all(self : Journal) -> Int {
+fn Journal::reset_all(self : Journal) -> Int32 {
   let removed = self.entries.length()
   self.entries.clear()
   self.entries.release_unused(placeholder=vacated)
@@ -544,9 +544,9 @@ fn Journal::reset_all(self : Journal) -> Int {
 /// What the Journal holds, and how many entries its bound has evicted.
 pub(all) struct JournalStats {
   /// The entries it holds.
-  entries : Int
+  entries : Int32
   /// The bytes they take, as they count them.
-  bytes : Int
+  bytes : Int32
   /// The entries the bound has evicted since the process started, whatever
   /// resets came since.
   evictions : Int64
@@ -721,7 +721,7 @@ fn no_conditions() -> @definitions.Conditions {
 pub(all) struct JournalQuery {
   filter : JournalFilter
   /// The most entries to return.
-  limit : Int
+  limit : Int32
   /// Only entries after the one with this sequence number: the last entry
   /// of the page before. `None` starts from the oldest entry.
   after : Int64?
@@ -734,7 +734,7 @@ let max_seq : Int64 = 9_007_199_254_740_991L
 
 ///|
 /// The default limit of a query.
-let default_limit : Int = 100
+let default_limit : Int32 = 100
 
 ///|
 /// Reads a query from its JSON form, the `JournalQuery` schema: an object
@@ -801,7 +801,7 @@ pub struct JournalPage {
   more : Bool
   /// How many of the Session's entries the bound has evicted since its
   /// last reset.
-  evicted : Int
+  evicted : Int32
 } derive(Debug)
 
 ///|
@@ -839,7 +839,7 @@ pub fn Engine::query_journal(
 pub fn Engine::unmatched(
   self : Engine,
   session~ : String?,
-  limit? : Int = default_limit,
+  limit~ : Int32 = default_limit,
   after? : Int64,
 ) -> JournalPage raise AdminError {
   self.check_journal(every_entry())
@@ -853,7 +853,7 @@ pub fn Engine::unmatched(
 fn Journal::page(
   self : Journal,
   session : String?,
-  limit : Int,
+  limit : Int32,
   after~ : Int64?,
   takes : (JournalEntry) -> Bool,
 ) -> JournalPage {

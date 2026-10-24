@@ -138,12 +138,12 @@ fn host_name(list : BytesView) -> String? {
 
 ///|
 /// The big-endian 16-bit number at `pos` in `data`.
-fn uint16(data : BytesView, pos : Int) -> Int {
+fn uint16(data : BytesView, pos : Int32) -> Int32 {
   (data[pos].to_int() << 8) | data[pos + 1].to_int()
 }
 
 ///|
 /// The big-endian 24-bit number at `pos` in `data`.
-fn uint24(data : BytesView, pos : Int) -> Int {
+fn uint24(data : BytesView, pos : Int32) -> Int32 {
   (data[pos].to_int() << 16) | uint16(data, pos + 1)
 }

@@ -332,7 +332,7 @@ async test "HTTP/1.0 never gets 100 Continue, and a client that sends its body w
 
 ///|
 /// A request head of exactly `size` bytes for `/users/1`.
-fn head_of_size(size : Int) -> String {
+fn head_of_size(size : Int32) -> String {
   // "GET /users/1 HTTP/1.1\r\n" + "Host: localhost\r\n" + "X: " + padding +
   // "\r\n" + "\r\n"
   "GET /users/1 HTTP/1.1\r\nHost: localhost\r\nX: \{"p".repeat(size - 47)}\r\n\r\n"
@@ -340,7 +340,7 @@ fn head_of_size(size : Int) -> String {
 
 ///|
 /// A request head for `/users/1` with `count` header fields.
-fn head_with_fields(count : Int) -> String {
+fn head_with_fields(count : Int32) -> String {
   let fields = (1).until(count).map(i => "X-\{i}: \{i}\r\n").collect()
   "GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\{fields.join("")}\r\n"
 }

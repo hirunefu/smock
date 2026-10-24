@@ -11,10 +11,10 @@
 /// given.
 fn messages_cut(
   strings : @llm.Strings,
-  after~ : Int,
-  kind? : String = "overloaded_error",
-  request? : Json? = Some({ "model": "claude-test", "stream": true }),
-  chunk_size? : Int,
+  after~ : Int32,
+  kind~ : String = "overloaded_error",
+  request~ : Json? = Some({ "model": "claude-test", "stream": true }),
+  chunk_size? : Int32,
 ) -> @llm.Reply {
   @llm.reply(
     @llm.Declaration(

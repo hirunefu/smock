@@ -11,7 +11,7 @@ pub struct Document {
   priv input : BytesView
   /// Where the local name of each element starts in `input`, in document
   /// order: the order of their start tags, the root element's first.
-  priv name_starts : Array[Int]
+  priv name_starts : Array[Int32]
   /// How deep each of them is, less one: 0 for the root element.
   priv depths : Array[Byte]
 }
@@ -21,7 +21,7 @@ pub struct Document {
 /// is the byte offset in the input where the problem is, from 0, and
 /// `message` says what the problem is.
 pub(all) suberror ParseError {
-  ParseError(position~ : Int, message~ : String)
+  ParseError(position~ : Int32, message~ : String)
 } derive(Eq, Debug)
 
 ///|

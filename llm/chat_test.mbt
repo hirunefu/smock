@@ -13,8 +13,8 @@ let received : Int64 = 1_791_815_405_123L
 /// request-id header field it adds, then the body.
 fn chat(
   text : String,
-  request? : Json? = Some({ "model": "test-model" }),
-  draw? : UInt64 = 7,
+  request~ : Json? = Some({ "model": "test-model" }),
+  draw~ : UInt64 = 7,
   id? : String,
   model? : String,
 ) -> String {
@@ -140,7 +140,7 @@ test "the same draw gives the same id, and another draw another one" {
 /// received at `now`, from a declaration with the `model` given.
 fn model_and_created(
   request : Json?,
-  now? : Int64 = received,
+  now~ : Int64 = received,
   model? : String,
 ) -> String {
   let reply = @llm.reply(

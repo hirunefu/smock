@@ -11,9 +11,9 @@
 /// `fields` after it and the header fields `headers`, its own seed fixing
 /// its ids.
 fn messages_mock(
-  api? : String = "anthropic-messages",
-  fields? : String = ", \"text\": \"Hello!\", \"usage\": { \"input\": 12, \"output\": 6 }",
-  headers? : String = "{ \"anthropic-ratelimit-requests-remaining\": \"49\", \"Content-Type\": \"text/plain\" }",
+  api~ : String = "anthropic-messages",
+  fields~ : String = ", \"text\": \"Hello!\", \"usage\": { \"input\": 12, \"output\": 6 }",
+  headers~ : String = "{ \"anthropic-ratelimit-requests-remaining\": \"49\", \"Content-Type\": \"text/plain\" }",
 ) -> (String, String) {
   (
     "anthropic.json",
@@ -32,7 +32,7 @@ fn messages_mock(
 ///|
 /// The JSON body of a Messages request for `claude-test`, with one user
 /// message and the members `extra`, such as `stop_sequences`, after it.
-fn messages_body(extra? : String = "") -> String {
+fn messages_body(extra~ : String = "") -> String {
   "{\"model\":\"claude-test\",\"max_tokens\":1024,\"messages\":[{\"role\":\"user\",\"content\":\"Hello, Claude\"}]\{extra}}"
 }
 
@@ -41,7 +41,7 @@ fn messages_body(extra? : String = "") -> String {
 /// `body`, by default `messages_body()`.
 fn Harness::messages(
   self : Harness,
-  body? : String = messages_body(),
+  body~ : String = messages_body(),
 ) -> @engine.Outcome {
   self.send(
     "POST",
@@ -163,7 +163,7 @@ test "with timing, the first text delta waits first and each later one interval;
 
 ///|
 test "a declared error ends the stream with event: error, which waits as a next piece would: first when no piece came before it, interval after one" {
-  let cut = (after : Int, timing : String) => {
+  let cut = (after : Int32, timing : String) => {
     let error = ", \"error\": { \"after\": \{after}, \"type\": \"overloaded_error\", \"message\": \"Overloaded\" }"
     harness([messages_mock(fields=", \"text\": \"Hello!\"\{error}\{timing}")]).messages(
       body=messages_body(extra=",\"stream\":true"),

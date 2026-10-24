@@ -16,7 +16,7 @@
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
-) -> Int {
+) -> Int32 {
   // When the process started, as process_start_time_seconds gives it.
   let started_at = @async.now()
   // Only SIGTERM cancels the program, which starts the drain below. SIGINT
@@ -186,7 +186,7 @@ async fn run(
   admin : Admin,
   admin_listener : @socket.TcpServer,
   journal~ : @engine.JournalSettings,
-  state_max_bytes~ : Int,
+  state_max_bytes~ : Int32,
   metrics~ : @metrics.Registry,
   watch~ : @watch.Watch?,
   tls_watches~ : Array[@watch.Watch],
@@ -194,7 +194,7 @@ async fn run(
   reloads~ : @metrics.Counter,
   traffic~ : Traffic,
   template_env~ : @template.Env,
-) -> Int {
+) -> Int32 {
   let connections = Connections::new()
   @async.with_task_group(group => {
     // The admin port serves until the end, and neither it nor its
@@ -361,7 +361,7 @@ async fn run(
 async fn listen(
   logger : @log.Logger,
   listener : String,
-  port : Int,
+  port : Int32,
 ) -> @socket.TcpServer? {
   let address = "0.0.0.0:\{port}"
   try @socket.TcpServer(@socket.Addr::parse(address), reuse_addr=true) catch {
@@ -621,7 +621,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
   respond~ : async (WatchedStream[S], @http1.Request, Stopwatch, Int64) -> Bool,
-  reject~ : async (WatchedStream[S], Int, Stopwatch) -> Unit,
+  reject~ : async (WatchedStream[S], Int32, Stopwatch) -> Unit,
   connection? : Connection,
 ) -> Bool {
   let mut writable = true
@@ -862,9 +862,9 @@ async fn[S : @io.Writer] write_response(
   plan : @engine.ResponsePlan,
   request : @http1.Request,
   date~ : String,
-  close? : Bool = false,
-  partial? : Bool = false,
-  before_last? : () -> Unit = () => (),
+  close~ : Bool = false,
+  partial~ : Bool = false,
+  before_last~ : () -> Unit = () => (),
 ) -> Bool {
   match plan.body {
     Bytes(body) => {

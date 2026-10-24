@@ -5,18 +5,18 @@
 
 ///|
 /// The most digits a number has before its point, and after it.
-let max_places : Int = 18
+let max_places : Int32 = 18
 
 ///|
 /// The digits a number keeps: 18 before the point and 18 after.
-let decimal_width : Int = 36
+let decimal_width : Int32 = 36
 
 ///|
 /// A decimal number: its sign and its digits, from 10^17 down to 10^-18.
 /// Zero is never negative.
 priv struct Decimal {
   negative : Bool
-  digits : FixedArray[Int]
+  digits : FixedArray[Int32]
 }
 
 ///|
@@ -31,7 +31,7 @@ priv suberror Beyond {
 ///|
 /// The number with the sign `negative` and the digits `digits`, zero made
 /// positive.
-fn Decimal::of(negative : Bool, digits : FixedArray[Int]) -> Decimal {
+fn Decimal::of(negative : Bool, digits : FixedArray[Int32]) -> Decimal {
   {
     negative: negative && !digits_all_zero(digits, 0, digits.length()),
     digits,
@@ -40,7 +40,11 @@ fn Decimal::of(negative : Bool, digits : FixedArray[Int]) -> Decimal {
 
 ///|
 /// Whether `digits[from:to]` are all 0.
-fn digits_all_zero(digits : FixedArray[Int], from : Int, to : Int) -> Bool {
+fn digits_all_zero(
+  digits : FixedArray[Int32],
+  from : Int32,
+  to : Int32,
+) -> Bool {
   for i in from..<to {
     if digits[i] != 0 {
       return false
@@ -119,8 +123,8 @@ fn is_ascii_digit_unit(c : UInt16) -> Bool {
 /// Puts `digit`, of the power of ten `power`, in `digits`. A digit that is
 /// not 0 must fit.
 fn decimal_place(
-  digits : FixedArray[Int],
-  digit : Int,
+  digits : FixedArray[Int32],
+  digit : Int32,
   power : Int64,
 ) -> Unit raise Beyond {
   if digit == 0 {
@@ -175,7 +179,7 @@ fn Decimal::write_whole(self : Decimal, out : StringBuilder) -> Unit {
 
 ///|
 /// The character of the decimal digit `d`.
-fn decimal_digit_char(d : Int) -> Char {
+fn decimal_digit_char(d : Int32) -> Char {
   ('0'.to_int() + d).unsafe_to_char()
 }
 
@@ -202,7 +206,7 @@ fn Decimal::add(self : Decimal, other : Decimal) -> Decimal raise Beyond {
 
 ///|
 /// Compares the magnitudes `a` and `b`, of the same length: -1, 0 or 1.
-fn digits_compare(a : FixedArray[Int], b : FixedArray[Int]) -> Int {
+fn digits_compare(a : FixedArray[Int32], b : FixedArray[Int32]) -> Int32 {
   for i in 0..<a.length() {
     if a[i] != b[i] {
       return if a[i] < b[i] { -1 } else { 1 }
@@ -214,9 +218,9 @@ fn digits_compare(a : FixedArray[Int], b : FixedArray[Int]) -> Int {
 ///|
 /// The magnitude `a + b`, of their length, `a` and `b` of the same length.
 fn digits_sum(
-  a : FixedArray[Int],
-  b : FixedArray[Int],
-) -> FixedArray[Int] raise Beyond {
+  a : FixedArray[Int32],
+  b : FixedArray[Int32],
+) -> FixedArray[Int32] raise Beyond {
   let out = FixedArray::make(a.length(), 0)
   let mut carry = 0
   for i = a.length() - 1; i >= 0; i = i - 1 {
@@ -233,9 +237,9 @@ fn digits_sum(
 ///|
 /// The magnitude `a - b`, `a` at least `b` and of the same length.
 fn digits_difference(
-  a : FixedArray[Int],
-  b : FixedArray[Int],
-) -> FixedArray[Int] {
+  a : FixedArray[Int32],
+  b : FixedArray[Int32],
+) -> FixedArray[Int32] {
   let out = a.copy()
   digits_take_away(out, b)
   out
@@ -244,7 +248,7 @@ fn digits_difference(
 ///|
 /// Takes the magnitude `b` away from `a`, in place: `a` is at least `b`,
 /// and of the same length.
-fn digits_take_away(a : FixedArray[Int], b : FixedArray[Int]) -> Unit {
+fn digits_take_away(a : FixedArray[Int32], b : FixedArray[Int32]) -> Unit {
   let mut borrow = 0
   for i = a.length() - 1; i >= 0; i = i - 1 {
     let d = a[i] - b[i] - borrow
@@ -294,7 +298,7 @@ fn Decimal::multiply(self : Decimal, other : Decimal) -> Decimal raise Beyond {
 
 ///|
 /// The decimal places of a quotient.
-let quotient_places : Int = 10
+let quotient_places : Int32 = 10
 
 ///|
 /// Whether the number is 0.
@@ -338,7 +342,7 @@ fn Decimal::divide(self : Decimal, other : Decimal) -> Decimal raise Beyond {
 
 ///|
 /// The magnitude `digits` with a 0 before it.
-fn digits_widened(digits : FixedArray[Int]) -> FixedArray[Int] {
+fn digits_widened(digits : FixedArray[Int32]) -> FixedArray[Int32] {
   let out = FixedArray::make(digits.length() + 1, 0)
   for i in 0..<digits.length() {
     out[i + 1] = digits[i]
@@ -352,10 +356,10 @@ fn digits_widened(digits : FixedArray[Int]) -> FixedArray[Int] {
 /// with a 0 and is not 0. `remainder`, all 0 and as long as `divisor`, ends
 /// up holding what is left over.
 fn long_division(
-  dividend : FixedArray[Int],
-  divisor : FixedArray[Int],
-  remainder : FixedArray[Int],
-) -> FixedArray[Int] {
+  dividend : FixedArray[Int32],
+  divisor : FixedArray[Int32],
+  remainder : FixedArray[Int32],
+) -> FixedArray[Int32] {
   let n = remainder.length()
   let quotient = FixedArray::make(dividend.length(), 0)
   for k in 0..<dividend.length() {
@@ -377,7 +381,10 @@ fn long_division(
 
 ///|
 /// Adds 1 to the magnitude `digits` at the digit `at`, carrying.
-fn digits_increment(digits : FixedArray[Int], at : Int) -> Unit raise Beyond {
+fn digits_increment(
+  digits : FixedArray[Int32],
+  at : Int32,
+) -> Unit raise Beyond {
   for i = at; i >= 0; i = i - 1 {
     if digits[i] < 9 {
       digits[i] += 1
@@ -420,7 +427,7 @@ priv enum Rounding {
 /// others dropped as `rounding` says.
 fn Decimal::rounded(
   self : Decimal,
-  places : Int,
+  places : Int32,
   rounding : Rounding,
 ) -> Decimal raise Beyond {
   // The last digit kept, of 10^-places.
@@ -445,7 +452,7 @@ fn Decimal::rounded(
 ///|
 /// The number written with exactly `places` digits after the point, from 0
 /// to 18, such as `19.990`; the digits after those are 0.
-fn Decimal::fixed(self : Decimal, places : Int) -> String {
+fn Decimal::fixed(self : Decimal, places : Int32) -> String {
   let out = StringBuilder()
   self.write_whole(out)
   if places > 0 {

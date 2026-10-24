@@ -259,7 +259,7 @@ fn render_with(
   sample : Json,
   now~ : Int64,
   seed? : UInt64,
-  fresh? : UInt64 = 1234,
+  fresh~ : UInt64 = 1234,
 ) -> String raise {
   let fresh_seed = () => fresh
   let rendering = h.engine.render(

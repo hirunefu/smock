@@ -4,7 +4,7 @@
 /// if anything, to stderr.
 async fn check(
   args : Array[String],
-  env? : Map[String, String] = Map([]),
+  env~ : Map[String, String] = Map([]),
 ) -> String {
   exit_report(smock_output(["check", ..args], env~))
 }
@@ -410,7 +410,7 @@ async test "a definitions directory that passes smock check loads in smock serve
 /// Whether `path` can still be read after a test removed its permissions.
 /// Root ignores file permissions (as in a container that runs as root), so
 /// such a test cannot make a path unreadable there and skips its checks.
-async fn still_readable(path : String, directory? : Bool = false) -> Bool {
+async fn still_readable(path : String, directory~ : Bool = false) -> Bool {
   try {
     if directory {
       ignore(@fs.readdir(path))

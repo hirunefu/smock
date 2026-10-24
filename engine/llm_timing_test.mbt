@@ -8,9 +8,9 @@
 /// after `api` and `text`, given as JSON text, and whose `fault` is
 /// `fault`, by default only the seed 7.
 fn paced_mock(
-  text? : String = "Hello! How can I assist you today?",
-  fields? : String = "",
-  fault? : String = "{ \"seed\": 7 }",
+  text~ : String = "Hello! How can I assist you today?",
+  fields~ : String = "",
+  fault~ : String = "{ \"seed\": 7 }",
 ) -> (String, String) {
   (
     "openai.json",
@@ -79,14 +79,14 @@ test "a reply with no piece waits first before its closing chunk, and never inte
 
 ///|
 /// The waits of the events of `outcome`'s plan, in milliseconds, in order.
-fn wait_list(outcome : @engine.Outcome) -> Array[Int] {
+fn wait_list(outcome : @engine.Outcome) -> Array[Int32] {
   guard outcome.plan.body is Events(events) else { return [] }
   events.iter().map(event => event.delay_ms).collect()
 }
 
 ///|
 /// `waits`, separated by spaces.
-fn numbers(waits : ArrayView[Int]) -> String {
+fn numbers(waits : ArrayView[Int32]) -> String {
   waits.iter().map(wait => wait.to_string()).collect().join(" ")
 }
 
@@ -111,8 +111,8 @@ test "each distribution is drawn from the waits generator, one wait per piece, a
   ])
   let lognormal = wait_list(h.chat(body=stream_body("true")))
   // The opening chunk, 50 pieces, the closing chunk and [DONE].
-  let pieces = (waits : Array[Int]) => waits[1:51]
-  let intervals = (waits : Array[Int]) => waits[2:51]
+  let pieces = (waits : Array[Int32]) => waits[1:51]
+  let intervals = (waits : Array[Int32]) => waits[2:51]
   inspect(
     [
       "uniform: \{uniform.length()} events; first \{uniform[1]}, from 100 to 300: \{uniform[1] >= 100 && uniform[1] <= 300}; every interval from 15 to 40: \{intervals(uniform).iter().all(w => w >= 15 && w <= 40)}, not all the same: \{intervals(uniform).iter().any(w => w != uniform[2])}",
@@ -138,7 +138,7 @@ let example_timing : String = ", \"timing\": { \"first\": { \"lognormal\": { \"m
 test "the same seed gives the same waits in every run, request by request, and another seed others" {
   // Each harness is a run: a new engine, and a process generator seeded
   // as `process_seed` says.
-  let run = (seed : Int, process_seed : UInt64) => {
+  let run = (seed : Int32, process_seed : UInt64) => {
     let h = harness(
       [paced_mock(fields=example_timing, fault="{ \"seed\": \{seed} }")],
       process_seed~,

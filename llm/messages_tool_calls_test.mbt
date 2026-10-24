@@ -12,10 +12,10 @@
 /// the draw `draw`.
 fn messages_calls_reply(
   strings : @llm.Strings,
-  request? : Json? = Some({ "model": "claude-test" }),
-  chunk_size? : Int,
+  request~ : Json? = Some({ "model": "claude-test" }),
+  chunk_size? : Int32,
   stop_reason? : String,
-  draw? : UInt64 = 7,
+  draw~ : UInt64 = 7,
 ) -> @llm.Reply {
   @llm.reply(
     @llm.Declaration(

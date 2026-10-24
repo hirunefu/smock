@@ -24,12 +24,12 @@ let fixed_now : Int64 = 1_791_815_405_123L
 /// set is invalid.
 fn harness(
   files : Array[(String, String)],
-  body_files? : Array[(String, Bytes)] = [],
-  process_seed? : UInt64 = 1,
-  journal? : @engine.JournalSettings = @engine.JournalSettings(),
-  match_index? : Bool = true,
-  env? : @template.Env = @template.no_env,
-  state_max_bytes? : Int = @engine.default_state_max_bytes,
+  body_files~ : Array[(String, Bytes)] = [],
+  process_seed~ : UInt64 = 1,
+  journal~ : @engine.JournalSettings = @engine.JournalSettings(),
+  match_index~ : Bool = true,
+  env~ : @template.Env = @template.no_env,
+  state_max_bytes~ : Int32 = @engine.default_state_max_bytes,
 ) -> Harness {
   let set : @definitions.DefinitionSet = {
     files: files.map(file => (file.0, @utf8.encode(file.1))),
@@ -69,8 +69,8 @@ fn Harness::send(
   self : Harness,
   meth : String,
   target : String,
-  headers? : Array[(String, String)] = [],
-  body? : String = "",
+  headers~ : Array[(String, String)] = [],
+  body~ : String = "",
   session? : String,
 ) -> @engine.Outcome {
   self.engine.handle(

@@ -98,7 +98,7 @@ let chat_default_stub : (String, String) = (
 ///|
 /// The request of the Default and Streaming examples, which asks for a
 /// stream when `stream` is true.
-fn hello_request(stream? : Bool = false) -> String {
+fn hello_request(stream~ : Bool = false) -> String {
   let stream = if stream { ",\"stream\":true" } else { "" }
   "{\"model\":\"gpt-6-astra\",\"messages\":[{\"role\":\"developer\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"Hello!\"}]\{stream}}"
 }

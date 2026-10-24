@@ -5,7 +5,7 @@
 ///|
 /// The `llm` members of an error after `after` code points of the text,
 /// as JSON text that `paced_mock` adds after `api` and `text`.
-fn error_after(after : Int) -> String {
+fn error_after(after : Int32) -> String {
   ", \"error\": { \"after\": \{after}, \"type\": \"server_error\", \"message\": \"Overloaded\" }"
 }
 
@@ -16,7 +16,7 @@ let fixed_timing : String = ", \"timing\": { \"first\": { \"fixed\": 400 }, \"in
 
 ///|
 test "with fixed waits, the error waits as a next piece would: first when no piece came before it, interval after one" {
-  let cut = (after : Int) => {
+  let cut = (after : Int32) => {
     let h = harness([paced_mock(fields=error_after(after) + fixed_timing)])
     waits(h.chat(body=stream_body("true")))
   }

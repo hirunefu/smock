@@ -8,7 +8,7 @@
 /// `id` and `model` given, as `shown` shows it.
 fn chat_stream(
   text : String,
-  request? : Json? = Some({ "model": "test-model", "stream": true }),
+  request~ : Json? = Some({ "model": "test-model", "stream": true }),
   id? : String,
   model? : String,
 ) -> String {

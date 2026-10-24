@@ -31,7 +31,7 @@ let shop_state : (String, String) = (
 
 ///|
 /// The bytes the count of per-Session state holds now.
-fn Harness::state_bytes(self : Harness) -> Int {
+fn Harness::state_bytes(self : Harness) -> Int32 {
   self.engine.state_stats().bytes
 }
 

@@ -147,7 +147,7 @@ pub struct Declaration {
   api : Api
   /// `chunkSize`: the code points each piece of the text holds in a
   /// stream, the last piece shorter, from 1 to `max_chunk_size`.
-  chunk_size : Int
+  chunk_size : Int32
   /// The token counts the reply reports.
   usage : Usage
   /// The stop reason as written, or `None` to derive it from the reply's
@@ -167,8 +167,8 @@ pub struct Declaration {
 /// definitions check that `chunk_size` is from 1 to `max_chunk_size`.
 pub fn Declaration::Declaration(
   api~ : Api,
-  chunk_size? : Int = default_chunk_size,
-  usage? : Usage = Usage(input=0, output=0),
+  chunk_size~ : Int32 = default_chunk_size,
+  usage~ : Usage = Usage(input=0, output=0),
   stop_reason? : StopReason,
   error? : MidStreamError,
 ) -> Declaration {
@@ -183,7 +183,7 @@ pub fn Declaration::Declaration(
 pub struct MidStreamError {
   /// `after`: how many code points of the text the stream sends before the
   /// error, from 0.
-  after : Int
+  after : Int32
   /// The error's `type`, or its `code` for `openai-responses`, sent as
   /// written.
   kind : String
@@ -194,7 +194,7 @@ pub struct MidStreamError {
 /// `code` for `openai-responses`, is `kind`. The definitions check `kind`
 /// with `read_error_kind`, and that `after` is not past the text.
 pub fn MidStreamError::MidStreamError(
-  after~ : Int,
+  after~ : Int32,
   kind~ : String,
 ) -> MidStreamError {
   { after, kind, }
@@ -202,7 +202,7 @@ pub fn MidStreamError::MidStreamError(
 
 ///|
 /// The largest `chunkSize`.
-pub let max_chunk_size : Int = 1_000_000
+pub let max_chunk_size : Int32 = 1_000_000
 
 ///|
 /// The token counts a reply reports, as declared: smock counts and
@@ -231,7 +231,7 @@ pub let max_token_count : Int64 = 9_007_199_254_740_991L
 /// as written, is `text`, the join of its chunks when it gives them: it may
 /// reach the end of the text, counted in code points, and not pass it. The
 /// message of the load error gives the text's length.
-pub fn check_error_after(after : Int, text : String) -> Result[Unit, String] {
+pub fn check_error_after(after : Int32, text : String) -> Result[Unit, String] {
   let mut length = 0
   for _ in text {
     length += 1
@@ -273,12 +273,12 @@ pub struct Strings {
 /// `tool_calls`, none by default, and the message of its mid-stream error
 /// `error_message`, empty by default.
 pub fn Strings::Strings(
-  text? : String = "",
+  text~ : String = "",
   chunks? : ReadOnlyArray[String],
   id? : String,
   model? : String,
-  tool_calls? : ReadOnlyArray[ToolCall] = [],
-  error_message? : String = "",
+  tool_calls~ : ReadOnlyArray[ToolCall] = [],
+  error_message~ : String = "",
 ) -> Strings {
   match chunks {
     Some(chunks) =>
@@ -337,7 +337,7 @@ pub fn ToolCall::ToolCall(
 /// The pieces of the text that a stream sends, in order: the elements of
 /// `chunks`, or the text cut into pieces of `size` code points; none when
 /// the reply carries no content.
-fn Strings::text_pieces(self : Strings, size : Int) -> ArrayView[String] {
+fn Strings::text_pieces(self : Strings, size : Int32) -> ArrayView[String] {
   match self.chunks {
     _ if !self.has_content() => [][:]
     Some(chunks) => chunks[:]
@@ -379,7 +379,7 @@ priv struct Closing {
   /// The Response object the closing event carries.
   response : Map[String, Json]
   /// The closing event's `sequence_number`.
-  sequence_number : Int
+  sequence_number : Int32
 }
 
 ///|
@@ -550,7 +550,7 @@ fn reply_id(strings : Strings, prefix : String, ids : Ids) -> String {
 /// whole seconds. No Chat Completions or Anthropic Messages event depends
 /// on them, nor does `response.incomplete`, whose `completed_at` is null,
 /// so those streams are left as they are, and a JSON reply has no wait.
-pub fn Reply::complete(self : Reply, waits : FixedArray[Int]) -> Unit {
+pub fn Reply::complete(self : Reply, waits : FixedArray[Int32]) -> Unit {
   guard self.closing is Some(closing) && self.body is Events(events) else {
     return
   }
@@ -583,7 +583,7 @@ pub fn Reply::complete(self : Reply, waits : FixedArray[Int]) -> Unit {
 /// The most bytes a reply takes once encoded: 1 MiB, the bound of a
 /// rendered body. It is counted apart from the rendered strings, which
 /// their rendering counts as a body.
-pub let max_reply_bytes : Int = @template.max_output
+pub let max_reply_bytes : Int32 = @template.max_output
 
 ///|
 /// Whether `self` takes at most `max_reply_bytes` bytes of UTF-8 once
@@ -669,12 +669,12 @@ priv struct Stream {
   /// The events so far, in the order they are sent.
   events : Array[Event]
   /// The bytes of UTF-8 the events so far take as they are sent.
-  mut bytes : Int
+  mut bytes : Int32
 }
 
 ///|
 /// The events of a new stream, with room for `capacity` of them.
-fn Stream::new(capacity : Int) -> Stream {
+fn Stream::new(capacity : Int32) -> Stream {
   { events: Array(capacity~), bytes: 0, }
 }
 
@@ -711,7 +711,7 @@ fn Stream::over(self : Stream) -> Bool {
 fn Stream::reply(
   self : Stream,
   request_id : (String, String),
-  closing? : Closing? = None,
+  closing~ : Closing? = None,
 ) -> Reply {
   {
     content_type: "text/event-stream",
@@ -726,7 +726,7 @@ fn Stream::reply(
 /// The bytes of UTF-8 that `text` takes, valid UTF-16 as compact JSON
 /// gives it: 1 for a code unit below U+0080, 2 below U+0800, 2 for each
 /// surrogate of a pair, and 3 for any other.
-fn utf8_length(text : String) -> Int {
+fn utf8_length(text : String) -> Int32 {
   let mut length = text.length()
   for i in 0..<text.length() {
     let unit = text[i].to_int()
@@ -799,7 +799,7 @@ let no_calls : FixedArray[String] = []
 ///|
 /// Draws the ids of one reply with `tool_calls` tool calls from `ids`, slot
 /// by slot.
-fn draw_ids(ids : @prng.Generator, tool_calls : Int) -> Ids {
+fn draw_ids(ids : @prng.Generator, tool_calls : Int32) -> Ids {
   let reply = draw_id(ids)
   let message = draw_id(ids)
   let functions = if tool_calls == 0 {
@@ -827,7 +827,7 @@ let id_alphabet : Array[Char] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu
 
 ///|
 /// The characters of an id after its prefix.
-let id_length : Int = 24
+let id_length : Int32 = 24
 
 ///|
 /// One id without its prefix: `id_length` characters, each drawn from
@@ -1609,12 +1609,12 @@ priv struct ResponsesEvents {
   /// The events so far.
   stream : Stream
   /// The `sequence_number` of the next event.
-  mut next : Int
+  mut next : Int32
 }
 
 ///|
 /// The events of a new stream, with room for `capacity` of them.
-fn ResponsesEvents::new(capacity : Int) -> ResponsesEvents {
+fn ResponsesEvents::new(capacity : Int32) -> ResponsesEvents {
   { stream: Stream::new(capacity), next: 0, }
 }
 
@@ -1627,7 +1627,7 @@ fn ResponsesEvents::push(
   wait : WaitSlot,
   kind : String,
   members : String,
-  after? : String = "",
+  after~ : String = "",
 ) -> Unit {
   let sequence_number = self.next
   self.next += 1
@@ -1645,7 +1645,7 @@ fn ResponsesEvents::push(
 fn event_data(
   kind : String,
   members : String,
-  sequence_number : Int,
+  sequence_number : Int32,
   after : String,
 ) -> String {
   "{\"type\":\"\{kind}\",\{members},\"sequence_number\":\{sequence_number}\{after}}"
@@ -1958,20 +1958,20 @@ let empty_json_delta : String = "{\"type\":\"input_json_delta\",\"partial_json\"
 ///|
 /// The data of the `content_block_start` event of the block at `index`,
 /// whose opening content is `block`, given as compact JSON.
-fn content_block_start(index : Int, block : String) -> String {
+fn content_block_start(index : Int32, block : String) -> String {
   "{\"type\":\"content_block_start\",\"index\":\{index},\"content_block\":\{block}}"
 }
 
 ///|
 /// The data of a `content_block_delta` event of the block at `index`,
 /// whose delta is `delta`, given as compact JSON.
-fn content_block_delta(index : Int, delta : String) -> String {
+fn content_block_delta(index : Int32, delta : String) -> String {
   "{\"type\":\"content_block_delta\",\"index\":\{index},\"delta\":\{delta}}"
 }
 
 ///|
 /// The data of the `content_block_stop` event of the block at `index`.
-fn content_block_stop(index : Int) -> String {
+fn content_block_stop(index : Int32) -> String {
   "{\"type\":\"content_block_stop\",\"index\":\{index}}"
 }
 
@@ -2002,7 +2002,7 @@ fn messages_usage(usage : Usage) -> Json {
 
 ///|
 /// The code points a piece of text holds by default.
-let default_chunk_size : Int = 4
+let default_chunk_size : Int32 = 4
 
 ///|
 /// The most pieces a stream cuts from one text or one tool call's
@@ -2010,14 +2010,14 @@ let default_chunk_size : Int = 4
 /// that carries a piece takes more than 64 bytes as it is sent. A stream
 /// that sends that many is over the bound, and so is one cut after them,
 /// so the rest of a longer text is never cut.
-let max_pieces : Int = max_reply_bytes / 64 + 1
+let max_pieces : Int32 = max_reply_bytes / 64 + 1
 
 ///|
 /// `text` cut into pieces of `size` code points, the last one shorter. They
 /// join to exactly `text` and never split a code point, so each one encodes
 /// to valid UTF-8 on its own. Empty text has no piece. Only the first
 /// `max_pieces` pieces of a longer text are cut.
-fn pieces(text : String, size : Int) -> Array[String] {
+fn pieces(text : String, size : Int32) -> Array[String] {
   let out = []
   // A piece holds no more than the text, whatever the size.
   let piece = StringBuilder(
@@ -2048,7 +2048,10 @@ fn pieces(text : String, size : Int) -> Array[String] {
 /// an empty one included, and the piece that reaches the cut, ending there.
 /// The pieces after it are not sent, empty ones included. When the pieces
 /// hold fewer code points, all of them are sent.
-fn pieces_before(pieces : ArrayView[String], after : Int) -> ArrayView[String] {
+fn pieces_before(
+  pieces : ArrayView[String],
+  after : Int32,
+) -> ArrayView[String] {
   if after == 0 {
     return pieces[:0]
   }
@@ -2075,7 +2078,7 @@ fn pieces_before(pieces : ArrayView[String], after : Int) -> ArrayView[String] {
 
 ///|
 /// The first `count` code points of `text`, which holds more.
-fn first_code_points(text : String, count : Int) -> String {
+fn first_code_points(text : String, count : Int32) -> String {
   let out = StringBuilder()
   let mut written = 0
   for c in text {

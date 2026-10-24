@@ -30,7 +30,7 @@ fn echo_mock(fields : String) -> (String, String) {
 ///|
 /// The JSON body of a Chat Completions request whose last message is the
 /// user's `content`, streamed when `stream` is true.
-fn said(content : String, stream? : Bool = false) -> String {
+fn said(content : String, stream~ : Bool = false) -> String {
   let message = Json::string(content).stringify()
   let stream = if stream { ",\"stream\":true" } else { "" }
   "{\"model\":\"test-model\",\"messages\":[{\"role\":\"system\",\"content\":\"Be brief.\"},{\"role\":\"user\",\"content\":\{message}}]\{stream}}"
@@ -165,7 +165,7 @@ let fields_mock : (String, String) = (
 
 ///|
 /// A request to `fields_mock`, streamed when `stream` is true.
-fn fields_request(h : Harness, stream? : Bool = false) -> @engine.Outcome {
+fn fields_request(h : Harness, stream~ : Bool = false) -> @engine.Outcome {
   let stream = if stream { ",\"stream\":true" } else { "" }
   h.chat(
     body="{\"model\":\"test-model\",\"tool\":\"search\",\"city\":\"Paris\",\"days\":3,\"tags\":[\"a\",\"b\"],\"messages\":[{\"role\":\"user\",\"content\":\"Say \\\"hi\\\"\"}]\{stream}}",

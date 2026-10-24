@@ -56,9 +56,9 @@ fn Harness::add(
 /// An Ephemeral Stub that answers `GET path` with `status` and `body`.
 fn get_stub(
   path : String,
-  status : Int,
+  status : Int32,
   body : String,
-  priority? : Int,
+  priority? : Int32,
 ) -> String {
   let priority = match priority {
     Some(p) => ", \"priority\": \{p}"
@@ -128,7 +128,7 @@ test "an Ephemeral Stub applies only to requests with the Session it was added f
 ///|
 /// An Ephemeral Stub that answers `GET` on paths matching `pattern` with
 /// 200 and `body`.
-fn pattern_stub(pattern : String, body : String, priority? : Int) -> String {
+fn pattern_stub(pattern : String, body : String, priority? : Int32) -> String {
   let priority = match priority {
     Some(p) => ", \"priority\": \{p}"
     None => ""
@@ -758,7 +758,7 @@ fn Harness::add_or_error(
 /// A Stub, without `id` and `mock`, that answers `GET path` after a delay
 /// drawn uniformly from 0 to 1000 ms, with its own generator from `seed`
 /// when it has one.
-fn delayed(path : String, seed? : Int) -> String {
+fn delayed(path : String, seed? : Int32) -> String {
   let seed = match seed {
     Some(seed) => ", \"seed\": \{seed}"
     None => ""
@@ -772,7 +772,7 @@ fn delayed(path : String, seed? : Int) -> String {
 fn Harness::delays(
   self : Harness,
   path : String,
-  n : Int,
+  n : Int32,
   session? : String,
 ) -> String {
   let delays = []

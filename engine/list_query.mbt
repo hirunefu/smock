@@ -55,9 +55,9 @@ priv struct ListQuery {
   /// The sort keys of `$sort`, in order; none keeps the bucket's order.
   sort : Array[SortKey]
   /// The number of items that pass the filters to skip, 0 by default.
-  offset : Int
+  offset : Int32
   /// The most items to keep after the offset, if any.
-  limit : Int?
+  limit : Int32?
 }
 
 ///|
@@ -246,7 +246,7 @@ fn ListQuery::sort(self : ListQuery, passed : Array[Json]) -> Unit {
 ///|
 /// How the items `a` and `b` order by the sort keys `keys`: by the first
 /// key, then by the next while they tie.
-fn compare_items(a : Json, b : Json, keys : Array[SortKey]) -> Int {
+fn compare_items(a : Json, b : Json, keys : Array[SortKey]) -> Int32 {
   for key in keys {
     let order = compare_members(a, b, key)
     if order != 0 {
@@ -263,7 +263,7 @@ fn compare_items(a : Json, b : Json, keys : Array[SortKey]) -> Int {
 /// code point (see `compare_code_points`). Descending reverses that order.
 /// An item whose member is absent, an object or an array goes after the
 /// others either way, and ties with every such item.
-fn compare_members(a : Json, b : Json, key : SortKey) -> Int {
+fn compare_members(a : Json, b : Json, key : SortKey) -> Int32 {
   let a = member_value(a, key.name)
   let b = member_value(b, key.name)
   let a_rank = type_rank(a)
@@ -298,13 +298,13 @@ fn member_value(item : Json, name : String) -> Json? {
 ///|
 /// The rank of the members that sort after every other, either way:
 /// absent members, objects and arrays.
-let unordered : Int = 5
+let unordered : Int32 = 5
 
 ///|
 /// Where a member's value, by its type, places an item in ascending
 /// order: null, false, true, numbers, strings, then `unordered` for an
 /// object, an array or no value.
-fn type_rank(value : Json?) -> Int {
+fn type_rank(value : Json?) -> Int32 {
   match value {
     Some(Null) => 0
     Some(False) => 1
@@ -320,7 +320,7 @@ fn type_rank(value : Json?) -> Int {
 /// rather than by UTF-16 code unit: a character beyond the Basic
 /// Multilingual Plane, written as a surrogate pair, goes after every
 /// character within it, U+E000 to U+FFFF included.
-fn compare_code_points(a : String, b : String) -> Int {
+fn compare_code_points(a : String, b : String) -> Int32 {
   let n = a.length().min(b.length())
   for i in 0..<n {
     if a[i] != b[i] {
@@ -334,7 +334,7 @@ fn compare_code_points(a : String, b : String) -> Int {
 /// Where the UTF-16 code unit `unit` places a string in code point order,
 /// at the first unit where two strings differ: surrogates move above
 /// U+E000 to U+FFFF, which move down to make room.
-fn code_point_order(unit : UInt16) -> Int {
+fn code_point_order(unit : UInt16) -> Int32 {
   let unit = unit.to_int()
   if unit >= 0xD800 && unit <= 0xDFFF {
     unit + 0x2000

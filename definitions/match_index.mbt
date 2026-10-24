@@ -17,19 +17,19 @@ priv struct MatchIndex {
   by_path : Map[String, PathStubs]
   /// The Stubs with a method condition and no exact path condition, such
   /// as a path pattern, by method.
-  by_method : Map[String, Array[Int]]
+  by_method : Map[String, Array[Int32]]
   /// The Stubs with neither a method nor an exact path condition, and the
   /// CRUD Stubs: they are tried for every request.
-  scanned : Array[Int]
+  scanned : Array[Int32]
 } derive(Debug, Eq)
 
 ///|
 /// The Stubs with one exact path condition.
 priv struct PathStubs {
   /// The Stubs that also have a method condition, by method.
-  by_method : Map[String, Array[Int]]
+  by_method : Map[String, Array[Int32]]
   /// The Stubs without a method condition.
-  any_method : Array[Int]
+  any_method : Array[Int32]
 } derive(Debug, Eq)
 
 ///|
@@ -73,9 +73,9 @@ fn MatchIndex::new(stubs : ReadOnlyArray[Stub]) -> MatchIndex {
 ///|
 /// Appends `position` to the list of `key` in `lists`.
 fn add_position(
-  lists : Map[String, Array[Int]],
+  lists : Map[String, Array[Int32]],
   key : String,
-  position : Int,
+  position : Int32,
 ) -> Unit {
   match lists.get(key) {
     Some(list) => list.push(position)
@@ -98,7 +98,7 @@ pub fn Mock::candidates(
   path : String,
 ) -> Iter[Stub] {
   let index = self.index
-  let lists : Array[Array[Int]] = []
+  let lists : Array[Array[Int32]] = []
   if index.by_path.get(path) is Some(stubs) {
     if stubs.by_method.get(meth) is Some(list) {
       lists.push(list)
@@ -128,7 +128,7 @@ pub fn Mock::candidates(
 
 ///|
 /// No positions, for a list the match index does not have.
-let no_positions : Array[Int] = []
+let no_positions : Array[Int32] = []
 
 ///|
 /// The first of `candidates(meth, path)` for which `accepts` holds, in the

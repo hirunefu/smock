@@ -426,7 +426,7 @@ test "the Journal keeps the values of failed form fields up to its body limit in
     journal=@engine.JournalSettings(body_limit=60),
   )
   let headers = [("Content-Type", form_type), ("X-Csrf", "t")]
-  let body = (e : Int) => {
+  let body = (e : Int32) => {
     "username=" +
     "b".repeat(20) +
     "&remember=" +

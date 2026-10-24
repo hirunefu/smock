@@ -20,14 +20,14 @@
 
 ///|
 /// The most documents a conversion reads, the root included.
-let max_documents : Int = 1000
+let max_documents : Int32 = 1000
 
 ///|
 /// The most bytes a conversion reads, in all its documents, the root
 /// included: 64 MiB. Both parsers build a tree, and the YAML parser copies
 /// the text into 4-byte characters, so a run needs many times what it
 /// reads.
-pub let max_read_bytes : Int = 64 * 1024 * 1024
+pub let max_read_bytes : Int32 = 64 * 1024 * 1024
 
 ///|
 /// What a conversion needs besides the documents.
@@ -82,10 +82,10 @@ pub fn Options::Options(
   root~ : String,
   mock~ : String,
   output~ : String,
-  root_label? : String = root,
-  ref_dir? : String = "",
-  hosts? : Array[String] = [],
-  declare_mock? : Bool = true,
+  root_label~ : String = root,
+  ref_dir~ : String = "",
+  hosts~ : Array[String] = [],
+  declare_mock~ : Bool = true,
   base_path? : String,
 ) -> Options {
   { root, root_label, ref_dir, mock, hosts, declare_mock, output, base_path, }
@@ -165,8 +165,8 @@ pub(all) enum Outcome {
   Converted(
     file~ : Bytes,
     problems~ : Array[Problem],
-    stubs~ : Int,
-    operations~ : Int
+    stubs~ : Int32,
+    operations~ : Int32
   )
   /// No file: every problem, errors and warnings, in the order the document
   /// writes what they are about. At least one is an error.
@@ -290,7 +290,7 @@ pub fn convert(
 ///|
 /// `n`, a count that is not negative, as messages write it: its digits in
 /// groups of three, separated by commas, such as `1,000`.
-fn count_text(n : Int) -> String {
+fn count_text(n : Int32) -> String {
   let digits = n.to_string()
   let out = StringBuilder()
   for i, c in digits {

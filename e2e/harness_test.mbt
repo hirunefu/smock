@@ -21,7 +21,7 @@ let build : @async.Lazy[Unit] = @async.Lazy(() => {
 
 ///|
 /// How long a test waits for smock to start listening or to exit.
-let patience_ms : Int = 20_000
+let patience_ms : Int32 = 20_000
 
 ///|
 /// Creates a temporary definitions directory holding `files`, given as
@@ -76,13 +76,13 @@ fn smock_env(env : Map[String, String]) -> Map[String, String] {
 /// A running smock process.
 struct Smock {
   /// The plain port it listens on.
-  port : Int
+  port : Int32
   /// The admin port it listens on.
-  admin_port : Int
+  admin_port : Int32
   /// The TLS port it listens on.
-  tls_port : Int
+  tls_port : Int32
   /// Its process ID.
-  pid : Int
+  pid : Int32
   /// The log lines it has written so far: they keep coming while it runs.
   logs : Array[String]
   /// The process, to wait for its exit.
@@ -97,14 +97,14 @@ async fn Smock::terminate(self : Smock) -> Unit {
 
 ///|
 /// Sends the process `pid` SIGTERM.
-async fn terminate(pid : Int) -> Unit {
+async fn terminate(pid : Int32) -> Unit {
   let _ = @process.run("kill", ["-TERM", pid.to_string()])
 }
 
 ///|
 /// Waits for smock to exit, and returns its exit status (minus the signal
 /// number when a signal ended it).
-async fn Smock::exited(self : Smock) -> Int {
+async fn Smock::exited(self : Smock) -> Int32 {
   let status = @async.with_timeout_opt(patience_ms, () => self.process.wait())
   guard status is Some(status) else { fail("smock did not exit in time") }
   status
@@ -159,8 +159,8 @@ async fn with_certificates(f : async (Certificates) -> Unit) -> Unit {
 /// default the RSA chain and its key.
 fn Certificates::args(
   self : Certificates,
-  cert? : String = self.rsa_chain,
-  key? : String = self.rsa_key,
+  cert~ : String = self.rsa_chain,
+  key~ : String = self.rsa_key,
 ) -> Array[String] {
   ["--tls-port", "0", "--tls-cert-file", cert, "--tls-key-file", key]
 }
@@ -172,8 +172,8 @@ fn Certificates::args(
 /// run this way: the codec and the connection loop are the same on both
 /// ports.
 async fn on_both_ports(
-  files? : Array[(String, String)] = [("users.json", users)],
-  args? : Array[String] = [],
+  files~ : Array[(String, String)] = [("users.json", users)],
+  args~ : Array[String] = [],
   f : async (Smock, Over) -> Unit,
 ) -> Stopped {
   let mut stopped = None
@@ -252,7 +252,7 @@ async fn Conn::read_until(self : Conn, separator : String) -> String? {
 }
 
 ///|
-async fn Conn::read_exactly(self : Conn, length : Int) -> Bytes {
+async fn Conn::read_exactly(self : Conn, length : Int32) -> Bytes {
   match self {
     PlainConn(tcp) => {
       // `tcp.read_exactly` drops what it has read when a read in it fails,
@@ -297,7 +297,7 @@ fn Conn::close(self : Conn) -> Unit {
 /// How a smock process ended: its exit status (minus the signal number when
 /// a signal ended it) and every log line it wrote.
 struct Stopped {
-  status : Int
+  status : Int32
   logs : Array[String]
 }
 
@@ -311,9 +311,9 @@ struct Stopped {
 /// --`, so that the signal still reaches smock.
 async fn with_smock(
   args : Array[String],
-  env? : Map[String, String] = Map([]),
-  cwd? : String = ".",
-  under? : Array[String] = [],
+  env~ : Map[String, String] = Map([]),
+  cwd~ : String = ".",
+  under~ : Array[String] = [],
   f : async (Smock) -> Unit,
 ) -> Stopped {
   @async.with_task_group(group => {
@@ -348,9 +348,9 @@ struct Serving {
 async fn[X] Serving::start(
   group : @async.TaskGroup[X],
   args : Array[String],
-  env? : Map[String, String] = Map([]),
-  cwd? : String = ".",
-  under? : Array[String] = [],
+  env~ : Map[String, String] = Map([]),
+  cwd~ : String = ".",
+  under~ : Array[String] = [],
 ) -> Serving {
   build.wait()
   let (stderr, stderr_end) = @process.read_from_process()
@@ -390,8 +390,8 @@ async fn[X] Serving::start(
 async fn Serving::listening_on(
   self : Serving,
   listeners : Array[String],
-) -> Map[String, Int]? {
-  let ports : Map[String, Int] = Map([])
+) -> Map[String, Int32]? {
+  let ports : Map[String, Int32] = Map([])
   let listened = @async.with_timeout_opt(patience_ms, () => {
     for ;; {
       if listeners.iter().all(listener => ports.contains(listener)) {
@@ -416,7 +416,7 @@ async fn Serving::listening_on(
 ///|
 /// The running smock, with the ports it listens on from `ports`; a port it
 /// has not opened yet is 0.
-fn Serving::smock(self : Serving, ports : Map[String, Int]) -> Smock {
+fn Serving::smock(self : Serving, ports : Map[String, Int32]) -> Smock {
   {
     port: ports.get("plain").unwrap_or(0),
     tls_port: ports.get("tls").unwrap_or(0),
@@ -430,7 +430,7 @@ fn Serving::smock(self : Serving, ports : Map[String, Int]) -> Smock {
 ///|
 /// Waits for smock to exit and for its last log line, and returns its exit
 /// status (minus the signal number when a signal ended it).
-async fn Serving::wait(self : Serving) -> Int {
+async fn Serving::wait(self : Serving) -> Int32 {
   let status = @async.with_timeout_opt(patience_ms, () => self.process.wait())
   guard status is Some(status) else { fail("smock did not stop in time") }
   self.reader.wait()
@@ -440,7 +440,7 @@ async fn Serving::wait(self : Serving) -> Int {
 ///|
 /// Stops smock with SIGTERM, unless it has exited, and waits for it as
 /// `wait` does.
-async fn Serving::stop(self : Serving) -> Int {
+async fn Serving::stop(self : Serving) -> Int32 {
   if self.process.try_wait() is None {
     terminate(self.process.pid)
   }
@@ -466,7 +466,7 @@ async fn serve_verdict(args : Array[String]) -> String {
 
 ///|
 /// The listener and the port of a `listening` log entry.
-fn listening(line : String) -> (String, Int)? {
+fn listening(line : String) -> (String, Int32)? {
   let entry = @json.parse(line) catch { _ => return None }
   guard entry is Object(entry) &&
     entry.get("msg") is Some(String("listening")) &&
@@ -488,7 +488,7 @@ fn listening(line : String) -> (String, Int)? {
 /// stderr.
 async fn run_smock(
   args : Array[String],
-  env? : Map[String, String] = Map([]),
+  env~ : Map[String, String] = Map([]),
 ) -> Stopped {
   let (status, _, stderr) = smock_output(args, env=smock_env(env))
   let logs = stderr
@@ -502,7 +502,7 @@ async fn run_smock(
 ///|
 /// Runs `smock <args>` until it exits, and returns its exit status and what
 /// it wrote to stdout, such as help text.
-async fn smock_stdout(args : Array[String]) -> (Int, String) {
+async fn smock_stdout(args : Array[String]) -> (Int32, String) {
   let (status, stdout, _) = smock_output(args)
   (status, stdout)
 }
@@ -513,9 +513,9 @@ async fn smock_stdout(args : Array[String]) -> (Int, String) {
 /// and returns its exit status and what it wrote to stdout and to stderr.
 async fn smock_output(
   args : Array[String],
-  env? : Map[String, String] = Map([]),
-  cwd? : String = ".",
-) -> (Int, String, String) {
+  env~ : Map[String, String] = Map([]),
+  cwd~ : String = ".",
+) -> (Int32, String, String) {
   build.wait()
   let smock = @fs.realpath(binary)
   let result = @async.with_timeout_opt(patience_ms, () => {
@@ -535,11 +535,11 @@ async fn smock_output(
 async fn collect_output(
   command : String,
   args : Array[String],
-  extra_env? : Map[String, String] = Map([]),
-  inherit_env? : Bool = true,
+  extra_env~ : Map[String, String] = Map([]),
+  inherit_env~ : Bool = true,
   stdin? : &@process.ProcessInput,
-  cwd? : String = ".",
-) -> (Int, &@io.Data, &@io.Data) {
+  cwd~ : String = ".",
+) -> (Int32, &@io.Data, &@io.Data) {
   let (stdout, stdout_end) = @process.read_from_process()
   let (stderr, stderr_end) = @process.read_from_process()
   @async.with_task_group(group => {
@@ -566,7 +566,7 @@ async fn collect_output(
 async fn collect_output_merged(
   command : String,
   args : Array[String],
-) -> (Int, &@io.Data) {
+) -> (Int32, &@io.Data) {
   let (output, output_end) = @process.read_from_process()
   @async.with_task_group(group => {
     let status = group.spawn(() => {
@@ -583,7 +583,7 @@ async fn collect_output_merged(
 async fn collect_stdout(
   command : String,
   args : Array[String],
-) -> (Int, &@io.Data) {
+) -> (Int32, &@io.Data) {
   let (output, output_end) = @process.read_from_process()
   @async.with_task_group(group => {
     let status = group.spawn(() => {
@@ -609,7 +609,7 @@ async fn read_output(output : @process.ReadFromProcess) -> &@io.Data {
 ///|
 /// Renders how a run of smock ended, as `smock_output` returns it: the exit
 /// status, then what smock wrote to stdout and, if anything, to stderr.
-fn exit_report(output : (Int, String, String)) -> String {
+fn exit_report(output : (Int32, String, String)) -> String {
   let (status, stdout, stderr) = output
   let out = "status \{status}\n\{stdout}"
   match stderr {
@@ -642,8 +642,8 @@ async fn Smock::admin(
   self : Smock,
   meth : String,
   path : String,
-  token? : String? = Some(test_token),
-  headers? : Array[(String, String)] = [],
+  token~ : String? = Some(test_token),
+  headers~ : Array[(String, String)] = [],
   body? : String,
 ) -> AdminResponse {
   let conn = PlainConn(
@@ -671,7 +671,7 @@ async fn Smock::admin(
 ///|
 /// An Admin API response as a test sees it.
 struct AdminResponse {
-  status : Int
+  status : Int32
   /// The header fields, in the order they came.
   headers : Array[(String, String)]
   body : String
@@ -719,7 +719,7 @@ fn raw_request(
   meth : String,
   target : String,
   host? : String,
-  headers? : Array[(String, String)] = [],
+  headers~ : Array[(String, String)] = [],
   body? : String,
 ) -> String {
   let out = StringBuilder()
@@ -762,7 +762,7 @@ async fn read_framed(conn : Conn) -> (String, Bytes)? {
 ///|
 /// Opens a connection to smock for tests that send exact bytes: over plain
 /// TCP by default, or over TLS.
-async fn Smock::connect(self : Smock, over? : Over = Plain) -> Conn {
+async fn Smock::connect(self : Smock, over~ : Over = Plain) -> Conn {
   match over {
     Plain =>
       PlainConn(

@@ -252,7 +252,7 @@ test "an anthropic-messages error's type is one of Anthropic's documented error 
 
 ///|
 test "an error's after may reach the end of the text, counted in code points, and not pass it" {
-  let check = (after : Int, strings : @llm.Strings) => {
+  let check = (after : Int32, strings : @llm.Strings) => {
     match @llm.check_error_after(after, strings.text) {
       Ok(_) => "\{after}: ok"
       Err(message) => "\{after}: \{message}"

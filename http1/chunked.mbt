@@ -6,11 +6,11 @@ priv struct Chunks {
   mut state : ChunkState
   /// The size of the chunk being read, then the bytes of its data still to
   /// come.
-  mut size : Int
+  mut size : Int32
   /// The data of the chunks decoded so far.
   mut body : @buffer.Buffer
   /// The longest body allowed, below `max_length`.
-  limit : Int
+  limit : Int32
 }
 
 ///|
@@ -52,7 +52,7 @@ priv enum ChunkState {
 }
 
 ///|
-fn Chunks::Chunks(limit~ : Int) -> Chunks {
+fn Chunks::Chunks(limit~ : Int32) -> Chunks {
   { state: SizeStart, size: 0, body: @buffer.Buffer(), limit, }
 }
 
@@ -74,9 +74,9 @@ fn Chunks::take_body(self : Chunks) -> Bytes {
 fn Chunks::decode(
   self : Chunks,
   buf : FixedArray[Byte],
-  start : Int,
-  end : Int,
-) -> Result[Int?, Int] {
+  start : Int32,
+  end : Int32,
+) -> Result[Int32?, Int32] {
   let mut i = start
   while i < end {
     let c = buf[i]
@@ -141,13 +141,17 @@ fn Chunks::decode(
         self.state = match c {
           b'"' => ExtAfterQuoted
           b'\\' => ExtQuotedPair
-          b'\t' | b' ' | b'!' | b'#'..=b'[' | b']'..=b'~' | b'\x80'..=b'\xff' =>
-            ExtQuoted
+          b'\t'
+          | b' '
+          | b'!'
+          | b'#'..<=b'['
+          | b']'..<=b'~'
+          | b'\x80'..<=b'\xff' => ExtQuoted
           _ => Broken
         }
       ExtQuotedPair =>
         self.state = match c {
-          b'\t' | b' '..=b'~' | b'\x80'..=b'\xff' => ExtQuoted
+          b'\t' | b' '..<=b'~' | b'\x80'..<=b'\xff' => ExtQuoted
           _ => Broken
         }
       ExtAfterQuoted => self.state = after_value(c)
@@ -197,7 +201,7 @@ fn Chunks::decode(
 ///|
 /// One more than the longest body limit the parser takes. Chunk sizes too
 /// large to hold saturate at it.
-let max_length : Int = 0x7fffffff
+let max_length : Int32 = 0x7fffffff
 
 ///|
 /// The state after `c`, which follows a chunk size or a chunk extension.
@@ -212,11 +216,11 @@ fn after_value(c : Byte) -> ChunkState {
 
 ///|
 /// The value of the hexadecimal digit `c`.
-fn hex_value(c : Byte) -> Int? {
+fn hex_value(c : Byte) -> Int32? {
   match c {
-    b'0'..=b'9' => Some((c - b'0').to_int())
-    b'a'..=b'f' => Some((c - b'a').to_int() + 10)
-    b'A'..=b'F' => Some((c - b'A').to_int() + 10)
+    b'0'..<=b'9' => Some((c - b'0').to_int())
+    b'a'..<=b'f' => Some((c - b'a').to_int() + 10)
+    b'A'..<=b'F' => Some((c - b'A').to_int() + 10)
     _ => None
   }
 }

@@ -9,8 +9,8 @@
 /// and `text`, such as a fixed `id`, and `headers`, its own seed fixing its
 /// generated ids.
 fn ids_mock(
-  fields? : String = "",
-  headers? : String = "{}",
+  fields~ : String = "",
+  headers~ : String = "{}",
 ) -> (String, String) {
   (
     "openai.json",

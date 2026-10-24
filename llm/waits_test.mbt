@@ -77,9 +77,9 @@ test "a JSON reply has no event, and handing it no wait leaves it as it was" {
 /// each `interval` one.
 fn fixed_waits(
   reply : @llm.Reply,
-  first : Int,
-  interval : Int,
-) -> FixedArray[Int] {
+  first : Int32,
+  interval : Int32,
+) -> FixedArray[Int32] {
   guard reply.body is Events(events) else { return [] }
   let waits = FixedArray::make(events.length(), 0)
   for i, event in events {
@@ -99,7 +99,7 @@ fn fixed_waits(
 /// gives for it, and whether every other event stayed as it was.
 fn completed_at(
   text : String,
-  waits : (@llm.Reply) -> FixedArray[Int],
+  waits : (@llm.Reply) -> FixedArray[Int32],
   stop_reason? : String,
 ) -> String raise {
   let stop_reason = match stop_reason {

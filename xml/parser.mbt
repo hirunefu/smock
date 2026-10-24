@@ -6,25 +6,25 @@
 priv struct Parser {
   input : BytesView
   /// The byte offset of the next byte to read.
-  mut pos : Int
+  mut pos : Int32
   /// Where the qualified name of each attribute of the start tag being read
   /// starts, in order.
-  attribute_starts : Array[Int]
+  attribute_starts : Array[Int32]
   /// Where each of them ends, in the same order.
-  attribute_ends : Array[Int]
+  attribute_ends : Array[Int32]
   /// Where the local name of each element read so far starts, in document
   /// order: the order of their start tags.
-  name_starts : Array[Int]
+  name_starts : Array[Int32]
   /// How deep each of them is, less one: 0 for the root element.
   depths : Array[Byte]
   /// Where the start tag of each open element begins, the root element's
   /// first: the elements whose end tags are not read yet.
-  open_tags : Array[Int]
+  open_tags : Array[Int32]
   /// Where the qualified name of each open element starts, which its end
   /// tag repeats.
-  open_name_starts : Array[Int]
+  open_name_starts : Array[Int32]
   /// Where each of those names ends.
-  open_name_ends : Array[Int]
+  open_name_ends : Array[Int32]
 }
 
 ///|
@@ -62,13 +62,13 @@ let not_utf8_message = "the input is not UTF-8"
 
 ///|
 /// Raises a `ParseError` at byte offset `position`.
-fn[T] fail_at(position : Int, message : String) -> T raise ParseError {
+fn[T] fail_at(position : Int32, message : String) -> T raise ParseError {
   raise ParseError(position~, message~)
 }
 
 ///|
 /// The next byte as an `Int`, or -1 at the end of the input.
-fn Parser::peek(self : Parser) -> Int {
+fn Parser::peek(self : Parser) -> Int32 {
   if self.pos < self.input.length() {
     self.input[self.pos].to_int()
   } else {
@@ -80,7 +80,7 @@ fn Parser::peek(self : Parser) -> Int {
 /// Reads the character at the next byte and returns its code point.
 /// Raises an error when the bytes there are not well-formed UTF-8, or not
 /// a character XML allows (XML 1.0 §2.2).
-fn Parser::char(self : Parser) -> Int raise ParseError {
+fn Parser::char(self : Parser) -> Int32 raise ParseError {
   let decoded = decode(self.input, self.pos)
   if decoded < 0 {
     fail_at(self.pos, not_utf8_message)
@@ -214,7 +214,7 @@ fn Parser::equals(self : Parser) -> Unit raise ParseError {
 /// Whether `text` is all ASCII digits.
 fn is_digits(text : StringView) -> Bool {
   for c in text {
-    if !(c is ('0'..='9')) {
+    if !(c is ('0'..<='9')) {
       return false
     }
   }
@@ -528,9 +528,9 @@ fn Parser::reference(self : Parser) -> Unit raise ParseError {
     let mut code = 0
     while true {
       let digit = match self.peek() {
-        '0'..='9' as b => b - '0'
-        'a'..='f' as b if hex => b - 'a' + 10
-        'A'..='F' as b if hex => b - 'A' + 10
+        '0'..<='9' as b => b - '0'
+        'a'..<='f' as b if hex => b - 'a' + 10
+        'A'..<='F' as b if hex => b - 'A' + 10
         _ => break
       }
       // Past U+10FFFF, the value no longer matters: it is not a character.
@@ -580,7 +580,7 @@ fn Parser::semicolon(self : Parser) -> Unit raise ParseError {
 
 ///|
 /// The input from byte `start` to byte `end`, which are ASCII.
-fn Parser::ascii(self : Parser, start : Int, end : Int) -> String {
+fn Parser::ascii(self : Parser, start : Int32, end : Int32) -> String {
   let text = StringBuilder()
   for i in start..<end {
     text.write_char(self.input[i].to_int().unsafe_to_char())
@@ -651,7 +651,7 @@ fn Parser::skip_name(self : Parser) -> Unit raise ParseError {
 ///|
 /// Whether the input from byte `start` to byte `end` is `xml` in any case,
 /// which processing instruction targets may not be.
-fn Parser::is_xml(self : Parser, start : Int, end : Int) -> Bool {
+fn Parser::is_xml(self : Parser, start : Int32, end : Int32) -> Bool {
   // A letter's lower case is its upper case with the bit 0x20 set.
   end - start == 3 &&
   (self.input[start].to_int() | 0x20) == 'x' &&
@@ -661,14 +661,14 @@ fn Parser::is_xml(self : Parser, start : Int, end : Int) -> Bool {
 
 ///|
 /// Whether the input from byte `start` is `literal`, which is ASCII.
-fn Parser::looking_back(self : Parser, start : Int, literal : Bytes) -> Bool {
+fn Parser::looking_back(self : Parser, start : Int32, literal : Bytes) -> Bool {
   self.input[start:start + literal.length()] == literal[:]
 }
 
 ///|
 /// The input from byte `start` to byte `end`, which are well-formed UTF-8,
 /// as a string: a name, for an error message.
-fn Parser::text(self : Parser, start : Int, end : Int) -> String {
+fn Parser::text(self : Parser, start : Int32, end : Int32) -> String {
   let text = StringBuilder()
   let mut i = start
   while i < end {

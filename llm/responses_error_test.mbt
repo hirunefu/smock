@@ -12,10 +12,10 @@
 /// given.
 fn responses_cut(
   strings : @llm.Strings,
-  after~ : Int,
-  code? : String = "server_error",
-  request? : Json? = Some({ "model": "gpt-6-astra", "stream": true }),
-  chunk_size? : Int,
+  after~ : Int32,
+  code~ : String = "server_error",
+  request~ : Json? = Some({ "model": "gpt-6-astra", "stream": true }),
+  chunk_size? : Int32,
 ) -> @llm.Reply {
   @llm.reply(
     @llm.Declaration(
@@ -255,7 +255,7 @@ test "every event of a cut stream keeps the SDK's invariants, sequence_number co
 
 ///|
 test "a cut stream that breaks a rule is caught: the check is not vacuous" {
-  let cut = (text : String, after : Int) => {
+  let cut = (text : String, after : Int32) => {
     responses_cut(
       @llm.Strings(text~, error_message="Something went wrong"),
       after~,
@@ -486,7 +486,7 @@ test "a written stop reason does not change the cut: neither response.completed 
 
 ///|
 test "at load, the stream that the error cuts at 0 is short, so only the JSON reply can pass the bound" {
-  let size = (text : String, after : Int, chunk_size : Int) => {
+  let size = (text : String, after : Int32, chunk_size : Int32) => {
     match
       @llm.check_reply_size(
         @llm.Declaration(

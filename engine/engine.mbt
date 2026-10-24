@@ -117,11 +117,11 @@ pub(all) enum Resolution {
 ///|
 /// The response to send, and how to send it.
 pub(all) struct ResponsePlan {
-  status : Int
+  status : Int32
   headers : Array[(String, String)]
   body : Body
   /// How long to wait, in milliseconds, before writing the status line.
-  delay_ms : Int
+  delay_ms : Int32
   /// A connection Fault to inject instead of a normal response.
   fault : @definitions.ConnectionKind?
 } derive(Debug)
@@ -154,10 +154,10 @@ pub(all) enum Body {
 /// it counts it: by default, `default_state_max_bytes` (64 MiB).
 pub fn Engine::Engine(
   snapshot : @definitions.Snapshot,
-  match_index? : Bool = true,
-  journal? : JournalSettings = JournalSettings(),
-  env? : @template.Env = @template.no_env,
-  state_max_bytes? : Int = default_state_max_bytes,
+  match_index~ : Bool = true,
+  journal~ : JournalSettings = JournalSettings(),
+  env~ : @template.Env = @template.no_env,
+  state_max_bytes~ : Int32 = default_state_max_bytes,
 ) -> Engine {
   let state = StateBound::new(state_max_bytes)
   {
@@ -245,13 +245,13 @@ pub(all) struct ReloadResult {
   /// Scenario once the new set is swapped in. The states of a Mock that is
   /// gone are dropped with it, and are not counted. It is 0 when nothing
   /// was swapped.
-  scenario_states_reset : Int
+  scenario_states_reset : Int32
   /// How many copies of Data buckets the reload dropped, so that their
   /// buckets read their initial values again: those of a Mock that is
   /// gone, and those of a bucket that the new set no longer declares, or
   /// whose initial value or `key` it changed. It is 0 when nothing was
   /// swapped.
-  data_buckets_reset : Int
+  data_buckets_reset : Int32
 } derive(Debug)
 
 ///|
@@ -307,7 +307,7 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 pub fn Engine::reload(
   self : Engine,
   set : @definitions.DefinitionSet,
-  read_problems? : Array[@definitions.Diagnostic] = [],
+  read_problems~ : Array[@definitions.Diagnostic] = [],
   at~ : Int64,
 ) -> ReloadResult {
   let old_snapshot = self.snapshot
@@ -859,7 +859,7 @@ fn authority_of(target : String) -> String? {
 ///|
 /// Where the scheme of an absolute-form target ends: the index of its
 /// `://`.
-fn scheme_end(target : String) -> Int? {
+fn scheme_end(target : String) -> Int32? {
   guard target.find("://") is Some(end) && end > 0 else { return None }
   for i, c in target[:end] {
     let ok = (c >= 'a' && c <= 'z') ||

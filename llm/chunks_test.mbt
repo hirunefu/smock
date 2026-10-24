@@ -10,8 +10,8 @@
 /// does not otherwise.
 fn chunked_reply(
   strings : @llm.Strings,
-  chunk_size? : Int,
-  streams? : Bool = true,
+  chunk_size? : Int32,
+  streams~ : Bool = true,
 ) -> @llm.Reply {
   @llm.reply(
     @llm.Declaration(api=OpenaiChat, chunk_size?),
@@ -27,7 +27,7 @@ fn chunked_reply(
 /// its wait slot: the content of each chunk after the opening one.
 fn carried(
   strings : @llm.Strings,
-  chunk_size? : Int,
+  chunk_size? : Int32,
 ) -> Array[(String, String)] {
   guard chunked_reply(strings, chunk_size?).body is Events(events) else {
     abort("the JSON reply")
@@ -50,7 +50,7 @@ fn carried(
 ///|
 /// The pieces of the stream of `text` with the chunk size `chunk_size`, as
 /// `"piece"` each, after a check that they join to exactly the text.
-fn cut(text : String, chunk_size? : Int) -> String raise {
+fn cut(text : String, chunk_size? : Int32) -> String raise {
   let pieces = carried(@llm.Strings(text~), chunk_size?).map(p => p.1)
   guard pieces.join("") == text else {
     fail("\{@debug.to_string(pieces)} do not join to \{text.escape()}")
@@ -119,7 +119,7 @@ test "without chunkSize, pieces hold 4 code points" {
 ///|
 /// The pieces of the stream of `chunks`, each after its wait slot, after a
 /// check that each element is one piece, in order.
-fn given(chunks : ReadOnlyArray[String], chunk_size? : Int) -> String raise {
+fn given(chunks : ReadOnlyArray[String], chunk_size? : Int32) -> String raise {
   let pieces = carried(@llm.Strings(chunks~), chunk_size?)
   guard pieces.map(p => p.1) == chunks.iter().collect() else {
     fail("\{@debug.to_string(pieces)} are not \{@debug.to_string(chunks)}")

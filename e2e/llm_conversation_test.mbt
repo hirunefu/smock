@@ -52,7 +52,7 @@ let weather_conversation : String =
 /// `first` before its first piece, then `interval` before each later one.
 /// They are the waits docs/definition-files.md shows under Timing for the
 /// same `timing` with `smock render --seed 7`, since the Stub's seed is 7.
-let first_match_waits : Array[Int] = [824, 27, 20, 38, 19, 40, 38, 26]
+let first_match_waits : Array[Int32] = [824, 27, 20, 38, 19, 40, 38, 26]
 
 ///|
 /// The header fields an SDK sends with each request, after Host.

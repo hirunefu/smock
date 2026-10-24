@@ -21,29 +21,29 @@
 /// can tell: the start or the end of the input, a `\n`, an ASCII word
 /// character, or anything else (another character, or a byte of ill-formed
 /// UTF-8).
-const EDGE : Int = 0
+const EDGE : Int32 = 0
 
 ///|
-const NEWLINE : Int = 1
+const NEWLINE : Int32 = 1
 
 ///|
-const WORD : Int = 2
+const WORD : Int32 = 2
 
 ///|
-const OTHER : Int = 3
+const OTHER : Int32 = 3
 
 ///|
 /// The dead state, which has no thread left.
-const DEAD : Int = 0
+const DEAD : Int32 = 0
 
 ///|
 /// The state at the start of the input.
-const START : Int = 1
+const START : Int32 = 1
 
 ///|
 /// The most Ints a DFA may hold in its transition table and its states
 /// together (128 KiB). Past it, the regex matches with the Pike VM.
-const DFA_BUDGET : Int = 32768
+const DFA_BUDGET : Int32 = 32768
 
 ///|
 /// The DFA of one program.
@@ -55,32 +55,32 @@ priv struct Dfa {
   /// The class of each ASCII byte: no instruction and no assertion tells
   /// the bytes of one class apart, so they lead from a state to the same
   /// state.
-  byte_class : FixedArray[Int]
+  byte_class : FixedArray[Int32]
   /// The number of byte classes.
-  classes : Int
+  classes : Int32
   /// Each state, as the instructions its threads are at, sorted, followed
   /// by the context the last character consumed leaves (`EDGE` at the
   /// start of the input).
-  states : Array[Array[Int]]
+  states : Array[Array[Int32]]
   /// The number of each state.
-  numbers : Map[Array[Int], Int]
+  numbers : Map[Array[Int32], Int32]
   /// The next state of each state for each byte class, at
   /// `state * classes + class`; -1 until it is computed.
-  table : Array[Int]
+  table : Array[Int32]
   /// The next state of each state for each character beyond ASCII, at
   /// `state * 0x110000 + character`.
-  wide : Map[Int64, Int]
+  wide : Map[Int64, Int32]
   /// Whether the input may end in each state: 1 if so, 0 if not, -1 until
   /// it is computed.
-  accepts : Array[Int]
+  accepts : Array[Int32]
   /// The Ints the states and the table hold.
-  mut size : Int
+  mut size : Int32
   /// Scratch space: the stamp each instruction got last, the instructions
   /// to visit, and those reached.
-  seen : FixedArray[Int]
-  mut stamp : Int
-  stack : Array[Int]
-  reached : Array[Int]
+  seen : FixedArray[Int32]
+  mut stamp : Int32
+  stack : Array[Int32]
+  reached : Array[Int32]
 }
 
 ///|
@@ -91,7 +91,7 @@ fn Dfa::new(insts : FixedArray[Inst]) -> Dfa {
   // tell it from the byte before.
   let starts = FixedArray::make(129, false)
   starts[0] = true
-  let split = (lo : Int, hi : Int) => {
+  let split = (lo : Int32, hi : Int32) => {
     if lo < 128 && hi >= 0 {
       starts[if lo < 0 { 0 } else { lo }] = true
       if hi < 127 {
@@ -148,7 +148,7 @@ fn Dfa::new(insts : FixedArray[Inst]) -> Dfa {
 ///|
 /// The number of the state `key`, added if it is new, or -1 when adding it
 /// would take the DFA over its budget.
-fn Dfa::add(self : Dfa, key : Array[Int]) -> Int {
+fn Dfa::add(self : Dfa, key : Array[Int32]) -> Int32 {
   if self.numbers.get(key) is Some(number) {
     return number
   }
@@ -170,7 +170,7 @@ fn Dfa::add(self : Dfa, key : Array[Int]) -> Int {
 
 ///|
 /// What a character leaves on its side of a position, for assertions.
-fn context_of(c : Int) -> Int {
+fn context_of(c : Int32) -> Int32 {
   if c == '\n'.to_int() {
     NEWLINE
   } else if (c >= '0'.to_int() && c <= '9'.to_int()) ||
@@ -186,7 +186,7 @@ fn context_of(c : Int) -> Int {
 ///|
 /// Whether `a` holds at a position with `before` on one side and `after`
 /// on the other, as `holds` decides it from the input.
-fn holds_between(a : Assertion, before : Int, after : Int) -> Bool {
+fn holds_between(a : Assertion, before : Int32, after : Int32) -> Bool {
   match a {
     BeginText => before == EDGE
     EndText => after == EDGE
@@ -201,7 +201,7 @@ fn holds_between(a : Assertion, before : Int, after : Int) -> Bool {
 /// Follows the jumps, splits and assertions from the threads of `state`,
 /// where `after` follows, into `self.reached`: the instructions that
 /// consume a character or match.
-fn Dfa::follow(self : Dfa, state : Int, after : Int) -> Unit {
+fn Dfa::follow(self : Dfa, state : Int32, after : Int32) -> Unit {
   let key = self.states[state]
   let before = key[key.length() - 1]
   self.stamp += 1
@@ -232,7 +232,7 @@ fn Dfa::follow(self : Dfa, state : Int, after : Int) -> Unit {
 ///|
 /// The state after `state` consumes the character `c`, or -1 when it would
 /// take the DFA over its budget.
-fn Dfa::step(self : Dfa, state : Int, c : Int) -> Int {
+fn Dfa::step(self : Dfa, state : Int32, c : Int32) -> Int32 {
   let context = context_of(c)
   self.follow(state, context)
   self.stamp += 1
@@ -258,7 +258,7 @@ fn Dfa::step(self : Dfa, state : Int, c : Int) -> Int {
 
 ///|
 /// Whether the input may end in `state`: a thread matches there.
-fn Dfa::accepts_at_end(self : Dfa, state : Int) -> Bool {
+fn Dfa::accepts_at_end(self : Dfa, state : Int32) -> Bool {
   if self.accepts[state] < 0 {
     self.follow(state, EDGE)
     let matches = self.reached.iter().any(pc => self.insts[pc] is Match)

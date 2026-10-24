@@ -286,7 +286,7 @@ pub fn Engine::set_scenario_state(
 fn Engine::prune_scenario_states(
   self : Engine,
   mocks : Map[String, @definitions.Mock],
-) -> Int {
+) -> Int32 {
   // The states of a Mock that is gone go with it, and are not counted.
   self.scenarios.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
   self.scenarios.retain((mock, session) => {
@@ -309,7 +309,7 @@ fn Engine::prune_scenario_states(
 fn ScenarioStates::retain(
   self : ScenarioStates,
   keep : (String, String?) -> (String, String) -> Bool,
-) -> Int {
+) -> Int32 {
   let mut cleared = 0
   for mock in self.by_mock.keys().collect() {
     let by_session = self.by_mock[mock]
@@ -340,7 +340,7 @@ fn ScenarioStates::retain(
 fn ScenarioStates::remove_where(
   self : ScenarioStates,
   remove : (String, String?) -> Bool,
-) -> Int {
+) -> Int32 {
   self.retain((mock, session) => {
     let removed = remove(mock, session)
     (_, _) => !removed

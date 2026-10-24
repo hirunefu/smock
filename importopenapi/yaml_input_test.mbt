@@ -8,8 +8,8 @@
 /// out, as `import_json` does.
 fn import_yaml(
   document : String,
-  name? : String = "petstore.yaml",
-  output? : String = "defs/petstore.json",
+  name~ : String = "petstore.yaml",
+  output~ : String = "defs/petstore.json",
 ) -> String {
   let options = @importopenapi.Options(root=name, mock="petstore", output~)
   rendered(@importopenapi.convert([(name, @utf8.encode(document))], options))

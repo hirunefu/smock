@@ -2,7 +2,7 @@
 /// The syntax tree of a pattern.
 priv enum Node {
   Empty
-  Literal(Int)
+  Literal(Int32)
   /// Consumes one code point of the set.
   Class(CharSet)
   /// Matches the empty string where the condition holds.
@@ -15,11 +15,11 @@ priv enum Node {
   /// node's `info`, kept so that it is computed once per node.
   Repeat(
     Node,
-    min~ : Int,
-    max~ : Int?,
+    min~ : Int32,
+    max~ : Int32?,
     greedy~ : Bool,
     nullable~ : Bool,
-    product~ : Int
+    product~ : Int32
   )
 }
 
@@ -28,7 +28,7 @@ priv enum Node {
 /// largest product of the counts of nested counted repetitions in it, which
 /// RE2 limits to `MAX_REPEAT`. Walks down to the nearest `Repeat`s only, so
 /// building a tree bottom-up visits each node once.
-fn info(node : Node) -> (Bool, Int) {
+fn info(node : Node) -> (Bool, Int32) {
   match node {
     Empty | Assert(_) => (true, 1)
     Literal(_) | Class(_) => (false, 1)
@@ -75,13 +75,13 @@ priv struct Flags {
 ///|
 priv struct Parser {
   /// The pattern's code points. Error positions are indexes into it.
-  chars : Array[Int]
-  mut pos : Int
+  chars : Array[Int32]
+  mut pos : Int32
   /// The flags in effect at `pos`. They last until the end of the group that
   /// sets them.
   mut flags : Flags
   /// How many groups are open at `pos`.
-  mut depth : Int
+  mut depth : Int32
   /// Set once no `:]` is left in the rest of the pattern, so that looking for
   /// POSIX classes stays linear in the pattern length.
   mut no_posix_end : Bool
@@ -91,7 +91,7 @@ priv struct Parser {
 /// How deep groups may nest. This bounds the recursion of the parser and
 /// the compiler, so that they stay well within the call stack on every
 /// target (wasm-gc hosts have small ones). RE2 allows deeper nesting.
-const MAX_DEPTH : Int = 100
+const MAX_DEPTH : Int32 = 100
 
 ///|
 fn parse(pattern : String) -> Node raise CompileError {
@@ -112,7 +112,7 @@ fn parse(pattern : String) -> Node raise CompileError {
 
 ///|
 /// The code points of `s`.
-fn code_points(s : String) -> Array[Int] {
+fn code_points(s : String) -> Array[Int32] {
   let out = []
   for c in s {
     out.push(c.to_int())
@@ -122,7 +122,7 @@ fn code_points(s : String) -> Array[Int] {
 
 ///|
 /// Fails with the problem `message` at `position` in the pattern.
-fn[T] fail_at(position : Int, message : String) -> T raise CompileError {
+fn[T] fail_at(position : Int32, message : String) -> T raise CompileError {
   raise CompileError(position~, message~)
 }
 
@@ -130,7 +130,7 @@ fn[T] fail_at(position : Int, message : String) -> T raise CompileError {
 /// Fails at `position` because `what` is RE2 syntax that smock's RE2 subset
 /// leaves out, with `hint` after the message when there is one.
 fn[T] fail_unsupported(
-  position : Int,
+  position : Int32,
   what : String,
   hint? : String,
 ) -> T raise CompileError {
@@ -144,11 +144,11 @@ fn[T] fail_unsupported(
 ///|
 /// What `Parser::peek` returns past the end of the pattern. No code point
 /// is negative.
-const END : Int = -1
+const END : Int32 = -1
 
 ///|
 /// The code point at `pos`, or `END` past the end of the pattern.
-fn Parser::peek(self : Parser, pos : Int) -> Int {
+fn Parser::peek(self : Parser, pos : Int32) -> Int32 {
   if pos >= 0 && pos < self.chars.length() {
     self.chars[pos]
   } else {
@@ -158,10 +158,10 @@ fn Parser::peek(self : Parser, pos : Int) -> Int {
 
 ///|
 /// The pattern text from `start` up to `end`, cut at the end of the pattern.
-fn Parser::text(self : Parser, start : Int, end : Int) -> String {
+fn Parser::text(self : Parser, start : Int32, end : Int32) -> String {
   let b = StringBuilder()
   for i in start..<@cmp.minimum(end, self.chars.length()) {
-    b.write_char(Int::unsafe_to_char(self.chars[i]))
+    b.write_char(Int32::unsafe_to_char(self.chars[i]))
   }
   b.to_string()
 }
@@ -188,7 +188,7 @@ fn Parser::parse_alternation(self : Parser) -> Node raise CompileError {
 fn Parser::parse_concat(self : Parser) -> Node raise CompileError {
   let items : Array[Node] = []
   // Where the repetition operator that ends `items` starts, if one does.
-  let mut last_repeat : Int? = None
+  let mut last_repeat : Int32? = None
   for c = self.peek(self.pos)
       c != END && c != '|' && c != ')'
       c = self.peek(self.pos) {
@@ -261,7 +261,9 @@ fn Parser::parse_concat(self : Parser) -> Node raise CompileError {
 /// minimum and maximum (`None` for no limit). Returns `None`, consuming
 /// nothing, when there is none: a `{` that does not start a valid counted
 /// repetition is a literal, as in RE2.
-fn Parser::parse_repeat_op(self : Parser) -> (Int, Int?)? raise CompileError {
+fn Parser::parse_repeat_op(
+  self : Parser,
+) -> (Int32, Int32?)? raise CompileError {
   let start = self.pos
   match self.peek(start) {
     '*' => {
@@ -306,12 +308,12 @@ fn Parser::parse_repeat_op(self : Parser) -> (Int, Int?)? raise CompileError {
 
 ///|
 /// The largest count a counted repetition may have, as in RE2.
-const MAX_REPEAT : Int = 1000
+const MAX_REPEAT : Int32 = 1000
 
 ///|
 /// Parses a repetition count at `pos` as RE2 does: decimal digits with no
 /// leading zero, below 10^9. Returns the count and the position after it.
-fn Parser::parse_count(self : Parser, pos : Int) -> (Int, Int)? {
+fn Parser::parse_count(self : Parser, pos : Int32) -> (Int32, Int32)? {
   if !is_digit(self.peek(pos)) {
     return None
   }
@@ -331,7 +333,7 @@ fn Parser::parse_count(self : Parser, pos : Int) -> (Int, Int)? {
 }
 
 ///|
-fn is_digit(c : Int) -> Bool {
+fn is_digit(c : Int32) -> Bool {
   c >= '0' && c <= '9'
 }
 
@@ -360,7 +362,7 @@ fn Parser::parse_atom(self : Parser) -> Node? raise CompileError {
 
 ///|
 /// The node for the literal code point `c` under the current flags.
-fn Parser::literal(self : Parser, c : Int) -> Node {
+fn Parser::literal(self : Parser, c : Int32) -> Node {
   let folded = fold_ascii([(c, c)])
   if self.flags.fold && folded.length() > 1 {
     Class(CharSet::of(folded))
@@ -372,7 +374,7 @@ fn Parser::literal(self : Parser, c : Int) -> Node {
 ///|
 /// The ranges with every ASCII letter in them added in its other case.
 /// Case folding in smock's RE2 subset is ASCII only.
-fn fold_ascii(ranges : Array[(Int, Int)]) -> Array[(Int, Int)] {
+fn fold_ascii(ranges : Array[(Int32, Int32)]) -> Array[(Int32, Int32)] {
   let out = ranges.copy()
   for r in ranges {
     let (lo, hi) = r
@@ -430,7 +432,7 @@ fn Parser::parse_group(self : Parser) -> Node? raise CompileError {
 /// `(?<name>`, which RE2 has but the subset leaves out.
 fn Parser::reject_group_syntax(
   self : Parser,
-  open : Int,
+  open : Int32,
 ) -> Unit raise CompileError {
   let c = self.peek(open + 2)
   let c2 = self.peek(open + 3)
@@ -464,7 +466,7 @@ fn Parser::reject_group_syntax(
 /// letters, digits and `_`.
 fn Parser::parse_group_name(
   self : Parser,
-  open : Int,
+  open : Int32,
 ) -> Unit raise CompileError {
   if self.peek(open + 3) != '<' {
     fail_at(open, "invalid group \{self.text(open, open + 4)}")
@@ -502,7 +504,7 @@ fn Parser::parse_group_name(
 /// new flags and whether a group follows (`:`).
 fn Parser::parse_flags(
   self : Parser,
-  open : Int,
+  open : Int32,
 ) -> (Flags, Bool) raise CompileError {
   let mut flags = self.flags
   let mut negated = false
@@ -563,7 +565,7 @@ fn Parser::parse_escape(self : Parser) -> Node raise CompileError {
 fn Parser::parse_char_escape(
   self : Parser,
   in_class~ : Bool,
-) -> Int raise CompileError {
+) -> Int32 raise CompileError {
   let start = self.pos
   let c = self.peek(start + 1)
   if c == END {
@@ -575,9 +577,9 @@ fn Parser::parse_char_escape(
   }
   let escape = self.text(start, start + 2)
   match c {
-    '1'..='7' if self.peek(start + 2) >= '0' && self.peek(start + 2) <= '7' =>
+    '1'..<='7' if self.peek(start + 2) >= '0' && self.peek(start + 2) <= '7' =>
       fail_unsupported(start, "octal escape \{self.text(start, start + 3)}")
-    '1'..='9' | 'k' | 'g' =>
+    '1'..<='9' | 'k' | 'g' =>
       fail_at(start, "backreference \{escape} is not RE2 syntax")
     '0' => fail_unsupported(start, "octal escape \{escape}")
     'x' => fail_unsupported(start, "hexadecimal escape \{escape}")
@@ -612,7 +614,7 @@ fn Parser::parse_char_escape(
 
 ///|
 /// The set of the Perl class `\<c>`, if `c` names one.
-fn perl_class(c : Int) -> CharSet? {
+fn perl_class(c : Int32) -> CharSet? {
   match c {
     'd' => Some(digits)
     'D' => Some(digits.negate())
@@ -657,7 +659,7 @@ fn Parser::parse_class(self : Parser) -> Node raise CompileError {
   if negated {
     self.pos += 1
   }
-  let ranges : Array[(Int, Int)] = []
+  let ranges : Array[(Int32, Int32)] = []
   // `]` right after `[` or `[^` is a literal.
   let mut first = true
   while first || self.peek(self.pos) != ']' {
@@ -734,8 +736,8 @@ fn Parser::reject_posix_class(self : Parser) -> Unit raise CompileError {
 /// Parses one code point of a bracket class that opened at `open`.
 fn Parser::parse_class_char(
   self : Parser,
-  open : Int,
-) -> Int raise CompileError {
+  open : Int32,
+) -> Int32 raise CompileError {
   let c = self.peek(self.pos)
   if c == END {
     fail_at(open, "missing closing ]")

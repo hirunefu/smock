@@ -36,9 +36,9 @@ fn chat_body(model : String?) -> String {
 /// `headers` after Host and Content-Type.
 fn Harness::chat(
   self : Harness,
-  path? : String = "/v1/chat/completions",
-  body? : String = chat_body(Some("test-model")),
-  headers? : Array[(String, String)] = [],
+  path~ : String = "/v1/chat/completions",
+  body~ : String = chat_body(Some("test-model")),
+  headers~ : Array[(String, String)] = [],
   session? : String,
 ) -> @engine.Outcome {
   self.send(
@@ -154,9 +154,9 @@ test "an llm Stub's Journal entry records the request as any other, with no new 
 /// the Stub's own seed.
 fn chat_ids(
   process_seed : UInt64,
-  n : Int,
-  interleaved? : Bool = false,
-  seeded? : Bool = true,
+  n : Int32,
+  interleaved~ : Bool = false,
+  seeded~ : Bool = true,
 ) -> Array[String] {
   let file = if seeded {
     chat_mock
@@ -230,7 +230,7 @@ fn rate_limited(body : String) -> (String, String) {
 /// What each of `n` requests to `h` gets from `rate_limited`: its status,
 /// its trace header, its delay, its connection Fault and its Journal
 /// entry's responseIndex.
-fn rate_limited_answers(h : Harness, n : Int) -> Array[String] {
+fn rate_limited_answers(h : Harness, n : Int32) -> Array[String] {
   Array::makei(n, _ => {
     let outcome = h.chat()
     let trace = outcome.plan.headers

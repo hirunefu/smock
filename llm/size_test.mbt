@@ -10,9 +10,9 @@
 /// JSON request that does not stream.
 fn sized_reply(
   strings : @llm.Strings,
-  api? : @llm.Api = OpenaiChat,
-  chunk_size? : Int,
-  request? : Json? = Some({ "model": "test-model" }),
+  api~ : @llm.Api = OpenaiChat,
+  chunk_size? : Int32,
+  request~ : Json? = Some({ "model": "test-model" }),
 ) -> @llm.Reply {
   @llm.reply(
     @llm.Declaration(api~, chunk_size?),
@@ -34,7 +34,7 @@ fn verdict(reply : @llm.Reply) -> String {
 
 ///|
 /// `count` copies of `text`.
-fn repeated(text : String, count : Int) -> String {
+fn repeated(text : String, count : Int32) -> String {
   let out = StringBuilder(size_hint=text.length() * count)
   for _ in 0..<count {
     out.write_string(text)
@@ -46,7 +46,7 @@ fn repeated(text : String, count : Int) -> String {
 /// Text that takes `bytes` bytes of UTF-8 as a reply carries it: as many
 /// two-byte characters (é) as fit, and ASCII after them, so that it takes
 /// fewer UTF-16 code units than bytes.
-fn text_of_bytes(bytes : Int) -> String {
+fn text_of_bytes(bytes : Int32) -> String {
   repeated("é", bytes / 2) + repeated("a", bytes % 2)
 }
 
@@ -81,7 +81,7 @@ test "a JSON reply of exactly 1 MiB of UTF-8 is within the bound, and one byte m
 /// The bytes `reply` takes on the wire, counted here as a client reads
 /// them: the JSON body, or each event as an `event:` line when it has a
 /// type, a `data:` line and a blank line, in UTF-8.
-fn wire_bytes(reply : @llm.Reply) -> Int {
+fn wire_bytes(reply : @llm.Reply) -> Int32 {
   match reply.body {
     Json(body) => body.length()
     Events(events) => {
@@ -107,16 +107,16 @@ fn wire_bytes(reply : @llm.Reply) -> Int {
 /// carries the text five times and the model three.
 fn strings_of_bytes(
   api : @llm.Api,
-  bytes : Int,
-  request? : Json = { "stream": true },
+  bytes : Int32,
+  request~ : Json = { "stream": true },
 ) -> @llm.Strings {
-  let strings = (text : Int, model : Int) => {
+  let strings = (text : Int32, model : Int32) => {
     @llm.Strings(
       chunks=[text_of_bytes(text)],
       model?=if model > 0 { Some(repeated("m", model)) } else { None },
     )
   }
-  let size = (text : Int, model : Int) => {
+  let size = (text : Int32, model : Int32) => {
     wire_bytes(sized_reply(strings(text, model), api~, request=Some(request)))
   }
   // What one more byte of the text and of the model add, and what the
@@ -238,8 +238,8 @@ test "a stream that passes the bound is cut short soon after, so a long text, lo
 /// message.
 fn at_load(
   strings : @llm.Strings,
-  api? : @llm.Api = OpenaiChat,
-  chunk_size? : Int,
+  api~ : @llm.Api = OpenaiChat,
+  chunk_size? : Int32,
 ) -> String {
   match @llm.check_reply_size(@llm.Declaration(api~, chunk_size?), strings) {
     Ok(_) => "ok"

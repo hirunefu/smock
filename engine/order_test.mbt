@@ -4,7 +4,7 @@
 ///|
 /// A Stub of Mock `m` with `id`, an optional priority and conditions given
 /// as JSON members, such as `"method": "GET"`. It answers 200 with its ID.
-fn stub(id : String, priority? : Int, request? : String = "") -> String {
+fn stub(id : String, priority? : Int32, request~ : String = "") -> String {
   let priority = match priority {
     Some(p) => "\"priority\": \{p}, "
     None => ""
@@ -86,7 +86,7 @@ test "a Stub without a priority comes after every Stub with one, however large i
 /// The Definition file `<name>.json`: a Stub `<name>-1` that matches only
 /// `/other`, then a Stub `<name>-2` that matches every request, both with
 /// `priority`.
-fn file(name : String, priority? : Int) -> (String, String) {
+fn file(name : String, priority? : Int32) -> (String, String) {
   let first = stub("\{name}-1", priority?, request="\"path\": \"/other\"")
   let second = stub("\{name}-2", priority?)
   ("\{name}.json", stub_file([first, second]))

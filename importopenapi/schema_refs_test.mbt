@@ -10,7 +10,7 @@
 fn referenced_sample(
   schema : String,
   schemas : String,
-  openapi? : String = "3.1.0",
+  openapi~ : String = "3.1.0",
 ) -> String raise {
   body_of(
     "{ \"openapi\": \"\{openapi}\", \"paths\": { \"/r\": { \"get\": { \"responses\": { \"200\": { \"content\": { \"application/json\": { \"schema\": \{schema} } } } } } } }, \"components\": { \"schemas\": \{schemas} } }",
@@ -157,7 +157,7 @@ test "in 3.1 and 3.2, the keywords beside a $ref come first, and the schema it n
 fn referenced_samples(
   schemas : Array[String],
   components : String,
-  openapi? : String = "3.1.0",
+  openapi~ : String = "3.1.0",
 ) -> String raise {
   let out = StringBuilder()
   for schema in schemas {
@@ -347,7 +347,7 @@ test "a $ref met again while merging allOf is skipped, so a cycle of schemas is 
 ///|
 /// How many collections `json` nests, at most, and the first value that
 /// sits that deep, as compact JSON: `[[1]]` nests 2, and holds `1` there.
-fn deepest(json : Json) -> (Int, String) {
+fn deepest(json : Json) -> (Int32, String) {
   let mut best = (0, json.stringify())
   match json {
     Array(items) =>

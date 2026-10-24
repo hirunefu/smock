@@ -6,7 +6,7 @@
 ///|
 /// A Mock `openai` with a Stub that answers Responses requests from an LLM
 /// response, with the header fields `headers`, its own seed fixing its ids.
-fn responses_mock(headers? : String = "{}") -> (String, String) {
+fn responses_mock(headers~ : String = "{}") -> (String, String) {
   (
     "openai.json",
     (
@@ -254,7 +254,7 @@ test "rendered with fixed waits, the Responses stream's completed_at follows the
 
 ///|
 test "a declared error ends the Responses stream with event: error, numbered next, which waits as a next piece would: first when no piece came before it, interval after one" {
-  let cut = (after : Int, timing : String) => {
+  let cut = (after : Int32, timing : String) => {
     let error = ", \"error\": { \"after\": \{after}, \"code\": \"server_error\", \"message\": \"Something went wrong\" }"
     harness([paced_responses("Hi there!", error + timing)]).responses(
       "{\"input\":\"Hello!\",\"stream\":true}",

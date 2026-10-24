@@ -42,7 +42,7 @@ pub fn indented_json_bytes(json : Json) -> Bytes {
 /// it, counted without writing them, plus `per_value` for each JSON value
 /// in it: each object, array, string, number, boolean and null. The bound
 /// on per-Session state counts a value this way.
-pub fn compact_length(json : Json, per_value? : Int64 = 0L) -> Int64 {
+pub fn compact_length(json : Json, per_value~ : Int64 = 0L) -> Int64 {
   per_value +
   (match json {
     Null | True => 4L
@@ -119,7 +119,11 @@ fn write_json(out : @buffer.Buffer, json : Json) -> Unit {
 /// that numbers and strings are the same in both forms. It walks the tree
 /// as `write_json` does, with line breaks; a change to how either writes
 /// keys, members or scalars is made in both.
-fn write_indented_json(out : @buffer.Buffer, json : Json, depth : Int) -> Unit {
+fn write_indented_json(
+  out : @buffer.Buffer,
+  json : Json,
+  depth : Int32,
+) -> Unit {
   match json {
     Array(items) if !items.is_empty() => {
       out.write_byte(b'[')
@@ -155,7 +159,7 @@ fn write_indented_json(out : @buffer.Buffer, json : Json, depth : Int) -> Unit {
 
 ///|
 /// Starts a new line indented for `depth` levels.
-fn write_line_start(out : @buffer.Buffer, depth : Int) -> Unit {
+fn write_line_start(out : @buffer.Buffer, depth : Int32) -> Unit {
   out.write_byte(b'\n')
   for _ in 0..<depth {
     out.write_bytes(b"  ")
@@ -179,7 +183,7 @@ pub fn number_text(n : Double, repr : String?) -> String {
 /// compact JSON writes it with `write_json_string_content`, or a length
 /// above `limit` as soon as it passes it, so that a long string is not
 /// walked to its end. The OpenAPI import bounds its samples with it.
-pub fn json_string_bytes(s : String, limit~ : Int) -> Int {
+pub fn json_string_bytes(s : String, limit~ : Int32) -> Int32 {
   let mut size = 2
   for c in s {
     if size > limit {
@@ -192,7 +196,7 @@ pub fn json_string_bytes(s : String, limit~ : Int) -> Int {
 
 ///|
 /// The bytes of UTF-8 that `write_json_string_content` writes for `s`.
-fn json_string_content_length(s : StringView) -> Int {
+fn json_string_content_length(s : StringView) -> Int32 {
   let mut n = 0
   for c in s {
     n += json_char_length(c)
@@ -202,7 +206,7 @@ fn json_string_content_length(s : StringView) -> Int {
 
 ///|
 /// The bytes of UTF-8 that `write_json_string_content` writes for `c`.
-fn json_char_length(c : Char) -> Int {
+fn json_char_length(c : Char) -> Int32 {
   match c {
     '"' | '\\' | '\n' | '\r' | '\t' | '\b' | '\u{0c}' => 2
     _ if c < ' ' => 6
@@ -247,7 +251,7 @@ fn read_compact_json(bytes : Bytes) -> Json {
 /// the bytes are always valid.
 priv struct CompactReader {
   bytes : Bytes
-  mut i : Int
+  mut i : Int32
 }
 
 ///|

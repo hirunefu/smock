@@ -47,9 +47,9 @@ pub struct Context {
   /// every rendering for the request shares.
   priv rand : @prng.Generator
   /// The loop iterations run so far.
-  priv mut iterations : Int
+  priv mut iterations : Int32
   /// The bytes of body or events rendered so far.
-  priv mut output : Int
+  priv mut output : Int32
   priv mut body : ParsedBody
   /// The request's cookies, by name, once a template has read one.
   priv mut cookies : Map[String, Array[String]]?
@@ -166,7 +166,7 @@ pub fn Context::generator(self : Context) -> @prng.Generator {
 /// Moves the clock of `now()` and `nowMillis()` on by `ms` milliseconds:
 /// the delay of the next event, whose templates then read the time of the
 /// request plus the delays of the events up to and including it.
-pub fn Context::advance(self : Context, ms : Int) -> Unit {
+pub fn Context::advance(self : Context, ms : Int32) -> Unit {
   self.elapsed += ms.to_int64()
 }
 
@@ -175,13 +175,13 @@ pub fn Context::advance(self : Context, ms : Int) -> Unit {
 /// or a rendered value of a Stub's `variables` take: 1 MiB. The engine
 /// bounds a Variable set through the Admin API by it too, so that a value
 /// has the same bound whichever way it is written.
-pub let max_output : Int = 1024 * 1024
+pub let max_output : Int32 = 1024 * 1024
 
 ///|
 /// Counts `bytes` more of output, from the field at `at`.
 fn Context::count(
   self : Context,
-  bytes : Int,
+  bytes : Int32,
   at : String,
 ) -> Unit raise RenderError {
   self.output += bytes
@@ -193,7 +193,7 @@ fn Context::count(
 /// the bound.
 fn Context::check_output(
   self : Context,
-  total : Int,
+  total : Int32,
   at : String,
 ) -> Unit raise RenderError {
   if total > max_output {
@@ -238,7 +238,7 @@ priv enum Got {
 priv struct Frame {
   name : String
   element : Json
-  index : Int
+  index : Int32
 }
 
 ///|
@@ -654,7 +654,7 @@ fn Context::write_node(
   out : @buffer.Buffer,
   node : Node,
   frames : Array[Frame],
-  start : Int,
+  start : Int32,
 ) -> Unit raise RenderError {
   match node {
     Static(json) => write_json(out, json)

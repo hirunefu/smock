@@ -3,7 +3,7 @@
 /// with the schema `schema`, given as JSON text, gets in a document of the
 /// OpenAPI version `openapi`: the problems, each on a line, then its `json`
 /// as compact JSON, or `no body`, or `nothing written`.
-fn sample_of(schema : String, openapi? : String = "3.1.0") -> String raise {
+fn sample_of(schema : String, openapi~ : String = "3.1.0") -> String raise {
   let document = "{ \"openapi\": \"\{openapi}\", \"paths\": { \"/r\": { \"get\": { \"responses\": { \"200\": { \"content\": { \"application/json\": { \"schema\": \{schema} } } } } } } } }"
   let conversion = @importopenapi.convert(
     [("petstore.json", @utf8.encode(document))],
@@ -46,7 +46,7 @@ fn sample_of(schema : String, openapi? : String = "3.1.0") -> String raise {
 /// after the schema.
 fn samples_of(
   schemas : Array[String],
-  openapi? : String = "3.1.0",
+  openapi~ : String = "3.1.0",
 ) -> String raise {
   let out = StringBuilder()
   for schema in schemas {

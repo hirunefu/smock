@@ -70,11 +70,11 @@ fn conversion_helper(site : CallSite) -> Helper? raise Syntax {
 
 ///|
 /// The most values `range` gives.
-let max_range : Int = 1000
+let max_range : Int32 = 1000
 
 ///|
 /// The values of a literal `range(a, b)`, if `expr` is one.
-fn literal_range(expr : Expr) -> Int? {
+fn literal_range(expr : Expr) -> Int32? {
   match expr {
     Call(Conversion(Range), [Literal(Number(a, ..)), Literal(Number(b, ..))], _) => {
       let count = b - a + 1.0

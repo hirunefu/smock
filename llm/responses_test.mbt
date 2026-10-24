@@ -10,8 +10,8 @@
 /// request-id header field it adds, then the body.
 fn responses(
   text : String,
-  request? : Json? = Some({ "model": "gpt-6-astra", "input": "Hello!" }),
-  draw? : UInt64 = 7,
+  request~ : Json? = Some({ "model": "gpt-6-astra", "input": "Hello!" }),
+  draw~ : UInt64 = 7,
   id? : String,
   model? : String,
   usage? : @llm.Usage,
@@ -34,8 +34,8 @@ fn responses(
 /// The reply that `responses` shows.
 fn responses_reply(
   text : String,
-  request? : Json? = Some({ "model": "gpt-6-astra", "input": "Hello!" }),
-  draw? : UInt64 = 7,
+  request~ : Json? = Some({ "model": "gpt-6-astra", "input": "Hello!" }),
+  draw~ : UInt64 = 7,
   id? : String,
   model? : String,
   usage? : @llm.Usage,
@@ -479,7 +479,7 @@ test "the same declaration answers under both OpenAI APIs, with the same 24 char
 
 ///|
 test "with chunks, the message item's text is their join, and chunkSize changes nothing in the JSON reply" {
-  let text = (strings : @llm.Strings, chunk_size : Int) => {
+  let text = (strings : @llm.Strings, chunk_size : Int32) => {
     let reply = @llm.reply(
       @llm.Declaration(api=OpenaiResponses, chunk_size~),
       strings,

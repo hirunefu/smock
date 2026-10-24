@@ -51,7 +51,7 @@ pub impl ToJson for EphemeralStub with fn to_json(self) {
 priv struct EphemeralStubs {
   by_mock : Map[String, Map[String?, Array[EphemeralStub]]]
   /// The `n` of the last ID assigned.
-  mut last_n : Int
+  mut last_n : Int32
 }
 
 ///|
@@ -65,7 +65,7 @@ fn EphemeralStubs::new() -> EphemeralStubs {
 fn EphemeralStubs::remove_where(
   self : EphemeralStubs,
   remove : (String, String?) -> Bool,
-) -> Int {
+) -> Int32 {
   let mut count = 0
   for mock in self.by_mock.keys().collect() {
     let by_session = self.by_mock[mock]
@@ -226,17 +226,17 @@ pub(all) enum ResetScope {
 /// What a reset removed.
 pub(all) struct Removed {
   /// How many Ephemeral Stubs.
-  ephemeral_stubs : Int
+  ephemeral_stubs : Int32
   /// How many Journal entries.
-  journal_entries : Int
+  journal_entries : Int32
   /// How many Scenario states, each of one Mock, Session and Scenario,
   /// which are back in `Started`.
-  scenario_states : Int
+  scenario_states : Int32
   /// How many Variables, each of one Mock, Session and name.
-  variables : Int
+  variables : Int32
   /// How many copies of Data buckets, each of one Mock, Session and bucket,
   /// whose buckets read their initial values again.
-  data_buckets : Int
+  data_buckets : Int32
 } derive(Debug)
 
 ///|

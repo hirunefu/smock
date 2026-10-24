@@ -68,9 +68,9 @@ pub struct Snapshot {
   mocks : ReadOnlyArray[Mock]
   /// The Host index: each Host the Mocks declare, normalised, and the index
   /// in `mocks` of the Mock that declares it, in declaration order.
-  priv host_index : Map[String, Int]
+  priv host_index : Map[String, Int32]
   /// The index in `mocks` of the Default Mock, if there is one.
-  priv default_index : Int?
+  priv default_index : Int32?
   /// Where each Stub is declared, by its ID: the Definition file and the
   /// JSON Pointer to the Stub in it.
   priv stub_locations : Map[String, Location]
@@ -86,7 +86,7 @@ pub struct Mock {
   /// The Hosts the Mock answers to, as declared.
   hosts : ReadOnlyArray[String]
   /// The status of the response when no Stub matches.
-  no_match_status : Int
+  no_match_status : Int32
   /// The header fields of the response when no Stub matches, in order: the
   /// Mock's `noMatch.headers`, sent with smock's own.
   no_match_headers : ReadOnlyArray[(String, String)]
@@ -148,7 +148,7 @@ pub struct Stub {
   mock : String
   /// The priority: a lower number is tried first, and a Stub without one
   /// after every Stub with one.
-  priority : Int?
+  priority : Int32?
   /// What the Stub serves: which requests it matches, and how it answers
   /// them.
   serves : Serves
@@ -194,7 +194,7 @@ pub struct Ordinary {
   /// The sum of the weights of `responses` when the Stub gives `responses`:
   /// a matched request then takes a pick among them. `None` for a Stub with
   /// `response`, which takes no pick.
-  total_weight : Int?
+  total_weight : Int32?
   /// The Variables the Stub writes when it matches, `variables`: none when
   /// it has no `variables`.
   variables : VariableWrites
@@ -229,7 +229,7 @@ pub fn Ordinary::writes_data(self : Ordinary) -> Bool {
 
 ///|
 /// The longest name of a Variable, in characters.
-pub let max_variable_name : Int = 128
+pub let max_variable_name : Int32 = 128
 
 ///|
 /// Whether `name` can name a Variable: 1 to `max_variable_name` name
@@ -252,18 +252,18 @@ pub fn is_variable_name(name : String) -> Bool {
 /// responses.
 pub struct WeightedResponse {
   /// An integer from 1 to `max_weight`.
-  weight : Int
+  weight : Int32
   response : Response
 } derive(Debug, Eq)
 
 ///|
 /// The most responses a Stub's `responses` holds.
-pub let max_responses : Int = 100
+pub let max_responses : Int32 = 100
 
 ///|
 /// The largest weight of a response in `responses`. With at most
 /// `max_responses` of them, the sum of the weights fits an `Int`.
-pub let max_weight : Int = 1_000_000
+pub let max_weight : Int32 = 1_000_000
 
 ///|
 /// A Stub's Scenario clause: the state a Scenario of the Stub's Mock must
@@ -296,7 +296,7 @@ pub struct Fault {
 ///|
 /// The longest duration a Definition file can give, in milliseconds, such
 /// as a delay: the largest `Int`, about 24 days.
-pub let max_milliseconds : Int = @int.MAX_VALUE
+pub let max_milliseconds : Int32 = @int.MAX_VALUE
 
 ///|
 /// The largest seed, 2^53 - 1: up to it, a JSON number holds every integer
@@ -316,14 +316,14 @@ pub struct Delay {
 /// A distribution of delays, in whole milliseconds.
 pub enum Distribution {
   /// Always this many milliseconds.
-  Fixed(Int)
+  Fixed(Int32)
   /// A whole number of milliseconds drawn uniformly from `min` to `max`,
   /// both included. `min` does not exceed `max`.
-  Uniform(min~ : Int, max~ : Int)
+  Uniform(min~ : Int32, max~ : Int32)
   /// A number of milliseconds drawn from a log-normal distribution with
   /// this median, where `sigma` is the standard deviation of its natural
   /// logarithm.
-  Lognormal(median~ : Int, sigma~ : Double)
+  Lognormal(median~ : Int32, sigma~ : Double)
 } derive(Debug, Eq)
 
 ///|
@@ -747,7 +747,7 @@ fn deep_copy(json : Json) -> Json {
 ///|
 /// A Stub's response.
 pub struct Response {
-  status : Int
+  status : Int32
   /// The header fields, in the order written, their values as written or
   /// text templates. A header given an array has one field per value, in
   /// array order. A `json` body adds `Content-Type: application/json` at
@@ -786,7 +786,7 @@ pub enum ResponseHeaders {
 
 ///|
 /// The number of header fields.
-pub fn ResponseHeaders::length(self : ResponseHeaders) -> Int {
+pub fn ResponseHeaders::length(self : ResponseHeaders) -> Int32 {
   match self {
     Written(fields) => fields.length()
     Templated(fields) => fields.length()
@@ -828,7 +828,7 @@ pub enum BodyTemplate {
 /// A Server-Sent Event of a response with `template` on.
 pub struct EventTemplate {
   /// How long to wait before writing the event, in milliseconds.
-  delay_ms : Int
+  delay_ms : Int32
   /// The event type.
   event : @template.Text?
   /// The event ID.
@@ -1038,7 +1038,7 @@ fn ResponseBody::reads(
 pub struct SseEvent {
   /// How long to wait before writing the event, in milliseconds: after the
   /// previous event, or after the head for the first one.
-  delay_ms : Int
+  delay_ms : Int32
   /// The event type, one line.
   event : String?
   /// The event ID, one line without NUL characters.
@@ -1050,7 +1050,7 @@ pub struct SseEvent {
 ///|
 /// An event with these fields: one rendered from an `EventTemplate`.
 pub fn SseEvent::SseEvent(
-  delay_ms~ : Int,
+  delay_ms~ : Int32,
   event~ : String?,
   id~ : String?,
   data~ : String,
@@ -1122,8 +1122,8 @@ pub fn normalize_host(host : String) -> String {
 /// values are not part of the digest.
 pub fn load(
   set : DefinitionSet,
-  read_problems? : Array[Diagnostic] = [],
-  env? : @template.Env = @template.no_env,
+  read_problems~ : Array[Diagnostic] = [],
+  env~ : @template.Env = @template.no_env,
 ) -> Result[Snapshot, Array[Diagnostic]] {
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
@@ -1303,7 +1303,7 @@ pub fn StatesByScenario::sorted(
 
 ///|
 /// How `a` and `b` compare in byte-wise order of their UTF-8 encodings.
-fn compare_bytes(a : String, b : String) -> Int {
+fn compare_bytes(a : String, b : String) -> Int32 {
   @utf8.encode(a).lexical_compare(@utf8.encode(b))
 }
 
@@ -1328,7 +1328,7 @@ fn in_matching_order(stubs : Array[Stub]) -> Array[Stub] {
 /// do not decide. A lower number is tried first, and a Stub without a
 /// priority after every Stub with one. Stubs from Definition files and
 /// Ephemeral Stubs are each ordered by this rule.
-pub fn Stub::compare_priority(self : Stub, other : Stub) -> Int {
+pub fn Stub::compare_priority(self : Stub, other : Stub) -> Int32 {
   match (self.priority, other.priority) {
     (Some(p), Some(q)) => p.compare(q)
     (Some(_), None) => -1

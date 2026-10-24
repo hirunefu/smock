@@ -46,7 +46,7 @@ let functions_mock : (String, String) = (
 ///|
 /// The first turn of the Responses conversation: the user's question, with
 /// `stream: true` when `stream` is true.
-fn first_input(stream? : Bool = false) -> String {
+fn first_input(stream~ : Bool = false) -> String {
   let stream = if stream { ",\"stream\":true" } else { "" }
   "{\"model\":\"gpt-6-astra\"\{stream},\"input\":[{\"role\":\"user\",\"content\":\"Weather in Paris?\"}]}"
 }

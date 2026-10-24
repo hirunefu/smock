@@ -14,8 +14,8 @@ pub fn ephemeral_stub(
   json : Json,
   id~ : String,
   mock~ : String,
-  env? : @template.Env = @template.no_env,
-  buckets? : ReadOnlyArray[DataBucket] = ReadOnlyArray::from_array([]),
+  env~ : @template.Env = @template.no_env,
+  buckets~ : ReadOnlyArray[DataBucket] = ReadOnlyArray::from_array([]),
 ) -> Result[Stub, Array[Diagnostic]] {
   let diagnostics = []
   let keys = Map([])

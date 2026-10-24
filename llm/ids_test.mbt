@@ -8,7 +8,7 @@
 /// generator of the draw `draw`: the request-id header field smock adds,
 /// then the id of the JSON reply, or of each chunk of the stream, each on a
 /// line of its own.
-fn reply_ids(request : Json?, id? : String, draw? : UInt64 = 7) -> String {
+fn reply_ids(request : Json?, id? : String, draw~ : UInt64 = 7) -> String {
   let reply = @llm.reply(
     @llm.Declaration(api=OpenaiChat),
     @llm.Strings(text="Hi there", id?),
@@ -107,7 +107,7 @@ test "a fixed id takes no prefix and is JSON-escaped on the wire, whatever it ho
 /// spec orders them: each slot is 24 characters from A-Z, a-z and 0-9, each
 /// one a draw below 62 from the ids generator, and the slots draw one after
 /// another.
-fn slot_id(draw : UInt64, n : Int) -> String {
+fn slot_id(draw : UInt64, n : Int32) -> String {
   let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".to_array()
   let ids = @llm.ids_generator(draw)
   let mut id = ""

@@ -35,7 +35,7 @@ let pick_mask : UInt64 = 0xE7037ED1A0B428DB
 /// running total holds that number, in the order written. A Stub with
 /// `response` takes no pick and draws nothing: `None`, for its one
 /// response.
-fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
+fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int32? {
   guard ordinary.total_weight is Some(total) else { return None }
   let mut n = @prng.Generator(draw ^ pick_mask)
     .below(total.to_uint64())
@@ -267,7 +267,7 @@ let waits_mask : UInt64 = 0x589965CC75374CC3
 
 ///|
 /// The waits of a stream none of whose events waits: none at all.
-let no_waits : FixedArray[Int] = []
+let no_waits : FixedArray[Int32] = []
 
 ///|
 /// The waits of the events of an LLM reply's stream, in milliseconds, one
@@ -283,7 +283,7 @@ fn draw_waits(
   events : Array[@llm.Event],
   timing : @definitions.LlmTiming,
   draw : UInt64,
-) -> FixedArray[Int] {
+) -> FixedArray[Int32] {
   if timing.first is None && timing.interval is None {
     return no_waits
   }
@@ -308,7 +308,7 @@ fn draw_waits(
 /// wait in `waits`, in milliseconds, or at once when `waits` is empty.
 fn sse_events(
   events : Array[@llm.Event],
-  waits : FixedArray[Int],
+  waits : FixedArray[Int32],
 ) -> ReadOnlyArray[@definitions.SseEvent] {
   let waited = waits.length() > 0
   let out = Array(capacity=events.length())
@@ -406,7 +406,7 @@ fn template_input(incoming : Incoming) -> @template.Input {
 /// in order. The plan is `status` with the header fields `headers`, and
 /// Server-Sent Events are always sent as text/event-stream.
 fn render_body(
-  status : Int,
+  status : Int32,
   headers : Array[(String, String)],
   template : @definitions.BodyTemplate,
   context : @template.Context,
@@ -461,7 +461,7 @@ fn template_failed(stub : String, error : TemplateError) -> ResponsePlan {
 ///|
 /// A response of smock's own that says what went wrong: `status`, with
 /// `body` in compact JSON, as `application/json`, and no delay or Fault.
-fn json_failure(status : Int, body : Json) -> ResponsePlan {
+fn json_failure(status : Int32, body : Json) -> ResponsePlan {
   {
     status,
     headers: [("Content-Type", "application/json")],

@@ -9,10 +9,10 @@
 /// and the stop reason `stop_reason` written, with ids drawn from the
 /// generator of the draw 7.
 fn responses_stream(
-  text? : String = "Hi there!",
+  text~ : String = "Hi there!",
   strings? : @llm.Strings,
-  request? : Json? = Some({ "model": "gpt-6-astra", "stream": true }),
-  chunk_size? : Int,
+  request~ : Json? = Some({ "model": "gpt-6-astra", "stream": true }),
+  chunk_size? : Int32,
   usage? : @llm.Usage,
   stop_reason? : String,
 ) -> @llm.Reply {
@@ -205,8 +205,8 @@ fn broken(reply : @llm.Reply) -> String raise {
   guard reply.body is Events(events) else { fail("not a stream") }
   let out = []
   let mut response_id = None
-  let opened : Map[Int, String] = Map([])
-  let done : Map[Int, String] = Map([])
+  let opened : Map[Int32, String] = Map([])
+  let done : Map[Int32, String] = Map([])
   for i, event in events {
     let data = @json.parse(event.data) catch {
       _ => {

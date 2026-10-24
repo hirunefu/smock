@@ -14,7 +14,7 @@ pub let version : String = "18.0.0"
 /// The simple upper-case mappings, as runs in order: the first and the
 /// last code point of the run, the step between the code points it maps,
 /// and what each one's mapping adds to them.
-let upper_runs : FixedArray[(Int, Int, Int, Int)] = [
+let upper_runs : FixedArray[(Int32, Int32, Int32, Int32)] = [
   (0x0061, 0x007A, 1, -32),
   (0x00B5, 0x00B5, 1, 743),
   (0x00E0, 0x00F6, 1, -32),
@@ -232,7 +232,7 @@ let upper_runs : FixedArray[(Int, Int, Int, Int)] = [
 
 ///|
 /// The simple lower-case mappings, as runs like those of `upper_runs`.
-let lower_runs : FixedArray[(Int, Int, Int, Int)] = [
+let lower_runs : FixedArray[(Int32, Int32, Int32, Int32)] = [
   (0x0041, 0x005A, 1, 32),
   (0x00C0, 0x00D6, 1, 32),
   (0x00D8, 0x00DE, 1, 32),
@@ -433,7 +433,7 @@ let lower_runs : FixedArray[(Int, Int, Int, Int)] = [
 ///|
 /// The code points with the property White_Space, as ranges in order:
 /// the first and the last code point of the range.
-let white_space_ranges : FixedArray[(Int, Int)] = [
+let white_space_ranges : FixedArray[(Int32, Int32)] = [
   (0x0009, 0x000D),
   (0x0020, 0x0020),
   (0x0085, 0x0085),

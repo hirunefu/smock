@@ -11,8 +11,8 @@
 /// from the generator of the draw 7.
 fn messages_reply_to(
   strings : @llm.Strings,
-  request? : Json? = Some({ "model": "claude-test", "stream": true }),
-  chunk_size? : Int,
+  request~ : Json? = Some({ "model": "claude-test", "stream": true }),
+  chunk_size? : Int32,
   usage? : @llm.Usage,
   stop_reason? : String,
 ) -> @llm.Reply {
@@ -33,7 +33,7 @@ fn messages_reply_to(
 /// `shown` shows it.
 fn messages_stream(
   text : String,
-  request? : Json? = Some({ "model": "claude-test", "stream": true }),
+  request~ : Json? = Some({ "model": "claude-test", "stream": true }),
   usage? : @llm.Usage,
   stop_reason? : String,
 ) -> String {
@@ -100,8 +100,8 @@ fn event_data(reply : @llm.Reply, name : String) -> String {
 /// and the stop sequences `\n\nHuman:` and `END`, or `request`.
 fn message_delta(
   written? : String,
-  text? : String = "Hi",
-  request? : Json = { "stream": true, "stop_sequences": ["\n\nHuman:", "END"] },
+  text~ : String = "Hi",
+  request~ : Json = { "stream": true, "stop_sequences": ["\n\nHuman:", "END"] },
 ) -> String {
   event_data(
     messages_reply_to(
@@ -234,7 +234,7 @@ fn text_deltas(reply : @llm.Reply) -> String {
 ///|
 /// The text deltas of the stream of a declaration with the strings
 /// `strings` and the `chunk_size` given, as `text_deltas` shows them.
-fn text_deltas_of(strings : @llm.Strings, chunk_size? : Int) -> String {
+fn text_deltas_of(strings : @llm.Strings, chunk_size? : Int32) -> String {
   text_deltas(messages_reply_to(strings, chunk_size?))
 }
 

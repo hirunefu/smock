@@ -605,8 +605,8 @@ fn re2_syntax(pattern : String) -> String {
           let mut code = 0
           for c in pattern[i + 2:i + 6] {
             let digit = match c {
-              '0'..='9' => c.to_int() - '0'.to_int()
-              'a'..='f' => c.to_int() - 'a'.to_int() + 10
+              '0'..<='9' => c.to_int() - '0'.to_int()
+              'a'..<='f' => c.to_int() - 'a'.to_int() + 10
               _ => c.to_int() - 'A'.to_int() + 10
             }
             code = code * 16 + digit

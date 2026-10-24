@@ -7,7 +7,7 @@
 /// with the body files `body_files`, as (name, text) pairs.
 fn load_data(
   files : Array[(String, String)],
-  body_files? : Array[(String, String)] = [],
+  body_files~ : Array[(String, String)] = [],
 ) -> Result[@definitions.Snapshot, Array[@definitions.Diagnostic]] {
   let set : @definitions.DefinitionSet = {
     files: files.map(file => (file.0, @utf8.encode(file.1))),
@@ -20,7 +20,7 @@ fn load_data(
 /// Every diagnostic of loading `files`, one per line, or `valid`.
 fn data_problems(
   files : Array[(String, String)],
-  body_files? : Array[(String, String)] = [],
+  body_files~ : Array[(String, String)] = [],
 ) -> String {
   match load_data(files, body_files~) {
     Ok(_) => "valid"
@@ -34,7 +34,7 @@ fn data_problems(
 /// as compact JSON.
 fn buckets_of(
   files : Array[(String, String)],
-  body_files? : Array[(String, String)] = [],
+  body_files~ : Array[(String, String)] = [],
 ) -> String raise {
   let snapshot = match load_data(files, body_files~) {
     Ok(snapshot) => snapshot

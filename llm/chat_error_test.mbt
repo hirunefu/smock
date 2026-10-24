@@ -10,10 +10,10 @@
 /// message `message`, and whose strings are `strings`, as `shown` shows it.
 fn chat_cut(
   strings : @llm.Strings,
-  after~ : Int,
-  kind? : String = "server_error",
-  request? : Json? = Some({ "model": "test-model", "stream": true }),
-  chunk_size? : Int,
+  after~ : Int32,
+  kind~ : String = "server_error",
+  request~ : Json? = Some({ "model": "test-model", "stream": true }),
+  chunk_size? : Int32,
 ) -> String {
   shown(
     @llm.reply(
@@ -77,9 +77,9 @@ test "an error inside a piece sends the text up to exactly after code points, th
 /// usage chunk, `[DONE]`, or the error frame as sent.
 fn cut_events(
   strings : @llm.Strings,
-  after~ : Int,
-  chunk_size? : Int,
-  request? : Json? = Some({ "model": "test-model", "stream": true }),
+  after~ : Int32,
+  chunk_size? : Int32,
+  request~ : Json? = Some({ "model": "test-model", "stream": true }),
 ) -> String {
   let reply = @llm.reply(
     @llm.Declaration(

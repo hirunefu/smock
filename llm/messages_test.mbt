@@ -11,8 +11,8 @@
 /// request-id header field it adds, then the body.
 fn messages(
   text : String,
-  request? : Json? = Some({ "model": "claude-test" }),
-  draw? : UInt64 = 7,
+  request~ : Json? = Some({ "model": "claude-test" }),
+  draw~ : UInt64 = 7,
   usage? : @llm.Usage,
   stop_reason? : String,
   id? : String,
@@ -90,8 +90,8 @@ fn reply_member(reply : String, name : String) -> String {
 /// `stop_sequence` and `stop_details`, the last one `missing` when left out.
 fn stops(
   written? : String,
-  text? : String = "Hi",
-  request? : Json? = Some({ "stop_sequences": ["\n\nHuman:", "END"] }),
+  text~ : String = "Hi",
+  request~ : Json? = Some({ "stop_sequences": ["\n\nHuman:", "END"] }),
 ) -> String {
   let reply = messages(text, request~, stop_reason?=written)
   [

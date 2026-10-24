@@ -176,7 +176,7 @@ test "a payload or a header that takes more than 1 MiB as compact JSON is a rend
   // The payload {"a":"x…x"} with `n` x, a multiple of 3, takes n + 8 bytes
   // as compact JSON: in base64url, eyJhIjoi, then eHh4 for each xxx, then
   // In0 for "}.
-  let sized = (n : Int) => {
+  let sized = (n : Int32) => {
     rendered("${len(jwtPayload(bodyText).a)}", input={
       ..request,
       body: @utf8.encode("e30.eyJhIjoi\{"eHh4".repeat(n / 3)}In0."),

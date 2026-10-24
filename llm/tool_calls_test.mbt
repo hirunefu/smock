@@ -16,8 +16,8 @@ fn weather(id? : String) -> @llm.ToolCall {
 fn chat_calls(
   text : String,
   tool_calls : ReadOnlyArray[@llm.ToolCall],
-  request? : Json? = Some({ "model": "test-model" }),
-  chunk_size? : Int,
+  request~ : Json? = Some({ "model": "test-model" }),
+  chunk_size? : Int32,
   stop_reason? : String,
 ) -> String {
   shown(
@@ -135,8 +135,8 @@ fn deltas(
   text : String,
   tool_calls : ReadOnlyArray[@llm.ToolCall],
   chunks? : ReadOnlyArray[String],
-  chunk_size? : Int,
-  usage? : Bool = false,
+  chunk_size? : Int32,
+  usage~ : Bool = false,
 ) -> String {
   let reply = @llm.reply(
     @llm.Declaration(api=OpenaiChat, chunk_size?),
@@ -439,7 +439,7 @@ test "each tool call takes two slots after the reply's and the Responses message
 
 ///|
 test "a tool call's id fixes its call id, sent as written, and every other id stays as it was" {
-  let fixed = (k : Int) => {
+  let fixed = (k : Int32) => {
     let tool_calls : Array[@llm.ToolCall] = [weather(), weather(), weather()]
     tool_calls[k] = weather(id="call_test_\{k}")
     ids_of(ReadOnlyArray::from_array(tool_calls), 7).join("\n")

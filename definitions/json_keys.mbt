@@ -14,7 +14,7 @@ priv struct Open {
   /// The names of the members so far, for an object; `None` for an array.
   names : Set[String]?
   /// For an array, the index of the element the scan is in.
-  mut index : Int
+  mut index : Int32
   /// For an object, whether a member's name comes next rather than its
   /// value.
   mut expects_name : Bool

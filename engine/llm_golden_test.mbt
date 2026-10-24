@@ -7,7 +7,7 @@
 /// One event of a stream, or the one JSON body of a reply: its place, from
 /// 1, its name, if any, and its data as written and parsed.
 priv struct GoldenEvent {
-  number : Int
+  number : Int32
   name : String?
   text : String
   /// The data parsed, or None when it is not JSON, as `[DONE]`.
@@ -18,7 +18,7 @@ priv struct GoldenEvent {
 /// The JSON body or event `text`, the `number`th, with the name `name`.
 fn golden_event(
   text : String,
-  number? : Int = 1,
+  number~ : Int32 = 1,
   name? : String,
 ) -> GoldenEvent {
   let data = @json.parse(text) catch {
@@ -352,7 +352,7 @@ fn Comparison::segment(
   self : Comparison,
   segment : Array[GoldenEvent],
   sent : Array[GoldenEvent],
-  at : Int,
+  at : Int32,
 ) -> Unit {
   for i, example in segment {
     let event = "event \{example.number}"
@@ -472,7 +472,7 @@ fn put_at(data : Json, pointer : String, value : Json) -> Unit {
 ///|
 /// The index of an array of `length` elements that the token `token`
 /// names, if any.
-fn index_of(length : Int, token : String) -> Int? {
+fn index_of(length : Int32, token : String) -> Int32? {
   for i in 0..<length {
     if i.to_string() == token {
       return Some(i)
@@ -530,11 +530,11 @@ fn pointer_token(key : String) -> String {
 fn compare_golden(
   example : String,
   outcome : @engine.Outcome,
-  differs? : Array[String] = [],
-  unfixed? : Array[String] = [],
-  fragments? : Array[String] = [],
-  absent? : Array[String] = [],
-  unframed? : Bool = false,
+  differs~ : Array[String] = [],
+  unfixed~ : Array[String] = [],
+  fragments~ : Array[String] = [],
+  absent~ : Array[String] = [],
+  unframed~ : Bool = false,
 ) -> String {
   let comparison = Comparison::new(differs, unfixed)
   // The names of `absent` that the example has.
@@ -708,8 +708,8 @@ test "the comparison reports a value that differs, and a JSON body where the exa
 /// finish reason `finish`, both as JSON text.
 fn chat_chunk(
   delta : String,
-  finish? : String = "null",
-  id? : String = "chatcmpl-123",
+  finish~ : String = "null",
+  id~ : String = "chatcmpl-123",
 ) -> String {
   "data: {\"id\":\"\{id}\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-6-astra\",\"choices\":[{\"index\":0,\"delta\":\{delta},\"logprobs\":null,\"finish_reason\":\{finish}}]}\n\n"
 }

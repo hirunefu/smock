@@ -8,8 +8,8 @@
 /// reason that `written` writes, or none.
 fn finish_reasons(
   written : String?,
-  text? : String = "Hi",
-  tool_calls? : ReadOnlyArray[@llm.ToolCall] = [],
+  text~ : String = "Hi",
+  tool_calls~ : ReadOnlyArray[@llm.ToolCall] = [],
 ) -> String {
   let stop_reason = written.map(word => {
     @llm.read_stop_reason(OpenaiChat, Json::string(word)).unwrap()

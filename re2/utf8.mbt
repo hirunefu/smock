@@ -1,19 +1,19 @@
 ///|
 /// The code point `decode` returns for a byte that is not part of a
 /// well-formed UTF-8 sequence. No instruction consumes it.
-let not_a_char : Int = -1
+let not_a_char : Int32 = -1
 
 ///|
 /// Decodes the code point that starts at `pos`, returning it and its length
 /// in bytes. A byte that does not start a well-formed UTF-8 sequence decodes
 /// as `not_a_char` with length 1.
-fn decode(input : BytesView, pos : Int) -> (Int, Int) {
+fn decode(input : BytesView, pos : Int32) -> (Int32, Int32) {
   let len = input.length()
   let b0 = input[pos].to_int()
   if b0 < 0x80 {
     return (b0, 1)
   }
-  fn cont(i : Int, lo : Int, hi : Int) -> Int {
+  fn cont(i : Int32, lo : Int32, hi : Int32) -> Int32 {
     if i >= len {
       return -1
     }
