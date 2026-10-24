@@ -169,7 +169,7 @@ stubs:
       headers:
         Content-Type: text/plain
         Smock-Replica: string
-      body: "# HELP smock_build_info The smock build: its version, commit and MoonBit toolchain, as labels. Always 1.\n# TYPE smock_build_info gauge\nsmock_build_info{version=\"0.1.0\",commit=\"0123456789ab\",toolchain=\"moonc v0.10.14+7d59c7ec9\"} 1\n"
+      body: "# HELP smock_build_info The smock build: its version, commit and MoonBit toolchain, as labels. Always 1.\n# TYPE smock_build_info gauge\nsmock_build_info{version=\"0.1.0\",commit=\"0123456789ab\",toolchain=\"moonc v0.10.17+d971670cd\"} 1\n"
   # GET /v1/status, 401: Show what this replica runs and serves
   - id: admin.getStatus.401
     mock: admin

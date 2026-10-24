@@ -157,6 +157,10 @@ of each GitHub release include its section
   The example points to
   [LLM responses](docs/definition-files.md#llm-responses), which write an
   LLM API's reply in its wire form.
+- smock is built with the MoonBit toolchain moonc v0.10.17+d971670cd, up
+  from v0.10.14+7d59c7ec9, which `smock --version`, the startup log entry,
+  `smock_build_info` and the Admin API status operation name. NOTICE
+  follows its core library. mimalloc is still 2.1.7.
 
 ### Fixed
 

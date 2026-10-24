@@ -720,7 +720,7 @@ fn chat_chunk(
 fn two_gaps(piece : String) -> String {
   chat_chunk("{\"role\":\"assistant\",\"content\":\"\"}") +
   ": omitted\n\n" +
-  chat_chunk("{\"content\":\{piece.to_json().stringify()}}") +
+  chat_chunk("{\"content\":\{Json(piece).stringify()}}") +
   ": omitted\n: and more\n\n" +
   chat_chunk("{}", finish="\"stop\"") +
   "data: [DONE]\n\n"
@@ -950,7 +950,7 @@ fn call_stream(pieces : Array[String]) -> String {
   for piece in pieces {
     out.write_string(
       chat_chunk(
-        "{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\{piece.to_json().stringify()}}}]}",
+        "{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\{Json(piece).stringify()}}}]}",
       ),
     )
   }
