@@ -125,6 +125,19 @@ HTTP/1.1 response does, adapted to the rules of HTTP/2:
 
 smock never pushes: it sends no PUSH_PROMISE.
 
+## Streams that wait
+
+A Stub's [delay](definition-files.md#delays) delays only its own stream.
+The other streams of the connection are answered meanwhile, so a slow call
+does not hold up the fast ones a client sends beside it on the same
+connection, as with a real server.
+
+A stream that the client resets during its delay stops waiting at once,
+and gets no response. So do a stream that smock resets because a frame the
+client sent on it breaks the protocol, and every stream of a connection
+that closes. Each such request is in the Journal, as a request whose client
+goes away is.
+
 ## The Journal
 
 An HTTP/2 request is in the Journal like any other, with `version`
@@ -170,3 +183,14 @@ opens a new connection for the rest.
 smock's HTTP/2 framing, header compression and connection state come from
 the `http2` package of moonbitstack/moonhttp 0.14.0, a MoonBit module with
 no I/O and no C ([ADR 0005](adr/0005-http2-comes-from-moonhttp.md)).
+smock pins it to that exact version: CI fails when the build resolves
+another one. CI also checks that moonhttp and the modules it imports bring
+no C. A new version comes only on purpose, after h2spec, the e2e tests, a
+check by hand with other clients and the benchmarks
+([Upgrading moonhttp](releasing.md#upgrading-moonhttp)).
+
+CI runs h2spec 2.6.0, which checks a server against RFC 7540 and RFC 7541,
+against the plain port on every push.
+[`scripts/h2spec/plain.txt`](../scripts/h2spec/plain.txt) lists the cases
+that do not pass yet, each with its reason
+([Build and test](../README.md#build-and-test)).

@@ -24,6 +24,20 @@ pre-merge run compares with them.
 ## Checklist
 
 - [ ] **CI is green on the integration branch**, and its issues are done.
+  CI also runs h2spec, the HTTP/2 conformance tool, against the plain
+  port, on linux/amd64
+  ([Build and test](../README.md#build-and-test)). Before the merge, its
+  list of the cases that do not pass, `scripts/h2spec/plain.txt`, names no
+  case that waits for an issue, and each listed case that the run reports
+  as passing has come off it. On a branch that raises moonhttp, this run is
+  part of the checks the upgrade needs.
+- [ ] **If the branch raises moonhttp**, it has passed the gate of
+  [Upgrading moonhttp](releasing.md#upgrading-moonhttp): h2spec against
+  both traffic ports, the e2e tests, and the interop check by hand with
+  curl, Go, the JVM and a browser, with the results in the merge record.
+  The runs below follow, as for any branch. Any change that raises the
+  moonhttp version the build resolves is such an upgrade, and CI fails on
+  it until `moon.mod` names the new version.
 - [ ] **Run the local Autopilot plan** on the usual machine, the full plan
   (about 20 minutes), as the benchmark's
   [GKE Autopilot profiles](../bench/README.md#gke-autopilot-profiles) section

@@ -51,8 +51,10 @@ of each GitHub release include its section
   a request of its own, with the Host from `:authority`, else from the
   `host` field, and its Session from its own `baggage`. Several `cookie`
   fields are joined into one, so conditions see what an HTTP/1.1 client's
-  one Cookie line gives. A stream whose request HTTP/1.1 would refuse gets
-  400 on that stream alone, and the connection's other streams go on. See
+  one Cookie line gives. A Stub's delay delays only its own stream, while
+  the connection's other streams are answered. A stream whose request
+  HTTP/1.1 would refuse gets 400 on that stream alone, and the connection's
+  other streams go on. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,

@@ -32,6 +32,15 @@ jobs:
       - uses: actions/checkout@v7
       - run: scripts/test-sbom.sh
 
+  # build-test.yml runs h2spec against smock and judges its report with
+  # scripts/h2spec-verdict.py. This tests the verdict on small reports.
+  h2spec-verdict:
+    name: Test the h2spec verdict
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/test-h2spec-verdict.sh
+
   # The benchmark itself runs only by hand (benchmark.yml); this checks its
   # files. Its request mix and definitions are checked against smock by the
   # tests in e2e/bench_test.mbt. The GKE run of another architecture than

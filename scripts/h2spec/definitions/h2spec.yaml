@@ -1,0 +1,17 @@
+# The Definition file that scripts/check-h2spec.sh serves to h2spec. h2spec
+# requests / with GET, HEAD and POST, and wants 200 with a body that is not
+# empty: without one, it skips its flow-control cases. The Stub answers
+# every method there with 200 and a body of 4,096 octets, which needs DATA
+# frames that a window of a few octets holds back.
+mocks:
+  - name: h2spec
+
+stubs:
+  - id: h2spec
+    mock: h2spec
+    request: { path: / }
+    response:
+      status: 200
+      template: true
+      headers: { Content-Type: text/plain }
+      body: "${padEnd('', 4096, 'h2spec ')}"

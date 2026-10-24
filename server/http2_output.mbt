@@ -1,20 +1,80 @@
 // The writing of what an HTTP/2 connection's `Conn` queues: its SETTINGS,
 // the acknowledgements and window updates it owes, the resets and
 // GOAWAY it sends, and the responses smock queues on its streams. Every
-// octet goes through the connection's `WatchedStream`, so each write has
-// the write timeout.
+// octet goes through the connection's one writer, `H2Writer`, and then
+// through its `WatchedStream`, so each write has the write timeout.
 
 ///|
-/// Writes what `conn` has queued for the client to `out`, and returns
-/// whether there was anything to write.
-async fn[S : @io.Writer] write_queued(
-  conn : @http2.Conn,
+/// The one writer of an HTTP/2 connection: every octet written to its
+/// socket goes through it, in the order its `Conn` queued it. Each task
+/// that queues something then asks the writer to write it: the connection's
+/// reader before each read, and a stream's task once its response is
+/// queued. Only one task writes at a time; while it does, a task that asks
+/// leaves what it queued to it, and it writes that too before it stops. So
+/// no task ever waits to write the socket while another does, which
+/// moonbitlang/async does not allow (it aborts the process), and none waits
+/// for another to write but the reader, before the connection ends.
+///
+/// A write that fails ends the connection, so a writer never stays busy on
+/// a connection that goes on.
+priv struct H2Writer {
+  conn : @http2.Conn
+  /// Whether a task is writing.
+  mut busy : Bool
+  /// Whether a task asked the writer to write while another was writing,
+  /// so that the one writing takes what the `Conn` queued once more.
+  mut more : Bool
+  /// Signalled when a task stops writing.
+  done : @async.CondVar
+}
+
+///|
+/// The writer of what `conn` queues.
+fn H2Writer::new(conn : @http2.Conn) -> H2Writer {
+  { conn, busy: false, more: false, done: @async.CondVar::Cond(), }
+}
+
+///|
+/// Writes to `out` what the `Conn` has queued, and returns whether there
+/// was anything to write. While another task is writing, it leaves what is
+/// queued to that task, which writes it before it stops, and returns
+/// false.
+async fn[S : @io.Writer] H2Writer::write(
+  self : H2Writer,
   out : WatchedStream[S],
 ) -> Bool {
-  let queued = conn.take()
+  if self.busy {
+    self.more = true
+    return false
+  }
+  let queued = self.conn.take()
   if queued.length() == 0 {
     return false
   }
+  self.busy = true
   @io.Writer::write(out, queued)
+  while self.more {
+    self.more = false
+    let queued = self.conn.take()
+    if queued.length() > 0 {
+      @io.Writer::write(out, queued)
+    }
+  }
+  self.busy = false
+  self.done.broadcast()
   true
+}
+
+///|
+/// Waits until no other task is writing, then writes to `out` what the
+/// `Conn` has queued: the last frames of a connection that ends, such as
+/// its GOAWAY, which would be lost if it ended while another task wrote.
+async fn[S : @io.Writer] H2Writer::write_last(
+  self : H2Writer,
+  out : WatchedStream[S],
+) -> Unit {
+  while self.busy {
+    self.done.wait()
+  }
+  let _ = self.write(out)
 }
