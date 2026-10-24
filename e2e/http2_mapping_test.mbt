@@ -633,7 +633,6 @@ async test "h2c: Journal queries, verification and the unmatched requests count 
           #|unmatched: 200
           #|"POST" "/users/1" "HTTP/2" host="users.example.com" mock="users" nearMiss="get-user" failed [{"condition":"method","expected":"GET","actual":["POST"]}]
           #|"GET" "/users/x" "HTTP/2" host="nowhere.example.com" mock=null nearMiss=null
-
         ),
       )
     })
