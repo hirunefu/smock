@@ -130,7 +130,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
   let stopwatch = self.last_read
   let task = self.group.spawn(no_wait=true, () => {
     defer self.ports.done(outcome, stopwatch)
-    let _ = self.trickle(stream, rest, outcome.journal, out)
+    let partial = outcome.plan.fault is Some(Partial)
+    if self.trickle(stream, rest, outcome.journal, out, end=!partial) && partial {
+      self.reset_after(stream, None)
+    }
     self.waiting.remove(stream)
     let _ = self.writer.write(out)
     self.answered()

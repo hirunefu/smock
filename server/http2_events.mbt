@@ -46,7 +46,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_events(
   }
   let task = self.group.spawn(no_wait=true, () => {
     defer ports.done(outcome, stopwatch)
-    self.send_events(stream, events, outcome.journal, out)
+    let partial = outcome.plan.fault is Some(Partial)
+    if self.send_events(stream, events, outcome.journal, out, partial~) &&
+      partial {
+      self.reset_after(stream, None)
+    }
     self.waiting.remove(stream)
     let _ = self.writer.write(out)
     self.answered()
@@ -82,6 +86,7 @@ fn H2Connection::open_events(
   now~ : Int64,
 ) -> Bool {
   let ports = self.ports
+  let partial = plan.fault is Some(Partial)
   let fields = response_fields(
     plan.status,
     plan.headers,
@@ -89,7 +94,18 @@ fn H2Connection::open_events(
     date=ports.dates.at(now),
     streamed=true,
   )
-  if head || count == 0 || !has_content(plan.status, connect~) {
+  let sent = if partial { count / 2 } else { count }
+  if head || sent == 0 || !has_content(plan.status, connect~) {
+    if partial {
+      self.conn.headers(stream, fields) catch {
+        _ => {
+          self.reset_after(stream, entry)
+          return false
+        }
+      }
+      self.reset_after(stream, entry)
+      return false
+    }
     ports.commit(entry)
     self.conn.headers(stream, fields, end=true) catch {
       _ => {
@@ -128,16 +144,19 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::send_events(
   events : ReadOnlyArray[@definitions.SseEvent],
   entry : @engine.JournalEntry?,
   out : WatchedStream[S],
-) -> Unit {
+  partial~ : Bool,
+) -> Bool {
   let ports = self.ports
   let mut entry = entry
   defer ports.commit(entry)
   // The HEADERS, queued before the task began, go out before the first
   // event's delay.
   let _ = self.writer.write_for(out, stream)
-  guard self.waiting.contains(stream) else { return }
-  let last = events.length() - 1
-  for i, event in events {
+  guard self.waiting.contains(stream) else { return false }
+  let count = if partial { events.length() / 2 } else { events.length() }
+  let last = count - 1
+  for i in 0..<count {
+    let event = events[i]
     if event.delay_ms > 0 {
       @async.sleep(event.delay_ms)
     }
@@ -146,16 +165,18 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::send_events(
       event?=event.event,
       id?=event.id,
     )
-    if i == last {
+    let ends = i == last && !partial
+    if ends {
       ports.commit(entry)
       entry = None
     }
-    guard self.trickle(stream, data, None, out, end=i == last) else { return }
+    guard self.trickle(stream, data, None, out, end=ends) else { return false }
     if i == last {
-      return
+      return true
     }
     let _ = self.writer.write_for(out, stream)
     // A reset while the task wrote did not cancel it: it ends now.
-    guard self.waiting.contains(stream) else { return }
+    guard self.waiting.contains(stream) else { return false }
   }
+  true
 }

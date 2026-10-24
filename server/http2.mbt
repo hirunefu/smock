@@ -741,21 +741,34 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
     self.wait(stream, outcome, head~, connect~, out)
     return
   }
-  if outcome.plan.fault is None && outcome.plan.body is Events(events) {
-    self.start_events(stream, outcome, events, head~, connect~, out)
-    return
+  match outcome.plan.fault {
+    Some(Reset) | Some(Close) => {
+      self.reset_after(stream, outcome.journal)
+      ports.done(outcome, self.last_read)
+      return
+    }
+    _ => ()
   }
-  let rest = self.queue(
-    stream,
-    outcome.plan,
-    outcome.journal,
-    head~,
-    connect~,
-    now=self.now,
-  )
-  if rest.length() > 0 {
-    self.write_slowly(stream, rest, outcome, out)
-    return
+  match outcome.plan.body {
+    Events(events) => {
+      self.start_events(stream, outcome, events, head~, connect~, out)
+      return
+    }
+    Bytes(body) => {
+      let rest = self.queue(
+        stream,
+        outcome.plan,
+        body,
+        outcome.journal,
+        head~,
+        connect~,
+        now=self.now,
+      )
+      if rest.length() > 0 {
+        self.write_slowly(stream, rest, outcome, out)
+        return
+      }
+    }
   }
   ports.done(outcome, self.last_read)
 }
@@ -797,30 +810,41 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
     // From here on the response ends the stream, and commits the entry.
     entry = None
     let now = @async.now()
-    if outcome.plan.fault is None && outcome.plan.body is Events(events) {
-      let more = self.open_events(
-        stream,
-        outcome.plan,
-        outcome.journal,
-        events.length(),
-        head~,
-        connect~,
-        now~,
-      )
-      if more {
-        self.send_events(stream, events, outcome.journal, out)
+    let partial = outcome.plan.fault is Some(Partial)
+    match (outcome.plan.fault, outcome.plan.body) {
+      (Some(Reset), _) | (Some(Close), _) =>
+        self.reset_after(stream, outcome.journal)
+      (_, Events(events)) => {
+        let more = self.open_events(
+          stream,
+          outcome.plan,
+          outcome.journal,
+          events.length(),
+          head~,
+          connect~,
+          now~,
+        )
+        if more &&
+          self.send_events(stream, events, outcome.journal, out, partial~) &&
+          partial {
+          self.reset_after(stream, None)
+        }
       }
-    } else {
-      let rest = self.queue(
-        stream,
-        outcome.plan,
-        outcome.journal,
-        head~,
-        connect~,
-        now~,
-      )
-      if rest.length() > 0 {
-        let _ = self.trickle(stream, rest, outcome.journal, out)
+      (_, Bytes(body)) => {
+        let rest = self.queue(
+          stream,
+          outcome.plan,
+          body,
+          outcome.journal,
+          head~,
+          connect~,
+          now~,
+        )
+        if rest.length() > 0 &&
+          self.trickle(stream, rest, outcome.journal, out, end=!partial) &&
+          partial {
+          self.reset_after(stream, None)
+        }
       }
     }
     self.waiting.remove(stream)
@@ -876,22 +900,22 @@ fn H2Connection::queue(
   self : H2Connection,
   stream : Int32,
   plan : @engine.ResponsePlan,
+  body : BytesView,
   entry : @engine.JournalEntry?,
   head~ : Bool,
   connect~ : Bool,
   now~ : Int64,
 ) -> BytesView {
   let ports = self.ports
-  guard plan.fault is None && plan.body is Bytes(body) else {
-    self.reset_after(stream, entry)
-    return b""
-  }
+  let partial = plan.fault is Some(Partial)
   // HEAD gets the length of the body without the body, as on HTTP/1.1. A
   // 2xx to a CONNECT gets neither: smock opens no tunnel.
-  let sent = if has_content(plan.status, connect~) && !head {
-    body
-  } else {
+  let sent = if !has_content(plan.status, connect~) || head {
     body[0:0]
+  } else if partial {
+    body[0:body.length() / 2]
+  } else {
+    body
   }
   let fields = response_fields(
     plan.status,
@@ -900,6 +924,16 @@ fn H2Connection::queue(
     date=ports.dates.at(now),
     connect~,
   )
+  if sent.length() == 0 && partial {
+    self.conn.headers(stream, fields) catch {
+      _ => {
+        self.reset_after(stream, entry)
+        return sent
+      }
+    }
+    self.reset_after(stream, entry)
+    return sent
+  }
   if sent.length() == 0 {
     ports.commit(entry)
     self.conn.headers(stream, fields, end=true) catch {
@@ -925,6 +959,14 @@ fn H2Connection::queue(
       }
     }
     return sent[room:]
+  }
+  if partial {
+    // What is sent fits the windows, so the `Conn` takes it.
+    self.conn.data(stream, sent) catch {
+      _ => return sent[0:0]
+    }
+    self.reset_after(stream, entry)
+    return sent[0:0]
   }
   ports.commit(entry)
   // The body fits the windows, so the `Conn` takes it.
