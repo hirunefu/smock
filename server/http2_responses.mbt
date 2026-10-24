@@ -55,12 +55,16 @@ fn has_content(status : Int32) -> Bool {
 /// in a response, since it is specific to an HTTP/1.1 connection (RFC 9113,
 /// section 8.2.2).
 fn is_connection_specific(name : Bytes) -> Bool {
-  name == b"keep-alive" ||
-  name == b"upgrade" ||
-  name == b"proxy-connection" ||
-  name == b"te" ||
-  name == b"connection" ||
-  name == b"transfer-encoding"
+  // By length first, so that most names are told apart without a
+  // comparison of their octets.
+  match name.length() {
+    2 => name == b"te"
+    7 => name == b"upgrade"
+    10 => name == b"keep-alive" || name == b"connection"
+    16 => name == b"proxy-connection"
+    17 => name == b"transfer-encoding"
+    _ => false
+  }
 }
 
 ///|
