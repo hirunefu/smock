@@ -262,6 +262,36 @@ a stream that smock resets because a frame the client sent on it breaks the
 protocol, and every stream of a connection that closes. Each such request
 is in the Journal, as a request whose client goes away is.
 
+## Server-Sent Events
+
+An [events Stub](definition-files.md#server-sent-events) streams one event
+stream per HTTP/2 stream. So one connection can carry several event
+streams at once, as a browser with several EventSources on one connection
+opens them, and its other streams are answered meanwhile.
+
+- The HEADERS go out at once, or after the Stub's delay, with the Stub's
+  status and headers. They carry `content-type: text/event-stream` and no
+  `content-length`.
+- Each event is encoded as over HTTP/1.1 and goes out as DATA after its
+  delay. An event larger than the client's frame size goes out in several
+  DATA frames. One larger than the flow-control windows waits for the
+  client to widen them, as a large body does
+  ([Streams that wait](#streams-that-wait)).
+- The DATA of the last event ends the HTTP/2 stream. The request is in the
+  Journal before the last event goes out, so a client that has all the
+  events finds it there.
+- A response with no body, to HEAD, with status 204 or 304, a 2xx to a
+  [CONNECT](#connect), or with no events, is its HEADERS alone, which end
+  the HTTP/2 stream at once.
+- A client that resets the HTTP/2 stream ends the event stream at once, and
+  so does a reset that smock sends because a frame the client sent on it
+  breaks the protocol. No more events go out on it, and its request is in
+  the Journal, as a request whose client goes away is. Over HTTP/1.1, smock
+  learns that a client has gone only when it next writes an event; over
+  HTTP/2, the RST_STREAM tells it at once.
+- On SIGTERM, event streams go on until they end or the drain timeout cuts
+  them, as over HTTP/1.1.
+
 ## The Journal
 
 An HTTP/2 request is in the Journal like any other, with `version`
