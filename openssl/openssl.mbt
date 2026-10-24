@@ -219,7 +219,8 @@ pub struct ServerConfig {
 /// - `alpn` lists the protocols accepted by ALPN, in order of preference.
 ///   A client that offers ALPN but none of them fails the handshake with
 ///   the no_application_protocol alert; a client that offers no ALPN is
-///   served.
+///   served. Over TLS 1.2, `h2` is skipped when the suite is one RFC 9113
+///   prohibits: any but ECDHE or DHE with an AEAD cipher.
 pub fn ServerConfig::ServerConfig(
   certificate_chain~ : Bytes,
   private_key~ : Bytes,
