@@ -636,6 +636,19 @@ class Plan(Helper):
         status, _, stderr = self.plan(plan=path)
         self.assertEqual(status, 1)
         self.assertIn("case http-keep-alive holds idle connections", stderr)
+        # A protocol the harness does not know, or a new connection per
+        # request over HTTP/2, which oha cannot make, as on one machine.
+        for change, problem in (({"protocol": "h3"}, "case h2c-keep-alive has the protocol h3, which the harness "
+                                                     "does not know: http, https, h2c or h2"),
+                                ({"connection": "new-per-request"},
+                                 "case h2c-keep-alive opens a new connection per request over HTTP/2 (h2c)")):
+            plan = json.loads((BENCH / "plan-autopilot.json").read_text())
+            plan["cases"] = [{**case, **change} if case["name"] == "h2c-keep-alive" else case
+                             for case in plan["cases"]]
+            path.write_text(json.dumps(plan))
+            status, _, stderr = self.plan(plan=path)
+            self.assertEqual(status, 1, stderr)
+            self.assertIn(problem, stderr)
 
 
 class SameNodePlan(Helper):
