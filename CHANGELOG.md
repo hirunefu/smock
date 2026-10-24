@@ -60,7 +60,10 @@ of each GitHub release include its section
   flow-control windows goes out as the client widens them, so a client with
   small windows still gets all of it. `--body-limit` applies to each stream
   too: a body over it gets 413 on that stream alone, and
-  `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. See
+  `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. An events
+  Stub streams one event stream per HTTP/2 stream, several at once on one
+  connection: the DATA of its last event ends the HTTP/2 stream, and a
+  client that resets the HTTP/2 stream ends the event stream at once. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,

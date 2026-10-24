@@ -1152,6 +1152,16 @@ data: line 2
   connection open but stops reading is cut by the
   [write timeout](../README.md#run): when the write of an event makes no
   progress for `--write-timeout-ms`, smock closes the connection.
+- Over HTTP/2, each event stream is an HTTP/2 stream of its own, so one
+  connection can carry several at once, and its other streams are answered
+  meanwhile. The HEADERS carry `content-type: text/event-stream` and no
+  `content-length`. Each event goes out as DATA, split where the client's
+  frame size or flow-control windows require, and the DATA of the last
+  event ends the HTTP/2 stream. A response with no body is its HEADERS
+  alone. A client that resets the HTTP/2 stream ends the event stream at
+  once, without waiting for the next event, and its request is in the
+  Journal, as one whose client disconnects is
+  ([HTTP/2](http2.md#server-sent-events)).
 
 ### JSON bodies
 
