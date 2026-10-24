@@ -121,9 +121,9 @@ async test "h2c: a stream whose own window stays at zero for the write timeout w
 /// Reads frames until DATA or RST_STREAM ends `stream`, or smock ends the
 /// connection, and after each DATA frame on it that does not, waits
 /// `pause_ms`, then sends `grant(n)`, a frame that widens a window, for the
-/// `n`th time, counting from 1. Returns
-/// the DATA and RST_STREAM frames of `stream`, as `render_frame` shows
-/// them, and then `closed` if smock ended the connection.
+/// `n`th time, counting from 1. Returns the DATA and RST_STREAM frames of
+/// `stream`, as `render_frame` shows them, and then `closed` if smock ended
+/// the connection.
 async fn RawH2::granting(
   self : RawH2,
   stream : Int32,
@@ -203,8 +203,8 @@ async test "h2c: a client that widens its windows slowly but steadily keeps its 
           "by SETTINGS, longer than the write timeout: \{@async.now() - start > 500}",
         )
         // On the connection: wide stream windows, and a body nine octets
-        // larger than the connection window, which widens by three octets
-        // every 200 ms once it is used.
+        // larger than the connection window, which the client widens by
+        // three octets 200 ms after each DATA frame it reads.
         let raw = smock.raw_h2(settings=false)
         defer raw.close()
         raw.send([
