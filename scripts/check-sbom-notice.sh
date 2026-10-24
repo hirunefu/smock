@@ -11,6 +11,13 @@
 #   section gives none;
 # - which smock (SPDXRef-Package-smock) links statically.
 #
+# It also checks the MoonBit modules that NOTICE names, but the standard
+# library: each must be one package of the SBOM, with the version and the
+# licence that NOTICE gives. smock must link it statically, unless NOTICE
+# says that smock compiles nothing from it: then smock must depend on it
+# (DEPENDS_ON), and not link it. scripts/check-notice.sh checks that NOTICE
+# names every module the build resolves.
+#
 # scripts/add-smock-to-sbom.sh makes the SBOM so. CI runs this check on the
 # SBOM it makes of the image (build-test.yml), and the release workflow on
 # each architecture's SBOM before attesting it. scripts/test-sbom.sh tests
@@ -32,8 +39,12 @@ notice=${2:-$root/NOTICE}
 problems=$(jq -r -L "$root/scripts" --rawfile notice "$notice" '
   include "notice";
   . as $sbom
-  | ($notice | notice_toolchain) as $toolchain
-  | $notice | notice_parts[]
+  | def related($package; $type):
+      any($sbom.relationships[]; .spdxElementId == "SPDXRef-Package-smock"
+          and .relatedSpdxElement == $package.SPDXID and .relationshipType == $type);
+  ($notice | notice_toolchain) as $toolchain
+  | ($notice | notice_parts[] | .compiled = true | .version = sbom_version($toolchain)),
+    ($notice | notice_modules[] | .version //= "NOASSERTION")
   | . as $part
   | [$sbom.packages[] | select(.name == $part.name)] as $packages
   | if $packages == [] then "the SBOM has no package \(.name), which NOTICE names"
@@ -42,12 +53,16 @@ problems=$(jq -r -L "$root/scripts" --rawfile notice "$notice" '
       $packages[0] as $package
       | (if $package.licenseDeclared == .licence then empty
          else "NOTICE gives \(.name) the licence \(.licence), the SBOM \($package.licenseDeclared)" end),
-        (sbom_version($toolchain) as $version
-         | if $package.versionInfo == $version then empty
-           else "NOTICE gives \(.name) the version \($version), the SBOM \($package.versionInfo)" end),
-        (if any($sbom.relationships[]; .spdxElementId == "SPDXRef-Package-smock"
-                and .relatedSpdxElement == $package.SPDXID and .relationshipType == "STATIC_LINK") then empty
-         else "smock does not link \(.name) statically in the SBOM" end)
+        (if $package.versionInfo == .version then empty
+         else "NOTICE gives \(.name) the version \(.version), the SBOM \($package.versionInfo)" end),
+        (if .compiled then
+           if related($package; "STATIC_LINK") then empty
+           else "smock does not link \(.name) statically in the SBOM" end
+         elif related($package; "STATIC_LINK") then
+           "smock links \(.name) statically, but NOTICE says that smock compiles nothing from it"
+         elif related($package; "DEPENDS_ON") then empty
+         else "smock does not depend on \(.name) in the SBOM, which NOTICE says that smock compiles nothing from"
+         end)
     end
 ' "$sbom") || {
   echo "check-sbom-notice: cannot check $sbom against $notice" >&2
@@ -58,4 +73,4 @@ if [ -n "$problems" ]; then
   printf '%s\n' "$problems" | sed "s|^|check-sbom-notice: $sbom: |" >&2
   exit 1
 fi
-echo "check-sbom-notice: $sbom lists the runtime, mimalloc and simdutf as NOTICE names them"
+echo "check-sbom-notice: $sbom lists the runtime, mimalloc and simdutf, and the MoonBit modules, as NOTICE names them"
