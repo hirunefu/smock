@@ -368,3 +368,28 @@ async test "h2c: a stream that breaks one of RFC 9113's field rules h2spec does 
     })
   })
 }
+
+///|
+async test "h2c: a CONNECT, which has no :path, is not refused for want of one" {
+  with_definitions([("files.json", uploads)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      raw.send([
+        headers_frame(
+          1,
+          raw.block([(":method", "CONNECT"), (":authority", "localhost:443")]),
+        ),
+      ])
+      inspect(
+        raw.frames_until_stream_ends(1),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 404, content-type: application/json, smock-near-miss: upload; failed=method,path, smock-mock: files; via=default, date: <now>, content-length: 27]
+          #|DATA 1 END_STREAM 27 octets
+        ),
+      )
+    })
+  })
+}
