@@ -787,6 +787,19 @@ fn Stream::over(self : Stream) -> Bool {
 }
 
 ///|
+/// Whether events that take `bytes` bytes more as they are sent, counted
+/// before they are written, would take the stream past `max_reply_bytes`.
+/// When they would, the stream is over, as if they had been added, and they
+/// are not to be written: the count is only compared with the bound.
+fn Stream::passes(self : Stream, bytes : Int64) -> Bool {
+  if self.bytes.to_int64() + bytes <= max_reply_bytes.to_int64() {
+    return false
+  }
+  self.bytes = max_reply_bytes + 1
+  true
+}
+
+///|
 /// The reply of the stream, with the request-id header field `request_id`
 /// and the closing event `closing` its waits complete, none by default.
 fn Stream::reply(
@@ -1489,6 +1502,16 @@ fn responses_stream(
     output=[],
     usage=Json::null(),
   )
+  // Both opening events copy the settings the request gives, which may be
+  // large, so their bytes are counted before the object is written once:
+  // a stream they would take past the bound stops before them.
+  let length = @template.compact_length(Json::object(opening))
+  if out.passes(
+      out.response_bytes("response.created", length) +
+      out.response_bytes("response.in_progress", length, ahead=1),
+    ) {
+    return out.reply(request_id)
+  }
   let opening = "\"response\":\{@template.compact_json(Json::object(opening))}"
   out.push(NoWait, "response.created", opening)
   out.push(NoWait, "response.in_progress", opening)
@@ -1659,14 +1682,22 @@ fn responses_stream(
     output=Json::array(output),
     usage=responses_usage(declaration.usage),
   )
+  let kind = if completes {
+    "response.completed"
+  } else {
+    "response.incomplete"
+  }
+  // It copies the request's settings too, so its bytes are counted before
+  // it is written.
+  if out.passes(
+      out.response_bytes(kind, @template.compact_length(Json::object(response))),
+    ) {
+    return out.reply(request_id)
+  }
   let sequence_number = out.next
   out.push(
     pace.closing(),
-    if completes {
-      "response.completed"
-    } else {
-      "response.incomplete"
-    },
+    kind,
     "\"response\":\{@template.compact_json(Json::object(response))}",
   )
   out.reply(
@@ -1723,6 +1754,32 @@ fn ResponsesEvents::reply(
   closing~ : Closing? = None,
 ) -> Reply {
   self.stream.reply(request_id, closing~)
+}
+
+///|
+/// Whether events that take `bytes` bytes more, counted before they are
+/// written, would take the stream past `max_reply_bytes`, as
+/// `Stream::passes` says.
+fn ResponsesEvents::passes(self : ResponsesEvents, bytes : Int64) -> Bool {
+  self.stream.passes(bytes)
+}
+
+///|
+/// The bytes that the event of type `kind` takes as it is sent when its
+/// one member between `type` and `sequence_number` is `response`, a
+/// Response object of `length` bytes of compact JSON, and its
+/// `sequence_number` is that of the event `ahead` after the next one:
+/// counted without writing the object.
+fn ResponsesEvents::response_bytes(
+  self : ResponsesEvents,
+  kind : String,
+  length : Int64,
+  ahead~ : Int32 = 0,
+) -> Int64 {
+  let frame = event_data(kind, "\"response\":", self.next + ahead, "")
+  // `event: `, the type and its line feed; `data: `, its line feed and the
+  // blank line.
+  (16 + kind.length() + utf8_length(frame)).to_int64() + length
 }
 
 ///|
