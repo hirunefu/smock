@@ -144,3 +144,67 @@ async test "h2c: a stream whose request HTTP/1.1 would refuse gets 400 on its st
     })
   })
 }
+
+///|
+async test "h2c: a 400 sent while the request still arrives is followed by RST_STREAM PROTOCOL_ERROR, frames that later arrive on that stream are ignored, a request that has ended gets the 400 alone, and the next stream is served" {
+  with_definitions([("files.json", uploads)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let out = []
+      raw.send([
+        headers_frame(
+          1,
+          raw.block(request_fields("POST", "/upload x", "localhost")),
+          end_stream=false,
+        ),
+        Data(stream_id=1, data=b"abc", end_stream=false, padding=0),
+        Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false),
+      ])
+      out.push("A request whose HEADERS do not end the stream:")
+      out.push(raw.frames_until_ping_ack())
+      raw.send([
+        Data(stream_id=1, data=b"def", end_stream=false, padding=0),
+        headers_frame(1, raw.block([("x-checksum", "abcdef")])),
+        headers_frame(
+          3,
+          raw.block(request_fields("GET", "/upload x", "localhost")),
+        ),
+        headers_frame(
+          5,
+          raw.block(request_fields("POST", "/upload", "localhost")),
+        ),
+      ])
+      out.push(
+        "Then more of stream 1, a request whose HEADERS end the stream, and one HTTP/1.1 takes:",
+      )
+      out.push(raw.frames_until_stream_ends(5))
+      let (_, journal) = smock.journal()
+      guard journal is Object({ "entries": Array(entries), .. }) else {
+        fail("no entries: \{journal.stringify()}")
+      }
+      let shown = entries.map(entry => {
+        guard entry is Object({ "request": Object(request), .. }) else {
+          return entry.stringify()
+        }
+        "\{request.get("method").unwrap().stringify()} \{request.get("target").unwrap().stringify()}"
+      })
+      out.push("Journal: \{shown.join(", ")}")
+      inspect(
+        out.join("\n"),
+        content=(
+          #|A request whose HEADERS do not end the stream:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0]
+          #|RST_STREAM 1 PROTOCOL_ERROR
+          #|Then more of stream 1, a request whose HEADERS end the stream, and one HTTP/1.1 takes:
+          #|HEADERS 3 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0]
+          #|HEADERS 5 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 5 END_STREAM 6 octets
+          #|Journal: "POST" "/upload"
+        ),
+      )
+    })
+  })
+}
