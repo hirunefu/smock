@@ -18,7 +18,9 @@
 // - the response encoding (`response_fields`, http2_responses.mbt);
 // - the writing of what the `Conn` queues, through the connection's one
 //   writer (`H2Writer`, http2_output.mbt);
-// - the tasks of the streams whose responses wait (`H2Connection::wait`).
+// - the tasks of the streams whose responses wait (`H2Connection::wait`);
+// - the deadlines of the connection and of its streams, which the
+//   connection's one watchdog keeps (`H2Connection::expire`).
 //
 // Each stream's request takes the steps every request to the Mocks takes
 // (requests.mbt). Until they get forms of their own, some cases are served
@@ -27,11 +29,6 @@
 // - a Fault, a stream of Server-Sent Events, or a body larger than the open
 //   windows ends its stream with RST_STREAM INTERNAL_ERROR, its Journal
 //   entry committed as the engine made it;
-// - one watch for the whole connection, as on HTTP/1.1: the idle timeout
-//   while no stream is in progress, and the read timeout while a request
-//   is arriving, from the read that brought the HEADERS of the first one
-//   in progress; none while only responses wait, since a delay is smock's
-//   own wait; past it, the connection closes without GOAWAY;
 // - for the drain, the connection is idle while no stream is in progress,
 //   and while smock drains, it closes, without GOAWAY, as soon as none is;
 // - no body or header limit applies beyond moonhttp's own.
@@ -89,6 +86,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
     defer {
       writable = !watchdog.write_timed_out
     }
+    let out : WatchedStream[S] = { stream, watchdog, }
     let now = @async.now()
     let idle_timeout = self.settings.idle_timeout_ms.to_int64()
     let conn = @http2.Conn::new(Server, settings=h2_settings(self.settings))
@@ -109,12 +107,17 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
       now,
       read_at: now,
       idle_deadline: now + idle_timeout,
-      read_deadline: now,
+      header_at: now,
+      header_stream: 0,
       became_idle: false,
       reading: false,
+      closing: false,
+      close_at: forever,
       last_read: Stopwatch::start(),
     }
-    h2.serve(stream, { stream, watchdog, })
+    watchdog.expired = Some(now => h2.expire(now, out))
+    watchdog.read_by(h2.idle_deadline, now)
+    h2.serve(stream, out)
   })
   // A read that timed out ended the task group while the connection waited.
   connection.idle = false
@@ -149,7 +152,8 @@ priv struct H2Connection {
   /// The task group the connection is served in, where the tasks of
   /// waiting streams run. They end with the connection.
   group : @async.TaskGroup[Unit]
-  /// The timeouts of the connection's waits on its client.
+  /// The timeouts of the connection's waits on its client, and its
+  /// deadlines (`expire`).
   watchdog : Watchdog
   connection : Connection
   idle_timeout : Int64
@@ -159,16 +163,26 @@ priv struct H2Connection {
   mut now : Int64
   /// When the last read returned.
   mut read_at : Int64
-  /// While no stream is in progress, when the connection times out.
+  /// While the connection is idle, when it times out: from when it opens,
+  /// and from when what was queued is written after the last stream in
+  /// progress ends. `forever` from when a stream begins.
   mut idle_deadline : Int64
-  /// While a request is arriving, when the connection times out.
-  mut read_deadline : Int64
+  /// When the last field block began: the read that brought its HEADERS.
+  mut header_at : Int64
+  /// The stream of the last field block.
+  mut header_stream : Int32
   /// Whether the last stream in progress has ended since the connection
   /// last read, so that the idle timeout starts again once what was queued
   /// is written.
   mut became_idle : Bool
   /// Whether the reader waits for more from the client.
   mut reading : Bool
+  /// Whether smock has queued a GOAWAY with NO_ERROR, and closes the
+  /// connection (`close_after_goaway`).
+  mut closing : Bool
+  /// Once that GOAWAY is written, when the connection closes if the client
+  /// has not closed it first; `forever` before.
+  mut close_at : Int64
   /// Started at the last read.
   mut last_read : Stopwatch
 }
@@ -227,11 +241,19 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::serve(
 /// already used, whose stream is neither open nor reset by this side, get
 /// `PROTOCOL_ERROR` (RFC 9113, section 5.1.1); the `Conn` enforces the rest
 /// of RFC 9113's rules.
+///
+/// HEADERS that begin a field block start the read timeout of its stream's
+/// request: its first frame.
 fn H2Connection::judge(
   self : H2Connection,
   head : @http2.FrameHeader,
   _frame : BytesView,
 ) -> Int32? {
+  if head.ftype == @http2.frame_headers && !self.streams.in_block {
+    self.header_at = self.read_at
+    self.header_stream = head.stream_id
+    self.watchdog.read_by(self.read_at + self.read_timeout, self.now)
+  }
   if self.streams.see(head) {
     None
   } else {
@@ -278,14 +300,16 @@ fn[S : @io.Writer] H2Connection::hand(
           self.reset(stream, @http2.error_refused_stream)
           continue
         }
-        let request = H2Request::new(fields)
+        let request = H2Request::new(
+          fields,
+          deadline=self.header_at + self.read_timeout,
+        )
         if request.is_malformed() {
           self.malformed = stream
           continue
         }
-        if self.requests.is_empty() {
-          self.read_deadline = self.read_at + self.read_timeout
-        }
+        // The watchdog has had its deadline since its HEADERS came.
+        self.idle_deadline = forever
         self.requests[stream] = request
       }
       Data(stream~, data~) => {
@@ -371,8 +395,10 @@ fn H2Connection::idle(self : H2Connection) -> Bool {
 ///|
 /// Writes what the `Conn` queued, then reads more from `stream`, and
 /// returns whether the connection goes on: not once the client has closed
-/// it, its timeout has passed, or smock drains and no stream is in
-/// progress.
+/// it, or smock drains and no stream is in progress, nor after a GOAWAY
+/// with NO_ERROR, once what the client sends after it has been read and
+/// discarded (`discard`). The read has no deadline of its own: the
+/// connection's watchdog keeps them all (`expire`).
 async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
   self : H2Connection,
   stream : S,
@@ -381,40 +407,180 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
   if self.writer.write(out) {
     self.now = @async.now()
   }
+  if self.closing {
+    self.discard(stream)
+    return false
+  }
   let idle = self.idle()
   if idle && self.became_idle {
     self.idle_deadline = self.now + self.idle_timeout
+    self.watchdog.read_by(self.idle_deadline, self.now)
     self.became_idle = false
   }
   if idle && self.ports.lifecycle.is_draining() {
     return false
   }
-  // While only responses wait, the read has no deadline: the task that
-  // ends the last of them gives it the idle timeout (`answered`).
-  let deadline = if !self.requests.is_empty() {
-    self.read_deadline
-  } else if idle {
-    self.idle_deadline
-  } else {
-    forever
-  }
-  if deadline - self.now <= 0L {
-    return false
-  }
   self.connection.idle = idle
-  // Past the deadline, the watchdog ends the task group, and with it this
-  // read and the connection.
   self.reading = true
-  self.watchdog.reading(deadline, self.now)
   let n = self.reader.read(stream)
-  self.watchdog.stop_reading()
   self.reading = false
   self.connection.idle = false
   guard n > 0 else { return false }
   self.last_read = Stopwatch::start()
   self.now = @async.now()
   self.read_at = self.now
+  if self.closing {
+    self.discard(stream)
+    return false
+  }
   true
+}
+
+///|
+/// How long smock reads and discards what a client sends after a GOAWAY
+/// with NO_ERROR, at most, before it closes the connection, in
+/// milliseconds.
+let closing_ms : Int64 = 1000
+
+///|
+/// Reads and discards what the client sends after a GOAWAY with NO_ERROR,
+/// until it closes the connection; the watchdog closes it first after
+/// `closing_ms` (`close_after_goaway`).
+async fn[S : @io.Reader] H2Connection::discard(
+  self : H2Connection,
+  stream : S,
+) -> Unit {
+  self.reader.drop_held()
+  while self.reader.read(stream) > 0 {
+    self.reader.drop_held()
+  }
+}
+
+///|
+/// Called by the connection's watchdog at `now`, when the earliest
+/// deadline it was given has come, or one before it that no longer
+/// counts; returns the next, or one that has passed to end the
+/// connection. What it queues, RST_STREAM frames or a GOAWAY, is written
+/// to `out` by a task that writes it and ends, so that the watchdog never
+/// waits on the client itself. While smock closes the connection after a
+/// GOAWAY, the time it closes is the only deadline.
+///
+/// - The read timeout of each stream runs from the read that brought the
+///   first frame of its request to its end. Past it, smock resets the
+///   stream with CANCEL, and the other streams go on. A field block still
+///   open at its stream's deadline holds the whole connection: the
+///   connection gets GOAWAY with NO_ERROR and closes instead.
+/// - The idle timeout runs while no stream is in progress; frames that
+///   open no stream, such as PING, SETTINGS and WINDOW_UPDATE, do not
+///   restart it, and a field block that has begun holds it off. Past it,
+///   the connection gets GOAWAY with NO_ERROR and closes.
+///
+/// Neither is logged.
+fn[S : @io.Writer] H2Connection::expire(
+  self : H2Connection,
+  now : Int64,
+  out : WatchedStream[S],
+) -> Int64 {
+  if self.closing {
+    return self.close_at
+  }
+  if self.idle_until() <= now || self.block_deadline() <= now {
+    self.go_away(out)
+    return forever
+  }
+  let late = []
+  for stream, request in self.requests {
+    if request.deadline <= now {
+      late.push(stream)
+    }
+  }
+  if late.length() > 0 {
+    for stream in late {
+      self.reset(stream, @http2.error_cancel)
+    }
+    self.group.spawn_bg(no_wait=true, () => {
+      let _ = self.writer.write(out)
+      self.answered()
+    })
+  }
+  self.next_deadline()
+}
+
+///|
+/// The earliest deadline of the connection: the idle deadline, that of
+/// each request in progress, and that of a field block still open.
+fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
+  let mut next = self.idle_until()
+  for _, request in self.requests {
+    if request.deadline < next {
+      next = request.deadline
+    }
+  }
+  let block = self.block_deadline()
+  if block < next {
+    next = block
+  }
+  next
+}
+
+///|
+/// When the idle timeout ends the connection: its idle deadline, unless a
+/// field block has begun, which holds it off, as the first byte of a
+/// request does over HTTP/1.1; `forever` then.
+fn H2Connection::idle_until(self : H2Connection) -> Int64 {
+  if self.streams.in_block {
+    forever
+  } else {
+    self.idle_deadline
+  }
+}
+
+///|
+/// While a field block is open, the deadline of its stream's request: that
+/// of the request in progress for trailers, else the read timeout after
+/// the read that brought its HEADERS; `forever` while none is.
+fn H2Connection::block_deadline(self : H2Connection) -> Int64 {
+  guard self.streams.in_block else { return forever }
+  match self.requests.get(self.header_stream) {
+    Some(request) => request.deadline
+    None => self.header_at + self.read_timeout
+  }
+}
+
+///|
+/// Queues a GOAWAY with NO_ERROR, naming the highest stream the client has
+/// opened, then closes the connection once the client has read it
+/// (`close_after_goaway`).
+fn[S : @io.Writer] H2Connection::go_away(
+  self : H2Connection,
+  out : WatchedStream[S],
+) -> Unit {
+  self.conn.goaway() catch {
+    _ => ()
+  }
+  self.close_after_goaway(out)
+}
+
+///|
+/// Closes the connection, after the GOAWAY with NO_ERROR the `Conn` has
+/// queued, once the client has read it. A task writes it to `out`; from
+/// then on, smock reads and discards what the client sends (`discard`),
+/// until the client closes the connection, or for `closing_ms` at most
+/// after the GOAWAY is written. Closing a socket with unread input makes
+/// the kernel send a reset, which can discard the GOAWAY before the client
+/// reads it. moonbitlang/async offers no half-close, so smock does not shut
+/// down its sending side first.
+fn[S : @io.Writer] H2Connection::close_after_goaway(
+  self : H2Connection,
+  out : WatchedStream[S],
+) -> Unit {
+  self.closing = true
+  self.group.spawn_bg(no_wait=true, () => {
+    self.writer.write_last(out)
+    let now = @async.now()
+    self.close_at = now + closing_ms
+    self.watchdog.read_by(self.close_at, now)
+  })
 }
 
 ///|
@@ -500,7 +666,7 @@ async fn H2Connection::answered(self : H2Connection) -> Unit {
   self.became_idle = false
   self.idle_deadline = now + self.idle_timeout
   self.connection.idle = true
-  self.watchdog.reading(self.idle_deadline, now)
+  self.watchdog.read_by(self.idle_deadline, now)
 }
 
 ///|

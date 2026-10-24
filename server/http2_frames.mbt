@@ -98,6 +98,14 @@ fn FrameReader::take(
 }
 
 ///|
+/// Drops what the reader holds, for the next read to go to the start of its
+/// buffer.
+fn FrameReader::drop_held(self : FrameReader) -> Unit {
+  self.start = 0
+  self.end = 0
+}
+
+///|
 /// Reads more from `stream`, after what the reader holds, and returns how
 /// many octets came: 0 once the client has closed the connection. The
 /// octets of a frame not yet whole move to the start of the buffer first.
