@@ -79,11 +79,10 @@ fn header_list_bound(limit : Int32) -> Int32 {
 /// `read` so far, and returns whether `stream` can still be written to: not
 /// after a write timed out. `connection` holds what starts its drain while
 /// it is served (`H2Connection::start_drain`), and the drain starts at once
-/// when smock already drains. On the plain port,
-/// `read` starts with the connection preface, which told the connection
-/// apart from HTTP/1.1; on the TLS port, where ALPN did, it is empty, and
-/// the `Conn` checks the preface as it comes (a wrong one gets GOAWAY
-/// PROTOCOL_ERROR).
+/// when smock already drains. On the plain port, `read` starts with the
+/// connection preface, which told the connection apart from HTTP/1.1; on
+/// the TLS port, where ALPN did, it is empty, and the `Conn` checks the
+/// preface as it comes (a wrong one gets GOAWAY PROTOCOL_ERROR).
 ///
 /// One task reads, a frame at a time, hands each frame to the connection's
 /// `Conn`, and handles the events it produced, in order; before it reads
