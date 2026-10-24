@@ -170,10 +170,11 @@ class Manifests(Helper):
         [pod] = objects(rendered, "Pod")
         [job] = objects(rendered, "Job")
         self.assertEqual(job["spec"]["backoffLimit"], 0)
-        # 8 steps of plain HTTP and 6 of TLS, each of 2 + 20 + 3 s, with a
-        # pause of 2 s between them: the deadline leaves room for each
-        # step's analysis and the start, but not for a run left behind.
-        load_s = 14 * 25 + 13 * 2
+        # 8 steps of plain HTTP, 6 of TLS, 8 of h2c and 8 of h2, each of 2 +
+        # 20 + 3 s, with a pause of 2 s between them: the deadline leaves
+        # room for each step's analysis and the start, but not for a run
+        # left behind.
+        load_s = 30 * 25 + 29 * 2
         self.assertGreaterEqual(job["spec"]["activeDeadlineSeconds"], load_s + 300)
         self.assertLessEqual(job["spec"]["activeDeadlineSeconds"], load_s + 900)
         spec = pod_spec(job)
@@ -185,7 +186,8 @@ class Manifests(Helper):
         self.assertEqual(container["image"], GENERATOR_IMAGE)
         self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
         env = {variable["name"]: variable["value"] for variable in container["env"]}
-        self.assertEqual((env["PROFILE"], env["CASES"]), ("chart-default", "http-keep-alive,https-keep-alive"))
+        self.assertEqual((env["PROFILE"], env["CASES"]),
+                         ("chart-default", "http-keep-alive,https-keep-alive,h2c-keep-alive,h2-keep-alive"))
 
     def test_the_load_generator_has_6_vcpus_on_amd64_and_4_on_arm64_and_fits_an_8_vcpu_node(self):
         # An x86 vCPU is a hyperthread: 4 of them fell behind the schedule
@@ -606,7 +608,7 @@ class Plan(Helper):
         self.assertEqual(status, 0, stderr)
         lines = [line.split() for line in stdout.splitlines()]
         self.assertEqual([line[:2] for line in lines],
-                         [["autopilot-burst-min", "14"], ["autopilot-min", "14"], ["chart-default", "14"]])
+                         [["autopilot-burst-min", "30"], ["autopilot-min", "30"], ["chart-default", "30"]])
         deadlines = {line[0]: int(line[2]) for line in lines}
         [job] = objects(self.manifests("chart-default"), "Job")
         self.assertEqual(deadlines["chart-default"], job["spec"]["activeDeadlineSeconds"])
@@ -634,6 +636,19 @@ class Plan(Helper):
         status, _, stderr = self.plan(plan=path)
         self.assertEqual(status, 1)
         self.assertIn("case http-keep-alive holds idle connections", stderr)
+        # A protocol the harness does not know, or a new connection per
+        # request over HTTP/2, which oha cannot make, as on one machine.
+        for change, problem in (({"protocol": "h3"}, "case h2c-keep-alive has the protocol h3, which the harness "
+                                                     "does not know: http, https, h2c or h2"),
+                                ({"connection": "new-per-request"},
+                                 "case h2c-keep-alive opens a new connection per request over HTTP/2 (h2c)")):
+            plan = json.loads((BENCH / "plan-autopilot.json").read_text())
+            plan["cases"] = [{**case, **change} if case["name"] == "h2c-keep-alive" else case
+                             for case in plan["cases"]]
+            path.write_text(json.dumps(plan))
+            status, _, stderr = self.plan(plan=path)
+            self.assertEqual(status, 1, stderr)
+            self.assertIn(problem, stderr)
 
 
 class SameNodePlan(Helper):
@@ -1351,7 +1366,7 @@ class Estimate(Helper):
                       *args)
 
     def test_it_states_the_expected_cost_and_the_most_a_run_cut_off_at_the_time_limit_costs(self):
-        status, stdout, stderr = self.estimate(time_limit_s=3600)
+        status, stdout, stderr = self.estimate(time_limit_s=6000)
         self.assertEqual(status, 0, stderr)
         self.assertIn("Cost estimate for arm64 Pods (us-central1, on-demand prices of 2026-10-16, before tax", stdout)
         self.assertRegex(stdout, r"Expected: about \$0\.\d\d, the cluster existing for about \d+ minutes\.")
@@ -1359,8 +1374,8 @@ class Estimate(Helper):
         # minutes the deletion takes: the cluster's fee ($0.10 an hour), the
         # load generator (4 vCPU and 4Gi at $0.0445 and $0.0049225 an hour,
         # 2Gi of ephemeral storage at $0.0001389) and the largest smock (1
-        # vCPU, 1Gi, 64Mi), $0.3474 an hour for 65 minutes.
-        self.assertIn("At most: $0.38, if it ran until the time limit (60 minutes)", stdout)
+        # vCPU, 1Gi, 64Mi), $0.3474 an hour for 105 minutes.
+        self.assertIn("At most: $0.61, if it ran until the time limit (100 minutes)", stdout)
         self.assertIn("Arm Pods are priced as x86 ones: autopilot-arm runs them on Autopilot's container-optimized "
                       "compute platform, which the pricing page bills at one rate for both architectures.", stdout)
         self.assertNotIn("Scale-Out", stdout)
@@ -1369,14 +1384,14 @@ class Estimate(Helper):
                       "$0.10 an hour", stdout)
 
     def test_x86_pods_in_tokyo_are_estimated_at_tokyos_prices(self):
-        status, stdout, stderr = self.estimate(region="asia-northeast1", arch="amd64", time_limit_s=3600)
+        status, stdout, stderr = self.estimate(region="asia-northeast1", arch="amd64", time_limit_s=6000)
         self.assertEqual(status, 0, stderr)
         self.assertIn("Cost estimate for amd64 (x86) Pods (asia-northeast1, on-demand prices of 2026-10-16", stdout)
         # The fee ($0.10 an hour), the load generator on amd64 (6 vCPU and
         # 6Gi at $0.0571 and $0.0063215 an hour, 2Gi of ephemeral storage at
         # $0.0001784) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.5443 an
-        # hour for 65 minutes.
-        self.assertIn("At most: $0.59, if it ran until the time limit (60 minutes)", stdout)
+        # hour for 105 minutes.
+        self.assertIn("At most: $0.95, if it ran until the time limit (100 minutes)", stdout)
         self.assertIn("The load generator's Pod (6 vCPU, 6Gi)", stdout)
         self.assertNotIn("Arm", stdout)
 
@@ -1384,33 +1399,33 @@ class Estimate(Helper):
         # amd64 in us-central1: the fee, the load generator (6 vCPU and 6Gi
         # at $0.0445 and $0.0049225 an hour, 2Gi of ephemeral storage at
         # $0.0001389) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.4462 an
-        # hour for 65 minutes, as before Arm Pods were priced apart.
-        status, stdout, stderr = self.estimate(arch="amd64", time_limit_s=3600)
+        # hour for 105 minutes, as before Arm Pods were priced apart.
+        status, stdout, stderr = self.estimate(arch="amd64", time_limit_s=6000)
         self.assertEqual(status, 0, stderr)
         self.assertIn("Cost estimate for amd64 (x86) Pods (us-central1, on-demand prices of 2026-10-16", stdout)
-        self.assertIn("At most: $0.48, if it ran until the time limit (60 minutes)", stdout)
+        self.assertIn("At most: $0.78, if it ran until the time limit (100 minutes)", stdout)
         self.assertNotIn("Arm", stdout)
         # The same run on arm64 costs less only for its smaller load
         # generator (4 vCPU, 4Gi): $0.3474 an hour.
-        _, stdout, _ = self.estimate(arch="arm64", time_limit_s=3600)
-        self.assertIn("At most: $0.38, if it ran until the time limit (60 minutes)", stdout)
+        _, stdout, _ = self.estimate(arch="arm64", time_limit_s=6000)
+        self.assertIn("At most: $0.61, if it ran until the time limit (100 minutes)", stdout)
         # Every region with Arm Pods at its own rates, such as Singapore's:
         # the load generator at $0.0549 and $0.0060729 an hour, ephemeral
         # storage at $0.0001713, and the fee, $0.4052 an hour.
         for region in ("us-central1", "us-east1", "us-west1", "europe-west1", "europe-west2", "europe-west4",
                        "asia-southeast1"):
-            _, stdout, _ = self.estimate(region=region, arch="arm64", time_limit_s=3600)
+            _, stdout, _ = self.estimate(region=region, arch="arm64", time_limit_s=6000)
             self.assertIn(f"Cost estimate for arm64 Pods ({region}, on-demand prices of 2026-10-16", stdout)
             if region == "asia-southeast1":
-                self.assertIn("At most: $0.44, if it ran until the time limit (60 minutes)", stdout)
+                self.assertIn("At most: $0.71, if it ran until the time limit (100 minutes)", stdout)
 
     def test_a_region_without_prices_here_is_estimated_from_us_central1s_with_a_margin(self):
         # An amd64 run in Frankfurt: us-central1's Pod prices plus 30% and
-        # the fee, $0.5501 an hour for 65 minutes.
-        status, stdout, _ = self.estimate(region="europe-west3", arch="amd64", time_limit_s=3600)
+        # the fee, $0.5501 an hour for 105 minutes.
+        status, stdout, _ = self.estimate(region="europe-west3", arch="amd64", time_limit_s=6000)
         self.assertEqual(status, 0)
         self.assertIn("europe-west3: us-central1's prices plus 30%", stdout)
-        self.assertIn("At most: $0.60, if it ran until the time limit (60 minutes)", stdout)
+        self.assertIn("At most: $0.96, if it ran until the time limit (100 minutes)", stdout)
 
     def test_a_run_longer_than_the_time_limit_is_refused(self):
         status, stdout, stderr = self.estimate(time_limit_s=1200)
@@ -1555,26 +1570,62 @@ class SilentPort:
         self.listener.close()
 
 
+class Http1Only:
+    """A port on this machine that answers every request on a connection
+    with an empty HTTP/1.1 200 and closes it, as a server without HTTP/2
+    does: the HTTP/2 preface gets that answer too, which no HTTP/2 client
+    takes for one."""
+
+    def __enter__(self):
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(64)
+        self.port = self.listener.getsockname()[1]
+        threading.Thread(target=self.answer, daemon=True).start()
+        return self
+
+    def answer(self):
+        while True:
+            try:
+                connection, _ = self.listener.accept()
+            except OSError:
+                return
+            with connection:
+                request = b""
+                while b"\r\n\r\n" not in request:
+                    chunk = connection.recv(65536)
+                    if not chunk:
+                        break
+                    request += chunk
+                connection.sendall(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+
+    def __exit__(self, *_):
+        self.listener.close()
+
+
 class Generator(Helper):
     """The load generator sends a profile's steps the way bench/bench.py
     does, and reports each as summarize reads it."""
 
-    def generator_plan(self, rates=(200,)):
+    def generator_plan(self, rates=(200,), http2=False):
         """The small plan with short steps, at `rates`, over plain HTTP and
-        then TLS."""
+        then TLS, and with `http2`, over h2c and h2 after them."""
         plan = json.loads(small_plan(self.directory(), rates=rates).read_text())
         plan.update(ramp_s=0.5, duration_s=2, tail_s=1, cooldown_s=0, idle_rss={"settle_s": 0.5})
         plan["cases"].append({**plan["cases"][0], "name": "https-keep-alive", "protocol": "https"})
+        if http2:
+            for name, protocol in (("h2c-keep-alive", "h2c"), ("h2-keep-alive", "h2")):
+                plan["cases"].append({**plan["cases"][0], "name": name, "protocol": protocol})
         path = self.directory() / "plan.json"
         path.write_text(json.dumps(plan))
         return path
 
-    def generate(self, plan_path, smock, **ports):
+    def generate(self, plan_path, smock, cases="http-keep-alive,https-keep-alive", **ports):
         """Runs the load generator for profile small against `smock`, with
-        `ports` instead of smock's own; returns its exit status, its JSON
-        lines and its output."""
+        `ports` instead of smock's own, for `cases`; returns its exit
+        status, its JSON lines and its output."""
         environment = {**os.environ, "TARGET": "localhost", "PROFILE": "small",
-                       "CASES": "http-keep-alive,https-keep-alive", "PLAN": str(plan_path),
+                       "CASES": cases, "PLAN": str(plan_path),
                        "PLAIN_PORT": str(ports.get("plain", smock.ports["plain"])),
                        "TLS_PORT": str(ports.get("tls", smock.ports["tls"])),
                        "ADMIN_PORT": smock.ports["admin"], "OHA": shutil.which(OHA) or OHA, "TRAFFIC_CHECK_S": "2"}
@@ -1583,9 +1634,10 @@ class Generator(Helper):
         lines = [json.loads(line) for line in generator.stdout.splitlines()]
         return generator.returncode, lines, generator.stdout + generator.stderr
 
-    def summarize(self, plan_path, log):
+    def summarize(self, plan_path, log, cases=None):
         """summarize's summary and conditions of a run of profile small whose
-        load generator wrote `log`."""
+        load generator wrote `log`, for `cases` (by default every case of
+        the plan)."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
@@ -1594,7 +1646,7 @@ class Generator(Helper):
         status, _, stderr = helper(
             "summarize", "--plan", plan_path, "--targets", small_targets(self.directory()), "--region", "us-central1",
             "--zone", "us-central1-a", "--arch", "arm64", "--started-at", "2026-10-14T03:28:50+00:00",
-            "--finished-at", "2026-10-14T04:01:56+00:00", out)
+            "--finished-at", "2026-10-14T04:01:56+00:00", *(["--cases", cases] if cases else []), out)
         self.assertEqual(status, 0, stderr)
         return (json.loads((out / "summary.json").read_text()), json.loads((out / "conditions.json").read_text()),
                 (out / "summary.md").read_text())
@@ -1627,6 +1679,9 @@ class Generator(Helper):
         self.assertEqual((check["host"], check["target"]), ("catalog.bench.internal", "/catalog/items/SKU-00317"))
         for port in ("plain", "tls"):
             self.assertEqual((check["ports"][port]["answered"], check["ports"][port]["status"]), (True, 200))
+        # No step sends HTTP/2, so no port is checked over it: a smock
+        # without HTTP/2 can still run the HTTP/1.1 cases.
+        self.assertEqual(check["http2"], {})
         for step, protocol in zip([line["result"] for line in lines if line["kind"] == "step"], ("http", "https")):
             self.assertEqual((step["profile"], step["protocol"], step["rate"]), ("small", protocol, 200))
             self.assertEqual((step["errors"], step["smock_ready"]), (0, True))
@@ -1647,6 +1702,63 @@ class Generator(Helper):
         self.assertIn(f"Idle RSS: {idle['rss_kib'] / 1024:.1f} MiB, 0.5 s after startup", markdown)
         self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
         self.assertIsNone(conditions["gke"]["profiles"]["small"]["ended_early"])
+
+    def test_the_http2_steps_go_over_h2c_to_the_plain_port_and_over_h2_to_the_tls_port(self):
+        plan_path = self.generator_plan(http2=True)
+        with LocalSmock() as smock:
+            status, lines, output = self.generate(plan_path, smock, cases="h2c-keep-alive,h2-keep-alive")
+        self.assertEqual(status, 0, output)
+        # Before the first step, each traffic port answered the first
+        # request of the mix over HTTP/1.1, and over HTTP/2 too, sent with
+        # oha: h2c to the plain port, h2 to the TLS port.
+        [check] = [line for line in lines if line["kind"] == "traffic-check"]
+        self.assertTrue(check["ok"], check)
+        for name in ("plain", "tls"):
+            for found in (check["ports"][name], check["http2"][name]):
+                self.assertEqual((found["port"], found["answered"], found["status"], found["error"]),
+                                 (int(smock.ports[name]), True, 200, None), name)
+        steps = [line["result"] for line in lines if line["kind"] == "step"]
+        self.assertEqual([(step["id"], step["protocol"]) for step in steps],
+                         [("h2c-keep-alive@small", "h2c"), ("h2-keep-alive@small", "h2")])
+        for step in steps:
+            # Every request got the status the mix expects, h2 over TLS
+            # included, which oha offers alone by ALPN.
+            self.assertEqual((step["errors"], step["smock_ready"]), (0, True), step["id"])
+            self.assertEqual(step["requests"]["ok"], step["requests"]["scheduled"], step["id"])
+            self.assertGreater(step["requests"]["scheduled"], 350, step["id"])
+            self.assert_smock_use(step)
+
+        summary, _, markdown = self.summarize(plan_path, output, cases="h2c-keep-alive,h2-keep-alive")
+        self.assertTrue(summary["complete"])
+        self.assertEqual([case["id"] for case in summary["cases"]], ["h2c-keep-alive@small", "h2-keep-alive@small"])
+        self.assertIn("| plain HTTP 200, TLS HTTP 200, plain HTTP/2 200, TLS HTTP/2 200 |", markdown)
+
+    def test_a_traffic_port_that_answers_http1_alone_stops_a_profile_with_http2_steps_before_its_first_step(self):
+        plan_path = self.generator_plan(http2=True)
+        with LocalSmock() as smock, Http1Only() as old:
+            status, lines, output = self.generate(plan_path, smock, cases="http-keep-alive,h2c-keep-alive",
+                                                  plain=old.port)
+        self.assertEqual(status, 0, output)
+        self.assertEqual([line["kind"] for line in lines],
+                         ["start", "idle-rss", "traffic-check", "metrics-before", "stopped", "metrics-after", "done"])
+        check = lines[2]
+        self.assertFalse(check["ok"])
+        # Over HTTP/1.1 both ports answered; over HTTP/2 only the plain
+        # port, which h2c-keep-alive sends to, was checked, and it did not.
+        self.assertEqual({name: (port["answered"], port["status"]) for name, port in check["ports"].items()},
+                         {"plain": (True, 200), "tls": (True, 200)})
+        self.assertEqual(list(check["http2"]), ["plain"])
+        found = check["http2"]["plain"]
+        self.assertEqual((found["port"], found["answered"], found["status"]), (old.port, False, None))
+        self.assertTrue(found["error"], found)
+        stopped = lines[4]
+        self.assertEqual(stopped["reason"], "smock did not answer through its Service in 2 s: plain port "
+                                            f"{old.port} over HTTP/2 ({found['error']})")
+        self.assertEqual((stopped["after"], stopped["steps"]), (None, ["http-keep-alive@small", "h2c-keep-alive@small"]))
+
+        summary, conditions, markdown = self.summarize(plan_path, output)
+        self.assertEqual((summary["complete"], summary["cases"]), (False, []))
+        self.assertIn(f"| plain HTTP 200, TLS HTTP 200, plain HTTP/2 no answer ({found['error']}) |", markdown)
 
     def assert_smock_use(self, step):
         """What a step says smock used, from its /metrics around the step,

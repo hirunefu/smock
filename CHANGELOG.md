@@ -116,6 +116,12 @@ of each GitHub release include its section
   of the TLS port's ALPN, for every certificate, so that it offers
   `http/1.1` alone, as before HTTP/2. The plain port still serves h2c. See
   [Turning h2 off](docs/http2.md#turning-h2-off).
+- The release benchmark measures HTTP/2: `bench/plan-autopilot.json` has
+  `h2c-keep-alive`, to the plain port, and `h2-keep-alive`, to the TLS
+  port, which are `http-keep-alive` over HTTP/2, sent by oha with
+  `--http2`, locally and on GKE. They make each run of the plan about 22
+  minutes longer, so `scripts/gke-bench.sh`'s default time limit is now 100
+  minutes. See [HTTP/2 cases](bench/README.md#http2-cases).
 
 ### Changed
 

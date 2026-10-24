@@ -1282,8 +1282,9 @@ native build, such as `scripts/build-release.sh`, records in the binary.
 
 `bench/` is the release benchmark. It measures smock's real request path,
 realistic requests matched against a definition set with many Stubs with
-the Journal on, at fixed arrival rates under the CPU and memory limits of
-small GKE Autopilot Pods, and checks the provisional performance targets.
+the Journal on, over HTTP/1.1 and HTTP/2, at fixed arrival rates under the
+CPU and memory limits of small GKE Autopilot Pods, and checks the
+provisional performance targets.
 [bench/README.md](bench/README.md) says how to run it on a machine, on GKE
 Autopilot and in CI, what a run writes and how to compare runs. The
 [chart's sizing table](charts/smock/README.md#sizing) has what it measured.
