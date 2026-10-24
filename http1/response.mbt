@@ -239,6 +239,34 @@ fn write_utf8(out : FixedArray[Byte], at : Int32, s : String) -> Int32 {
 }
 
 ///|
+/// The octets `encode_response` writes for `text`, a field name or value:
+/// its UTF-8, with a surrogate that is not part of a pair written as the
+/// three bytes of its code unit. So another protocol, such as HTTP/2, can
+/// send a field with the same octets as an HTTP/1.1 response.
+///
+/// ```mbt check
+/// test {
+///   inspect(
+///     @http1.field_octets("caf\u{e9}"),
+///     content=(
+///       #|b"caf\xc3\xa9"
+///     ),
+///   )
+///   inspect(
+///     @http1.field_octets("\u{1f600}"),
+///     content=(
+///       #|b"\xf0\x9f\x98\x80"
+///     ),
+///   )
+/// }
+/// ```
+pub fn field_octets(text : String) -> Bytes {
+  let out = FixedArray::make(utf8_length(text), b'\x00')
+  let _ = write_utf8(out, 0, text)
+  out.unsafe_reinterpret_as_bytes()
+}
+
+///|
 /// Whether the connection stays open after the response that
 /// `encode_response` encodes with the same `request` and `close`: unless
 /// `close` is true or `request` does not keep it open

@@ -1,13 +1,19 @@
 // The response encoding of an HTTP/2 stream: the header fields of the
-// response the engine's plan describes, which the connection's `Conn`
-// compresses into HEADERS, with the body sent as DATA after them.
+// response the engine's plan describes, adapted to HTTP/2's rules, which
+// the connection's `Conn` compresses into HEADERS, with the body sent as
+// DATA after them.
 
 ///|
 /// The header fields of the HTTP/2 response with the status `status`, the
 /// header fields `headers` and a body of `length` octets: `:status`, then
-/// each of `headers` with its name in lower case and its value as the UTF-8
-/// octets the HTTP/1.1 encoder writes, then `date` with the value `date`,
-/// unless `headers` give one, and `content-length`.
+/// each of `headers` with its name in lower case and its value trimmed of
+/// spaces and tabs, then `date` with the value `date`, unless `headers`
+/// give one, and `content-length`, unless the status has no content.
+///
+/// Names and values are the octets the HTTP/1.1 encoder writes. The fields
+/// HTTP/2 forbids in a response (RFC 9113, section 8.2.2) are left out:
+/// `keep-alive`, `upgrade`, `proxy-connection` and `te`, which a Stub may
+/// give, and `connection` and `transfer-encoding`, which it may not.
 fn response_fields(
   status : Int32,
   headers : ArrayView[(String, String)],
@@ -19,16 +25,72 @@ fn response_fields(
   let mut has_date = false
   for header in headers {
     let name = lower_case(header.0)
+    if is_connection_specific(name) {
+      continue
+    }
     if name == b"date" {
       has_date = true
     }
-    fields.push({ name, value: @utf8.encode(header.1), })
+    fields.push({ name, value: @http1.field_octets(trimmed(header.1)), })
   }
   if !has_date {
-    fields.push({ name: b"date", value: @utf8.encode(date), })
+    fields.push({ name: b"date", value: @http1.field_octets(date), })
   }
-  fields.push({ name: b"content-length", value: decimal(length), })
+  if has_content(status) {
+    fields.push({ name: b"content-length", value: decimal(length), })
+  }
   fields
+}
+
+///|
+/// Whether a response with `status` has content: one with status 1xx, 204
+/// or 304 has none, so it has neither `content-length` nor DATA, as on
+/// HTTP/1.1 (RFC 9110, sections 8.6, 15.2, 15.3.5 and 15.4.5).
+fn has_content(status : Int32) -> Bool {
+  !(status is (100..<=199 | 204 | 304))
+}
+
+///|
+/// Whether `name`, a field name in lower case, is one that HTTP/2 forbids
+/// in a response, since it is specific to an HTTP/1.1 connection (RFC 9113,
+/// section 8.2.2).
+fn is_connection_specific(name : Bytes) -> Bool {
+  // By length first, so that most names are told apart without a
+  // comparison of their octets.
+  match name.length() {
+    2 => name == b"te"
+    7 => name == b"upgrade"
+    10 => name == b"keep-alive" || name == b"connection"
+    16 => name == b"proxy-connection"
+    17 => name == b"transfer-encoding"
+    _ => false
+  }
+}
+
+///|
+/// `value` without the spaces and tabs at either end, which HTTP/2 does not
+/// allow there (RFC 9113, section 8.2.1). A value without them is returned
+/// as it is.
+fn trimmed(value : String) -> String {
+  let mut start = 0
+  let mut end = value.length()
+  while start < end && is_space_or_tab(value[start]) {
+    start += 1
+  }
+  while end > start && is_space_or_tab(value[end - 1]) {
+    end -= 1
+  }
+  if start == 0 && end == value.length() {
+    value
+  } else {
+    value.view(start_offset=start, end_offset=end).to_owned()
+  }
+}
+
+///|
+/// Whether the code unit `c` is a space or a tab.
+fn is_space_or_tab(c : UInt16) -> Bool {
+  c == ' ' || c == '\t'
 }
 
 ///|

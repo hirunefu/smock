@@ -54,6 +54,13 @@ of each GitHub release include its section
   one Cookie line gives. A Stub's delay delays only its own stream, while
   the connection's other streams are answered. See
   [docs/http2.md](docs/http2.md).
+- Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
+  lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
+  `Upgrade`, `Proxy-Connection` and `TE` left out. HEAD, 204 and 304 are
+  framed as over HTTP/1.1. See [Responses](docs/http2.md#responses).
+- The `smock/http1` module makes public `field_octets`: the octets
+  `encode_response` writes for a field name or value, so that another
+  protocol, such as HTTP/2, can send the same ones.
 
 ### Changed
 

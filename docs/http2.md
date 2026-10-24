@@ -61,8 +61,26 @@ and CRUD Stubs work as over HTTP/1.1.
 A stream that the client resets before it has sent all of its request
 never reaches the Mocks: it has no Journal entry, and it moves no Scenario.
 
-The response carries the Stub's status and headers, with the names in
-lower case, and its body.
+## Responses
+
+A stream's response carries the Stub's status, headers and body, as an
+HTTP/1.1 response does, adapted to the rules of HTTP/2:
+
+- Header names are in lower case, as HTTP/2 requires. So are smock's own
+  headers, `smock-mock` and `smock-near-miss`.
+- Spaces and tabs around a value are trimmed, since HTTP/2 does not allow
+  them there. Values go out as the same UTF-8 octets as over HTTP/1.1.
+- `Keep-Alive`, `Upgrade`, `Proxy-Connection` and `TE` are left out, since
+  HTTP/2 forbids them in a response (RFC 9113, section 8.2.2). So a Stub
+  written for HTTP/1.1 still works over HTTP/2. No response has a
+  `connection` field.
+- `date` and `content-length` are sent as over HTTP/1.1. A Stub that gives
+  its own Date sends that one alone. A response to HEAD carries the length
+  of the body but not the body, and a 204 or 304 carries neither.
+- Templates, several responses, body files and Range requests work as over
+  HTTP/1.1, with the same statuses and bytes.
+
+smock never pushes: it sends no PUSH_PROMISE.
 
 ## Streams that wait
 
