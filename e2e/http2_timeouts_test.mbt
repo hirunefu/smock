@@ -380,7 +380,6 @@ async test "h2c: a field block that has begun holds off the idle timeout, so a r
             #|SETTINGS ACK
             #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
             #|DATA 1 END_STREAM 4 octets
-
           ),
         )
       },

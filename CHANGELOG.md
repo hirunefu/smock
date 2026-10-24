@@ -52,7 +52,9 @@ of each GitHub release include its section
   `host` field, and its Session from its own `baggage`. Several `cookie`
   fields are joined into one, so conditions see what an HTTP/1.1 client's
   one Cookie line gives. A Stub's delay delays only its own stream, while
-  the connection's other streams are answered. See
+  the connection's other streams are answered. The read timeout applies to
+  each stream alone, and resets only a stream whose request is late, with
+  `CANCEL`; an idle connection gets GOAWAY before it closes. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
@@ -82,6 +84,9 @@ of each GitHub release include its section
 - The HTTP/2 preface on the plain port now starts HTTP/2, instead of
   getting 505. The Journal's `version` and the Admin API's
   `RecordedRequest.version` can be `HTTP/2`.
+- The help text of `--read-timeout-ms` says that over HTTP/2, a request
+  that does not arrive in time resets its stream instead of closing the
+  connection.
 
 ### Fixed
 
