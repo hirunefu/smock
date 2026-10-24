@@ -846,12 +846,12 @@ class Summary(Helper):
         self.assertEqual(summary["idle_rss"], [{**IDLE["idle"], "memory": {"peak_bytes": 15 << 20, "oom_kills": 0}}])
         verdicts = {target["id"]: (target["verdict"], target["measured"]) for target in summary["targets"]}
         self.assertEqual(verdicts, {
-            "small/p99": ("met", 2.5),
-            "small/p99_9": ("missed", 6.0),
-            "small/oom_kills": ("met", 0),
+            "small/http-keep-alive/p99": ("met", 2.5),
+            "small/http-keep-alive/p99_9": ("missed", 6.0),
+            "small/http-keep-alive/oom_kills": ("met", 0),
             # From smock's /metrics: its cgroup's memory.peak by the end of
             # the step, and its RSS idle.
-            "small/peak_memory": ("met", 21.5),
+            "small/http-keep-alive/peak_memory": ("met", 21.5),
             "small/idle_rss": ("met", 16.0),
         })
         markdown = (out / "summary.md").read_text()
@@ -872,7 +872,7 @@ class Summary(Helper):
         summary = json.loads((out / "summary.json").read_text())
         self.assertEqual(summary["idle_rss"], [])
         verdicts = {target["id"]: (target["verdict"], target["reason"]) for target in summary["targets"]}
-        self.assertEqual(verdicts["small/peak_memory"],
+        self.assertEqual(verdicts["small/http-keep-alive/peak_memory"],
                          ("not measured",
                           "the kernel kept no peak memory in http-keep-alive@small@1000 (no memory.peak)"))
         self.assertEqual(verdicts["small/idle_rss"], ("not measured", "the run did not measure idle RSS under small"))
@@ -887,7 +887,7 @@ class Summary(Helper):
             out = self.results(lines, pods(), where=("--region", "us-central1", "--arch", arch),
                                targets={"arm64": [SMALL_TARGETS], "amd64": [amd64]})
             summary = json.loads((out / "summary.json").read_text())
-            p99 = next(target for target in summary["targets"] if target["id"] == "small/p99")
+            p99 = next(target for target in summary["targets"] if target["id"] == "small/http-keep-alive/p99")
             self.assertEqual((p99["architecture"], p99["max"], p99["verdict"]), (arch, maximum, verdict))
             self.assertIn(f"for {arch}, the architecture the run ran on.", (out / "summary.md").read_text())
         # A targets file with none for the run's architecture: none is
@@ -1143,7 +1143,7 @@ class Summary(Helper):
                                            "steps": steps}, {"kind": "done", "profile": "small"}], pods())
         summary = json.loads((out / "summary.json").read_text())
         self.assertEqual((summary["complete"], summary["cases"]), (False, []))
-        verdict = next(target for target in summary["targets"] if target["id"] == "small/p99")
+        verdict = next(target for target in summary["targets"] if target["id"] == "small/http-keep-alive/p99")
         self.assertEqual((verdict["verdict"], verdict["reason"]),
                          ("not measured", f"http-keep-alive@small@1000 was not run: {reason}"))
         recorded = json.loads((out / "conditions.json").read_text())["gke"]["profiles"]["small"]
@@ -1177,7 +1177,7 @@ class Summary(Helper):
                            pods(restarts=1, reason="OOMKilled"))
         summary = json.loads((out / "summary.json").read_text())
         self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {None})
-        verdict = next(target for target in summary["targets"] if target["id"] == "small/oom_kills")
+        verdict = next(target for target in summary["targets"] if target["id"] == "small/http-keep-alive/oom_kills")
         self.assertEqual(verdict["verdict"], "not measured")
         self.assertIn("smock restarted 1 time under small (last: OOMKilled)", (out / "summary.md").read_text())
 
@@ -1189,7 +1189,7 @@ class Summary(Helper):
         summary = json.loads((out / "summary.json").read_text())
         self.assertEqual({entry["memory"]["oom_kills"] for entry in [*summary["cases"], *summary["idle_rss"]]},
                          {None})
-        verdict = next(target for target in summary["targets"] if target["id"] == "small/oom_kills")
+        verdict = next(target for target in summary["targets"] if target["id"] == "small/http-keep-alive/oom_kills")
         self.assertEqual(verdict["verdict"], "not measured")
         markdown = (out / "summary.md").read_text()
         # No traffic check, and smock's restarts unknown.

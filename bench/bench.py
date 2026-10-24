@@ -1720,11 +1720,13 @@ def read_targets(path):
 
 
 def architecture_targets(path, architecture, entries):
-    """The targets of one architecture of a targets file, one for each limit
-    of each profile's entry: its id (<profile>/<metric>), what it is for
-    people, the architecture, the profile with its limits, the case and the
-    rate of a target that holds at a load (None for one at idle), the
-    metric, the most it may be and its unit."""
+    """The targets of one architecture of a targets file: for each profile's
+    entry, one for each limit that holds at a load and each case the entry
+    names, case by case, then one for each limit at idle. Each has its id
+    (<profile>/<case>/<metric> at a load, <profile>/<metric> at idle),
+    what it is for people, the architecture, the profile with its limits,
+    the case and the rate of a target that holds at a load (None for one at
+    idle), the metric, the most it may be and its unit."""
     where = f"{path}: {architecture}"
     if not isinstance(entries, list) or not entries:
         raise BenchError(f"{where}: needs a list of profiles, each with the most smock may reach under it (at_most)")
@@ -1741,19 +1743,39 @@ def architecture_targets(path, architecture, entries):
                 raise BenchError(f"{where}: {name}: {key} cannot be checked; use one of {', '.join(TARGET_METRICS)}")
             if not isinstance(value, (int, float)) or value < 0:
                 raise BenchError(f"{where}: {name}: {key} must be a number, at least 0")
-            metric, unit, what, scope = TARGET_METRICS[key]
+        cases = entry_cases(where, name, entry)
+        load = [key for key in limits if TARGET_METRICS[key][3] == "load"]
+        if load and (cases is None or not isinstance(entry.get("rate"), (int, float))):
+            raise BenchError(f"{where}: {name}: {load[0]} holds at a load: give the case and the rate (or cases, a "
+                             "list of them, in place of case)")
+        held = [(key, case) for case in (cases if load else []) for key in load]
+        held += [(key, None) for key in limits if key not in load]
+        for key, case in held:
+            metric, unit, what, _ = TARGET_METRICS[key]
             target = {"id": f"{name}/{metric}", "about": what, "architecture": architecture, "profile": name,
                       "cpu_limit": entry["cpu_limit"], "memory_limit": entry.get("memory_limit"), "case": None,
-                      "rate": None, "metric": metric, "max": value, "unit": unit}
-            if scope == "load":
-                if not isinstance(entry.get("case"), str) or not isinstance(entry.get("rate"), (int, float)):
-                    raise BenchError(f"{where}: {name}: {key} holds at a load: give the case and the rate")
-                target.update(case=entry["case"], rate=entry["rate"],
-                              about=f"{what}, {entry['case']} at {entry['rate']:,} requests/s")
+                      "rate": None, "metric": metric, "max": limits[key], "unit": unit}
+            if case is not None:
+                target.update(id=f"{name}/{case}/{metric}", case=case, rate=entry["rate"],
+                              about=f"{what}, {case} at {entry['rate']:,} requests/s")
             if target["id"] in [other["id"] for other in targets]:
-                raise BenchError(f"{where}: {name} limits {metric} twice")
+                raise BenchError(f"{where}: {name} limits {metric}{'' if case is None else f' for {case}'} twice")
             targets.append(target)
     return targets
+
+
+def entry_cases(where, name, entry):
+    """The cases the load targets of a targets file's entry hold for: its
+    case, or each of its cases; None when it names none."""
+    if "cases" not in entry:
+        return [entry["case"]] if isinstance(entry.get("case"), str) else None
+    if "case" in entry:
+        raise BenchError(f"{where}: {name}: give case or cases, not both")
+    cases = entry["cases"]
+    if not isinstance(cases, list) or not cases or not all(isinstance(case, str) for case in cases):
+        raise BenchError(f"{where}: {name}: cases must be a list of case names, such as "
+                         '["http-keep-alive", "h2c-keep-alive"]')
+    return cases
 
 
 def check_targets(targets, architecture, summary):

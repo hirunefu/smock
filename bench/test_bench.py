@@ -1312,16 +1312,17 @@ class Targets(unittest.TestCase):
         summary = read(out, "summary.json")
         targets = {t["id"]: t for t in summary["targets"]}
         self.assertEqual({i: t["verdict"] for i, t in targets.items()}, {
-            "small/p99": "met",
-            "small/p99_9": "missed",
-            "small/oom_kills": "met",
-            "small/peak_memory": "missed",
+            "small/http-keep-alive/p99": "met",
+            "small/http-keep-alive/p99_9": "missed",
+            "small/http-keep-alive/oom_kills": "met",
+            "small/http-keep-alive/peak_memory": "missed",
             "small/idle_rss": "met",
         })
         self.assertEqual({t["architecture"] for t in summary["targets"]}, {LOCAL_ARCHITECTURE})
         result = case(out, "http-keep-alive@small")
-        self.assertEqual(targets["small/p99"]["measured"], result["latency_ms"]["p99"])
-        self.assertEqual(targets["small/peak_memory"]["measured"], round(result["memory"]["peak_bytes"] / MiB, 2))
+        self.assertEqual(targets["small/http-keep-alive/p99"]["measured"], result["latency_ms"]["p99"])
+        self.assertEqual(targets["small/http-keep-alive/peak_memory"]["measured"],
+                         round(result["memory"]["peak_bytes"] / MiB, 2))
         self.assertEqual(targets["small/idle_rss"]["measured"], round(summary["idle_rss"][0]["rss_kib"] / 1024, 2))
         # summary.md says which architecture's targets it checked, and has
         # a row for each, with its profile, what it is and its verdict.
@@ -1362,13 +1363,13 @@ class TargetsFile(unittest.TestCase):
             for profile, (cpu, memory, rate, p99, p99_9) in load.items():
                 at_load = (architecture, profile, cpu, memory, "http-keep-alive", rate)
                 expected |= {
-                    f"{profile}/p99": (*at_load, "p99", p99, "ms"),
-                    f"{profile}/p99_9": (*at_load, "p99_9", p99_9, "ms"),
-                    f"{profile}/peak_memory": (*at_load, "peak_memory", 32, "MiB"),
+                    f"{profile}/http-keep-alive/p99": (*at_load, "p99", p99, "ms"),
+                    f"{profile}/http-keep-alive/p99_9": (*at_load, "p99_9", p99_9, "ms"),
+                    f"{profile}/http-keep-alive/peak_memory": (*at_load, "peak_memory", 32, "MiB"),
                     f"{profile}/idle_rss": (architecture, profile, cpu, memory, None, None, "idle_rss", 20, "MiB"),
                 }
                 if profile == "autopilot-burst-min":
-                    expected[f"{profile}/oom_kills"] = (*at_load, "oom_kills", 0, "OOM kills")
+                    expected[f"{profile}/http-keep-alive/oom_kills"] = (*at_load, "oom_kills", 0, "OOM kills")
             self.assertEqual(shown, expected, architecture)
 
     def test_each_set_says_where_it_comes_from_and_that_it_is_provisional(self):
@@ -1467,12 +1468,13 @@ class TargetsByArchitecture(unittest.TestCase):
         targets = harness.read_targets(targets_file(self, architectures=self.FILE))
         for architecture, verdict, maximum in (("arm64", "missed", 3), ("amd64", "met", 100)):
             checked_targets = {t["id"]: t for t in harness.check_targets(targets, architecture, summary)}
-            self.assertEqual(set(checked_targets), {"small/p99", "small/p99_9", "small/oom_kills",
-                                                    "small/peak_memory", "small/idle_rss"}, architecture)
-            p99 = checked_targets["small/p99"]
+            self.assertEqual(set(checked_targets), {
+                "small/http-keep-alive/p99", "small/http-keep-alive/p99_9", "small/http-keep-alive/oom_kills",
+                "small/http-keep-alive/peak_memory", "small/idle_rss"}, architecture)
+            p99 = checked_targets["small/http-keep-alive/p99"]
             self.assertEqual((p99["architecture"], p99["max"], p99["verdict"], p99["measured"]),
                              (architecture, maximum, verdict, 50), architecture)
-            self.assertEqual(checked_targets["small/p99_9"]["verdict"], "met", architecture)
+            self.assertEqual(checked_targets["small/http-keep-alive/p99_9"]["verdict"], "met", architecture)
 
     def test_a_run_on_an_architecture_with_no_targets_measures_none_and_says_why(self):
         summary = summary_of(idle=[idle_measured()], steps=[step_measured(p99=1.0)])
@@ -1481,7 +1483,8 @@ class TargetsByArchitecture(unittest.TestCase):
         # Each target of each architecture, in the file's order.
         self.assertEqual([(t["architecture"], t["id"]) for t in checked_targets],
                          [(architecture, f"small/{metric}") for architecture in ("arm64", "amd64")
-                          for metric in ("p99", "p99_9", "oom_kills", "peak_memory", "idle_rss")])
+                          for metric in ("http-keep-alive/p99", "http-keep-alive/p99_9", "http-keep-alive/oom_kills",
+                                         "http-keep-alive/peak_memory", "idle_rss")])
         for target in checked_targets:
             self.assertEqual((target["verdict"], target["measured"]), ("not measured", None), target["id"])
             self.assertEqual(target["reason"],
@@ -1497,7 +1500,8 @@ class TargetVerdicts(unittest.TestCase):
         # no memory limit.
         verdicts = checked(self, SMALL, idle=[idle_measured(profile="1", cpu_limit="1", memory_limit=None)],
                            steps=[step_measured(profile="1", cpu_limit="1", memory_limit=None, rate=50000)])
-        self.assertEqual(set(verdicts), {"small/p99", "small/p99_9", "small/oom_kills", "small/peak_memory",
+        self.assertEqual(set(verdicts), {"small/http-keep-alive/p99", "small/http-keep-alive/p99_9",
+                                         "small/http-keep-alive/oom_kills", "small/http-keep-alive/peak_memory",
                                          "small/idle_rss"})
         for verdict, measured, reason in verdicts.values():
             self.assertEqual((verdict, measured), ("not measured", None))
@@ -1521,27 +1525,28 @@ class TargetVerdicts(unittest.TestCase):
         within = checked(self, SMALL, idle=[idle_measured(rss_kib=16 * 1024)],
                          steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20), *others])
         self.assertEqual(within, {
-            "small/p99": ("met", 1.9, None),
-            "small/p99_9": ("met", 2.1, None),
-            "small/oom_kills": ("met", 0, None),
-            "small/peak_memory": ("met", 20.0, None),
+            "small/http-keep-alive/p99": ("met", 1.9, None),
+            "small/http-keep-alive/p99_9": ("met", 2.1, None),
+            "small/http-keep-alive/oom_kills": ("met", 0, None),
+            "small/http-keep-alive/peak_memory": ("met", 20.0, None),
             "small/idle_rss": ("met", 16.0, None),
         })
         over = checked(self, SMALL, idle=[idle_measured(rss_kib=21 * 1024)],
                        steps=[step_measured(p99=3.5, p99_9=12, peak_mib=33), *others])
         self.assertEqual(over, {
-            "small/p99": ("missed", 3.5, None),
-            "small/p99_9": ("missed", 12, None),
-            "small/oom_kills": ("met", 0, None),
-            "small/peak_memory": ("missed", 33.0, None),
+            "small/http-keep-alive/p99": ("missed", 3.5, None),
+            "small/http-keep-alive/p99_9": ("missed", 12, None),
+            "small/http-keep-alive/oom_kills": ("met", 0, None),
+            "small/http-keep-alive/peak_memory": ("missed", 33.0, None),
             "small/idle_rss": ("missed", 21.0, None),
         })
 
     def test_an_oom_kill_misses_every_target_of_its_step_and_one_before_smock_was_ready_misses_idle_rss(self):
         verdicts = checked(self, SMALL, idle=[idle_measured(oom_killed=True)],
                            steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20, oom_kills=2)])
-        self.assertEqual(verdicts["small/oom_kills"], ("missed", 2, None))
-        for target_id in ("small/p99", "small/p99_9", "small/peak_memory"):
+        self.assertEqual(verdicts["small/http-keep-alive/oom_kills"], ("missed", 2, None))
+        for target_id in ("small/http-keep-alive/p99", "small/http-keep-alive/p99_9",
+                          "small/http-keep-alive/peak_memory"):
             verdict, measured, reason = verdicts[target_id]
             self.assertEqual(verdict, "missed", target_id)
             self.assertIn("OOM-killed in http-keep-alive@small@1000", reason)
@@ -1554,13 +1559,13 @@ class TargetVerdicts(unittest.TestCase):
         # its wait, but smock's memory under the load is still its own.
         verdicts = checked(self, SMALL, steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20, lag=(25, 26))],
                            idle=[idle_measured()])
-        for target_id, measured in (("small/p99", 1.9), ("small/p99_9", 2.1)):
+        for target_id, measured in (("small/http-keep-alive/p99", 1.9), ("small/http-keep-alive/p99_9", 2.1)):
             verdict, shown_measured, reason = verdicts[target_id]
             self.assertEqual((verdict, shown_measured), ("not measured", measured), target_id)
             self.assertIn("fell behind", reason)
             self.assertIn("p99.9 25 ms", reason)
-        self.assertEqual(verdicts["small/peak_memory"], ("met", 20.0, None))
-        self.assertEqual(verdicts["small/oom_kills"], ("met", 0, None))
+        self.assertEqual(verdicts["small/http-keep-alive/peak_memory"], ("met", 20.0, None))
+        self.assertEqual(verdicts["small/http-keep-alive/oom_kills"], ("met", 0, None))
 
     def test_failed_requests_miss_the_latency_targets_and_leave_memory_within_its_bound_not_measured(self):
         # 5,000 of the 20,000 requests got no response: smock did not carry
@@ -1568,20 +1573,20 @@ class TargetVerdicts(unittest.TestCase):
         # over it is a miss all the same.
         verdicts = checked(self, SMALL, idle=[idle_measured()],
                            steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20, errors=5000)])
-        for target_id in ("small/p99", "small/p99_9"):
+        for target_id in ("small/http-keep-alive/p99", "small/http-keep-alive/p99_9"):
             verdict, measured, reason = verdicts[target_id]
             self.assertEqual(verdict, "missed", target_id)
             self.assertIn("5000 of the 20000 requests got no expected response", reason)
-        for target_id in ("small/peak_memory", "small/oom_kills"):
+        for target_id in ("small/http-keep-alive/peak_memory", "small/http-keep-alive/oom_kills"):
             verdict, measured, reason = verdicts[target_id]
             self.assertEqual(verdict, "not measured", target_id)
             self.assertIn("5000 of the 20000 requests got no expected response", reason)
         over = checked(self, SMALL, steps=[step_measured(peak_mib=33, errors=5000)])
-        self.assertEqual(over["small/peak_memory"], ("missed", 33.0, None))
+        self.assertEqual(over["small/http-keep-alive/peak_memory"], ("missed", 33.0, None))
 
     def test_a_run_without_the_targets_rate_or_without_memory_peak_does_not_measure_them(self):
         ladder = checked(self, SMALL, steps=[step_measured(rate=500), step_measured(rate=2000)])
-        verdict, measured, reason = ladder["small/p99"]
+        verdict, measured, reason = ladder["small/http-keep-alive/p99"]
         self.assertEqual((verdict, measured), ("not measured", None))
         self.assertIn("http-keep-alive@small ran at 500 and 2000 requests/s, the target is at 1000", reason)
 
@@ -1589,17 +1594,49 @@ class TargetVerdicts(unittest.TestCase):
         old_kernel = step_measured(peak_mib=None)
         old_kernel["memory"]["oom_kills"] = None
         verdicts = checked(self, SMALL, steps=[old_kernel])
-        for target_id, file in (("small/peak_memory", "memory.peak"), ("small/oom_kills", "memory.events")):
+        for target_id, file in (("small/http-keep-alive/peak_memory", "memory.peak"),
+                                ("small/http-keep-alive/oom_kills", "memory.events")):
             verdict, measured, reason = verdicts[target_id]
             self.assertEqual((verdict, measured), ("not measured", None), target_id)
             self.assertIn(file, reason)
-        self.assertEqual(verdicts["small/p99"], ("met", 1.9, None))
+        self.assertEqual(verdicts["small/http-keep-alive/p99"], ("met", 1.9, None))
 
         # A window too short to hold a request has no latencies.
         empty = checked(self, SMALL, steps=[step_measured(p99=None, p99_9=None)])
-        verdict, measured, reason = empty["small/p99"]
+        verdict, measured, reason = empty["small/http-keep-alive/p99"]
         self.assertEqual((verdict, measured), ("not measured", None))
         self.assertIn("no latencies", reason)
+
+
+# The keep-alive cases of bench/plan-autopilot.json that the targets of
+# http-keep-alive hold for: it and its HTTP/2 twins.
+KEEP_ALIVE_CASES = ["http-keep-alive", "h2c-keep-alive", "h2-keep-alive"]
+
+# SMALL, naming the three keep-alive cases in place of http-keep-alive.
+SEVERAL = {**{key: value for key, value in SMALL.items() if key != "case"}, "cases": KEEP_ALIVE_CASES}
+
+
+class TargetsForSeveralCases(unittest.TestCase):
+    """An entry of a targets file may name several cases (cases, in place of
+    case): each of its limits that holds at a load holds for each case, at
+    the entry's rate, as a target of its own, and idle RSS holds once, for
+    the profile."""
+
+    def test_each_load_limit_is_a_target_for_each_case_and_idle_rss_one_for_the_profile(self):
+        targets = harness.read_targets(targets_file(self, [SEVERAL]))["arm64"]
+        load = ("p99", "p99_9", "oom_kills", "peak_memory")
+        self.assertEqual([(t["id"], t["case"], t["rate"], t["metric"]) for t in targets],
+                         [(f"small/{name}/{metric}", name, 1000, metric) for name in KEEP_ALIVE_CASES
+                          for metric in load] + [("small/idle_rss", None, None, "idle_rss")])
+        about = {t["id"]: t["about"] for t in targets}
+        self.assertEqual(about["small/h2c-keep-alive/p99"], "p99 latency, h2c-keep-alive at 1,000 requests/s")
+        self.assertEqual(about["small/h2-keep-alive/peak_memory"], "peak memory, h2-keep-alive at 1,000 requests/s")
+        self.assertEqual(about["small/idle_rss"], "idle RSS after startup")
+        # One case, by case or alone in cases, gives the same targets: a
+        # load target's id names its case either way.
+        alone = {**SEVERAL, "cases": ["http-keep-alive"]}
+        self.assertEqual(harness.read_targets(targets_file(self, [alone])),
+                         harness.read_targets(targets_file(self, [SMALL])))
 
 
 def check_targets_command(*args):
