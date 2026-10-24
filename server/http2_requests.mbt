@@ -23,6 +23,12 @@ priv struct H2Request {
   /// values joined with `; `, in their order, at the place of the first
   /// (RFC 9113, section 8.2.3), as one Cookie line is over HTTP/1.1.
   headers : Array[(String, String)]
+  /// The body length its `content-length` declares, or -1 without one. Of
+  /// several, the largest, so that none over `--body-limit` passes.
+  declared : Int64
+  /// Whether it asks for `100 Continue` (`expect: 100-continue`) and has a
+  /// body to send: not with a `content-length` of 0, as on HTTP/1.1.
+  continues : Bool
   /// Its body: the first DATA received, until a second comes.
   mut body : Bytes
   /// Its body, once a second DATA has come.
@@ -49,6 +55,8 @@ fn H2Request::new(
   // second has come, the values joined so far.
   let mut cookie = -1
   let mut cookies : StringBuilder? = None
+  let mut declared = -1L
+  let mut expects = false
   for field in fields {
     let name = field.name
     if name.length() > 0 && name[0] == b':' {
@@ -78,13 +86,52 @@ fn H2Request::new(
         joined.write_string(value)
       }
     } else {
-      headers.push((header_text(name), header_text(field.value)))
+      let value = header_text(field.value)
+      if name == b"content-length" {
+        let length = declared_length(field.value)
+        if length > declared {
+          declared = length
+        }
+      } else if name == b"expect" && @http1.expects_continue(value) {
+        expects = true
+      }
+      headers.push((header_text(name), value))
     }
   }
   if cookies is Some(joined) {
     headers[cookie] = ("cookie", joined.to_string())
   }
-  { meth, target, authority, headers, body: b"", parts: None, deadline, }
+  {
+    meth,
+    target,
+    authority,
+    headers,
+    declared,
+    continues: expects && declared != 0L,
+    body: b"",
+    parts: None,
+    deadline,
+  }
+}
+
+///|
+/// A body length longer than any `--body-limit`.
+let too_long : Int64 = 0x1_0000_0000L
+
+///|
+/// The body length the `content-length` value `value` declares, `too_long`
+/// for one longer than that. moonhttp has checked that `value` is digits
+/// alone. smock reads them itself rather than take moonhttp's number, so
+/// that a length too large for 32 bits cannot pass for a short one.
+fn declared_length(value : Bytes) -> Int64 {
+  let mut length = 0L
+  for i in 0..<value.length() {
+    length = length * 10L + (value[i].to_int() - 0x30).to_int64()
+    if length >= too_long {
+      return too_long
+    }
+  }
+  length
 }
 
 ///|
@@ -137,6 +184,15 @@ fn H2Request::is_malformed(self : H2Request) -> Bool {
       @definitions.normalize_host(host)
   }
   false
+}
+
+///|
+/// How many octets of the body have arrived.
+fn H2Request::received(self : H2Request) -> Int32 {
+  match self.parts {
+    Some(parts) => parts.length()
+    None => self.body.length()
+  }
 }
 
 ///|

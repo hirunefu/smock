@@ -91,7 +91,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--template-env` | `SMOCK_TEMPLATE_ENV` | none: templates read no environment variable; a comma-separated list of names lets them read those as `env.NAME`, with values read once at startup ([Environment variables](docs/definition-files.md#environment-variables)) |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
 | `--header-count-limit` | `SMOCK_HEADER_COUNT_LIMIT` | 100 header fields: more get 431 |
-| `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
+| `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413; over HTTP/2, per stream, on that stream alone ([Request bodies](docs/http2.md#request-bodies)) |
 | `--http2-max-concurrent-streams` | `SMOCK_HTTP2_MAX_CONCURRENT_STREAMS` | 100, from 1 to 1000: the most streams an HTTP/2 connection may have in progress at once; a stream past it gets RST_STREAM `REFUSED_STREAM` ([Limits and timeouts](docs/http2.md#limits-and-timeouts)) |
 | `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte, or, when it was pipelined behind a response, of that response; over HTTP/2, a stream whose request is late gets RST_STREAM `CANCEL` alone ([Limits and timeouts](docs/http2.md#limits-and-timeouts)) |
 | `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
@@ -107,6 +107,11 @@ exits with status 2. `smock serve --help` lists the settings:
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout, read, idle or write, closes the connection
 without a response. None is logged.
+
+Over HTTP/2, a body over `--body-limit` gets 413 on its stream alone, and
+the connection's other streams go on. When the client is still sending the
+body, RST_STREAM `NO_ERROR` follows the 413, to stop the upload. See
+[Request bodies](docs/http2.md#request-bodies).
 
 Over HTTP/2, the read timeout applies to each stream alone, from the first
 frame of its request: a stream whose request is late gets RST_STREAM
@@ -131,7 +136,8 @@ smock closes the connection without reading the rest of the request. A
 client that is still sending it, such as a body over `--body-limit`, may
 then get a connection reset instead of the error response. smock would
 need to close only its sending side first (a half-close), which the async
-library it is built on does not offer yet.
+library it is built on does not offer yet. Over HTTP/2, such a response
+ends only its stream, so the connection stays open and the client gets it.
 
 On SIGTERM, smock drains instead of dropping requests, so that a rolling
 update does not fail the tests running against the old Pod. SIGINT and
