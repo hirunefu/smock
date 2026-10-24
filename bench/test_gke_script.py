@@ -1053,6 +1053,19 @@ class Run(Script):
         self.assertLessEqual(pod["spec"]["activeDeadlineSeconds"], 100 * 60)
         self.assertEqual(self.made(["wait"])[0]["words"][1:], ["pod/smock-small"])
 
+    def test_the_load_generators_image_holds_oha_the_harness_the_mixes_and_the_plan_and_nothing_else(self):
+        # oha is the image's only tool: it sends every step's load, and the
+        # traffic check's HTTP/2 requests, h2c and h2; Python itself sends
+        # the check's HTTP/1.1 ones.
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        [_, generator] = self.made(["build"])
+        self.assertEqual(generator["context"], ["bench/bench.py", "bench/gke/generator.py", "bench/gke/gke.py",
+                                                "bench/plan.json", "bench/requests-crud.json", "bench/requests.json",
+                                                "oha"])
+        self.assertEqual(generator["copies"], [[["oha"], "/usr/local/bin/oha"], [["bench"], "/bench"]])
+        self.assertEqual(generator["missing"], [])
+
     def test_kubectl_uses_its_own_kubeconfig_with_an_access_token_deleted_at_the_end(self):
         status, output = self.run_script("--yes")
         self.assertEqual(status, 0, output)
