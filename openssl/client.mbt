@@ -12,6 +12,10 @@
 extern "C" fn ctx_trust_ffi(ctx : Ctx, pem : Bytes) -> Int32 = "smock_openssl_ctx_trust"
 
 ///|
+#borrow(ctx, ciphers)
+extern "C" fn ctx_tls12_ciphers_ffi(ctx : Ctx, ciphers : Bytes) -> Bool = "smock_openssl_ctx_tls12_ciphers"
+
+///|
 #borrow(ssl, name)
 extern "C" fn ssl_set_server_name_ffi(ssl : Ssl, name : Bytes) -> Bool = "smock_openssl_ssl_set_server_name"
 
@@ -31,10 +35,14 @@ pub struct ClientConfig {
 
 ///|
 /// A client configuration that trusts only the PEM certificates in
-/// `trusted` and offers the protocols in `alpn` by ALPN, if any.
+/// `trusted` and offers the protocols in `alpn` by ALPN, if any. With
+/// `tls12_ciphers`, an OpenSSL cipher list such as
+/// `ECDHE-RSA-AES128-GCM-SHA256`, it offers TLS 1.2 alone, with only those
+/// suites, so that a test can choose the suite a TLS 1.2 connection uses.
 pub fn ClientConfig::ClientConfig(
   trusted~ : Bytes,
   alpn~ : Array[String] = [],
+  tls12_ciphers? : String,
 ) -> ClientConfig raise TlsError {
   let wire = alpn_wire(alpn)
   let ctx = new_ctx(server=false)
@@ -51,6 +59,10 @@ pub fn ClientConfig::ClientConfig(
   }
   if alpn.length() > 0 && !ctx_set_alpn_ffi(ctx, false, wire) {
     raise Failed("cannot set ALPN: \{take_error()}")
+  }
+  if tls12_ciphers is Some(ciphers) &&
+    !ctx_tls12_ciphers_ffi(ctx, @utf8.encode(ciphers)) {
+    raise Failed("cannot set the TLS 1.2 cipher suites: \{take_error()}")
   }
   { ctx, }
 }
