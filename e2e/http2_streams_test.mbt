@@ -241,3 +241,92 @@ async test "h2c: when the connection ends during its streams' delays, their task
     })
   })
 }
+
+///|
+/// Mock `m` with a Stub that answers `GET /coin` after a delay drawn from
+/// its own generator, seeded: half of the time, from 1 to 1000 ms.
+let seeded_delays : String =
+  #|{ "mocks": [{ "name": "m" }],
+  #|  "stubs": [
+  #|    { "id": "coin", "mock": "m", "request": { "path": "/coin" },
+  #|      "response": { "status": 200, "body": "coin" },
+  #|      "fault": {
+  #|        "delay": { "uniform": { "min": 1, "max": 1000 }, "probability": 0.5 },
+  #|        "seed": 42 } } ] }
+
+///|
+/// `ms`, how long a request took, as a test shows it against `drawn`, the
+/// delay it should have had: `as drawn` when it took at least that long,
+/// and not much longer.
+fn against_drawn(ms : Int64, drawn : Int64) -> String {
+  if ms >= drawn && ms < drawn + 300L {
+    "as drawn"
+  } else {
+    "\{ms} ms"
+  }
+}
+
+///|
+async test "h2c: a delay drawn from a Stub's seed is the same over HTTP/1.1 and HTTP/2, where the streams of one connection wait at once" {
+  with_definitions([("m.json", seeded_delays)], dir => {
+    let args = ["--dir", dir, "--port", "0"]
+    // Each run starts the Stub's generator from its seed. Over HTTP/1.1,
+    // the requests go one after another.
+    let over_http1 = []
+    let _ = with_smock(args, smock => {
+      for _ in 0..<8 {
+        let conn = smock.connect()
+        defer conn.close()
+        let start = @async.now()
+        conn.write("GET /coin HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        let _ = read_response(conn)
+        over_http1.push(@async.now() - start)
+      }
+    })
+    // Over HTTP/2, the eight streams of one connection are sent at once,
+    // so each takes its own delay from when it was sent.
+    let over_http2 = []
+    let _ = with_smock(args, smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let start = @async.now()
+      let streams = []
+      for _ in 0..<8 {
+        streams.push(client.send("GET", "/coin", authority="localhost"))
+      }
+      let ended = Map([])
+      while ended.length() < streams.length() {
+        match client.read_event() {
+          End(stream~) => ended[stream] = @async.now() - start
+          Closed => fail("smock closed the connection")
+          _ => ()
+        }
+      }
+      for stream in streams {
+        over_http2.push(ended.get(stream).unwrap())
+      }
+    })
+    // The delays the engine's own tests pin for seed 42: each request draws
+    // whether it waits, then how long, before anything else.
+    let drawn = [0L, 0, 395, 572, 818, 0, 594, 0]
+    let out = []
+    for i, ms in drawn {
+      out.push(
+        "\{ms} ms: HTTP/1.1 \{against_drawn(over_http1[i], ms)}, HTTP/2 \{against_drawn(over_http2[i], ms)}",
+      )
+    }
+    inspect(
+      out.join("\n"),
+      content=(
+        #|0 ms: HTTP/1.1 as drawn, HTTP/2 as drawn
+        #|0 ms: HTTP/1.1 as drawn, HTTP/2 as drawn
+        #|395 ms: HTTP/1.1 as drawn, HTTP/2 as drawn
+        #|572 ms: HTTP/1.1 as drawn, HTTP/2 as drawn
+        #|818 ms: HTTP/1.1 as drawn, HTTP/2 as drawn
+        #|0 ms: HTTP/1.1 as drawn, HTTP/2 as drawn
+        #|594 ms: HTTP/1.1 as drawn, HTTP/2 as drawn
+        #|0 ms: HTTP/1.1 as drawn, HTTP/2 as drawn
+      ),
+    )
+  })
+}
