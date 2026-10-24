@@ -50,11 +50,15 @@ impl ReadOutput for @socket.Tcp with fn write_read_output(_, _) {
 /// for another to write but the reader, before the connection ends.
 ///
 /// A write that fails ends the connection, so a writer never stays busy on
-/// a connection that goes on.
+/// a connection that goes on. A stream's task that a reset would cancel
+/// writes with `write_for`, and a reset leaves it be while it writes, so
+/// that no task stops in the middle of a frame.
 priv struct H2Writer {
   conn : @http2.Conn
   /// Whether a task is writing.
   mut busy : Bool
+  /// While a stream's task writes with `write_for`, that stream; else 0.
+  mut writing_for : Int32
   /// Whether a task asked the writer to write while another was writing,
   /// so that the one writing takes what the `Conn` queued once more.
   mut more : Bool
@@ -65,7 +69,13 @@ priv struct H2Writer {
 ///|
 /// The writer of what `conn` queues.
 fn H2Writer::new(conn : @http2.Conn) -> H2Writer {
-  { conn, busy: false, more: false, done: @async.CondVar::Cond(), }
+  {
+    conn,
+    busy: false,
+    writing_for: 0,
+    more: false,
+    done: @async.CondVar::Cond(),
+  }
 }
 
 ///|
@@ -109,6 +119,32 @@ async fn[S : @io.Writer + ReadOutput] write_queued(
   if ReadOutput::has_read_output(out.stream) {
     ReadOutput::write_read_output(out.stream, out.watchdog)
   }
+}
+
+///|
+/// Writes as `write` does, for the task of `stream`, which a reset of the
+/// stream cancels, except while it writes here (`writes_for`): cut off
+/// then, it would leave a frame half written, and the connection broken.
+/// The task ends itself once the write is done instead.
+async fn[S : @io.Writer + ReadOutput] H2Writer::write_for(
+  self : H2Writer,
+  out : WatchedStream[S],
+  stream : Int32,
+) -> Bool {
+  if self.busy {
+    self.more = true
+    return false
+  }
+  self.writing_for = stream
+  let wrote = self.write(out)
+  self.writing_for = 0
+  wrote
+}
+
+///|
+/// Whether the task of `stream` is writing, with `write_for`.
+fn H2Writer::writes_for(self : H2Writer, stream : Int32) -> Bool {
+  self.busy && self.writing_for == stream
 }
 
 ///|
