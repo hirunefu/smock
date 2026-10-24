@@ -742,6 +742,13 @@ fn utf8_length(text : String) -> Int32 {
 }
 
 ///|
+/// `text` as a JSON string, as compact JSON writes it: in quotes, with
+/// quotes, backslashes and control characters escaped.
+fn quoted(text : String) -> String {
+  @template.compact_json(Json::string(text))
+}
+
+///|
 /// Whether the request whose body is the JSON `request` asks for the
 /// stream: its body is a JSON object with `stream` exactly `true`. A body
 /// that is not JSON, a missing `stream`, `false` and the string `"true"`
@@ -998,7 +1005,7 @@ fn chat_stream(
     if out.over() {
       return out.reply(request_id)
     }
-    let delta = "{\"content\":\{@template.compact_json(Json::string(piece))}}"
+    let delta = "{\"content\":\{quoted(piece)}}"
     out.push(pace.piece(), None, chunks.chunk(delta, "null"))
   }
   if declaration.error is Some(error) {
@@ -1011,16 +1018,12 @@ fn chat_stream(
       return out.reply(request_id)
     }
     let call = tool_calls[k]
-    // The call id and the name as JSON strings.
-    let quoted_id = @template.compact_json(
-      Json::string(call_id(call, "call_", calls[k])),
-    )
-    let quoted_name = @template.compact_json(Json::string(call.name))
+    let id = call_id(call, "call_", calls[k])
     out.push(
       NoWait,
       None,
       chunks.chunk(
-        "{\"tool_calls\":[{\"index\":\{k},\"id\":\{quoted_id},\"type\":\"function\",\"function\":{\"name\":\{quoted_name},\"arguments\":\"\"}}]}",
+        "{\"tool_calls\":[{\"index\":\{k},\"id\":\{quoted(id)},\"type\":\"function\",\"function\":{\"name\":\{quoted(call.name)},\"arguments\":\"\"}}]}",
         "null",
       ),
     )
@@ -1028,12 +1031,11 @@ fn chat_stream(
       if out.over() {
         return out.reply(request_id)
       }
-      let piece = @template.compact_json(Json::string(piece))
       out.push(
         pace.piece(),
         None,
         chunks.chunk(
-          "{\"tool_calls\":[{\"index\":\{k},\"function\":{\"arguments\":\{piece}}}]}",
+          "{\"tool_calls\":[{\"index\":\{k},\"function\":{\"arguments\":\{quoted(piece)}}}]}",
           "null",
         ),
       )
@@ -1056,9 +1058,7 @@ fn chat_stream(
 /// `message`: an `error` object, in place of a chunk, whose `param` and
 /// `code` are null.
 fn chat_error(error : MidStreamError, message : String) -> String {
-  let message = @template.compact_json(Json::string(message))
-  let kind = @template.compact_json(Json::string(error.kind))
-  "{\"error\":{\"message\":\{message},\"type\":\{kind},\"param\":null,\"code\":null}}"
+  "{\"error\":{\"message\":\{quoted(message)},\"type\":\{quoted(error.kind)},\"param\":null,\"code\":null}}"
 }
 
 ///|
@@ -1083,8 +1083,8 @@ fn ChatChunks::new(
   usage~ : Bool,
 ) -> ChatChunks {
   let created = @template.compact_json(Json::number(created.to_double()))
-  let id = @template.compact_json(Json::string(id))
-  let model = @template.compact_json(Json::string(model))
+  let id = quoted(id)
+  let model = quoted(model)
   {
     head: "{\"id\":\{id},\"object\":\"chat.completion.chunk\",\"created\":\{created},\"model\":\{model},\"choices\":[",
     tail: if usage {
@@ -1406,7 +1406,7 @@ fn responses_stream(
   // What each event of the message item's text part gives first, its item
   // id and indexes, once the item is opened at output_index 0.
   let part_of = if has_message {
-    let item_id = @template.compact_json(Json::string(message_id))
+    let item_id = quoted(message_id)
     out.push(
       NoWait,
       "response.output_item.added",
@@ -1426,7 +1426,7 @@ fn responses_stream(
       out.push(
         pace.piece(),
         "response.output_text.delta",
-        "\{part_of},\"delta\":\{@template.compact_json(Json::string(piece))}",
+        "\{part_of},\"delta\":\{quoted(piece)}",
         after=no_logprobs,
       )
     }
@@ -1454,7 +1454,7 @@ fn responses_stream(
     out.push(
       pace.closing(),
       "response.output_text.done",
-      "\{part_of},\"text\":\{@template.compact_json(Json::string(strings.text))}",
+      "\{part_of},\"text\":\{quoted(strings.text)}",
       after=no_logprobs,
     )
     if out.stream.over() {
@@ -1496,7 +1496,7 @@ fn responses_stream(
       "response.output_item.added",
       "\"output_index\":\{output_index},\"item\":\{@template.compact_json(added)}",
     )
-    let arguments_of = "\"item_id\":\{@template.compact_json(Json::string(item_id))},\"output_index\":\{output_index}"
+    let arguments_of = "\"item_id\":\{quoted(item_id)},\"output_index\":\{output_index}"
     for piece in pieces(call.arguments, declaration.chunk_size) {
       if out.stream.over() {
         return out.stream.reply(request_id)
@@ -1504,7 +1504,7 @@ fn responses_stream(
       out.push(
         pace.piece(),
         "response.function_call_arguments.delta",
-        "\{arguments_of},\"delta\":\{@template.compact_json(Json::string(piece))}",
+        "\{arguments_of},\"delta\":\{quoted(piece)}",
       )
     }
     // An earlier item's closing events follow at once, so that a reply
@@ -1522,7 +1522,7 @@ fn responses_stream(
         NoWait
       },
       "response.function_call_arguments.done",
-      "\{arguments_of},\"arguments\":\{@template.compact_json(Json::string(call.arguments))}",
+      "\{arguments_of},\"arguments\":\{quoted(call.arguments)}",
     )
     if out.stream.over() {
       return out.stream.reply(request_id)
@@ -1592,9 +1592,7 @@ fn responses_stream(
 /// message `message`, between its `type` and its `sequence_number`: the
 /// error's code, the message and a null `param`.
 fn responses_error(error : MidStreamError, message : String) -> String {
-  let code = @template.compact_json(Json::string(error.kind))
-  let message = @template.compact_json(Json::string(message))
-  "\"code\":\{code},\"message\":\{message},\"param\":null"
+  "\"code\":\{quoted(error.kind)},\"message\":\{quoted(message)},\"param\":null"
 }
 
 ///|
@@ -1863,7 +1861,7 @@ fn messages_stream(
       if out.over() {
         return out.reply(request_id)
       }
-      let delta = "{\"type\":\"text_delta\",\"text\":\{@template.compact_json(Json::string(piece))}}"
+      let delta = "{\"type\":\"text_delta\",\"text\":\{quoted(piece)}}"
       out.push(
         pace.piece(),
         Some("content_block_delta"),
@@ -1891,17 +1889,13 @@ fn messages_stream(
     }
     let call = tool_calls[k]
     let index = first_call + k
-    // The call id and the name as JSON strings.
-    let quoted_id = @template.compact_json(
-      Json::string(call_id(call, "toolu_", calls[k])),
-    )
-    let quoted_name = @template.compact_json(Json::string(call.name))
+    let id = call_id(call, "toolu_", calls[k])
     out.push(
       NoWait,
       Some("content_block_start"),
       content_block_start(
         index,
-        "{\"type\":\"tool_use\",\"id\":\{quoted_id},\"name\":\{quoted_name},\"input\":{}}",
+        "{\"type\":\"tool_use\",\"id\":\{quoted(id)},\"name\":\{quoted(call.name)},\"input\":{}}",
       ),
     )
     // The empty first piece, as the vendor sends it, carries nothing, so it
@@ -1915,7 +1909,7 @@ fn messages_stream(
       if out.over() {
         return out.reply(request_id)
       }
-      let delta = "{\"type\":\"input_json_delta\",\"partial_json\":\{@template.compact_json(Json::string(piece))}}"
+      let delta = "{\"type\":\"input_json_delta\",\"partial_json\":\{quoted(piece)}}"
       out.push(
         pace.piece(),
         Some("content_block_delta"),
@@ -1979,9 +1973,7 @@ fn content_block_stop(index : Int32) -> String {
 /// The data of Anthropic Messages' `error` event for `error` with the
 /// message `message`: an `error` object with its type and message.
 fn messages_error(error : MidStreamError, message : String) -> String {
-  let message = @template.compact_json(Json::string(message))
-  let kind = @template.compact_json(Json::string(error.kind))
-  "{\"type\":\"error\",\"error\":{\"type\":\{kind},\"message\":\{message}}}"
+  "{\"type\":\"error\",\"error\":{\"type\":\{quoted(error.kind)},\"message\":\{quoted(message)}}}"
 }
 
 ///|
