@@ -97,3 +97,218 @@ async test "h2c: cookie fields are joined into one with ; at the place of the fi
     })
   })
 }
+
+///|
+/// Two Mocks with Hosts, `users`, the Default Mock, and `orders`. Each has
+/// a Stub for `PATCH /orders/7?x=1` that echoes the method, the path, the
+/// query and the `host` field, if any. `orders` also has a Stub that wants
+/// a `host` field, and `users` one for `OPTIONS *` that echoes its path.
+let echo_hosts : String =
+  #|{ "mocks": [{ "name": "users", "hosts": ["users.example.com"], "default": true },
+  #|            { "name": "orders", "hosts": ["orders.example.com"] }],
+  #|  "stubs": [
+  #|    { "id": "orders-echo", "mock": "orders",
+  #|      "request": { "method": "PATCH", "path": "/orders/7", "query": { "x": "1" } },
+  #|      "response": { "status": 200, "template": true,
+  #|        "body": "orders: ${method} ${path} x=${query.x} host=${header.host ?? 'none'}" } },
+  #|    { "id": "users-echo", "mock": "users",
+  #|      "request": { "method": "PATCH", "path": "/orders/7", "query": { "x": "1" } },
+  #|      "response": { "status": 200, "template": true,
+  #|        "body": "users: ${method} ${path} x=${query.x} host=${header.host ?? 'none'}" } },
+  #|    { "id": "host-field", "mock": "orders",
+  #|      "request": { "path": "/host", "headers": { "Host": "orders.example.com" } },
+  #|      "response": { "status": 200, "body": "a host field" } },
+  #|    { "id": "options", "mock": "users",
+  #|      "request": { "method": "OPTIONS", "path": { "pattern": "\\*" } },
+  #|      "response": { "status": 200, "template": true, "body": "options: ${path}" } } ] }
+
+///|
+/// A Journal entry as these tests show it: its Host, its Mock, whether the
+/// Default Mock answered, its version, its target and its header fields.
+fn mapped(entry : Json) -> String {
+  guard entry
+    is Object(
+      {
+        "host": host,
+        "mock": mock,
+        "viaDefault": via_default,
+        "request": Object(
+          { "target": target, "version": version, "headers": headers, .. }
+        ),
+        ..
+      }
+    ) else {
+    return entry.stringify()
+  }
+  "host=\{host.stringify()} mock=\{mock.stringify()} viaDefault=\{via_default.stringify()} \{version.stringify()} \{target.stringify()} headers=\{headers.stringify()}"
+}
+
+///|
+async test "h2c: :method and :path reach the Stubs as over HTTP/1.1, the Host comes from :authority, else the host field, a request with neither goes to the Default Mock, and header.host and host conditions see only a host field the client sent" {
+  with_definitions([("mocks.json", echo_hosts)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let orders = "orders.example.com"
+      let out = []
+      for
+        request in [
+          ("/orders/7?x=1", Some(orders), []),
+          ("/orders/7?x=1", None, [("host", orders)]),
+          ("/orders/7?x=1", Some(orders), [("host", "ORDERS.example.com:8080")]),
+          ("/orders/7?x=1", None, []),
+          ("/host", Some(orders), []),
+          ("/host", None, [("host", orders)]),
+        ] {
+        let (path, authority, headers) = request
+        let meth = if path == "/host" { "GET" } else { "PATCH" }
+        let response = client.request(meth, path, authority?, headers~)
+        out.push(response.render())
+      }
+      let (_, journal) = smock.journal()
+      guard journal is Object({ "entries": Array(entries), .. }) else {
+        fail("no entries: \{journal.stringify()}")
+      }
+      for entry in entries {
+        out.push(mapped(entry))
+      }
+      inspect(
+        out.join("\n---\n"),
+        content=(
+          #|200
+          #|date: <now>
+          #|content-length: 37
+          #|
+          #|orders: PATCH /orders/7 x=1 host=none
+          #|---
+          #|200
+          #|date: <now>
+          #|content-length: 51
+          #|
+          #|orders: PATCH /orders/7 x=1 host=orders.example.com
+          #|---
+          #|200
+          #|date: <now>
+          #|content-length: 56
+          #|
+          #|orders: PATCH /orders/7 x=1 host=ORDERS.example.com:8080
+          #|---
+          #|200
+          #|smock-mock: users; via=default
+          #|date: <now>
+          #|content-length: 36
+          #|
+          #|users: PATCH /orders/7 x=1 host=none
+          #|---
+          #|404
+          #|content-type: application/json
+          #|smock-near-miss: host-field; failed=header:host
+          #|date: <now>
+          #|content-length: 27
+          #|
+          #|{"error":"no Stub matched"}
+          #|---
+          #|200
+          #|date: <now>
+          #|content-length: 12
+          #|
+          #|a host field
+          #|---
+          #|host="orders.example.com" mock="orders" viaDefault=false "HTTP/2" "/orders/7?x=1" headers=[]
+          #|---
+          #|host="orders.example.com" mock="orders" viaDefault=false "HTTP/2" "/orders/7?x=1" headers=[{"name":"host","value":"orders.example.com"}]
+          #|---
+          #|host="orders.example.com" mock="orders" viaDefault=false "HTTP/2" "/orders/7?x=1" headers=[{"name":"host","value":"ORDERS.example.com:8080"}]
+          #|---
+          #|host=null mock="users" viaDefault=true "HTTP/2" "/orders/7?x=1" headers=[]
+          #|---
+          #|host="orders.example.com" mock="orders" viaDefault=false "HTTP/2" "/host" headers=[]
+          #|---
+          #|host="orders.example.com" mock="orders" viaDefault=false "HTTP/2" "/host" headers=[{"name":"host","value":"orders.example.com"}]
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: OPTIONS * is the asterisk form and reaches the Stub an HTTP/1.1 OPTIONS * reaches" {
+  with_definitions([("mocks.json", echo_hosts)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let h2 = client.request("OPTIONS", "*", authority="users.example.com")
+      let http1 = smock.request("OPTIONS", "*", headers=[
+        ("Host", "users.example.com"),
+      ])
+      let (_, journal) = smock.journal()
+      guard journal is Object({ "entries": Array(entries), .. }) else {
+        fail("no entries: \{journal.stringify()}")
+      }
+      inspect(
+        [h2.render(), http1, ..entries.map(mapped)].join("\n---\n"),
+        content=(
+          #|200
+          #|date: <now>
+          #|content-length: 10
+          #|
+          #|options: *
+          #|---
+          #|HTTP/1.1 200 OK
+          #|Date: <now>
+          #|Content-Length: 10
+          #|
+          #|options: *
+          #|---
+          #|host="users.example.com" mock="users" viaDefault=false "HTTP/2" "*" headers=[]
+          #|---
+          #|host="users.example.com" mock="users" viaDefault=false "HTTP/1.1" "*" headers=[{"name":"Host","value":"users.example.com"},{"name":"Content-Length","value":"0"}]
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: streams of one connection, all sent before the first is answered, reach the Mocks their own :authority names, the Default Mock included" {
+  with_definitions(two_mocks(default=true), dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let streams = []
+      for
+        authority in [
+          Some("orders.example.com"),
+          Some("users.example.com"),
+          Some("elsewhere.example.com"),
+          Some("ORDERS.example.com.:443"),
+          None,
+        ] {
+        let stream = client.send("GET", "/x", authority?)
+        streams.push((authority.unwrap_or("(none)"), stream))
+      }
+      let out = []
+      for sent in streams {
+        let (authority, stream) = sent
+        let response = client.response(stream)
+        let mock = response.headers
+          .filter(header => header.0 == "smock-mock")
+          .map(header => " [\{header.1}]")
+          .join("")
+        out.push(
+          "\{authority}: \{response.status} \{@utf8.decode(response.body)}\{mock}",
+        )
+      }
+      inspect(
+        out.join("\n"),
+        content=(
+          #|orders.example.com: 200 from orders
+          #|users.example.com: 200 from users
+          #|elsewhere.example.com: 200 from users [users; via=default]
+          #|ORDERS.example.com.:443: 200 from orders
+          #|(none): 200 from users [users; via=default]
+        ),
+      )
+    })
+  })
+}
