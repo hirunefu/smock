@@ -13,8 +13,9 @@
 //   open against `--http2-max-concurrent-streams`, and which every
 //   RST_STREAM smock sends goes into, through `H2Connection::reset`;
 // - the mapping from a stream onto the engine's request (`H2Request`,
-//   http2_requests.mbt), with the checks of HTTP/1.1's rules, which refuse
-//   a stream with 400 (`H2Connection::refuse`);
+//   http2_requests.mbt), with the header limits, which refuse a stream
+//   with 431, and the checks of HTTP/1.1's rules, which refuse it with 400
+//   (`H2Connection::refuse`);
 // - the response encoding (`response_fields`, http2_responses.mbt);
 // - the writing of what the `Conn` queues, through the connection's one
 //   writer (`H2Writer`, http2_output.mbt);
@@ -31,7 +32,7 @@
 //   entry committed as the engine made it;
 // - for the drain, the connection is idle while no stream is in progress,
 //   and while smock drains, it closes, without GOAWAY, as soon as none is;
-// - no body or header limit applies beyond moonhttp's own.
+// - no body limit applies.
 
 ///|
 /// The settings smock advertises on every HTTP/2 connection of a process
@@ -83,8 +84,9 @@ fn header_list_bound(limit : Int32) -> Int32 {
 /// while that event is handled, unless it waits: a response with a delay
 /// is queued by a task of its own, once the delay is over, so that the
 /// other streams are answered meanwhile. A stream the client resets before
-/// it ends never reaches the engine, nor does one whose request HTTP/1.1's
-/// rules refuse, which gets 400 instead.
+/// it ends never reaches the engine, nor does one whose header list is over
+/// the header limits, which gets 431 instead, or whose request HTTP/1.1's
+/// rules refuse, which gets 400.
 async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
   self : MockPorts,
   stream : S,
@@ -112,7 +114,8 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
       writer: H2Writer::new(conn),
       requests: Map([]),
       streams: StreamRecord::new(),
-      malformed: 0,
+      refused: 0,
+      refused_status: 0,
       waiting: Map([]),
       group,
       watchdog,
@@ -153,11 +156,15 @@ priv struct H2Connection {
   /// The client's streams: the highest ID seen, the streams open, and the
   /// streams this side reset.
   streams : StreamRecord
-  /// The stream whose request, begun by the frame being handled, HTTP/1.1's
-  /// rules refuse, or 0. It gets 400 once it is known whether that frame
-  /// ended the stream: on its `End` event, or else once the frame's events
-  /// are all taken.
-  mut malformed : Int32
+  /// The stream whose request smock refuses with `refused_status` for the
+  /// frame being handled, or 0: 400 for a request HTTP/1.1's rules refuse,
+  /// 431 for a header list over `--header-size-limit`. It gets that status
+  /// once it is known whether that frame ended the stream: on its `End`
+  /// event, or else once the frame's events are all taken. One frame brings
+  /// at most one such stream.
+  mut refused : Int32
+  /// The status `refused` gets.
+  mut refused_status : Int32
   /// The tasks of the streams whose response waits, by stream: from the end
   /// of the request until the response is queued, or the stream is reset.
   /// A task then lives on only to write what it queued, so each task is
@@ -294,11 +301,11 @@ fn[S : @io.Writer] H2Connection::hand(
     match event {
       NeedData | Closed => {
         // HEADERS that end the stream bring its `End` with its `Request`,
-        // so a malformed request still here has not ended.
-        if self.malformed != 0 {
-          let stream = self.malformed
-          self.malformed = 0
-          self.refuse(stream, ended=false)
+        // so a refused request still here has not ended.
+        if self.refused != 0 {
+          let stream = self.refused
+          self.refused = 0
+          self.refuse(stream, self.refused_status, ended=false)
         }
         // A new stream whose field block brought no `Request` event was
         // refused by moonhttp, which reports nothing for it.
@@ -315,12 +322,19 @@ fn[S : @io.Writer] H2Connection::hand(
           self.reset(stream, @http2.error_refused_stream)
           continue
         }
+        // Counted as received, before the fields are mapped.
+        if is_list_over(fields, self.ports.settings.header_size_limit) {
+          self.refused = stream
+          self.refused_status = 431
+          continue
+        }
         let request = H2Request::new(
           fields,
           deadline=self.header_at + self.read_timeout,
         )
         if request.is_malformed() {
-          self.malformed = stream
+          self.refused = stream
+          self.refused_status = 400
           continue
         }
         // The watchdog has had its deadline since its HEADERS came.
@@ -339,9 +353,9 @@ fn[S : @io.Writer] H2Connection::hand(
       }
       End(stream~) => {
         self.streams.ended_by_client(stream)
-        if stream == self.malformed {
-          self.malformed = 0
-          self.refuse(stream, ended=true)
+        if stream == self.refused {
+          self.refused = 0
+          self.refuse(stream, self.refused_status, ended=true)
         } else if self.requests.get(stream) is Some(request) {
           self.requests.remove(stream)
           self.respond(stream, request, out)
@@ -358,11 +372,11 @@ fn[S : @io.Writer] H2Connection::hand(
         } else {
           self.streams.remember(stream, by_smock=false)
         }
-        // moonhttp reset a malformed request for one of RFC 9113's own
+        // moonhttp reset a refused request for one of RFC 9113's own
         // rules, such as a `content-length` that HEADERS ending the stream
         // do not match: the stream ends with that bare RST_STREAM.
-        if stream == self.malformed {
-          self.malformed = 0
+        if stream == self.refused {
+          self.refused = 0
         }
         if self.requests.contains(stream) {
           self.requests.remove(stream)
@@ -746,19 +760,26 @@ fn H2Connection::queue(
 }
 
 ///|
-/// Answers `stream`, whose request HTTP/1.1's rules refuse, with 400 and no
+/// Answers `stream`, whose request smock refuses, with `status` and no
 /// body, as HTTP/1.1 answers such a request, and counts it as rejected
-/// traffic. The request never reaches the engine, so it has no Journal
-/// entry. A request that has not `ended` is then reset with
-/// PROTOCOL_ERROR, as a malformed one (RFC 9113, section 8.1.1); one that
-/// has gets the 400 alone. No `connection` field is sent: the response ends
-/// only its stream.
+/// traffic: 400 for a request HTTP/1.1's rules refuse, 431 for a header
+/// list over `--header-size-limit`. The request never reaches the engine,
+/// so it has no Journal entry. A request that has not `ended` is then reset
+/// with PROTOCOL_ERROR, as a malformed one (RFC 9113, section 8.1.1); one
+/// that has gets its status alone. No `connection` field is sent: the
+/// response ends only its stream.
 fn H2Connection::refuse(
   self : H2Connection,
   stream : Int32,
+  status : Int32,
   ended~ : Bool,
 ) -> Unit {
-  let fields = response_fields(400, [], 0, date=self.ports.dates.at(self.now))
+  let fields = response_fields(
+    status,
+    [],
+    0,
+    date=self.ports.dates.at(self.now),
+  )
   self.conn.headers(stream, fields, end=true) catch {
     _ => {
       self.reset(stream, @http2.error_internal_error)
