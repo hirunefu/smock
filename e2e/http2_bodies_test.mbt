@@ -34,7 +34,7 @@ fn upload_fields(
 }
 
 ///|
-async test "h2c: a content-length over --body-limit gets 413 at once, then RST_STREAM NO_ERROR, frames that later arrive on that stream are ignored, the other streams go on, and the stream counts as rejected traffic with no Journal entry" {
+async test "h2c: a content-length over --body-limit gets 413 at once, then RST_STREAM NO_ERROR, or 413 alone when the request has ended, frames that later arrive on that stream are ignored, the other streams go on, and the stream counts as rejected traffic with no Journal entry" {
   with_definitions([("files.json", uploads)], dir => {
     let _ = with_smock(["--dir", dir, "--port", "0", "--body-limit", "10"], smock => {
       let raw = smock.raw_h2()
@@ -67,6 +67,15 @@ async test "h2c: a content-length over --body-limit gets 413 at once, then RST_S
         "HEADERS that end the stream and declare 11 octets, which moonhttp resets first, since no body follows:",
       )
       out.push(raw.frames_until_stream_ends(7))
+      let huge = request_fields("POST", "/upload", "localhost")
+      huge.push(("content-length", "4294967296"))
+      raw.send([headers_frame(9, raw.block(huge))])
+      // moonhttp 0.14.0 reads that length in 32 bits, as 0, so it lets
+      // the stream end with no body; smock reads it as sent.
+      out.push(
+        "HEADERS that end the stream and declare 2^32 octets, a request that has ended:",
+      )
+      out.push(raw.frames_until_stream_ends(9))
       out.push("Journal:")
       out.push(uploads_journaled(smock))
       out.push(requests_counted(smock))
@@ -86,10 +95,12 @@ async test "h2c: a content-length over --body-limit gets 413 at once, then RST_S
           #|DATA 5 END_STREAM 6 octets
           #|HEADERS that end the stream and declare 11 octets, which moonhttp resets first, since no body follows:
           #|RST_STREAM 7 PROTOCOL_ERROR
+          #|HEADERS that end the stream and declare 2^32 octets, a request that has ended:
+          #|HEADERS 9 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
           #|Journal:
           #|POST /upload abc 201
           #|POST /upload 0123456789 201
-          #|smock_requests_total{mock="",stub=""} 1
+          #|smock_requests_total{mock="",stub=""} 2
           #|smock_requests_total{mock="files",stub="upload"} 2
         ),
       )
