@@ -22,12 +22,15 @@ fail() {
   echo "FAIL $*"
 }
 
-# outcome <pass | fail | skip>: what a testcase element holds for it.
-# h2spec 2.6.0 writes a failed case as an error element.
+# outcome <pass | fail | error | skip>: what a testcase element holds for
+# it. h2spec 2.6.0 writes a failed case as an error element: what it
+# expected, one line each, then what it got (fail), or only what went wrong
+# (error).
 outcome() {
   case $1 in
   pass) ;;
   fail) printf '<error>GOAWAY Frame (Error Code: PROTOCOL_ERROR)\nConnection closed\nError: unexpected EOF</error>' ;;
+  error) printf '<error>No HEADER frame received</error>' ;;
   skip) printf '<skipped></skipped>' ;;
   esac
 }
@@ -94,6 +97,16 @@ says() {
   fi
 }
 
+# mentions <name> <text>: the verdict <name> printed <text> in some line.
+mentions() {
+  if grep -qF -- "$2" "$tmp/$1.out"; then
+    pass "$1: mentions $2"
+  else
+    fail "$1: does not mention $2"
+    sed 's/^/     /' "$tmp/$1.out"
+  fi
+}
+
 # --- Cases that pass ---------------------------------------------------------
 
 report pass pass pass pass
@@ -113,9 +126,17 @@ verdict unlisted-failure
 exits unlisted-failure 1
 says unlisted-failure "h2spec plain: 4 cases, 3 passed, 0 skipped, 1 failed"
 says unlisted-failure "h2spec plain: http2/3.5/2 failed, and is not listed: Sends invalid connection preface"
-says unlisted-failure "    GOAWAY Frame (Error Code: PROTOCOL_ERROR)"
-says unlisted-failure "    Error: unexpected EOF"
+says unlisted-failure "    expected: GOAWAY Frame (Error Code: PROTOCOL_ERROR)"
+says unlisted-failure "          or: Connection closed"
+says unlisted-failure "         got: Error: unexpected EOF"
 says unlisted-failure "h2spec plain: 1 case failed or was skipped, and plain.txt does not list it with that outcome"
+
+# An error of one line is not what h2spec expected and got, but what went
+# wrong.
+report pass pass error pass
+verdict one-line-error
+exits one-line-error 1
+says one-line-error "    No HEADER frame received"
 
 # A case listed with the issue that fixes it may fail, and the run lists it
 # with its issue and reason.
@@ -167,7 +188,7 @@ list "http2/3.5/2  skipped  The Stub answers with an empty body."
 verdict failure-listed-as-skipped
 exits failure-listed-as-skipped 1
 says failure-listed-as-skipped "h2spec plain: http2/3.5/2 failed, but is listed as skipped: Sends invalid connection preface"
-says failure-listed-as-skipped "    Error: unexpected EOF"
+says failure-listed-as-skipped "         got: Error: unexpected EOF"
 
 # --- Cases left out ----------------------------------------------------------
 
@@ -188,6 +209,42 @@ report pass pass pass pass
 verdict left-out-pass
 exits left-out-pass 0
 says left-out-pass "h2spec plain: 1 listed case passed, so it can come off plain.txt: http2/3.5/2"
+
+# --- A list or a report that does not fit ------------------------------------
+
+# A listed case that h2spec did not run is out of date, as after an
+# upgrade of h2spec that numbers its cases differently.
+list "http2/9.9/1  #147  Gone."
+verdict stale-entry
+exits stale-entry 1
+says stale-entry "h2spec plain: http2/9.9/1 is listed in plain.txt, but h2spec ran no such case"
+says stale-entry "h2spec plain: 1 listed case did not run, so plain.txt is out of date"
+
+list "http2/3.5/2  later  Some day."
+verdict unknown-why
+exits unknown-why 2
+says unknown-why "h2spec plain: plain.txt:2: http2/3.5/2 is listed as 'later', not as skipped, left-out or #<issue>"
+
+list "http2/3.5/2  #150"
+verdict no-reason
+exits no-reason 2
+says no-reason "h2spec plain: plain.txt:2: give the case, why it is listed, and the reason"
+
+list "http2/3.5/2  #150  One reason." "http2/3.5/2  #147  Another."
+verdict listed-twice
+exits listed-twice 2
+says listed-twice "h2spec plain: plain.txt:3: http2/3.5/2 is listed twice"
+
+list
+rm "$tmp/report.xml"
+verdict no-report
+exits no-report 2
+mentions no-report "h2spec plain: cannot read the report $tmp/report.xml:"
+
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites></testsuites>\n' >"$tmp/report.xml"
+verdict empty-report
+exits empty-report 1
+says empty-report "h2spec plain: the report holds no case: h2spec ran none"
 
 echo
 echo "$passed passed, $failed failed"

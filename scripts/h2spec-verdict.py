@@ -22,7 +22,8 @@ every case that failed or was skipped without being listed with that
 outcome, with what h2spec expected and got. On GitHub Actions, a listed
 case that passed is also a notice on its line of the list. It exits with 1
 when a case failed or was skipped without being listed with that outcome,
-and with 2 when it cannot read the list or the report.
+when a listed case did not run, or when the report holds no case, and with
+2 when it cannot read the list or the report.
 """
 
 import os
@@ -61,8 +62,8 @@ class Entry:
 
 def cases(report):
     """The cases of a JUnit report, in order: (ID, description, outcome,
-    detail), where the detail of a failed case is what h2spec expected and
-    got, one line each.
+    detail), where the detail of a failed case is the lines h2spec gives on
+    what went wrong.
 
     h2spec names a case by its group and its number in the group, such as
     http2/6.9.1/1, but the report gives only the group (package) and the
@@ -99,8 +100,21 @@ def read_list(path):
         if why not in ("skipped", "left-out") and not re.fullmatch(r"#[0-9]+", why):
             raise ListError(f"{path.name}:{number}: {case} is listed as {why!r}, "
                             "not as skipped, left-out or #<issue>")
+        if case in entries:
+            raise ListError(f"{path.name}:{number}: {case} is listed twice")
         entries[case] = Entry(why, reason.strip(), number)
     return entries
+
+
+def explain(detail):
+    """The lines of a failed case's detail, labelled. h2spec 2.6.0 writes
+    each outcome it expected on a line, then what it got; a detail of one
+    line says what went wrong instead."""
+    lines = detail.splitlines()
+    if len(lines) < 2:
+        return [f"    {line}" for line in lines]
+    labels = ["expected"] + ["or"] * (len(lines) - 2) + ["got"]
+    return [f"    {label:>8}: {line}" for label, line in zip(labels, lines)]
 
 
 def plural(count, one, more):
@@ -119,7 +133,14 @@ def main(argv):
     except (OSError, ListError) as error:
         print(f"h2spec {port}: {error}", file=sys.stderr)
         return 2
-    run = cases(argv[2])
+    try:
+        run = cases(argv[2])
+    except (OSError, ET.ParseError) as error:
+        print(f"h2spec {port}: cannot read the report {argv[2]}: {error}", file=sys.stderr)
+        return 2
+    if not run:
+        print(f"h2spec {port}: the report holds no case: h2spec ran none")
+        return 1
     counts = {outcome: sum(1 for _, _, o, _ in run if o == outcome) for outcome in ("passed", "skipped", "failed")}
     print(f"h2spec {port}: {len(run)} cases, {counts['passed']} passed, {counts['skipped']} skipped, "
           f"{counts['failed']} failed")
@@ -155,12 +176,22 @@ def main(argv):
             print(f"h2spec {port}: {case} {outcome}, and is not listed: {description}")
         else:
             print(f"h2spec {port}: {case} {outcome}, but is listed {entry.how()}: {description}")
-        for line in detail.splitlines():
-            print(f"    {line}")
+        for line in explain(detail):
+            print(line)
+    ran = {case for case, _, _, _ in run}
+    stale = 0
+    for case in listed:
+        if case not in ran:
+            stale += 1
+            print(f"h2spec {port}: {case} is listed in {path.name}, but h2spec ran no such case")
     if wrong:
         print(f"h2spec {port}: {plural(wrong, 'case', 'cases')} failed or "
               f"{'was' if wrong == 1 else 'were'} skipped, and {path.name} does not list "
               f"{'it' if wrong == 1 else 'them'} with that outcome")
+    if stale:
+        print(f"h2spec {port}: {plural(stale, 'listed case', 'listed cases')} did not run, "
+              f"so {path.name} is out of date")
+    if wrong or stale:
         return 1
     print(f"h2spec {port}: every case passed or is listed")
     return 0
