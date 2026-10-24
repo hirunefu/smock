@@ -144,3 +144,66 @@ async test "h2c: a stream past the limit is refused before the client has acknow
     )
   })
 }
+
+///|
+/// Opens `n` streams with unfinished uploads on a new connection to
+/// `smock`, then one more, and shows the frames smock sends until it ends
+/// the last one.
+async fn one_past(smock : Smock, n : Int32) -> String {
+  let raw = smock.raw_h2()
+  defer raw.close()
+  let upload = request_fields("POST", "/upload", "localhost")
+  let frames = []
+  for stream = 1; stream <= 2 * n + 1; stream = stream + 2 {
+    frames.push(headers_frame(stream, raw.block(upload), end_stream=false))
+  }
+  raw.send(frames)
+  raw.frames_until_stream_ends(2 * n + 1)
+}
+
+///|
+async test "h2c: the concurrent-streams limit is 100 by default, can come from SMOCK_HTTP2_MAX_CONCURRENT_STREAMS, and goes up to 1000" {
+  with_definitions([("files.json", uploads)], dir => {
+    let out = []
+    for
+      run in [
+        ("default", [], Map([]), 100),
+        (
+          "SMOCK_HTTP2_MAX_CONCURRENT_STREAMS=2",
+          [],
+          { "SMOCK_HTTP2_MAX_CONCURRENT_STREAMS": "2" },
+          2,
+        ),
+        (
+          "--http2-max-concurrent-streams 1000",
+          ["--http2-max-concurrent-streams", "1000"],
+          Map([]),
+          1000,
+        ),
+      ] {
+      let (label, flags, env, n) = run
+      let args = ["--dir", dir, "--port", "0", ..flags]
+      let _ = with_smock(args, env~, smock => {
+        out.push("\{label}:")
+        out.push(one_past(smock, n))
+      })
+    }
+    inspect(
+      out.join("\n"),
+      content=(
+        #|default:
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+        #|SETTINGS ACK
+        #|RST_STREAM 201 REFUSED_STREAM
+        #|SMOCK_HTTP2_MAX_CONCURRENT_STREAMS=2:
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=2, MAX_HEADER_LIST_SIZE=65536]
+        #|SETTINGS ACK
+        #|RST_STREAM 5 REFUSED_STREAM
+        #|--http2-max-concurrent-streams 1000:
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=1000, MAX_HEADER_LIST_SIZE=65536]
+        #|SETTINGS ACK
+        #|RST_STREAM 2001 REFUSED_STREAM
+      ),
+    )
+  })
+}
