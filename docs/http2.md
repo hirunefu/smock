@@ -82,6 +82,19 @@ HTTP/1.1 response does, adapted to the rules of HTTP/2:
 
 smock never pushes: it sends no PUSH_PROMISE.
 
+## Streams that wait
+
+A Stub's [delay](definition-files.md#delays) delays only its own stream.
+The other streams of the connection are answered meanwhile, so a slow call
+does not hold up the fast ones a client sends beside it on the same
+connection, as with a real server.
+
+A stream that the client resets during its delay stops waiting at once,
+and gets no response. So do a stream that smock resets because a frame the
+client sent on it breaks the protocol, and every stream of a connection
+that closes. Each such request is in the Journal, as a request whose client
+goes away is.
+
 ## The Journal
 
 An HTTP/2 request is in the Journal like any other, with `version`
