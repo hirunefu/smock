@@ -258,3 +258,65 @@ async test "h2c: a header list with more regular fields than --header-count-limi
     })
   })
 }
+
+///|
+async test "h2c: a 431 sent while the request still arrives is followed by RST_STREAM NO_ERROR, frames that later arrive on that stream are ignored, and the next stream is served" {
+  with_definitions([("files.json", hello_and_uploads)], dir => {
+    let args = [
+      "--dir", dir, "--port", "0", "--header-size-limit", "1000", "--header-count-limit",
+      "3",
+    ]
+    let _ = with_smock(args, smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let upload = request_fields("POST", "/upload", "localhost")
+      raw.send([
+        headers_frame(1, raw.block(padded(upload, 1001)), end_stream=false),
+        Data(stream_id=1, data=b"abc", end_stream=false, padding=0),
+        headers_frame(
+          3,
+          raw.block(
+            [..upload, ("x-a", "1"), ("x-b", "2"), ("x-c", "3"), ("x-d", "4")],
+          ),
+          end_stream=false,
+        ),
+        Data(stream_id=3, data=b"abc", end_stream=false, padding=0),
+        Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false),
+      ])
+      let out = [
+        "An upload whose list is over the size limit on stream 1, and one with too many fields on stream 3, while their bodies arrive:",
+        raw.frames_until_ping_ack(),
+      ]
+      raw.send([
+        Data(stream_id=1, data=b"def", end_stream=true, padding=0),
+        Data(stream_id=3, data=b"def", end_stream=false, padding=0),
+        headers_frame(3, raw.block([("x-checksum", "abcdef")])),
+        headers_frame(5, raw.block(upload), end_stream=false),
+        Data(stream_id=5, data=b"abc", end_stream=true, padding=0),
+      ])
+      out.push(
+        "Then the rest of streams 1 and 3, trailers on stream 3, and an upload on stream 5:",
+      )
+      out.push(raw.frames_until_stream_ends(5))
+      out.push("Journal:")
+      out.push(journaled(smock))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|An upload whose list is over the size limit on stream 1, and one with too many fields on stream 3, while their bodies arrive:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=2000]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_STREAM END_HEADERS [:status: 431, date: <now>, content-length: 0]
+          #|RST_STREAM 1 NO_ERROR
+          #|HEADERS 3 END_STREAM END_HEADERS [:status: 431, date: <now>, content-length: 0]
+          #|RST_STREAM 3 NO_ERROR
+          #|Then the rest of streams 1 and 3, trailers on stream 3, and an upload on stream 5:
+          #|HEADERS 5 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 5 END_STREAM 6 octets
+          #|Journal:
+          #|POST /upload
+        ),
+      )
+    })
+  })
+}

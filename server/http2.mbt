@@ -772,10 +772,11 @@ fn H2Connection::queue(
 /// traffic: 400 for a request HTTP/1.1's rules refuse, 431 for a header
 /// list over `--header-size-limit` or with more fields than
 /// `--header-count-limit`. The request never reaches the engine, so it has
-/// no Journal entry. A request that has not `ended` is then reset
-/// with PROTOCOL_ERROR, as a malformed one (RFC 9113, section 8.1.1); one
-/// that has gets its status alone. No `connection` field is sent: the
-/// response ends only its stream.
+/// no Journal entry. A request that has not `ended` is then reset, so
+/// that the client stops sending it: with PROTOCOL_ERROR after a 400, as a
+/// malformed request (RFC 9113, section 8.1.1), and with NO_ERROR after a
+/// 431 (section 8.1). One that has ended gets its status alone. No
+/// `connection` field is sent: the response ends only its stream.
 fn H2Connection::refuse(
   self : H2Connection,
   stream : Int32,
@@ -796,7 +797,12 @@ fn H2Connection::refuse(
   }
   self.streams.ended_by_smock(stream)
   if !ended {
-    self.reset(stream, @http2.error_protocol_error)
+    let code = if status == 400 {
+      @http2.error_protocol_error
+    } else {
+      @http2.error_no_error
+    }
+    self.reset(stream, code)
   }
   self.ports.rejected(self.last_read)
   self.end_stream()
