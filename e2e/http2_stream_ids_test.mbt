@@ -146,7 +146,6 @@ async test "h2c: HEADERS on a stream ID already used, whose stream smock did not
           #|GOAWAY last=1 PROTOCOL_ERROR
           #|closed
           #|then a fresh connection: 200 end
-
         ),
       )
     })
@@ -201,14 +200,17 @@ async test "h2c: HEADERS on a stream still open are its trailers, and the stream
         headers_frame(1, raw.block([("x-checksum", "abc")])),
         headers_frame(3, raw.block(upload)),
       ])
-      inspect(raw.frames_until_stream_ends(3), content=(
-        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
-        #|SETTINGS ACK
-        #|HEADERS 1 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
-        #|DATA 1 END_STREAM 6 octets
-        #|HEADERS 3 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
-        #|DATA 3 END_STREAM 6 octets
-      ))
+      inspect(
+        raw.frames_until_stream_ends(3),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 1 END_STREAM 6 octets
+          #|HEADERS 3 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 3 END_STREAM 6 octets
+        ),
+      )
     })
   })
 }
@@ -227,13 +229,60 @@ async test "h2c: HEADERS on a stream that a reset Fault ended are ignored, and t
         headers_frame(1, raw.block(request_fields("GET", "/fast", "localhost"))),
         headers_frame(3, raw.block(request_fields("GET", "/fast", "localhost"))),
       ])
-      inspect(raw.frames_until_stream_ends(3), content=(
-        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
-        #|SETTINGS ACK
-        #|RST_STREAM 1 INTERNAL_ERROR
-        #|HEADERS 3 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
-        #|DATA 3 END_STREAM 4 octets
-      ))
+      inspect(
+        raw.frames_until_stream_ends(3),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|RST_STREAM 1 INTERNAL_ERROR
+          #|HEADERS 3 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+          #|DATA 3 END_STREAM 4 octets
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: smock remembers the last 256 streams it reset: HEADERS on the oldest of them are ignored, and HEADERS on one reset before them end the connection" {
+  with_definitions([("faults.json", faults)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let reset = request_fields("GET", "/reset", "localhost")
+      let fast = request_fields("GET", "/fast", "localhost")
+      // Streams 1 to 513, each reset by its Fault.
+      let frames = []
+      for stream = 1; stream <= 513; stream = stream + 2 {
+        frames.push(headers_frame(stream, raw.block(reset)))
+      }
+      frames.push(headers_frame(3, raw.block(fast)))
+      frames.push(headers_frame(515, raw.block(fast)))
+      frames.push(headers_frame(1, raw.block(fast)))
+      raw.send(frames)
+      let out = []
+      let mut resets = 0
+      while raw.read_frame() is Some(frame) {
+        if frame is RstStream(error_code=0x2, ..) {
+          resets += 1
+        } else {
+          out.push(raw.render_frame(frame))
+        }
+      }
+      out.push("closed")
+      out.push("RST_STREAM INTERNAL_ERROR on \{resets} streams")
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 515 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+          #|DATA 515 END_STREAM 4 octets
+          #|GOAWAY last=515 PROTOCOL_ERROR
+          #|closed
+          #|RST_STREAM INTERNAL_ERROR on 257 streams
+        ),
+      )
     })
   })
 }
