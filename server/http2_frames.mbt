@@ -1,12 +1,20 @@
 // The frame reader of an HTTP/2 connection: what smock reads, split into
 // the connection preface and then whole frames, so that the connection's
 // moonhttp `Conn` gets one frame at a time (http2.mbt) and each frame can
-// be judged before it reaches it (`H2Connection::judge`).
+// be judged before it reaches it (`H2Connection::judge`). The reader also
+// caps the header table size that the client's SETTINGS frames allow
+// (`FrameReader::cap_header_table`).
 
 ///|
 /// The largest frame payload smock accepts: the SETTINGS_MAX_FRAME_SIZE it
 /// advertises, RFC 9113's default.
 let max_frame_size : Int32 = 16384
+
+///|
+/// The largest HPACK table smock encodes its responses with, in octets: RFC
+/// 9113's default SETTINGS_HEADER_TABLE_SIZE, however large a table the
+/// client allows.
+let encoding_table_size : Int32 = 4096
 
 ///|
 /// What an HTTP/2 connection reads, split into the connection preface and
@@ -30,7 +38,9 @@ priv struct FrameReader {
 priv enum Split {
   /// The client's connection preface, its 24 octets, which come first.
   Preface(BytesView)
-  /// A whole frame, its header included, and its header decoded.
+  /// A whole frame, its header included, and its header decoded. A
+  /// SETTINGS frame has had its header table size capped
+  /// (`FrameReader::cap_header_table`).
   Frame(@http2.FrameHeader, BytesView)
   /// The header of a frame larger than smock advertises, which is a
   /// connection error (RFC 9113, section 4.2).
@@ -82,7 +92,45 @@ fn FrameReader::next(self : FrameReader) -> Split {
   if held < 9 + head.length {
     return NeedMore
   }
+  if head.ftype == @http2.frame_settings {
+    self.cap_header_table(head.length)
+  }
   Frame(head, self.take(bytes, 9 + head.length))
+}
+
+///|
+/// Lowers each SETTINGS_HEADER_TABLE_SIZE over `encoding_table_size`, read
+/// as unsigned, to `encoding_table_size`, in the SETTINGS frame at the start
+/// of what the reader holds, whose payload is `length` octets, before the
+/// `Conn` sees it. moonhttp sizes the table it encodes responses with from
+/// that setting, with no cap, and indexes every response field it cannot
+/// match exactly: with a huge table nothing is evicted, so the table and the
+/// cost of each lookup would grow for the life of the connection. An encoder
+/// may use any table size up to the decoder's maximum (RFC 9113, section
+/// 4.3.1; RFC 7541, section 4.2), so the client still sees a valid table.
+/// The frame's other settings pass unchanged, and so do octets past its last
+/// whole setting, which the `Conn` refuses.
+fn FrameReader::cap_header_table(self : FrameReader, length : Int32) -> Unit {
+  let buf = self.buf
+  let end = self.start + 9 + length
+  let mut at = self.start + 9
+  // Each setting is an identifier of two octets, then a value of four.
+  while at + 6 <= end {
+    let id = (buf[at].to_int() << 8) | buf[at + 1].to_int()
+    let low = (buf[at + 4].to_int() << 8) | buf[at + 5].to_int()
+    if id == @http2.settings_header_table_size &&
+      (
+        buf[at + 2] != b'\x00' ||
+        buf[at + 3] != b'\x00' ||
+        low > encoding_table_size
+      ) {
+      buf[at + 2] = b'\x00'
+      buf[at + 3] = b'\x00'
+      buf[at + 4] = (encoding_table_size >> 8).to_byte()
+      buf[at + 5] = (encoding_table_size & 0xFF).to_byte()
+    }
+    at += 6
+  }
 }
 
 ///|
