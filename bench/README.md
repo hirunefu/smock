@@ -39,6 +39,19 @@ branch is merged into `main`,
 [docs/merging-into-main.md](../docs/merging-into-main.md). Nothing runs it on
 a schedule.
 
+## Contents
+
+- [Run it on your machine](#run-it-on-your-machine)
+- [GKE Autopilot profiles](#gke-autopilot-profiles)
+- [Scenarios in the benchmark](#scenarios-in-the-benchmark)
+- [CRUD Stubs in the benchmark](#crud-stubs-in-the-benchmark)
+- [Targets](#targets)
+- [What a run does](#what-a-run-does)
+- [What a run writes](#what-a-run-writes)
+- [Comparing runs](#comparing-runs)
+- [On GKE Autopilot](#on-gke-autopilot)
+- [In CI](#in-ci)
+
 ## Run it on your machine
 
 It needs Linux on amd64 or arm64 with at least three CPUs, python3 3.10 or

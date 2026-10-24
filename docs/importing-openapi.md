@@ -14,6 +14,36 @@ A part of the document that the command does not import, such as
 [What is generated](#what-is-generated) says what becomes of each part,
 and [Limits](#limits) gives the bounds the command keeps to.
 
+## Contents
+
+- [Quick start](#quick-start)
+- [Validate the document first](#validate-the-document-first)
+- [What is generated](#what-is-generated)
+  - [Paths with parameters](#paths-with-parameters)
+  - [Servers and base paths](#servers-and-base-paths)
+  - [The main response](#the-main-response)
+  - [The other responses](#the-other-responses)
+  - [Bodies](#bodies)
+  - [Bodies from examples](#bodies-from-examples)
+  - [Samples from schemas](#samples-from-schemas)
+  - [Response headers](#response-headers)
+  - [IDs and conditions that repeat](#ids-and-conditions-that-repeat)
+- [The Mock and its Hosts](#the-mock-and-its-hosts)
+- [Selecting responses](#selecting-responses)
+  - [Selecting examples](#selecting-examples)
+  - [Through the system under test](#through-the-system-under-test)
+- [Regenerating](#regenerating)
+  - [Overrides](#overrides)
+  - [Checking that the file is current](#checking-that-the-file-is-current)
+- [References and bundling](#references-and-bundling)
+  - [References to other files](#references-to-other-files)
+  - [Bundling](#bundling)
+- [How YAML is read](#how-yaml-is-read)
+- [Problems and exit codes](#problems-and-exit-codes)
+- [Notes for Mockoon users](#notes-for-mockoon-users)
+- [Notes for Prism users](#notes-for-prism-users)
+- [Limits](#limits)
+
 ## Quick start
 
 The example is in [`examples/from-openapi/`](examples/from-openapi/): the
