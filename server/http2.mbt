@@ -85,6 +85,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
       reader: FrameReader::new(read),
       requests: Map([]),
       streams: StreamRecord::new(),
+      malformed: 0,
       watchdog,
       connection,
       idle_timeout,
@@ -115,6 +116,11 @@ priv struct H2Connection {
   /// The client's streams: the highest ID seen, the streams open, and the
   /// streams this side reset.
   streams : StreamRecord
+  /// The stream whose request, begun by the frame being handled, HTTP/1.1's
+  /// rules refuse, or 0. It gets 400 once it is known whether that frame
+  /// ended the stream: on its `End` event, or else once the frame's events
+  /// are all taken.
+  mut malformed : Int32
   /// The timeouts of the connection's waits on its client.
   watchdog : Watchdog
   connection : Connection
@@ -216,17 +222,29 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
     let event = self.conn.next() catch { _ => return false }
     match event {
       NeedData | Closed => {
+        // HEADERS that end the stream bring its `End` with its `Request`,
+        // so a malformed request still here has not ended.
+        if self.malformed != 0 {
+          let stream = self.malformed
+          self.malformed = 0
+          self.refuse(stream, ended=false)
+        }
         // A new stream whose field block brought no `Request` event was
         // refused by moonhttp, which reports nothing for it.
         self.streams.settle()
         return true
       }
       Request(stream~, fields~) => {
+        self.streams.opened(stream)
+        let request = H2Request::new(fields)
+        if request.is_malformed() {
+          self.malformed = stream
+          continue
+        }
         if self.requests.is_empty() {
           self.read_deadline = self.read_at + self.read_timeout
         }
-        self.requests[stream] = H2Request::new(fields)
-        self.streams.opened(stream)
+        self.requests[stream] = request
       }
       Data(stream~, data~) => {
         if self.requests.get(stream) is Some(request) {
@@ -240,7 +258,10 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
       }
       End(stream~) => {
         self.streams.ended_by_client(stream)
-        if self.requests.get(stream) is Some(request) {
+        if stream == self.malformed {
+          self.malformed = 0
+          self.refuse(stream, ended=true)
+        } else if self.requests.get(stream) is Some(request) {
           self.requests.remove(stream)
           self.respond(stream, request)
           self.end_stream()
@@ -253,6 +274,12 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
           self.streams.reset_by_client(stream)
         } else {
           self.streams.remember(stream, by_smock=false)
+        }
+        // moonhttp reset a malformed request for one of RFC 9113's own
+        // rules, such as a `content-length` that HEADERS ending the stream
+        // do not match: the stream ends with that bare RST_STREAM.
+        if stream == self.malformed {
+          self.malformed = 0
         }
         if self.requests.contains(stream) {
           self.requests.remove(stream)
@@ -388,6 +415,34 @@ async fn H2Connection::respond(
     _ => return
   }
   self.streams.ended_by_smock(stream)
+}
+
+///|
+/// Answers `stream`, whose request HTTP/1.1's rules refuse, with 400 and no
+/// body, as HTTP/1.1 answers such a request, and counts it as rejected
+/// traffic. The request never reaches the engine, so it has no Journal
+/// entry. A request that has not `ended` is then reset with
+/// PROTOCOL_ERROR, as a malformed one (RFC 9113, section 8.1.1); one that
+/// has gets the 400 alone. No `connection` field is sent: the response ends
+/// only its stream.
+fn H2Connection::refuse(
+  self : H2Connection,
+  stream : Int32,
+  ended~ : Bool,
+) -> Unit {
+  let fields = response_fields(400, [], 0, date=self.ports.dates.at(self.now))
+  self.conn.headers(stream, fields, end=true) catch {
+    _ => {
+      self.reset(stream, @http2.error_internal_error)
+      return
+    }
+  }
+  self.streams.ended_by_smock(stream)
+  if !ended {
+    self.reset(stream, @http2.error_protocol_error)
+  }
+  self.ports.rejected(self.last_read)
+  self.end_stream()
 }
 
 ///|

@@ -81,6 +81,16 @@ fn H2Request::new(fields : Array[@header.Header]) -> H2Request {
 }
 
 ///|
+/// Whether HTTP/1.1's rules refuse the request, so that its stream gets 400
+/// as a malformed request (RFC 9113, section 8.1.1), checked with the
+/// HTTP/1.1 codec's own checks: `:path` is not an origin-form target, or
+/// `*` for OPTIONS, or holds an octet outside 0x21 to 0x7E.
+fn H2Request::is_malformed(self : H2Request) -> Bool {
+  !(@http1.is_origin_or_asterisk_form(self.target, meth=self.meth) &&
+  @http1.is_visible_ascii(self.target))
+}
+
+///|
 /// Adds `data`, the next DATA octets of the stream, to the body.
 fn H2Request::receive(self : H2Request, data : Bytes) -> Unit {
   match self.parts {
