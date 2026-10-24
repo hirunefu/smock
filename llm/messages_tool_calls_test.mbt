@@ -117,6 +117,30 @@ test "text comes first, in its text block, then a tool_use block per call in the
 }
 
 ///|
+test "an input written as an object is sent as compact JSON writes it, its numbers as smock writes them, and the object a string holds is read from it" {
+  let written = @json.parse(
+    "{\"big\":12345678901234567890,\"ratio\":1.50,\"exp\":1e3,\"neg\":-0,\"huge\":1e400,\"text\":\"\\u00e9\\n\"}",
+  ) catch {
+    _ => abort("not JSON")
+  }
+  let reply = messages_calls_reply(
+    @llm.Strings(tool_calls=[
+      @llm.ToolCall(name="written", arguments=written),
+      @llm.ToolCall(
+        name="given_as_string",
+        arguments="{\"big\": 12345678901234567890, \"ratio\": 1.50}",
+      ),
+    ]),
+  )
+  inspect(
+    json_text(reply),
+    content=(
+      #|{"id":"msg_KCVauEuclT08Mg4CWd55sNbz","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_iHzkHTRdWXnW746KnN1UOBYQ","name":"written","input":{"big":12345678901234567890,"ratio":1.5,"exp":1000,"neg":0,"huge":1e400,"text":"é\n"}},{"type":"tool_use","id":"toolu_DbhbAGir3qs3o77JKr2BTN9j","name":"given_as_string","input":{"big":12345678901234567890,"ratio":1.5}}],"model":"claude-test","stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}
+    ),
+  )
+}
+
+///|
 test "a stream with tool calls and no text has no text block: each call is a tool_use block that starts with input {}, then an empty partial_json and one input_json_delta per piece of its arguments" {
   inspect(
     shown(

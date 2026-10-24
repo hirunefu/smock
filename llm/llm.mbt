@@ -327,6 +327,10 @@ pub struct ToolCall {
   /// The arguments' JSON text, as the reply sends it: not always valid
   /// JSON, since a string is sent as written.
   arguments : String
+  /// The arguments as written when they are an object, which a Messages
+  /// reply sends as its `input` without reading `arguments` back; or `None`
+  /// when they are given as a string, which may hold an object.
+  priv object : Json?
   /// The call id, sent as written, or `None` for a generated one.
   id : String?
 } derive(Debug, Eq)
@@ -342,11 +346,30 @@ pub fn ToolCall::ToolCall(
   arguments~ : Json,
   id? : String,
 ) -> ToolCall {
-  let arguments = match arguments {
-    String(text) => text
-    value => @template.compact_json(value)
+  match arguments {
+    String(text) => ToolCall::from_text(name~, arguments=text, id?)
+    Object(_) =>
+      {
+        name,
+        arguments: @template.compact_json(arguments),
+        object: Some(arguments),
+        id,
+      }
+    value =>
+      { name, arguments: @template.compact_json(value), object: None, id, }
   }
-  { name, arguments, id, }
+}
+
+///|
+/// The tool call of the function `name` whose arguments are the string
+/// `arguments`, sent as written, and the call id `id` when given: the
+/// arguments a template renders, or a string the definitions give.
+pub fn ToolCall::from_text(
+  name~ : String,
+  arguments~ : String,
+  id? : String,
+) -> ToolCall {
+  { name, arguments, object: None, id, }
 }
 
 ///|
@@ -1829,8 +1852,11 @@ fn messages_reply(
 /// The `input` of the `tool_use` block of `call`, which is always an object
 /// in the vendor's replies: its arguments as that object when they are one,
 /// as written or as a string that holds one, and otherwise the string they
-/// are, as a JSON string.
+/// are, as a JSON string. Only a string is read.
 fn tool_use_input(call : ToolCall) -> Json {
+  if call.object is Some(object) {
+    return object
+  }
   let parsed = @json.parse(call.arguments) catch { _ => Json::null() }
   match parsed {
     Object(_) => parsed

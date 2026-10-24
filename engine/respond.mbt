@@ -240,9 +240,7 @@ fn render_strings(
       Text(arguments) => arguments.render(context)
       Json(arguments) => @utf8.decode_lossy(arguments.render(context))
     }
-    tool_calls.push(
-      @llm.ToolCall(name~, arguments=Json::string(arguments), id?=call_id),
-    )
+    tool_calls.push(@llm.ToolCall::from_text(name~, arguments~, id?=call_id))
   }
   let error_message = match templates.error_message {
     Some(message) => Some(message.render(context))
