@@ -876,6 +876,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_drain(
     if self.closing {
       return
     }
+    // Its acknowledgement is one smock is owed, not a frame that does no
+    // work.
+    self.no_work_frames.pings_owed += 1
     self.writer.write_first(out, drain_frames)
     // The client may have acknowledged the PING while the writer went on
     // with what the `Conn` queued.

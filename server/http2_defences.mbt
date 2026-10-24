@@ -27,8 +27,8 @@ priv struct NoWorkFrames {
   /// frame it opens the connection with, until it comes.
   mut settings_owed : Int32
   /// How many PING acknowledgements smock is owed: one for each PING it has
-  /// sent, until it comes. smock sends no PING of its own yet, so every
-  /// acknowledgement counts.
+  /// sent, until it comes. smock sends one PING, after the first GOAWAY of
+  /// a drain (`H2Connection::start_drain`).
   mut pings_owed : Int32
 }
 

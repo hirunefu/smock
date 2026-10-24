@@ -313,3 +313,50 @@ async test "h2c: an event stream that outlasts the drain timeout goes on until t
     )
   })
 }
+
+///|
+async test "h2c: the acknowledgement of the drain's PING answers a PING smock sent, so it is not among the frames that do no work: a client already at their bound still gets the final GOAWAY" {
+  with_definitions([("m.json", drain_defs)], dir => {
+    let stopped = with_smock(
+      ["--dir", dir, "--port", "0", "--drain-timeout-ms", "10000"],
+      smock => {
+        let raw = smock.raw_h2()
+        defer raw.close()
+        let start = @async.now()
+        let opened = raw.frames_until(start, frame => {
+          frame is Settings(ack=true, ..)
+        })
+        smock.terminate()
+        let payload = Ref(b"")
+        let warned = raw.frames_until(start, frame => {
+          guard frame is Ping(payload=p, ack=false) else { return false }
+          payload.val = p
+          true
+        })
+        // With the client's SETTINGS, 99 PINGs are 100 frames that do no
+        // work within a second, the bound; the acknowledgement follows.
+        raw.send([..times(ping, 99), Ping(payload=payload.val, ack=true)])
+        let told = raw.frames_until(start, is_goaway)
+        let after = raw.frames_until(start, _ => false)
+        inspect(
+          [
+            ..opened.shown,
+            ..warned.shown,
+            runs(told.shown),
+            "then: \{after.shown.length()} frames, \{after.how}",
+          ].join("\n"),
+          content=(
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+            #|SETTINGS ACK
+            #|GOAWAY last=2147483647 NO_ERROR
+            #|PING
+            #|PING ACK x99
+            #|GOAWAY last=0 NO_ERROR
+            #|then: 0 frames, a FIN
+          ),
+        )
+      },
+    )
+    inspect(defence_entries(stopped.logs), content="")
+  })
+}
