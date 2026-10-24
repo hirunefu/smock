@@ -133,6 +133,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       waiting: Map([]),
       blocked: Map([]),
       claimed: 0,
+      window_deadline: forever,
       group,
       watchdog,
       connection,
@@ -200,6 +201,10 @@ priv struct H2Connection {
   /// `blocked`, whose tasks have not run yet, are to send, so that no other
   /// stream takes them meanwhile.
   mut claimed : Int32
+  /// While a slow write waits for the client to widen the connection
+  /// window, when the write timeout closes the connection; `forever` while
+  /// none waits for it (`watch_windows`).
+  mut window_deadline : Int64
   /// The task group the connection is served in, where the tasks of
   /// waiting streams run. They end with the connection.
   group : @async.TaskGroup[Unit]
@@ -423,7 +428,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
       }
       // A window the client widened, of a stream or of the connection, or
       // every stream's, by a SETTINGS frame that raised the initial window.
-      WindowUpdated(stream~, ..) => self.widened(stream)
+      WindowUpdated(stream~, ..) => self.window_updated(stream)
       Settings(_) => self.widened(0)
       // A reset from the client, or one moonhttp sent for the client's
       // frames.
@@ -513,6 +518,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::read_more(
     self.discard(stream)
     return false
   }
+  self.watch_windows(self.now)
   let idle = self.idle()
   if idle && self.became_idle {
     self.idle_deadline = self.now + self.idle_timeout
@@ -586,6 +592,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
   if self.closing {
     return self.close_at
   }
+  self.watch_windows(now)
+  if self.window_deadline <= now {
+    self.watchdog.time_out_writing(now)
+    return forever
+  }
   if self.idle_until() <= now || self.block_deadline() <= now {
     self.go_away(out)
     return forever
@@ -621,6 +632,9 @@ fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   let block = self.block_deadline()
   if block < next {
     next = block
+  }
+  if self.window_deadline < next {
+    next = self.window_deadline
   }
   next
 }
@@ -782,12 +796,13 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
 /// connection becomes idle; while smock drains, it closes instead.
 async fn H2Connection::answered(self : H2Connection) -> Unit {
   self.end_stream()
+  let now = @async.now()
+  self.watch_windows(now)
   guard self.became_idle && self.reading && self.idle() else { return }
   if self.ports.lifecycle.is_draining() {
     self.group.return_immediately(())
     return
   }
-  let now = @async.now()
   self.became_idle = false
   self.idle_deadline = now + self.idle_timeout
   self.connection.idle = true

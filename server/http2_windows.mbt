@@ -24,6 +24,36 @@ priv struct WindowWait {
 }
 
 ///|
+/// The client has widened the window of `stream` with WINDOW_UPDATE, or,
+/// for 0, that of the connection: progress, which restarts the write
+/// timeout of the slow writes that wait for that window. Then the slow
+/// writes that can send now are woken (`widened`).
+fn H2Connection::window_updated(self : H2Connection, stream : Int32) -> Unit {
+  if stream == 0 {
+    self.window_deadline = forever
+  }
+  self.widened(stream)
+}
+
+///|
+/// Starts at `now` the write timeout of the slow writes that wait for the
+/// client's connection window, when it has not started, or stops it once
+/// none waits for it: so it runs from when a slow write waits while the
+/// connection window has no free part, or from when that part runs out
+/// while one waits, until the client widens that window. Called whenever
+/// the windows or the slow writes may have changed since: by the reader
+/// before each read, by a slow write before it waits, by a stream's task
+/// once it is done, and by the watchdog (`H2Connection::expire`).
+fn H2Connection::watch_windows(self : H2Connection, now : Int64) -> Unit {
+  if self.blocked.is_empty() || self.conn.window(0) > self.claimed {
+    self.window_deadline = forever
+  } else if self.window_deadline == forever {
+    self.window_deadline = now + self.watchdog.write_timeout
+    self.watchdog.read_by(self.window_deadline, now)
+  }
+}
+
+///|
 /// How much of a response body smock may send on `stream` now: the smaller
 /// of the stream's window and the connection's, less what is set aside for
 /// the slow writes woken before it.
@@ -207,6 +237,7 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::trickle(
     }
     wait.rest = rest.length()
     self.blocked[stream] = wait
+    self.watch_windows(@async.now())
     wait.ready.wait()
     // A reset since the task was woken has taken it out of `blocked`.
     guard wait.woken else { return }
