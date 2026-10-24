@@ -22,7 +22,7 @@
 # It needs docker, curl, openssl, readelf and jq.
 #
 # usage: scripts/smoke-test-image.sh <image> <version> <commit> <toolchain>
-# example: scripts/smoke-test-image.sh smock:dev 0.0.0-dev 0123456789ab "moonc v0.10.14+7d59c7ec9"
+# example: scripts/smoke-test-image.sh smock:dev 0.0.0-dev 0123456789ab "moonc v0.10.17+d971670cd"
 set -eu
 cd "$(dirname "$0")/.."
 

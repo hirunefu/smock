@@ -17,7 +17,7 @@
 # turn each into a link to the file at the release's tag.
 #
 # usage: scripts/release-notes.sh <version> <commit> <toolchain> <image>
-# example: scripts/release-notes.sh 0.1.0 0123456789ab "moonc v0.10.14+7d59c7ec9" ghcr.io/hirunefu/smock
+# example: scripts/release-notes.sh 0.1.0 0123456789ab "moonc v0.10.17+d971670cd" ghcr.io/hirunefu/smock
 set -eu
 
 if [ "$#" -ne 4 ]; then

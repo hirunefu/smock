@@ -3,7 +3,7 @@
 # toolchain the binary was built with, and exits 0.
 #
 # usage: scripts/check-version.sh <smock binary> <version> <commit> <toolchain>
-# example: scripts/check-version.sh dist/smock 0.0.0-dev 0123456789ab "moonc v0.10.14+7d59c7ec9"
+# example: scripts/check-version.sh dist/smock 0.0.0-dev 0123456789ab "moonc v0.10.17+d971670cd"
 set -eu
 
 if [ "$#" -ne 4 ]; then

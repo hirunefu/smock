@@ -39,6 +39,19 @@ branch is merged into `main`,
 [docs/merging-into-main.md](../docs/merging-into-main.md). Nothing runs it on
 a schedule.
 
+## Contents
+
+- [Run it on your machine](#run-it-on-your-machine)
+- [GKE Autopilot profiles](#gke-autopilot-profiles)
+- [Scenarios in the benchmark](#scenarios-in-the-benchmark)
+- [CRUD Stubs in the benchmark](#crud-stubs-in-the-benchmark)
+- [Targets](#targets)
+- [What a run does](#what-a-run-does)
+- [What a run writes](#what-a-run-writes)
+- [Comparing runs](#comparing-runs)
+- [On GKE Autopilot](#on-gke-autopilot)
+- [In CI](#in-ci)
+
 ## Run it on your machine
 
 It needs Linux on amd64 or arm64 with at least three CPUs, python3 3.10 or
@@ -558,9 +571,10 @@ scripts/gke-bench.sh              # the checks and the estimate; makes nothing
 scripts/gke-bench.sh --yes        # runs it, about 50 minutes
 ```
 
-It needs gcloud (logged in), docker, kubectl, python3, setsid, and to
-build the release binary the MoonBit toolchain (or `--smock` with a
-binary). `GCLOUD`, `KUBECTL`, `DOCKER` and `PYTHON` name other commands
+It needs gcloud (logged in), docker, kubectl, python3, setsid, curl to
+download oha (or `--oha` with a binary), and to build the release binary
+the MoonBit toolchain (or `--smock` with a binary). `GCLOUD`, `KUBECTL`,
+`DOCKER` and `PYTHON` name other commands
 than those on `PATH`. `scripts/gke-bench.sh --help` lists its options: the
 nodes' architecture, some profiles or cases only, another plan, the results
 directory, the time limit.
@@ -837,8 +851,9 @@ scripts/gke-bench.sh --yes --arch amd64 --plan bench/plan-same-node.json \
 ```
 
 Each `--variant` is `LABEL=FILE`, the first the baseline; the label (1 to
-16 lowercase letters, digits and hyphens) names the variant's Pod and
-Service, `smock-<profile>-<label>`. `no-init` leaves out the init
+16 lowercase letters, digits and hyphens, starting with a letter and
+ending with a letter or digit) names the variant's Pod and Service,
+`smock-<profile>-<label>`. `no-init` leaves out the init
 container that prints the node's CPU, and `no-first-second` the load
 generator's scrape of smock's `/metrics` a second into each step: the two
 changes the harness got between 0d984c8 and 52ee405. `scenarios` serves
@@ -939,7 +954,8 @@ python3 bench/gke/gke.py same-node --baseline new --report same-node-new \
   --sha256 newh=<SHA-256 of new> --no-init newh <results directory>
 ```
 
-The run above, two profiles of 48 runs each, costs about $0.43 in
+The run of four variants above, two profiles of 48 runs each, costs
+about $0.43 in
 us-central1 at the prices of 2026-10-16, or $0.30 while the free tier
 covers the cluster's fee: the cluster lives about 77 minutes, and the
 load generator about 54. A profile starts only when its Job's deadline,

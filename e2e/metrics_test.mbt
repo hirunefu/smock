@@ -3,7 +3,7 @@
 
 ///|
 /// The version, the commit and the toolchain in a `smock --version` line,
-/// such as `smock 1.2.3 (commit 0123456789ab, moonc v0.10.14+7d59c7ec9)`.
+/// such as `smock 1.2.3 (commit 0123456789ab, moonc v0.10.17+d971670cd)`.
 fn version_parts(line : String) -> (String, String, String) raise {
   let line = line.trim()
   guard line.strip_prefix("smock ") is Some(rest) &&

@@ -27,6 +27,20 @@ repository.
   guide shows are from them. The steps with the published image and
   chart have not run on GKE yet.
 
+## Contents
+
+- [What you need](#what-you-need)
+- [How smock serves requests](#how-smock-serves-requests)
+- [Choose a release](#choose-a-release)
+- [Write and check a Definition file](#write-and-check-a-definition-file)
+- [Create an Autopilot cluster](#create-an-autopilot-cluster)
+- [Install smock](#install-smock)
+- [Send a request and call the Admin API](#send-a-request-and-call-the-admin-api)
+- [Clean up](#clean-up)
+- [Next steps](#next-steps)
+- [Troubleshooting](#troubleshooting)
+- [Appendix: an unreleased commit](#appendix-an-unreleased-commit)
+
 ## What you need
 
 A machine with a POSIX shell (Linux, macOS, or Windows with WSL), and:

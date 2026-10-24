@@ -794,15 +794,9 @@ pub fn response_index_reason() -> String {
 /// seeds `--seed` takes: what `smock serve`, `smock render` and the Admin
 /// render operation use when no seed is given.
 pub fn random_seed() -> UInt64 {
-  // What Rand::new() does, written out: MoonBit 0.10.15 deprecates it for
-  // Rand(), which 0.10.14 does not have. Without entropy (wasm-gc has
-  // none), ChaCha8 falls back to its fixed default seed, as Rand::new() did.
-  let rand = match @env.rand(32) {
-    Some(seed) => @random.Rand::chacha8(seed~)
-    None => @random.Rand::chacha8()
-  }
-  // max_seed is 2^53 - 1, all ones in binary.
-  rand.uint64() & max_seed
+  // Without entropy (wasm-gc has none), Rand() seeds ChaCha8 with its
+  // fixed default seed. max_seed is 2^53 - 1, all ones in binary.
+  @random.Rand().uint64() & max_seed
 }
 
 ///|

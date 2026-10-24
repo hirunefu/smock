@@ -349,7 +349,7 @@ async test "the spec's example over real sockets: a Session creates an order, li
             fail("an entry lacks a member: \{entry.stringify()}")
           }
           let shown : Json = {
-            "session": session.to_json(),
+            "session": Json(session),
             "method": meth,
             "target": target,
             "stub": stub,

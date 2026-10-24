@@ -559,7 +559,7 @@ def conditions(version="0.1.0", commit="a21fe97d59c6", architecture="arm64", cpu
     if plan_sha_without_about:
         plan["sha256_without_about"] = plan_sha_without_about
     value = {"started_at": "2026-10-14T03:13:18+00:00",
-             "smock": {"version": version, "commit": commit, "toolchain": "moonc v0.10.14"},
+             "smock": {"version": version, "commit": commit, "toolchain": "moonc v0.10.17"},
              "definitions": {"digest": "48f7ce9715f0"},
              "request_mix": {"file": "bench/requests.json", "sha256": "bb"},
              "plan": plan,

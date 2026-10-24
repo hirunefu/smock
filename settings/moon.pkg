@@ -5,7 +5,6 @@ import {
   "smock/smock/log",
   "smock/smock/usage",
   "moonbitlang/core/argparse",
-  "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/random",
 }

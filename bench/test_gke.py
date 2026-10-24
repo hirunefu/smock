@@ -744,7 +744,7 @@ IDLE = {"kind": "idle-rss", "profile": "small", "idle": {
 
 
 START = {"kind": "start", "profile": "small", "oha": "oha 1.16.0", "cpus": 8, "affinity": 4,
-         "status": {"version": "0.2.0", "commit": "a21fe97d59c6", "toolchain": "moonc v0.10.14+7d59c7ec9",
+         "status": {"version": "0.2.0", "commit": "a21fe97d59c6", "toolchain": "moonc v0.10.17+d971670cd",
                     "digest": "48f7ce9715f0", "mocks": [{"name": "catalog"}]}}
 
 NODE = {"instance_type": "e4a-standard-8", "arch": "arm64", "zone": "us-central1-a", "machine_family": "e4a",
