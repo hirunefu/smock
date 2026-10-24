@@ -825,41 +825,44 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
     entry = None
     let now = @async.now()
     let partial = outcome.plan.fault is Some(Partial)
-    match (outcome.plan.fault, outcome.plan.body) {
-      (Some(Reset), _) => self.reset_after(stream, outcome.journal)
-      (Some(Close), _) => self.close_by_fault(stream, outcome.journal, out)
-      (_, Events(events)) => {
-        let more = self.open_events(
-          stream,
-          outcome.plan,
-          outcome.journal,
-          events.length(),
-          head~,
-          connect~,
-          now~,
-        )
-        if more &&
-          self.send_events(stream, events, outcome.journal, out, partial~) &&
-          partial {
-          self.reset_after(stream, None)
+    match outcome.plan.fault {
+      Some(Reset) => self.reset_after(stream, outcome.journal)
+      Some(Close) => self.close_by_fault(stream, outcome.journal, out)
+      _ =>
+        match outcome.plan.body {
+          Events(events) => {
+            let more = self.open_events(
+              stream,
+              outcome.plan,
+              outcome.journal,
+              events.length(),
+              head~,
+              connect~,
+              now~,
+            )
+            if more &&
+              self.send_events(stream, events, outcome.journal, out, partial~) &&
+              partial {
+              self.reset_after(stream, None)
+            }
+          }
+          Bytes(body) => {
+            let rest = self.queue(
+              stream,
+              outcome.plan,
+              body,
+              outcome.journal,
+              head~,
+              connect~,
+              now~,
+            )
+            if rest.length() > 0 &&
+              self.trickle(stream, rest, outcome.journal, out, end=!partial) &&
+              partial {
+              self.reset_after(stream, None)
+            }
+          }
         }
-      }
-      (_, Bytes(body)) => {
-        let rest = self.queue(
-          stream,
-          outcome.plan,
-          body,
-          outcome.journal,
-          head~,
-          connect~,
-          now~,
-        )
-        if rest.length() > 0 &&
-          self.trickle(stream, rest, outcome.journal, out, end=!partial) &&
-          partial {
-          self.reset_after(stream, None)
-        }
-      }
     }
     self.waiting.remove(stream)
     let _ = self.writer.write(out)
