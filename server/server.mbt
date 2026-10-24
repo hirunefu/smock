@@ -115,6 +115,7 @@ pub async fn serve(
   logger.info("listening", fields={
     "listener": "admin",
     "address": Json::string("0.0.0.0:\{admin_listener.addr.port()}"),
+    "protocols": ["http/1.1"],
   })
   // The runtime cancels the whole program on SIGTERM, the one cancellation
   // signal set above. The watcher below notices that and starts the drain,
@@ -273,13 +274,17 @@ async fn run(
       return 1
     }
     lifecycle.serving()
+    // Each port names the protocols it serves: the plain port HTTP/1.1, and
+    // HTTP/2 by prior knowledge; the TLS port those ALPN offers.
     logger.info("listening", fields={
       "listener": "plain",
       "address": Json::string("0.0.0.0:\{plain.addr.port()}"),
+      "protocols": ["http/1.1", "h2c"],
     })
     let tls_fields : Map[String, Json] = {
       "listener": "tls",
       "address": Json::string("0.0.0.0:\{tls_listener.addr.port()}"),
+      "protocols": Json::array(alpn.map(protocol => Json::string(protocol))),
     }
     if settings.tls is Some(files) {
       add_file_fields(tls_fields, files)
