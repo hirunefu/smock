@@ -81,10 +81,13 @@ static void smock_ctx_finalize(void *object) {
 }
 
 // The protocols a server accepts by ALPN, in wire format and in order of
-// preference. A context keeps its list in its ex_data, so OpenSSL frees the
-// list with the context.
+// preference: `length` octets, then the same list without h2 in
+// `without_h2` octets, for a connection whose suite HTTP/2 prohibits
+// (smock_suite_allows_h2). A context keeps its lists in its ex_data, so
+// OpenSSL frees them with the context.
 typedef struct {
   unsigned int length;
+  unsigned int without_h2;
   unsigned char wire[];
 } smock_alpn;
 
@@ -256,10 +259,56 @@ MOONBIT_FFI_EXPORT int32_t smock_openssl_ctx_trust(smock_ctx *self,
   return count;
 }
 
-// Picks the first protocol in the server's list that the client offers. When
-// the client offers ALPN but none of them, the handshake fails with the
-// no_application_protocol alert (RFC 7301, section 3.2). A client that sends
-// no ALPN never reaches this callback.
+// Caps a client at TLS 1.2 and has it offer only the suites of `ciphers`, an
+// OpenSSL cipher list such as "ECDHE-RSA-AES128-GCM-SHA256". Returns 1, or 0
+// on failure (see smock_openssl_take_error). Client side: only the bindings'
+// tests use it, to choose the TLS 1.2 suite (see client.mbt).
+MOONBIT_FFI_EXPORT int32_t smock_openssl_ctx_tls12_ciphers(
+    smock_ctx *self, moonbit_bytes_t ciphers) {
+  ERR_clear_error();
+  char *copy =
+      OPENSSL_strndup((const char *)ciphers, Moonbit_array_length(ciphers));
+  if (copy == NULL) {
+    return 0;
+  }
+  int ok = SSL_CTX_set_max_proto_version(self->ctx, TLS1_2_VERSION) == 1 &&
+           SSL_CTX_set_cipher_list(self->ctx, copy) == 1;
+  OPENSSL_free(copy);
+  return ok;
+}
+
+// Whether HTTP/2 may run over the suite the connection uses (RFC 9113,
+// section 9.2.2). Over TLS 1.3 every suite will do. Over TLS 1.2, Appendix A
+// of RFC 9113 prohibits every suite without an ephemeral key exchange or
+// without an AEAD cipher, so only ECDHE or DHE, with or without a PSK, with
+// an AEAD cipher will do. For TLS 1.2, OpenSSL has chosen the suite by the
+// time it calls the ALPN callback.
+static int smock_suite_allows_h2(const SSL *ssl) {
+  if (SSL_version(ssl) >= TLS1_3_VERSION) {
+    return 1;
+  }
+  const SSL_CIPHER *suite = SSL_get_pending_cipher(ssl);
+  if (suite == NULL || !SSL_CIPHER_is_aead(suite)) {
+    return 0;
+  }
+  switch (SSL_CIPHER_get_kx_nid(suite)) {
+  case NID_kx_ecdhe:
+  case NID_kx_dhe:
+  case NID_kx_ecdhe_psk:
+  case NID_kx_dhe_psk:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+// Picks the first protocol in the server's list that the client offers,
+// skipping h2 over a TLS 1.2 suite that HTTP/2 prohibits, so that a client
+// that also offers http/1.1 gets it rather than a connection it would have
+// to fail (RFC 9113, section 9.2.2). When the client offers ALPN but none of
+// them, the handshake fails with the no_application_protocol alert (RFC
+// 7301, section 3.2). A client that sends no ALPN never reaches this
+// callback.
 static int smock_alpn_select(SSL *ssl, const unsigned char **out,
                              unsigned char *out_length,
                              const unsigned char *offered,
@@ -267,10 +316,19 @@ static int smock_alpn_select(SSL *ssl, const unsigned char **out,
   (void)arg;
   const smock_alpn *accepted =
       SSL_CTX_get_ex_data(SSL_get_SSL_CTX(ssl), smock_alpn_index);
+  if (accepted == NULL) {
+    return SSL_TLSEXT_ERR_ALERT_FATAL;
+  }
+  const unsigned char *list = accepted->wire;
+  unsigned int length = accepted->length;
+  // The suite is checked only when the list holds h2.
+  if (accepted->without_h2 != length && !smock_suite_allows_h2(ssl)) {
+    list += length;
+    length = accepted->without_h2;
+  }
   unsigned char *selected = NULL;
-  if (accepted != NULL &&
-      SSL_select_next_proto(&selected, out_length, accepted->wire,
-                            accepted->length, offered,
+  if (length > 0 &&
+      SSL_select_next_proto(&selected, out_length, list, length, offered,
                             offered_length) == OPENSSL_NPN_NEGOTIATED) {
     *out = selected;
     return SSL_TLSEXT_ERR_OK;
@@ -288,12 +346,28 @@ MOONBIT_FFI_EXPORT int32_t smock_openssl_ctx_set_alpn(smock_ctx *self,
     // SSL_CTX_set_alpn_protos returns 0 on success.
     return SSL_CTX_set_alpn_protos(self->ctx, wire, length) == 0;
   }
-  smock_alpn *accepted = OPENSSL_malloc(sizeof(smock_alpn) + length);
+  smock_alpn *accepted =
+      OPENSSL_malloc(sizeof(smock_alpn) + 2 * (size_t)length);
   if (accepted == NULL) {
     return 0;
   }
   accepted->length = length;
   memcpy(accepted->wire, wire, length);
+  // The list without h2 follows it.
+  unsigned int kept = 0;
+  for (unsigned int i = 0; i < length;) {
+    unsigned int size = 1u + wire[i];
+    if (size > length - i) {
+      OPENSSL_free(accepted);
+      return 0;
+    }
+    if (!(wire[i] == 2 && memcmp(wire + i + 1, "h2", 2) == 0)) {
+      memcpy(accepted->wire + length + kept, wire + i, size);
+      kept += size;
+    }
+    i += size;
+  }
+  accepted->without_h2 = kept;
   // A context gets its list once, before it makes any connection.
   if (SSL_CTX_get_ex_data(self->ctx, smock_alpn_index) != NULL ||
       SSL_CTX_set_ex_data(self->ctx, smock_alpn_index, accepted) != 1) {

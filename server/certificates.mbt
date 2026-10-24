@@ -43,6 +43,9 @@ priv struct Certificates {
   /// serves.
   engine : @engine.Engine
   logger : @log.Logger
+  /// The protocols every certificate it loads or generates accepts by ALPN
+  /// (`tls_alpn`), reloads included.
+  alpn : Array[String]
   /// Serialises the checks of the files, which several watches start.
   checking : @async.Mutex
   /// The Mocks of `by_mock` that the definition set served does not
@@ -54,13 +57,15 @@ priv struct Certificates {
 /// Loads the default pair, `default`, or without it generates a
 /// self-signed certificate for the Hosts `engine` serves; loads the pair of
 /// each Mock in `by_mock`; and registers the expiry metric in `metrics`,
-/// with a series for each of these certificates.
+/// with a series for each of these certificates. Each of them, and each
+/// one a reload loads or generates, accepts the protocols `alpn` by ALPN.
 /// When a pair cannot be loaded, or the certificate cannot be generated, it
 /// logs why and returns `None`: smock then does not start. Warns about each
 /// Mock in `by_mock` that `engine` does not serve.
 async fn Certificates::load(
   default : @settings.TlsFiles?,
   by_mock : Map[String, @settings.TlsFiles],
+  alpn~ : Array[String],
   engine~ : @engine.Engine,
   logger~ : @log.Logger,
   metrics~ : @metrics.Registry,
@@ -72,20 +77,25 @@ async fn Certificates::load(
   )
   let default = match default {
     Some(files) =>
-      match Pair::load("", files, expiry, logger) {
+      match Pair::load("", files, expiry, logger, alpn~) {
         Some(pair) => Files(pair)
         None => return None
       }
     None =>
       match
-        SelfSignedCertificate::generate(engine, logger, expiry.labels([""])) {
+        SelfSignedCertificate::generate(
+          engine,
+          logger,
+          expiry.labels([""]),
+          alpn~,
+        ) {
         Some(certificate) => SelfSigned(certificate)
         None => return None
       }
   }
   let pairs = Map([])
   for mock, files in by_mock {
-    guard Pair::load(mock, files, expiry, logger) is Some(pair) else {
+    guard Pair::load(mock, files, expiry, logger, alpn~) is Some(pair) else {
       return None
     }
     pairs[mock] = pair
@@ -95,6 +105,7 @@ async fn Certificates::load(
     by_mock: pairs,
     engine,
     logger,
+    alpn,
     checking: @async.Mutex(),
     undeclared: [],
   }
@@ -104,17 +115,19 @@ async fn Certificates::load(
 
 ///|
 /// Reads and loads the pair of `mock` ("" for the default certificate) from
-/// `files`, and sets its series of the expiry metric. Logs why it cannot be
-/// loaded, and returns `None`, when it cannot.
+/// `files`, accepting the protocols `alpn` by ALPN, and sets its series of
+/// the expiry metric. Logs why it cannot be loaded, and returns `None`,
+/// when it cannot.
 async fn Pair::load(
   mock : String,
   files : @settings.TlsFiles,
   expiry : @metrics.Gauge,
   logger : @log.Logger,
+  alpn~ : Array[String],
 ) -> Pair? {
   let read = read_pair(files)
   let loaded = match read {
-    Ok((cert, key)) => load_pair(cert, key)
+    Ok((cert, key)) => load_pair(cert, key, alpn~)
     Err(reason) => Err(reason)
   }
   match loaded {
@@ -229,7 +242,7 @@ fn Certificates::select(
 fn Certificates::after_swap(self : Certificates) -> Unit {
   self.warn_undeclared()
   if self.default is SelfSigned(certificate) {
-    certificate.follow_hosts(self.engine, self.logger)
+    certificate.follow_hosts(self.engine, self.logger, alpn=self.alpn)
   }
 }
 
@@ -323,7 +336,8 @@ async fn Certificates::check_pair(self : Certificates, pair : Pair) -> Bool {
   }
   pair.last_read = read
   let (loaded, expiry) = match read {
-    Ok((cert, key)) => (load_pair(cert, key), certificate_expiry(cert))
+    Ok((cert, key)) =>
+      (load_pair(cert, key, alpn=self.alpn), certificate_expiry(cert))
     Err(reason) => (Err(reason), None)
   }
   let fields = pair_fields(pair.mock, pair.files)

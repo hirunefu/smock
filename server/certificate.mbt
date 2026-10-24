@@ -20,16 +20,18 @@ priv struct SelfSignedCertificate {
 }
 
 ///|
-/// A self-signed certificate for the Hosts `engine` serves, whose expiry
-/// `expiry`, the default certificate's series of the expiry metric,
-/// reports. Returns `None` when it cannot be generated, which is logged.
+/// A self-signed certificate for the Hosts `engine` serves, accepting the
+/// protocols `alpn` by ALPN, whose expiry `expiry`, the default
+/// certificate's series of the expiry metric, reports. Returns `None` when
+/// it cannot be generated, which is logged.
 fn SelfSignedCertificate::generate(
   engine : @engine.Engine,
   logger : @log.Logger,
   expiry : @metrics.GaugeSeries,
+  alpn~ : Array[String],
 ) -> SelfSignedCertificate? {
   let names = self_signed_names(engine.status())
-  generate_self_signed(names, logger).map(generated => {
+  generate_self_signed(names, logger, alpn~).map(generated => {
     let (config, certificate) = generated
     set_self_signed_expiry(expiry, certificate)
     { config, names, expiry, }
@@ -38,19 +40,20 @@ fn SelfSignedCertificate::generate(
 
 ///|
 /// Follows the Hosts `engine` serves after a reload: a certificate whose
-/// names no longer match them is replaced by a new one, for new
-/// connections. It is kept when a new one cannot be generated (which is
-/// logged).
+/// names no longer match them is replaced by a new one, accepting the
+/// protocols `alpn` by ALPN, for new connections. It is kept when a new one
+/// cannot be generated (which is logged).
 fn SelfSignedCertificate::follow_hosts(
   self : SelfSignedCertificate,
   engine : @engine.Engine,
   logger : @log.Logger,
+  alpn~ : Array[String],
 ) -> Unit {
   let names = self_signed_names(engine.status())
   if names == self.names {
     return
   }
-  if generate_self_signed(names, logger) is Some((config, certificate)) {
+  if generate_self_signed(names, logger, alpn~) is Some((config, certificate)) {
     self.config = config
     self.names = names
     set_self_signed_expiry(self.expiry, certificate)
@@ -96,12 +99,14 @@ fn self_signed_names(status : @engine.Status) -> Array[String] {
 
 ///|
 /// Generates a self-signed certificate for `names` and loads it for the TLS
-/// port, and logs that it is in use, with its SHA-256 fingerprint and its
-/// names. Returns the configuration that presents it and the certificate,
-/// in PEM, or `None` when it cannot, which is logged instead.
+/// port, accepting the protocols `alpn` by ALPN, and logs that it is in
+/// use, with its SHA-256 fingerprint and its names. Returns the
+/// configuration that presents it and the certificate, in PEM, or `None`
+/// when it cannot, which is logged instead.
 fn generate_self_signed(
   names : Array[String],
   logger : @log.Logger,
+  alpn~ : Array[String],
 ) -> (@openssl.ServerConfig, Bytes)? {
   try {
     let generated = @openssl.SelfSigned::generate(names, days=SELF_SIGNED_DAYS)

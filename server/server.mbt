@@ -255,10 +255,13 @@ async fn run(
     }
     // Without default certificate files, the TLS port presents a
     // self-signed certificate generated for the Hosts served, unless SNI
-    // chooses a Mock's own.
+    // chooses a Mock's own. Every certificate accepts the protocols
+    // --tls-http2 gives by ALPN.
+    let alpn = tls_alpn(settings.tls_http2)
     guard Certificates::load(
         settings.tls,
         settings.tls_mock_certs,
+        alpn~,
         engine~,
         logger~,
         metrics~,
