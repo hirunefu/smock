@@ -302,3 +302,77 @@ test "a Host value is a host and an optional port: names, IPv4 and IPv6 literals
     ),
   )
 }
+
+///|
+/// Whether `value`, an Expect field value, asks for `100 Continue` as RFC
+/// 9110 reads it, written with core's own string functions: one of the
+/// elements of its comma-separated list, without the white space around
+/// it, is `100-continue` in any case.
+fn reference_expects_continue(value : String) -> Bool {
+  value
+  .split(",")
+  .any(element => element.trim(char_set=" \t").to_lower() == "100-continue")
+}
+
+///|
+test "the 100-continue check finds the expectation in any case, among other elements and with white space around it, and nothing else" {
+  let values = [
+    "100-continue", "100-Continue", "100-CONTINUE", " \t100-continue\t ", "x, 100-continue",
+    "100-continue,x", ",,100-continue,,", "100-continue; x", "100-continuex", "100-continu",
+    "x100-continue", "100 -continue", "100-cont\u{130}nue", "\u{130}", "", " , ",
+  ]
+  inspect(
+    values
+    .map(value => "\{shown(value)} \{@http1.expects_continue(value)}")
+    .join("\n"),
+    content=(
+      #|"100-continue" true
+      #|"100-Continue" true
+      #|"100-CONTINUE" true
+      #|" \t100-continue\t " true
+      #|"x, 100-continue" true
+      #|"100-continue,x" true
+      #|",,100-continue,," true
+      #|"100-continue; x" false
+      #|"100-continuex" false
+      #|"100-continu" false
+      #|"x100-continue" false
+      #|"100 -continue" false
+      #|"100-cont\u{130}nue" false
+      #|"\u{130}" false
+      #|"" false
+      #|" , " false
+    ),
+  )
+}
+
+///|
+test "the 100-continue check agrees with RFC 9110's reading for every value of up to four pieces" {
+  let pieces = [
+    "100-continue", "100-Continue", "100-continuE", "100-continu", "e", "x", "\u{130}",
+    " ", "\t", ",", "\u{0}",
+  ]
+  let values = [""]
+  let mut from = 0
+  for _ in 0..<4 {
+    let to = values.length()
+    for i in from..<to {
+      for piece in pieces {
+        values.push(values[i] + piece)
+      }
+    }
+    from = to
+  }
+  let mut differ = 0
+  for value in values {
+    if @http1.expects_continue(value) != reference_expects_continue(value) {
+      differ += 1
+    }
+  }
+  inspect(
+    "\{values.length()} values, \{differ} differ",
+    content=(
+      #|16105 values, 0 differ
+    ),
+  )
+}

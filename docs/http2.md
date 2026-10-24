@@ -115,6 +115,10 @@ codec's own checks. Such a stream gets `400 Bad Request`, with no body:
 - a field name that is not a token;
 - a field value with a control character other than tab, or with DEL.
 
+A header list over `--header-size-limit`, or with more fields than
+`--header-count-limit`, gets 431 instead, before these checks: see
+[Header lists](#header-lists).
+
 The 400 ends only its stream: it has no `connection` field, and the
 connection's other streams go on. When the client has not sent all of the
 request yet, the 400 is followed by RST_STREAM `PROTOCOL_ERROR`, so that
@@ -139,6 +143,9 @@ Neither kind of stream reaches the Mocks: it has no Journal entry, and it
 moves no Scenario. A stream refused with 400 counts in the request metrics
 with `mock=""` and `stub=""`, as a request the HTTP/1.1 codec rejects does.
 A stream that moonhttp resets is not counted.
+
+A body over `--body-limit` gets `413 Content Too Large` on its stream
+instead ([Request bodies](#request-bodies)).
 
 ## Responses
 
@@ -222,6 +229,81 @@ defaults, against 10 MiB for an HTTP/1.1 connection. For a small Pod, lower
 either flag, such as `--http2-max-concurrent-streams 10` or a smaller
 `--body-limit`.
 
+### Request bodies
+
+`--body-limit` applies to each stream alone, as it applies to each request
+over HTTP/1.1.
+
+- A `content-length` over the limit gets `413 Content Too Large` at once,
+  before any of the body is read.
+- A body that passes the limit as it arrives gets 413 then. smock keeps
+  none of it past the limit.
+- When the client has not sent all of the request yet, the 413 is followed
+  by RST_STREAM `NO_ERROR`, which tells the client to stop sending the body
+  (RFC 9113, section 8.1). Frames that still arrive on that stream are
+  ignored. A request the client has sent in full gets the 413 alone.
+- The 413 has no body, and ends only its stream: the connection's other
+  streams go on. The stream never reaches the Mocks: it has no Journal
+  entry, and it moves no Scenario. It counts in the request metrics with
+  `mock=""` and `stub=""`, as a 400 does.
+
+smock hands back to the client's flow-control windows every DATA octet it
+takes, whether it keeps it or not. That covers the part of a body past the
+limit, and what still arrives on a stream smock has answered. So refused
+uploads do not use up the window that all the streams of a connection
+share, and the next upload on the connection goes through.
+
+A request whose HEADERS carry `expect: 100-continue` and do not end the
+stream gets `100 Continue` at once, as over HTTP/1.1, so a client that
+waits for it sends its body. One whose `content-length` is over the limit
+gets 413 instead. One with a `content-length` of 0 has no body to send, so
+it gets no `100 Continue`, as over HTTP/1.1.
+
+### Header lists
+
+`--header-size-limit` and `--header-count-limit` apply to the header list
+of each stream: the fields of its HEADERS. A stream over either gets
+`431 Request Header Fields Too Large` on that stream alone, as a request
+over HTTP/1.1 does, and the connection's other streams go on.
+
+- HTTP/2 counts a header list as RFC 7541 does (section 4.1): each field's
+  name and value, as sent, plus 32 octets. The pseudo-header fields count,
+  and so does every `cookie` field, before smock joins them. HTTP/1.1
+  counts the octets of a request head, about 4 per field beyond its name
+  and value (`: ` and the line end). So each field counts about 28 octets
+  more over HTTP/2, and a head that fits over HTTP/1.1 can get 431 over
+  HTTP/2: with 100 fields, it counts about 2,800 octets more. Raise
+  `--header-size-limit` for clients that send many fields.
+- `--header-count-limit` counts the regular fields. The pseudo-header
+  fields do not count, so neither does `:authority`, where an HTTP/1.1
+  `Host` field does. Several `cookie` fields count as one, as the one
+  Cookie line of an HTTP/1.1 client does.
+- When the client has not sent all of the request yet, the 431 is followed
+  by RST_STREAM `NO_ERROR`, so that the client stops sending (RFC 9113,
+  section 8.1). Frames that still arrive on that stream are ignored. A
+  request the client has sent in full gets the 431 alone.
+- The stream never reaches the Mocks: it has no Journal entry, and it
+  moves no Scenario. It counts in the request metrics with `mock=""` and
+  `stub=""`, as a request the HTTP/1.1 codec rejects does.
+
+moonhttp, which decodes the header blocks, has a larger bound of its own:
+twice `--header-size-limit`, at most 2^31-1 octets, so 32,768 octets (32
+KiB) with the default. smock advertises it to the client as
+SETTINGS_MAX_HEADER_LIST_SIZE, and moonhttp holds the client to it from the
+first stream:
+
+- A header list over the bound, counted as above once decoded, gets
+  RST_STREAM `ENHANCE_YOUR_CALM` from moonhttp, with no status. The stream
+  has no Journal entry, and no metric counts it.
+- A header block over the bound as received, its HEADERS and CONTINUATION
+  frames together, ends the connection with GOAWAY `ENHANCE_YOUR_CALM`.
+  Every stream of the connection ends with it, and the client opens a new
+  connection for the rest.
+
+So a list just over the limit gets a 431, which tells the client why,
+while what moonhttp holds of one header block, and of the list it decodes
+to, stays within twice the limit.
+
 ### Timeouts
 
 Over HTTP/2, the read and idle timeouts work per stream and per connection.
@@ -264,6 +346,7 @@ connection.
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
 | Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. A client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
 | Header fields with empty names (CVE-2019-9516) | moonhttp refuses an empty field name. | RST_STREAM `PROTOCOL_ERROR` on that stream. |
+| Request bodies | `--body-limit` per stream, under the concurrent-streams limit. | 413, then RST_STREAM `NO_ERROR` on that stream ([Request bodies](#request-bodies)). |
 
 ## Connection errors
 
@@ -274,6 +357,8 @@ opens a new connection for the rest.
 
 - A frame larger than 16,384 octets, the frame size smock advertises,
   gets `FRAME_SIZE_ERROR`.
+- A header block over twice `--header-size-limit` as received gets
+  `ENHANCE_YOUR_CALM` ([Header lists](#header-lists)).
 - HEADERS on a stream ID that the client has already used get
   `PROTOCOL_ERROR` (RFC 9113, section 5.1.1). That covers a stream that
   has ended, one the client reset, and an ID the client skipped when it

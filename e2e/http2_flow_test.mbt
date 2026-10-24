@@ -184,7 +184,7 @@ async test "h2c: a client SETTINGS frame that raises the initial window resumes 
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 200, date: <now>, content-length: 5]
           #|--- the initial window raised to 3
@@ -395,7 +395,7 @@ async test "h2c: streams waiting on the connection window get it in the order th
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 3 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 150000]
           #|DATA 3: 4 frames, 65535 octets
@@ -445,7 +445,7 @@ async test "h2c: a fast stream is answered at once while a large body on the sam
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 150000]
           #|DATA 1 1000 octets
@@ -497,7 +497,7 @@ async test "h2c: a stream reset while its body waits for window ends its slow wr
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 150000]
           #|DATA 1: 4 frames, 65535 octets
@@ -567,7 +567,7 @@ async test "h2c: a stream reset while its task writes part of its body to a clie
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 9000000]
           #|DATA 1: 4 frames, 65535 octets

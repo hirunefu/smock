@@ -80,7 +80,7 @@ async test "h2c: with --http2-max-concurrent-streams 3, three unfinished uploads
         inspect(
           out.join("\n"),
           content=(
-            #|SETTINGS [MAX_CONCURRENT_STREAMS=3, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=3, MAX_HEADER_LIST_SIZE=32768]
             #|SETTINGS ACK
             #|RST_STREAM 7 REFUSED_STREAM
             #|HEADERS 1 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
@@ -131,7 +131,7 @@ async test "h2c: a stream past the limit is refused before the client has acknow
         inspect(
           out.join("\n"),
           content=(
-            #|SETTINGS [MAX_CONCURRENT_STREAMS=1, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=1, MAX_HEADER_LIST_SIZE=32768]
             #|SETTINGS ACK
             #|RST_STREAM 3 REFUSED_STREAM
             #|HEADERS 1 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
@@ -192,15 +192,15 @@ async test "h2c: the concurrent-streams limit is 100 by default, can come from S
       out.join("\n"),
       content=(
         #|default:
-        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
         #|SETTINGS ACK
         #|RST_STREAM 201 REFUSED_STREAM
         #|SMOCK_HTTP2_MAX_CONCURRENT_STREAMS=2:
-        #|SETTINGS [MAX_CONCURRENT_STREAMS=2, MAX_HEADER_LIST_SIZE=65536]
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=2, MAX_HEADER_LIST_SIZE=32768]
         #|SETTINGS ACK
         #|RST_STREAM 5 REFUSED_STREAM
         #|--http2-max-concurrent-streams 1000:
-        #|SETTINGS [MAX_CONCURRENT_STREAMS=1000, MAX_HEADER_LIST_SIZE=65536]
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=1000, MAX_HEADER_LIST_SIZE=32768]
         #|SETTINGS ACK
         #|RST_STREAM 2001 REFUSED_STREAM
       ),
