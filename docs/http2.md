@@ -93,6 +93,41 @@ verification and the unmatched requests count both.
 The request metrics count HTTP/2 requests with the same `mock` and `stub`
 labels as HTTP/1.1 ones.
 
+## Limits and timeouts
+
+The limits and timeouts of `smock serve` apply to HTTP/2 too. One flag is
+HTTP/2's own: `--http2-max-concurrent-streams`
+(`SMOCK_HTTP2_MAX_CONCURRENT_STREAMS`), the most streams one connection may
+have in progress at once. It is 100 by default, and can be from 1 to 1000.
+
+- smock tells the client the limit in its SETTINGS, as
+  SETTINGS_MAX_CONCURRENT_STREAMS, and holds the client to it from the
+  first stream, before the client has acknowledged the SETTINGS.
+- A stream is in progress from its HEADERS until both sides have ended it,
+  or until either side resets it. So a stream still counts while its
+  request arrives, and then until its response has gone out.
+- A stream past the limit gets RST_STREAM `REFUSED_STREAM` and never
+  reaches the Mocks: it has no Journal entry. The client may send that
+  request again, since RFC 9113 says it was not processed (section 8.7).
+  Frames the client sent on that stream before it learnt of the refusal
+  are ignored.
+
+Each stream in progress can hold a request body of up to `--body-limit`.
+So the request bodies one connection holds at once can reach the
+concurrent-streams limit times the body limit: 100 × 10 MiB with the
+defaults, against 10 MiB for an HTTP/1.1 connection. For a small Pod, lower
+either flag, such as `--http2-max-concurrent-streams 10` or a smaller
+`--body-limit`.
+
+### Defences
+
+smock bounds what a client can make one connection cost. Each bound is per
+connection.
+
+| Pattern | Bound | Past it |
+|---|---|---|
+| Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
+
 ## Connection errors
 
 Some errors end the whole connection, not just one stream. smock then
