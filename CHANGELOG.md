@@ -93,6 +93,12 @@ of each GitHub release include its section
 - Each `listening` log entry names the protocols its port serves, as
   `protocols`: `["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]`
   on the TLS port and `["http/1.1"]` on the admin port.
+- The release benchmark measures HTTP/2: `bench/plan-autopilot.json` has
+  `h2c-keep-alive`, to the plain port, and `h2-keep-alive`, to the TLS
+  port, which are `http-keep-alive` over HTTP/2, sent by oha with
+  `--http2`, locally and on GKE. They make each run of the plan about 22
+  minutes longer, so `scripts/gke-bench.sh`'s default time limit is now 100
+  minutes. See [HTTP/2 cases](bench/README.md#http2-cases).
 
 ### Changed
 
