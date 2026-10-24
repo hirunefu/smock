@@ -90,6 +90,19 @@ jobs:
           "${GITHUB_SHA::12}"
           "moonc $(moonc -v | cut -d' ' -f1)"
 
+      # h2spec publishes a Linux binary for amd64 only, so it runs there.
+      # Every case of its generic, http2 and hpack sections runs against
+      # the plain port (h2c); scripts/h2spec/plain.txt lists the cases that
+      # do not pass, each with its reason, and the log names a listed case
+      # that passes, so that it can come off.
+      - name: Install h2spec
+        if: matrix.arch == 'amd64'
+        run: scripts/install-h2spec.sh "$RUNNER_TEMP/bin"
+
+      - name: Run h2spec against the plain port (h2c)
+        if: matrix.arch == 'amd64'
+        run: scripts/check-h2spec.sh dist/smock plain
+
       # The release workflow builds and smoke-tests the image the same way.
       - name: Build the container image
         run: docker build --provenance=false --tag smock:ci .

@@ -218,7 +218,9 @@ moonhttp is raised only on purpose, on an integration branch of its own
 whatever the new version needs in smock. Before that branch merges into
 `main`, it needs:
 
-- **h2spec** against both traffic ports, with every case passing.
+- **h2spec** against both traffic ports, with every case passing. CI
+  runs it against the plain port
+  ([Build and test](../README.md#build-and-test)).
 - **The e2e tests**, which CI runs. They check the limits and rules that
   moonhttp enforces as well as smock's own, so an upgrade that drops one
   fails them.

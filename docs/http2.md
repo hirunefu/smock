@@ -123,3 +123,9 @@ another one. CI also checks that moonhttp and the modules it imports bring
 no C. A new version comes only on purpose, after h2spec, the e2e tests, a
 check by hand with other clients and the benchmarks
 ([Upgrading moonhttp](releasing.md#upgrading-moonhttp)).
+
+CI runs h2spec 2.6.0, which checks a server against RFC 7540 and RFC 7541,
+against the plain port on every push.
+[`scripts/h2spec/plain.txt`](../scripts/h2spec/plain.txt) lists the cases
+that do not pass yet, each with its reason
+([Build and test](../README.md#build-and-test)).
