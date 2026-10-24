@@ -223,6 +223,11 @@ async test "h2c: with a header table of 2^31-1 allowed, a few thousand responses
           }
         }
       }
+      let shown_updates = if updates.is_empty() {
+        "none"
+      } else {
+        updates.map(update => update.to_string()).join(", ")
+      }
       let shown = if failures.length() > 3 {
         [..failures[:3], "..."]
       } else {
@@ -232,16 +237,91 @@ async test "h2c: with a header table of 2^31-1 allowed, a few thousand responses
         (
           $|Requests: \{batches * batch}, streams ended: \{ended}, DATA frames: \{data}
           $|Response blocks: \{blocks}, decoded: \{decoded}, with the stream's own x-n: \{matched}
-          $|Table size updates: \{updates}
+          $|Table size updates: \{shown_updates}
           $|Blocks that do not decode: \{failures.length()}
           $|\{shown.join("\n")}
         ),
         content=(
           #|Requests: 3000, streams ended: 3000, DATA frames: 3000
           #|Response blocks: 3000, decoded: 3000, with the stream's own x-n: 3000
-          #|Table size updates: []
+          #|Table size updates: none
           #|Blocks that do not decode: 0
           #|
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: an HPACK bomb, a block that names a large table entry over and over, gets 431 while its decoded list is within twice --header-size-limit, else RST_STREAM ENHANCE_YOUR_CALM with no status, too many fields named over and over get 431, and the connection goes on" {
+  with_definitions([("files.json", hello_and_echo)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let hello = request_fields("GET", "/hello", "localhost")
+      // An entry of 3,938 octets, which fits the table of 4,096 octets with
+      // those of `:path` and `:authority`, so that none is evicted.
+      let bomb = ("x-bomb", String::make(3900, 'b'))
+      let small = ("x-a", "1")
+      let out = []
+      // Each stream's block, made in the order they are sent, as the
+      // client's and smock's tables must stay in step: after the first, each
+      // field is an index of one octet.
+      let streams = [
+        ("the entry once", [..hello, bomb]),
+        ("the entry 5 times", [..hello, ..Array::make(5, bomb)]),
+        ("the entry 16,000 times", [..hello, ..Array::make(16000, bomb)]),
+        ("a small field 100 times", [..hello, ..Array::make(100, small)]),
+        ("a small field 101 times", [..hello, ..Array::make(101, small)]),
+        ("no more", hello),
+      ]
+      let frames = []
+      for i, case in streams {
+        let (label, fields) = case
+        let block = raw.block(fields)
+        out.push(
+          "Stream \{2 * i + 1}, \{label}: a block of \{block.length()} octets, a list of \{list_size(fields)}",
+        )
+        frames.push(headers_frame(2 * i + 1, block))
+      }
+      raw.send(frames)
+      out.push(raw.frames_until_stream_ends(2 * streams.length() - 1))
+      let client = smock.h2c()
+      defer client.close()
+      let response = client.request("GET", "/hello", authority="localhost")
+      out.push("A fresh connection: \{response.line()}")
+      out.push("Journal:")
+      out.push(journaled(smock))
+      out.push(smock.metric("smock_requests_total"))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|Stream 1, the entry once: a block of 2952 octets, a list of 4117
+          #|Stream 3, the entry 5 times: a block of 9 octets, a list of 19869
+          #|Stream 5, the entry 16,000 times: a block of 16004 octets, a list of 63008179
+          #|Stream 7, a small field 100 times: a block of 110 octets, a list of 3779
+          #|Stream 9, a small field 101 times: a block of 105 octets, a list of 3815
+          #|Stream 11, no more: a block of 4 octets, a list of 179
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|DATA 1 END_STREAM 2 octets
+          #|HEADERS 3 END_STREAM END_HEADERS [:status: 431, date: <now>, content-length: 0]
+          #|RST_STREAM 5 ENHANCE_YOUR_CALM
+          #|HEADERS 7 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|DATA 7 END_STREAM 2 octets
+          #|HEADERS 9 END_STREAM END_HEADERS [:status: 431, date: <now>, content-length: 0]
+          #|HEADERS 11 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|DATA 11 END_STREAM 2 octets
+          #|A fresh connection: 200 [smock-mock: files; via=default, date: <now>, content-length: 2] 2 octets, end
+          #|Journal:
+          #|GET /hello
+          #|GET /hello
+          #|GET /hello
+          #|GET /hello
+          #|smock_requests_total{mock="files",stub="hello"} 4
+          #|smock_requests_total{mock="",stub=""} 2
         ),
       )
     })
