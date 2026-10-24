@@ -1,21 +1,189 @@
 // The HTTP/2 side of the Seam 2 harness, for every HTTP/2 test: an HTTP/2
-// client, which is moonhttp's client-side `Conn` over a TCP socket, and
-// raw-frame helpers, which send any frame, malformed ones included, with
-// none of the checks a client makes, and read frames back.
+// client, which is moonhttp's client-side `Conn` over a TCP socket to the
+// plain port (h2c) or over TLS to the TLS port (h2), and raw-frame helpers,
+// which send any frame, malformed ones included, with none of the checks a
+// client makes, and read frames back. Over TLS, the octets go through the
+// OpenSSL bindings' client side, which offers ALPN: moonbitlang/async's TLS
+// client offers none.
 
 ///|
-/// An HTTP/2 connection to smock's plain port by prior knowledge (h2c):
-/// moonhttp's client-side `Conn` over a TCP socket. It sends the preface
-/// and its SETTINGS when it opens, hands back every DATA octet it receives,
-/// so that smock's windows stay open, and keeps the events of streams no
-/// one has asked about yet.
-struct H2Client {
+/// A TLS connection to smock's TLS port through the OpenSSL bindings'
+/// client side. OpenSSL works on memory only, so this moves the octets
+/// between it and the socket.
+struct TlsClient {
   tcp : @socket.Tcp
+  tls : @openssl.Connection
+  /// What each socket read reads into.
+  input : FixedArray[Byte]
+}
+
+///|
+/// Opens a TLS connection to smock's TLS port that offers the protocols in
+/// `alpn` by ALPN, or no ALPN when it is empty, sends `server_name` by SNI
+/// and checks smock's certificate for it, trusting only the PEM
+/// certificates in `trusted` (by default the test root CA). A handshake
+/// that fails raises OpenSSL's reason, such as `tlsv1 alert no application
+/// protocol`.
+async fn Smock::tls(
+  self : Smock,
+  alpn~ : Array[String],
+  server_name~ : String = "localhost",
+  trusted~ : String = @testcerts.root_ca,
+) -> TlsClient {
+  let tls = @openssl.ClientConfig(trusted=@utf8.encode(trusted), alpn~).connect(
+    server_name~,
+  )
+  let tcp = @socket.Tcp::connect(
+    @socket.Addr::parse("127.0.0.1:\{self.tls_port}"),
+  )
+  errdefer tcp.close()
+  let client = { tcp, tls, input: FixedArray::make(16 * 1024, b'\x00'), }
+  let handshake = @async.with_timeout_opt(patience_ms, () => {
+    for ;; {
+      let done = tls.handshake()
+      client.flush()
+      if done {
+        break
+      }
+      let n = past_spurious_eagain(() => tcp.read(client.input))
+      if n == 0 {
+        fail("smock closed the connection during the handshake")
+      }
+      tls.receive(client.input.unsafe_reinterpret_as_bytes()[:n])
+    }
+  })
+  guard handshake is Some(_) else { fail("no TLS handshake in time") }
+  client
+}
+
+///|
+/// The protocol ALPN selected: `none` when none was.
+fn TlsClient::protocol(self : TlsClient) -> String {
+  self.tls.alpn_protocol().unwrap_or("none")
+}
+
+///|
+/// Sends what OpenSSL has written for smock.
+async fn TlsClient::flush(self : TlsClient) -> Unit {
+  let output = self.tls.take_output()
+  if output.length() > 0 {
+    self.tcp.write(output)
+  }
+}
+
+///|
+/// Encrypts `data` and sends it.
+async fn TlsClient::write(self : TlsClient, data : BytesView) -> Unit {
+  self.tls.write(data)
+  self.flush()
+}
+
+///|
+/// Reads plaintext into `buf`, and returns how many octets came: 0 once
+/// smock has ended the connection, with close_notify, a FIN or a reset.
+async fn TlsClient::read(self : TlsClient, buf : FixedArray[Byte]) -> Int32 {
+  for ;; {
+    match self.tls.read(buf, offset=0, max_len=buf.length()) {
+      Data(n) => {
+        self.flush()
+        return n
+      }
+      Closed => return 0
+      NeedInput => {
+        self.flush()
+        let n = past_spurious_eagain(() => self.tcp.read(self.input)) catch {
+          _ => 0
+        }
+        if n == 0 {
+          return 0
+        }
+        self.tls.receive(self.input.unsafe_reinterpret_as_bytes()[:n])
+      }
+    }
+  }
+}
+
+///|
+/// Reads plaintext until smock ends the connection, and returns all of it.
+async fn TlsClient::read_all(self : TlsClient) -> Bytes {
+  let buf = FixedArray::make(16 * 1024, b'\x00')
+  let out = @buffer.Buffer()
+  let result = @async.with_timeout_opt(patience_ms, () => {
+    for ;; {
+      let n = self.read(buf)
+      if n == 0 {
+        break
+      }
+      out.write_bytes(buf.unsafe_reinterpret_as_bytes()[:n])
+    }
+  })
+  guard result is Some(_) else { fail("the TLS connection stayed open") }
+  out.to_bytes()
+}
+
+///|
+fn TlsClient::close(self : TlsClient) -> Unit {
+  self.tcp.close()
+}
+
+///|
+/// What an HTTP/2 test client talks over: TCP to the plain port, or TLS to
+/// the TLS port.
+enum Wire {
+  Cleartext(@socket.Tcp)
+  Encrypted(TlsClient)
+}
+
+///|
+async fn Wire::write(self : Wire, data : BytesView) -> Unit {
+  match self {
+    Cleartext(tcp) => tcp.write(data)
+    Encrypted(tls) => tls.write(data)
+  }
+}
+
+///|
+/// Reads into `buf`, and returns how many octets came: 0 once smock has
+/// ended the connection.
+async fn Wire::read(self : Wire, buf : FixedArray[Byte]) -> Int32 {
+  match self {
+    Cleartext(tcp) => past_spurious_eagain(() => tcp.read(buf))
+    Encrypted(tls) => tls.read(buf)
+  }
+}
+
+///|
+fn Wire::close(self : Wire) -> Unit {
+  match self {
+    Cleartext(tcp) => tcp.close()
+    Encrypted(tls) => tls.close()
+  }
+}
+
+///|
+/// An HTTP/2 connection to smock: moonhttp's client-side `Conn` over TCP to
+/// the plain port by prior knowledge (h2c), or over TLS to the TLS port by
+/// ALPN (h2). It sends the preface and its SETTINGS when it opens, hands
+/// back every DATA octet it receives, so that smock's windows stay open,
+/// and keeps the events of streams no one has asked about yet.
+struct H2Client {
+  wire : Wire
   conn : @http2.Conn
   /// What each read reads into.
   buf : FixedArray[Byte]
   /// The events read but not yet taken, oldest first.
   events : Array[@http2.Event]
+}
+
+///|
+/// An HTTP/2 client over `wire`, which has sent nothing yet.
+fn H2Client::new(wire : Wire) -> H2Client {
+  {
+    wire,
+    conn: @http2.Conn::new(Client),
+    buf: FixedArray::make(16 * 1024, b'\x00'),
+    events: [],
+  }
 }
 
 ///|
@@ -25,12 +193,7 @@ struct H2Client {
 /// that smock reads it in parts.
 async fn Smock::h2c(self : Smock, preface_in~ : Int32 = 0) -> H2Client {
   let tcp = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{self.port}"))
-  let client = {
-    tcp,
-    conn: @http2.Conn::new(Client),
-    buf: FixedArray::make(16 * 1024, b'\x00'),
-    events: [],
-  }
+  let client = H2Client::new(Cleartext(tcp))
   if preface_in > 0 {
     let opening = client.conn.take()
     let preface = @http2.preface.length()
@@ -53,8 +216,35 @@ async fn Smock::h2c(self : Smock, preface_in~ : Int32 = 0) -> H2Client {
 }
 
 ///|
+/// Opens an HTTP/2 connection to smock's TLS port, a TLS connection that
+/// offers `h2` alone by ALPN, as `Smock::tls` opens it with `server_name`
+/// and `trusted`, and sends the preface and the client's SETTINGS. Fails
+/// unless ALPN selected `h2`.
+async fn Smock::h2(
+  self : Smock,
+  server_name~ : String = "localhost",
+  trusted~ : String = @testcerts.root_ca,
+) -> H2Client {
+  let tls = self.tls(alpn=["h2"], server_name~, trusted~)
+  if tls.protocol() != "h2" {
+    tls.close()
+    fail("ALPN selected \{tls.protocol()}, not h2")
+  }
+  H2Client::over(Encrypted(tls))
+}
+
+///|
+/// An HTTP/2 client over `wire`, once it has sent the preface and its
+/// SETTINGS.
+async fn H2Client::over(wire : Wire) -> H2Client {
+  let client = H2Client::new(wire)
+  client.flush()
+  client
+}
+
+///|
 fn H2Client::close(self : H2Client) -> Unit {
-  self.tcp.close()
+  self.wire.close()
 }
 
 ///|
@@ -62,7 +252,7 @@ fn H2Client::close(self : H2Client) -> Unit {
 async fn H2Client::flush(self : H2Client) -> Unit {
   let out = self.conn.take()
   if out.length() > 0 {
-    self.tcp.write(out)
+    self.wire.write(out)
   }
 }
 
@@ -77,9 +267,7 @@ async fn H2Client::read_event(self : H2Client) -> @http2.Event {
       match event {
         NeedData => {
           self.flush()
-          let n = past_spurious_eagain(() => self.tcp.read(self.buf)) catch {
-            _ => 0
-          }
+          let n = self.wire.read(self.buf) catch { _ => 0 }
           self.conn.receive(self.buf.unsafe_reinterpret_as_bytes()[:n])
         }
         Data(stream~, data~) => {
@@ -318,31 +506,50 @@ fn error_name(code : Int32) -> String {
 }
 
 ///|
-/// A connection to smock's plain port that sends frames exactly as a test
-/// builds them, with moonhttp's frame encoder and header blocks from its
-/// HPACK encoder, and none of the checks a client makes, so that malformed
-/// requests can be sent; and reads frames back, decoding their header
-/// blocks with its HPACK decoder.
+/// A connection to smock's plain port, or by ALPN `h2` to its TLS port,
+/// that sends frames exactly as a test builds them, with moonhttp's frame
+/// encoder and header blocks from its HPACK encoder, and none of the checks
+/// a client makes, so that malformed requests can be sent; and reads frames
+/// back, decoding their header blocks with its HPACK decoder.
 struct RawH2 {
-  tcp : @socket.Tcp
+  wire : Wire
   encoder : @hpack.Encoder
   decoder : @hpack.Decoder
+  /// What each read reads into.
+  buf : FixedArray[Byte]
   /// The octets received and not yet read as frames.
   mut received : Bytes
 }
 
 ///|
-/// Opens a connection to smock's plain port and sends the preface and,
-/// unless `settings` is false, an empty SETTINGS frame.
-async fn Smock::raw_h2(self : Smock, settings~ : Bool = true) -> RawH2 {
-  let tcp = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{self.port}"))
+/// Opens a connection to smock's plain port, or with `tls` to its TLS port,
+/// offering `h2` alone by ALPN, and sends the preface and, unless
+/// `settings` is false, an empty SETTINGS frame.
+async fn Smock::raw_h2(
+  self : Smock,
+  settings~ : Bool = true,
+  tls~ : Bool = false,
+) -> RawH2 {
+  let wire = if tls {
+    let tls = self.tls(alpn=["h2"])
+    if tls.protocol() != "h2" {
+      tls.close()
+      fail("ALPN selected \{tls.protocol()}, not h2")
+    }
+    Encrypted(tls)
+  } else {
+    Cleartext(
+      @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{self.port}")),
+    )
+  }
   let raw = {
-    tcp,
+    wire,
     encoder: @hpack.Encoder::new(),
     decoder: @hpack.Decoder::new(),
+    buf: FixedArray::make(16 * 1024, b'\x00'),
     received: b"",
   }
-  tcp.write(@http2.preface)
+  wire.write(@http2.preface)
   if settings {
     raw.send([Settings(params=[], ack=false)])
   }
@@ -351,7 +558,7 @@ async fn Smock::raw_h2(self : Smock, settings~ : Bool = true) -> RawH2 {
 
 ///|
 fn RawH2::close(self : RawH2) -> Unit {
-  self.tcp.close()
+  self.wire.close()
 }
 
 ///|
@@ -361,13 +568,13 @@ async fn RawH2::send(self : RawH2, frames : Array[@http2.Frame]) -> Unit {
   for frame in frames {
     out.write_bytes(frame.encode())
   }
-  self.tcp.write(out.to_bytes())
+  self.wire.write(out.to_bytes())
 }
 
 ///|
 /// Sends `bytes` as they are.
 async fn RawH2::send_bytes(self : RawH2, bytes : Bytes) -> Unit {
-  self.tcp.write(bytes)
+  self.wire.write(bytes)
 }
 
 ///|
@@ -400,11 +607,10 @@ async fn RawH2::read_frame(self : RawH2) -> @http2.Frame? {
     for ;; {
       let (frame, used) = @http2.decode(self.received) catch {
         Incomplete => {
-          let more = past_spurious_eagain(() => self.tcp.read_some()) catch {
-            _ => None
-          }
-          guard more is Some(more) else { break None }
-          self.received = self.received + more
+          let n = self.wire.read(self.buf) catch { _ => 0 }
+          guard n > 0 else { break None }
+          self.received = self.received +
+            self.buf.unsafe_reinterpret_as_bytes()[:n].to_owned()
           continue
         }
         err => fail("smock sent a frame that does not decode: \{err}")

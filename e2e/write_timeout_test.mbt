@@ -140,10 +140,10 @@ async test "write timeout: an Admin API client that stops reading is closed too,
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"*","names":["localhost","127.0.0.1","::1"]}
-        #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*","protocols":["http/1.1","h2c"]}
+        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["h2","http/1.1"]}
         #|{"level":"info","msg":"drain started","timeoutMs":20000}
         #|{"level":"info","msg":"drain ended","connectionsCut":0}
       ),

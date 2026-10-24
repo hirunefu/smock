@@ -134,9 +134,9 @@ async test "rewriting the certificate files rotates the certificate without a re
             #|{"level":"info","msg":"random seed","seed":"*"}
             #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
             #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-            #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-            #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-            #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","certFile":"*/tls.crt","keyFile":"*/tls.key"}
+            #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
+            #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*","protocols":["http/1.1","h2c"]}
+            #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["h2","http/1.1"],"certFile":"*/tls.crt","keyFile":"*/tls.key"}
             #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
             #|{"level":"info","msg":"drain started","timeoutMs":20000}
             #|{"level":"info","msg":"drain ended","connectionsCut":0}
@@ -686,7 +686,7 @@ async test "smock serve refuses to start when a Mock's certificate pair cannot b
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","certFile":"*/missing.pem","keyFile":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
         #|---
         #|status 1
@@ -694,7 +694,7 @@ async test "smock serve refuses to start when a Mock's certificate pair cannot b
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","certFile":"*/rsa-chain.pem","keyFile":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 2

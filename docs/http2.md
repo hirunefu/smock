@@ -23,6 +23,42 @@ upgrade is ignored.
 The admin port serves HTTP/1.1 only. It never looks for the preface, so a
 preface sent there gets `505 HTTP Version Not Supported`.
 
+## h2 on the TLS port
+
+On the TLS port, ALPN chooses the protocol. smock offers `h2`, then
+`http/1.1`, with every certificate: the certificate files, the self-signed
+certificate and a Mock's own.
+
+- A client that offers `h2` gets HTTP/2, whether it also offers `http/1.1`
+  or not. So a client that offers only `h2`, as some load generators do,
+  completes the handshake.
+- A client that offers only `http/1.1`, or sends no ALPN, gets HTTP/1.1, as
+  before.
+- A client that offers neither fails the handshake, with the
+  `no_application_protocol` alert.
+
+```sh
+curl --http2 --insecure https://localhost:8443/users/1
+```
+
+curl's `--http2` offers `h2` and `http/1.1`. `--insecure` skips the check
+of smock's self-signed certificate; leave it out with a certificate the
+client trusts.
+
+The TLS port never looks for the preface, since HTTP/2 over TLS needs ALPN
+(RFC 9113, section 3.3). A connection that chose `http/1.1`, or no ALPN, is
+HTTP/1.1, so a preface sent on it gets `505 HTTP Version Not Supported`.
+
+SNI only chooses the certificate. Each stream goes to the Mock its own
+`:authority` names, as the next section says. So a browser that sends
+requests for several Hosts that the certificate covers over one connection
+reaches each Host's Mock, and smock never answers `421 Misdirected
+Request`.
+
+Each port's `listening` log entry names the protocols it serves:
+`["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]` on the TLS
+port and `["http/1.1"]` on the admin port.
+
 ## What a Stub sees
 
 Each HTTP/2 stream carries one request, which reaches the Mocks once the
@@ -240,8 +276,10 @@ Over HTTP/2, the read and idle timeouts work per stream and per connection.
   block that has begun holds it off. A new stream restarts it, and it runs
   again from the response that ends the last stream in progress. Past it,
   the connection gets GOAWAY `NO_ERROR` and closes. It also bounds the wait
-  for a connection's first octet, as over HTTP/1.1, and the rest of the
-  preface has the read timeout from that octet.
+  for a connection's first octet, as over HTTP/1.1. On the plain port, the
+  rest of the preface has the read timeout from that octet. On the TLS
+  port, where ALPN has already chosen HTTP/2, the idle timeout bounds the
+  whole preface.
 - smock's own waits, such as a delay, count toward neither.
 - `--write-timeout-ms` closes a connection that takes nothing of what smock
   writes for that long, without GOAWAY, as over HTTP/1.1.
@@ -299,7 +337,8 @@ hand with other clients and the benchmarks
 ([Upgrading moonhttp](releasing.md#upgrading-moonhttp)).
 
 CI runs h2spec 2.6.0, which checks a server against RFC 7540 and RFC 7541,
-against the plain port on every push.
-[`scripts/h2spec/plain.txt`](../scripts/h2spec/plain.txt) lists the cases
-that do not pass yet, each with its reason
+against the plain port and the TLS port on every push.
+[`scripts/h2spec/plain.txt`](../scripts/h2spec/plain.txt) and
+[`scripts/h2spec/tls.txt`](../scripts/h2spec/tls.txt) list the cases that
+do not pass yet on each port, with their reasons
 ([Build and test](../README.md#build-and-test)).
