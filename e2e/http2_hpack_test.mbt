@@ -237,25 +237,25 @@ async test "h2c: with a header table of 2^31-1 allowed, a few thousand responses
       } else {
         updates.map(update => update.to_string()).join(", ")
       }
-      let shown = if failures.length() > 3 {
-        [..failures[:3], "..."]
-      } else {
-        failures
+      let out = [
+        "Requests: \{batches * batch}, streams ended: \{ended}, DATA frames: \{data}",
+        "Response blocks: \{blocks}, decoded: \{decoded}, with the stream's own x-n: \{matched}",
+        "Table size updates: \{shown_updates}",
+        "Blocks that do not decode: \{failures.length()}",
+      ]
+      // The first few, if any.
+      for i, failure in failures {
+        if i < 3 {
+          out.push(failure)
+        }
       }
       inspect(
-        (
-          $|Requests: \{batches * batch}, streams ended: \{ended}, DATA frames: \{data}
-          $|Response blocks: \{blocks}, decoded: \{decoded}, with the stream's own x-n: \{matched}
-          $|Table size updates: \{shown_updates}
-          $|Blocks that do not decode: \{failures.length()}
-          $|\{shown.join("\n")}
-        ),
+        out.join("\n"),
         content=(
           #|Requests: 3000, streams ended: 3000, DATA frames: 3000
           #|Response blocks: 3000, decoded: 3000, with the stream's own x-n: 3000
           #|Table size updates: none
           #|Blocks that do not decode: 0
-          #|
         ),
       )
     })
