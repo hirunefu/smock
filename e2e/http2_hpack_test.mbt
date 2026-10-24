@@ -327,3 +327,153 @@ async test "h2c: an HPACK bomb, a block that names a large table entry over and 
     })
   })
 }
+
+///|
+/// The header block of `GET /hello` to `localhost` with no field added to
+/// the dynamic table: indexes of the static table and literals without
+/// indexing (RFC 7541, sections 6.1 and 6.2.2), so that octets after it
+/// meet the table the blocks before left.
+let hello_unindexed : Bytes = b"\x82\x86\x04\x06/hello\x01\x09localhost"
+
+///|
+async test "h2c: a header block that does not decode, with a Huffman code with EOS or bad padding, an index that names no entry, or a table size update past 4,096 octets, the size of smock's decoding table, gets GOAWAY COMPRESSION_ERROR, and a fresh connection is served; the table keeps an entry of 4,096 octets and not one larger" {
+  with_definitions([("files.json", hello_and_echo)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let out = []
+      // Each case: the fields stream 1 adds to `GET /hello`, then the block
+      // of stream 3.
+      for
+        case in [
+          (
+            "a Huffman code with EOS",
+            [],
+            hello_unindexed + b"\x00\x03x-a\x84\xff\xff\xff\xff",
+          ),
+          (
+            "a Huffman code padded with more than seven bits",
+            [],
+            hello_unindexed + b"\x00\x03x-a\x82\x1f\xff",
+          ),
+          (
+            "a Huffman code padded with zeros",
+            [],
+            hello_unindexed + b"\x00\x03x-a\x81\x18",
+          ),
+          ("index 0", [], hello_unindexed + b"\x80"),
+          ("an index past the table", [], hello_unindexed + b"\xe4"),
+          (
+            "a table size update to 4,097",
+            [],
+            @hpack.size_update(4097) + hello_unindexed,
+          ),
+          (
+            "a table size update to 4,096",
+            [],
+            @hpack.size_update(4096) + hello_unindexed,
+          ),
+          (
+            "an index to an entry of 4,097 octets, which the table does not keep",
+            [("x-big", String::make(4060, 'b'))],
+            hello_unindexed + b"\xbe",
+          ),
+          (
+            "an index to an entry of 4,096 octets, which the table keeps",
+            [("x-big", String::make(4059, 'b'))],
+            hello_unindexed + b"\xbe",
+          ),
+        ] {
+        let (label, added, block) = case
+        let raw = smock.raw_h2()
+        let hello = request_fields("GET", "/hello", "localhost")
+        raw.send([
+          headers_frame(1, raw.block([..hello, ..added])),
+          headers_frame(3, block),
+        ])
+        out.push("\{label}:")
+        // The frames until stream 3 ends or smock closes the connection,
+        // with the GOAWAY's debug data, which says why.
+        for ;; {
+          guard raw.read_frame() is Some(frame) else {
+            out.push("  closed")
+            break
+          }
+          match frame {
+            Settings(..) => continue
+            GoAway(debug~, ..) =>
+              out.push(
+                "  \{raw.render_frame(frame)}: \{@utf8.decode_lossy(debug)}",
+              )
+            _ => out.push("  \{raw.render_frame(frame)}")
+          }
+          if frame is Data(stream_id=3, end_stream=true, ..) {
+            break
+          }
+        }
+        raw.close()
+        let client = smock.h2c()
+        let response = client.request("GET", "/hello", authority="localhost")
+        client.close()
+        out.push("  a fresh connection: \{response.status}")
+      }
+      inspect(
+        out.join("\n"),
+        content=(
+          #|a Huffman code with EOS:
+          #|  HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 1 END_STREAM 2 octets
+          #|  GOAWAY last=1 COMPRESSION_ERROR: Malformed(a Huffman string literal: Eos)
+          #|  closed
+          #|  a fresh connection: 200
+          #|a Huffman code padded with more than seven bits:
+          #|  HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 1 END_STREAM 2 octets
+          #|  GOAWAY last=1 COMPRESSION_ERROR: Malformed(a Huffman string literal: Padding(more than seven bits))
+          #|  closed
+          #|  a fresh connection: 200
+          #|a Huffman code padded with zeros:
+          #|  HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 1 END_STREAM 2 octets
+          #|  GOAWAY last=1 COMPRESSION_ERROR: Malformed(a Huffman string literal: Padding(not a run of ones))
+          #|  closed
+          #|  a fresh connection: 200
+          #|index 0:
+          #|  HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 1 END_STREAM 2 octets
+          #|  GOAWAY last=1 COMPRESSION_ERROR: Malformed(indexed header field with index 0)
+          #|  closed
+          #|  a fresh connection: 200
+          #|an index past the table:
+          #|  HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 1 END_STREAM 2 octets
+          #|  GOAWAY last=1 COMPRESSION_ERROR: Index(got=100)
+          #|  closed
+          #|  a fresh connection: 200
+          #|a table size update to 4,097:
+          #|  HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 1 END_STREAM 2 octets
+          #|  GOAWAY last=1 COMPRESSION_ERROR: Malformed(a dynamic table size update to 4097, past the agreed 4096)
+          #|  closed
+          #|  a fresh connection: 200
+          #|a table size update to 4,096:
+          #|  HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 1 END_STREAM 2 octets
+          #|  HEADERS 3 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 3 END_STREAM 2 octets
+          #|  a fresh connection: 200
+          #|an index to an entry of 4,097 octets, which the table does not keep:
+          #|  HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 1 END_STREAM 2 octets
+          #|  GOAWAY last=1 COMPRESSION_ERROR: Index(got=62)
+          #|  closed
+          #|  a fresh connection: 200
+          #|an index to an entry of 4,096 octets, which the table keeps:
+          #|  HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 1 END_STREAM 2 octets
+          #|  HEADERS 3 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|  DATA 3 END_STREAM 2 octets
+          #|  a fresh connection: 200
+        ),
+      )
+    })
+  })
+}
