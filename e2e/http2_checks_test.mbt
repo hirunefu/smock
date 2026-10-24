@@ -287,3 +287,84 @@ async test "h2c: a stream refused with 400 counts as rejected traffic, with mock
     })
   })
 }
+
+///|
+async test "h2c: a stream that breaks one of RFC 9113's field rules h2spec does not test is reset with PROTOCOL_ERROR by moonhttp, while another stream on the connection is answered" {
+  with_definitions([("files.json", uploads)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let cases = [
+        ("a field name with a space", ("x note", "1")),
+        ("a field name with a control octet", ("x\u{01}note", "1")),
+        ("a field name with DEL", ("x-note\u{7f}", "1")),
+        ("a field name with octets above 0x7F", ("caf\u{e9}", "1")),
+        ("a field name with a colon", ("x:note", "1")),
+        ("an empty field name (CVE-2019-9516)", ("", "1")),
+        ("a field value with NUL", ("x-note", "a\u{00}b")),
+        ("a field value with CR", ("x-note", "a\rb")),
+        ("a field value with LF", ("x-note", "a\nb")),
+        ("a field value with a space at its start", ("x-note", " a")),
+        ("a field value with a space at its end", ("x-note", "a ")),
+        ("a field value with a tab at its start", ("x-note", "\ta")),
+        ("a field value with a tab at its end", ("x-note", "a\t")),
+      ]
+      // Stream 1 is an upload still in progress while the others arrive.
+      let frames = [
+        headers_frame(
+          1,
+          raw.block(request_fields("POST", "/upload", "localhost")),
+          end_stream=false,
+        ),
+      ]
+      let labels : Map[Int32, String] = Map([])
+      for i, case in cases {
+        let stream = 3 + 2 * i
+        let fields = request_fields("GET", "/x", "localhost")
+        fields.push(case.1)
+        frames.push(headers_frame(stream, raw.block(fields)))
+        labels[stream] = case.0
+      }
+      frames.push(Data(stream_id=1, data=b"abc", end_stream=true, padding=0))
+      raw.send(frames)
+      let out = []
+      for ;; {
+        guard raw.read_frame() is Some(frame) else {
+          out.push("closed")
+          break
+        }
+        match frame {
+          RstStream(stream_id~, error_code~) if labels.get(stream_id)
+            is Some(label) =>
+            out.push("\{label}: RST_STREAM \{error_name(error_code)}")
+          _ => out.push(raw.render_frame(frame))
+        }
+        if frame is Data(stream_id=1, end_stream=true, ..) {
+          break
+        }
+      }
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|a field name with a space: RST_STREAM PROTOCOL_ERROR
+          #|a field name with a control octet: RST_STREAM PROTOCOL_ERROR
+          #|a field name with DEL: RST_STREAM PROTOCOL_ERROR
+          #|a field name with octets above 0x7F: RST_STREAM PROTOCOL_ERROR
+          #|a field name with a colon: RST_STREAM PROTOCOL_ERROR
+          #|an empty field name (CVE-2019-9516): RST_STREAM PROTOCOL_ERROR
+          #|a field value with NUL: RST_STREAM PROTOCOL_ERROR
+          #|a field value with CR: RST_STREAM PROTOCOL_ERROR
+          #|a field value with LF: RST_STREAM PROTOCOL_ERROR
+          #|a field value with a space at its start: RST_STREAM PROTOCOL_ERROR
+          #|a field value with a space at its end: RST_STREAM PROTOCOL_ERROR
+          #|a field value with a tab at its start: RST_STREAM PROTOCOL_ERROR
+          #|a field value with a tab at its end: RST_STREAM PROTOCOL_ERROR
+          #|HEADERS 1 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 1 END_STREAM 6 octets
+        ),
+      )
+    })
+  })
+}
