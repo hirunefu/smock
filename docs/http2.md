@@ -472,10 +472,58 @@ connection.
 | Pattern | Bound | Past it |
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
+| Frames that do no work: SETTINGS, PING, PRIORITY, reset and empty-frame floods (CVE-2019-9512, -9513, -9514, -9515, -9518) | At most 100 in any one second ([Frames that do no work](#frames-that-do-no-work)). | GOAWAY `ENHANCE_YOUR_CALM`, and the connection closes. |
 | A client that stops reading or keeps its windows at zero (CVE-2019-9517) | `--write-timeout-ms`: a write that makes no progress, or a body that waits for a window, for that long ([Timeouts](#timeouts)). | The connection closes, without GOAWAY. A stream whose own window alone stays at zero gets RST_STREAM `CANCEL`, and the connection goes on. |
 | Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. Each window update lets smock send, which starts the write timeout again, so a client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
 | Header fields with empty names (CVE-2019-9516) | moonhttp refuses an empty field name. | RST_STREAM `PROTOCOL_ERROR` on that stream. |
 | Request bodies | `--body-limit` per stream, under the concurrent-streams limit. | 413, then RST_STREAM `NO_ERROR` on that stream ([Request bodies](#request-bodies)). |
+
+A defence that closes a connection with GOAWAY uses `ENHANCE_YOUR_CALM`,
+and names the pattern in the GOAWAY's debug data. The connection then
+closes at once. Its streams in progress end with it. A response still
+waiting, for its delay or for the client's windows, goes no further, and
+its request's Journal entry is committed then. A request still arriving
+never reaches the Mocks. The client opens a new connection for the rest.
+
+Unlike a timeout, such a close is logged: one line per connection, at
+level `warn`, that names the pattern and the kind of frame that passed the
+bound. No metric counts it.
+
+```json
+{"time":"2026-10-25T09:00:00.000Z","level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}
+```
+
+### Frames that do no work
+
+Some frames cost smock a little work each, or make it queue a reply, but
+ask nothing of the Mocks. A client that sends more than 100 of them in any
+one second, on one connection, gets GOAWAY `ENHANCE_YOUR_CALM`, as above.
+The log line's `frame` names the kind of the frame that passed the bound.
+These frames count:
+
+- SETTINGS frames (`SETTINGS`). An acknowledgement counts only beyond the
+  one smock is owed for its own SETTINGS (`SETTINGS acknowledgement`).
+- PING frames (`PING`), each only when smock has sent no HEADERS or DATA
+  since the client's last PING. gRPC counts PINGs this way, so a client
+  that sends a PING for each DATA frame it receives, to estimate its
+  bandwidth, is not cut while responses stream to it. A PING
+  acknowledgement counts when it answers no PING that smock sent
+  (`PING acknowledgement`).
+- PRIORITY frames (`PRIORITY`): smock ignores priority signals.
+- DATA frames that carry no data, padded or not, and do not end their
+  stream (`empty DATA`).
+- DATA, WINDOW_UPDATE and RST_STREAM frames on a stream that has closed
+  (`DATA on a closed stream`, and so on), and HEADERS on a stream that
+  smock reset, which are ignored (`HEADERS on a stream smock reset`).
+  HEADERS on another stream that has closed end the connection at once
+  ([Connection errors](#connection-errors)).
+- Frames of a type that HTTP/2 does not define (`unknown type`).
+
+The bound holds for any one second, however long the connection lives: a
+client that sends such frames now and then is never cut. Frames that do
+some work never count: HEADERS that open a stream, DATA that carries a
+body, and WINDOW_UPDATE frames on the connection or on a stream in
+progress.
 
 ## The drain
 
@@ -511,6 +559,8 @@ opens a new connection for the rest.
   gets `FRAME_SIZE_ERROR`.
 - A header block over twice `--header-size-limit` as received gets
   `ENHANCE_YOUR_CALM` ([Header lists](#header-lists)).
+- A connection that a defence closes with GOAWAY gets `ENHANCE_YOUR_CALM`,
+  and is logged ([Defences](#defences)).
 - HEADERS on a stream ID that the client has already used get
   `PROTOCOL_ERROR` (RFC 9113, section 5.1.1). That covers a stream that
   has ended, one the client reset, and an ID the client skipped when it

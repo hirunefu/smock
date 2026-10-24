@@ -69,10 +69,13 @@ of each GitHub release include its section
   body. An events Stub streams one event stream per HTTP/2 stream, several
   at once on one connection: the DATA of its last event ends the HTTP/2
   stream, and a client that resets the HTTP/2 stream ends the event stream
-  at once. On SIGTERM, each HTTP/2 connection gets GOAWAY and a PING, then
-  a second GOAWAY that names the last stream smock received: the streams up
-  to it finish, and the client sends the others again on a new connection.
-  See [docs/http2.md](docs/http2.md).
+  at once. A client that sends more than 100 frames that do no work in one
+  second, such as a flood of PING or SETTINGS frames, gets GOAWAY
+  `ENHANCE_YOUR_CALM`, and smock logs one line that names the pattern. On
+  SIGTERM, each HTTP/2 connection gets GOAWAY and a PING, then a second
+  GOAWAY that names the last stream smock received: the streams up to it
+  finish, and the client sends the others again on a new connection. See
+  [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
   `Upgrade`, `Proxy-Connection` and `TE` left out. HEAD, 204 and 304 are
