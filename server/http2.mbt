@@ -81,6 +81,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
       conn: @http2.Conn::new(Server, settings=h2_settings),
       reader: FrameReader::new(read),
       requests: Map([]),
+      streams: StreamRecord::new(),
       watchdog,
       connection,
       idle_timeout,
@@ -108,6 +109,9 @@ priv struct H2Connection {
   /// The requests in progress, by stream: begun, and neither ended nor
   /// reset by the client.
   requests : Map[Int32, H2Request]
+  /// The client's streams: the highest ID seen, the streams open, and the
+  /// streams this side reset.
+  streams : StreamRecord
   /// The timeouts of the connection's waits on its client.
   watchdog : Watchdog
   connection : Connection
@@ -180,14 +184,20 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::serve(
 /// Judges `frame`, a whole frame from the client whose header is `head`,
 /// against the stream state the frames before it left, before the `Conn`
 /// sees it: `None` hands it to the `Conn`, and `Some(code)` ends the
-/// connection with GOAWAY `code` instead. For now every frame is handed
-/// over, and the `Conn` alone enforces RFC 9113's rules.
+/// connection with GOAWAY `code` instead. HEADERS on a client stream ID
+/// already used, whose stream is neither open nor reset by this side, get
+/// `PROTOCOL_ERROR` (RFC 9113, section 5.1.1); the `Conn` enforces the rest
+/// of RFC 9113's rules.
 fn H2Connection::judge(
-  _self : H2Connection,
-  _head : @http2.FrameHeader,
+  self : H2Connection,
+  head : @http2.FrameHeader,
   _frame : BytesView,
 ) -> Int32? {
-  None
+  if self.streams.see(head) {
+    None
+  } else {
+    Some(@http2.error_protocol_error)
+  }
 }
 
 ///|
@@ -202,12 +212,16 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
   for ;; {
     let event = self.conn.next() catch { _ => return false }
     match event {
-      NeedData | Closed => return true
+      NeedData | Closed => {
+        self.streams.settle()
+        return true
+      }
       Request(stream~, fields~) => {
         if self.requests.is_empty() {
           self.read_deadline = self.read_at + self.read_timeout
         }
         self.requests[stream] = H2Request::new(fields)
+        self.streams.opened(stream)
       }
       Data(stream~, data~) => {
         if self.requests.get(stream) is Some(request) {
@@ -219,17 +233,27 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
           _ => return false
         }
       }
-      End(stream~) =>
+      End(stream~) => {
+        self.streams.ended_by_client(stream)
         if self.requests.get(stream) is Some(request) {
           self.requests.remove(stream)
           self.respond(stream, request)
           self.end_stream()
         }
-      Reset(stream~, ..) =>
+      }
+      Reset(stream~, remote~, ..) => {
+        // smock's own resets give no event, so one not from the client is
+        // moonhttp's.
+        if remote {
+          self.streams.reset_by_client(stream)
+        } else {
+          self.streams.remember(stream, Moonhttp)
+        }
         if self.requests.contains(stream) {
           self.requests.remove(stream)
           self.end_stream()
         }
+      }
       // Trailers are ignored. The `Conn` has acknowledged SETTINGS and
       // answered PING itself, and window updates and the client's GOAWAY
       // ask nothing of a stream that is answered at once.
@@ -330,8 +354,12 @@ async fn H2Connection::respond(
   if body.length() == 0 {
     ports.commit(outcome.journal)
     self.conn.headers(stream, fields, end=true) catch {
-      _ => self.reset_after(stream, None)
+      _ => {
+        self.reset_after(stream, None)
+        return
+      }
     }
+    self.streams.ended_by_smock(stream)
     return
   }
   self.conn.headers(stream, fields) catch {
@@ -343,8 +371,9 @@ async fn H2Connection::respond(
   ports.commit(outcome.journal)
   // The body fits the windows, so the `Conn` takes it.
   self.conn.data(stream, body, end=true) catch {
-    _ => ()
+    _ => return
   }
+  self.streams.ended_by_smock(stream)
 }
 
 ///|

@@ -430,6 +430,32 @@ async fn RawH2::frames_until_end(self : RawH2) -> String {
 }
 
 ///|
+/// Reads frames until one ends `stream` (DATA or HEADERS with END_STREAM,
+/// or RST_STREAM) or smock ends the connection, and shows each as
+/// `render_frame` does, one per line, with `closed` at the end of the
+/// connection.
+async fn RawH2::frames_until_stream_ends(
+  self : RawH2,
+  stream : Int32,
+) -> String {
+  let out = []
+  for ;; {
+    guard self.read_frame() is Some(frame) else {
+      out.push("closed")
+      break
+    }
+    out.push(self.render_frame(frame))
+    match frame {
+      Data(stream_id~, end_stream=true, ..)
+      | Headers(stream_id~, end_stream=true, ..)
+      | RstStream(stream_id~, ..) if stream_id == stream => break
+      _ => ()
+    }
+  }
+  out.join("\n")
+}
+
+///|
 /// A frame as a test shows it: its type, its stream, its flags and what
 /// it carries, header blocks decoded.
 fn RawH2::render_frame(self : RawH2, frame : @http2.Frame) -> String {
