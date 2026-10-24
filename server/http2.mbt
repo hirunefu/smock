@@ -72,9 +72,10 @@ fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
 /// again, it writes what the `Conn` queued. A stream's request reaches the
 /// engine when the client ends the stream, and its response is queued
 /// while that event is handled, unless it waits: a response with a delay
-/// is queued by a task of its own, once the delay is over, so that the
-/// other streams are answered meanwhile. A stream the client resets before
-/// it ends never reaches the engine.
+/// is queued by a task of its own, once the delay is over, and a body
+/// larger than the client's windows goes out from a task of its own as the
+/// client widens them, so that the other streams are answered meanwhile. A
+/// stream the client resets before it ends never reaches the engine.
 async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
   self : MockPorts,
   stream : S,

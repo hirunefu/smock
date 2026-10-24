@@ -89,11 +89,22 @@ The other streams of the connection are answered meanwhile, so a slow call
 does not hold up the fast ones a client sends beside it on the same
 connection, as with a real server.
 
-A stream that the client resets during its delay stops waiting at once,
-and gets no response. So do a stream that smock resets because a frame the
-client sent on it breaks the protocol, and every stream of a connection
-that closes. Each such request is in the Journal, as a request whose client
-goes away is.
+A response body larger than the client's flow-control windows waits in
+its own stream too. smock sends what the windows allow, in DATA frames no
+larger than the client's frame size, and sends more each time the client
+widens a window: with WINDOW_UPDATE for the stream or for the connection,
+or with a SETTINGS frame that raises the initial window. So a client with
+small windows still gets the whole body, and the other streams of the
+connection go on meanwhile. When several streams wait for the connection
+window, they get it in the order they began to wait, and a stream that has
+sent what it was given waits behind the others. Priority signals are
+accepted and ignored.
+
+A stream that the client resets during its delay, or while its body waits
+for window, stops waiting at once, and gets no more of its response. So do
+a stream that smock resets because a frame the client sent on it breaks the
+protocol, and every stream of a connection that closes. Each such request
+is in the Journal, as a request whose client goes away is.
 
 ## The Journal
 
@@ -140,6 +151,7 @@ connection.
 | Pattern | Bound | Past it |
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
+| Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. A client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
 
 ## Connection errors
 
