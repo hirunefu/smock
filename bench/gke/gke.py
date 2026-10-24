@@ -1176,13 +1176,17 @@ def node_text(node):
 
 
 def traffic_check_text(check):
-    """What the traffic check found, for people: `-` when the load generator
-    did none."""
+    """What the traffic check found, for people, over HTTP/1.1 and then over
+    HTTP/2 where it checked that too: `-` when the load generator did
+    none."""
     if check is None:
         return "-"
     names = {"plain": "plain", "tls": "TLS"}
-    return ", ".join(f"{names[name]} HTTP {port['status']}" if port["answered"]
-                     else f"{names[name]} no answer ({port['error']})" for name, port in check["ports"].items())
+    found = [(name, "HTTP", port) for name, port in check["ports"].items()]
+    found += [(name, "HTTP/2", port) for name, port in check.get("http2", {}).items()]
+    return ", ".join(f"{names[name]} {version} {port['status']}" if port["answered"]
+                     else f"{names[name]} {'' if version == 'HTTP' else 'HTTP/2 '}no answer ({port['error']})"
+                     for name, version, port in found)
 
 
 def gke_markdown(results):

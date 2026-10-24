@@ -1099,7 +1099,7 @@ def case_problem(case):
     if protocol not in PROTOCOLS:
         return (f"case {case['name']} has the protocol {protocol}, which the harness does not know: "
                 f"{', '.join(list(PROTOCOLS)[:-1])} or {list(PROTOCOLS)[-1]}")
-    if PROTOCOLS[protocol][1] and case["connection"] == "new-per-request":
+    if over_http2(protocol) and case["connection"] == "new-per-request":
         return (f"case {case['name']} opens a new connection per request over HTTP/2 ({protocol}), which oha cannot "
                 "do: give it keep-alive connections")
     return None
@@ -1109,6 +1109,11 @@ def traffic_port(protocol):
     """smock's traffic port that a case over `protocol` sends to: `tls` over
     TLS, else `plain`."""
     return "tls" if PROTOCOLS[protocol][0] else "plain"
+
+
+def over_http2(protocol):
+    """Whether a case over `protocol` sends HTTP/2."""
+    return PROTOCOLS[protocol][1]
 
 
 def oha_request(protocol, request, address, port):

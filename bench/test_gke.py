@@ -1557,17 +1557,52 @@ class SilentPort:
         self.listener.close()
 
 
+class Http1Only:
+    """A port on this machine that answers every request on a connection
+    with an empty HTTP/1.1 200 and closes it, as a server without HTTP/2
+    does: the HTTP/2 preface gets that answer too, which no HTTP/2 client
+    takes for one."""
+
+    def __enter__(self):
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(64)
+        self.port = self.listener.getsockname()[1]
+        threading.Thread(target=self.answer, daemon=True).start()
+        return self
+
+    def answer(self):
+        while True:
+            try:
+                connection, _ = self.listener.accept()
+            except OSError:
+                return
+            with connection:
+                request = b""
+                while b"\r\n\r\n" not in request:
+                    chunk = connection.recv(65536)
+                    if not chunk:
+                        break
+                    request += chunk
+                connection.sendall(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+
+    def __exit__(self, *_):
+        self.listener.close()
+
+
 class Generator(Helper):
     """The load generator sends a profile's steps the way bench/bench.py
     does, and reports each as summarize reads it."""
 
-    def generator_plan(self, rates=(200,)):
+    def generator_plan(self, rates=(200,), http2=False):
         """The small plan with short steps, at `rates`, over plain HTTP and
-        then TLS, and over h2c and h2."""
+        then TLS, and with `http2`, over h2c and h2 after them."""
         plan = json.loads(small_plan(self.directory(), rates=rates).read_text())
         plan.update(ramp_s=0.5, duration_s=2, tail_s=1, cooldown_s=0, idle_rss={"settle_s": 0.5})
-        for name, protocol in (("https-keep-alive", "https"), ("h2c-keep-alive", "h2c"), ("h2-keep-alive", "h2")):
-            plan["cases"].append({**plan["cases"][0], "name": name, "protocol": protocol})
+        plan["cases"].append({**plan["cases"][0], "name": "https-keep-alive", "protocol": "https"})
+        if http2:
+            for name, protocol in (("h2c-keep-alive", "h2c"), ("h2-keep-alive", "h2")):
+                plan["cases"].append({**plan["cases"][0], "name": name, "protocol": protocol})
         path = self.directory() / "plan.json"
         path.write_text(json.dumps(plan))
         return path
@@ -1586,9 +1621,10 @@ class Generator(Helper):
         lines = [json.loads(line) for line in generator.stdout.splitlines()]
         return generator.returncode, lines, generator.stdout + generator.stderr
 
-    def summarize(self, plan_path, log):
+    def summarize(self, plan_path, log, cases=None):
         """summarize's summary and conditions of a run of profile small whose
-        load generator wrote `log`."""
+        load generator wrote `log`, for `cases` (by default every case of
+        the plan)."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
@@ -1597,7 +1633,7 @@ class Generator(Helper):
         status, _, stderr = helper(
             "summarize", "--plan", plan_path, "--targets", small_targets(self.directory()), "--region", "us-central1",
             "--zone", "us-central1-a", "--arch", "arm64", "--started-at", "2026-10-14T03:28:50+00:00",
-            "--finished-at", "2026-10-14T04:01:56+00:00", out)
+            "--finished-at", "2026-10-14T04:01:56+00:00", *(["--cases", cases] if cases else []), out)
         self.assertEqual(status, 0, stderr)
         return (json.loads((out / "summary.json").read_text()), json.loads((out / "conditions.json").read_text()),
                 (out / "summary.md").read_text())
@@ -1630,6 +1666,9 @@ class Generator(Helper):
         self.assertEqual((check["host"], check["target"]), ("catalog.bench.internal", "/catalog/items/SKU-00317"))
         for port in ("plain", "tls"):
             self.assertEqual((check["ports"][port]["answered"], check["ports"][port]["status"]), (True, 200))
+        # No step sends HTTP/2, so no port is checked over it: a smock
+        # without HTTP/2 can still run the HTTP/1.1 cases.
+        self.assertEqual(check["http2"], {})
         for step, protocol in zip([line["result"] for line in lines if line["kind"] == "step"], ("http", "https")):
             self.assertEqual((step["profile"], step["protocol"], step["rate"]), ("small", protocol, 200))
             self.assertEqual((step["errors"], step["smock_ready"]), (0, True))
@@ -1652,10 +1691,19 @@ class Generator(Helper):
         self.assertIsNone(conditions["gke"]["profiles"]["small"]["ended_early"])
 
     def test_the_http2_steps_go_over_h2c_to_the_plain_port_and_over_h2_to_the_tls_port(self):
-        plan_path = self.generator_plan()
+        plan_path = self.generator_plan(http2=True)
         with LocalSmock() as smock:
             status, lines, output = self.generate(plan_path, smock, cases="h2c-keep-alive,h2-keep-alive")
         self.assertEqual(status, 0, output)
+        # Before the first step, each traffic port answered the first
+        # request of the mix over HTTP/1.1, and over HTTP/2 too, sent with
+        # oha: h2c to the plain port, h2 to the TLS port.
+        [check] = [line for line in lines if line["kind"] == "traffic-check"]
+        self.assertTrue(check["ok"], check)
+        for name in ("plain", "tls"):
+            for found in (check["ports"][name], check["http2"][name]):
+                self.assertEqual((found["port"], found["answered"], found["status"], found["error"]),
+                                 (int(smock.ports[name]), True, 200, None), name)
         steps = [line["result"] for line in lines if line["kind"] == "step"]
         self.assertEqual([(step["id"], step["protocol"]) for step in steps],
                          [("h2c-keep-alive@small", "h2c"), ("h2-keep-alive@small", "h2")])
@@ -1666,6 +1714,38 @@ class Generator(Helper):
             self.assertEqual(step["requests"]["ok"], step["requests"]["scheduled"], step["id"])
             self.assertGreater(step["requests"]["scheduled"], 350, step["id"])
             self.assert_smock_use(step)
+
+        summary, _, markdown = self.summarize(plan_path, output, cases="h2c-keep-alive,h2-keep-alive")
+        self.assertTrue(summary["complete"])
+        self.assertEqual([case["id"] for case in summary["cases"]], ["h2c-keep-alive@small", "h2-keep-alive@small"])
+        self.assertIn("| plain HTTP 200, TLS HTTP 200, plain HTTP/2 200, TLS HTTP/2 200 |", markdown)
+
+    def test_a_traffic_port_that_answers_http1_alone_stops_a_profile_with_http2_steps_before_its_first_step(self):
+        plan_path = self.generator_plan(http2=True)
+        with LocalSmock() as smock, Http1Only() as old:
+            status, lines, output = self.generate(plan_path, smock, cases="http-keep-alive,h2c-keep-alive",
+                                                  plain=old.port)
+        self.assertEqual(status, 0, output)
+        self.assertEqual([line["kind"] for line in lines],
+                         ["start", "idle-rss", "traffic-check", "metrics-before", "stopped", "metrics-after", "done"])
+        check = lines[2]
+        self.assertFalse(check["ok"])
+        # Over HTTP/1.1 both ports answered; over HTTP/2 only the plain
+        # port, which h2c-keep-alive sends to, was checked, and it did not.
+        self.assertEqual({name: (port["answered"], port["status"]) for name, port in check["ports"].items()},
+                         {"plain": (True, 200), "tls": (True, 200)})
+        self.assertEqual(list(check["http2"]), ["plain"])
+        found = check["http2"]["plain"]
+        self.assertEqual((found["port"], found["answered"], found["status"]), (old.port, False, None))
+        self.assertTrue(found["error"], found)
+        stopped = lines[4]
+        self.assertEqual(stopped["reason"], "smock did not answer through its Service in 2 s: plain port "
+                                            f"{old.port} over HTTP/2 ({found['error']})")
+        self.assertEqual((stopped["after"], stopped["steps"]), (None, ["http-keep-alive@small", "h2c-keep-alive@small"]))
+
+        summary, conditions, markdown = self.summarize(plan_path, output)
+        self.assertEqual((summary["complete"], summary["cases"]), (False, []))
+        self.assertIn(f"| plain HTTP 200, TLS HTTP 200, plain HTTP/2 no answer ({found['error']}) |", markdown)
 
     def assert_smock_use(self, step):
         """What a step says smock used, from its /metrics around the step,
