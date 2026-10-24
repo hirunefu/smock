@@ -196,8 +196,9 @@ value, in RE2 syntax:
   `/users/42/orders` or `/api/users/42`.
 - It is matched against the same value as an exact condition: the
   percent-decoded path without the query, the decoded values of a query
-  parameter, the values of a header, and the body. When a parameter or a
-  header is repeated, any one of its values may match. In a `json`
+  parameter, the values of a header or a cookie, and the body. When a
+  parameter, a header or a cookie is repeated, any one of its values may
+  match. In a `json`
   condition, it is matched against the value in its place, as described
   above.
 - The body is matched as text in UTF-8. `.` does not match a line break
@@ -895,7 +896,7 @@ off, so that recording costs nothing:
 ```
 
 A Journal query or verification whose filter names such a Mock is refused
-with `journal_off`, rather than answered with no entries. Only such a
+with 409 `journal_off`, rather than answered with no entries. Only such a
 filter is refused: a filter that names no Mock is answered from the
 requests that were recorded, which leave out this Mock's, and the
 unmatched requests leave them out too. `--journal off` turns the Journal
@@ -1147,9 +1148,10 @@ pick.
 
 The [Journal](../README.md#the-journal) records which response each
 request got, as `responseIndex`, its index from 0. It is null for a Stub
-with `response`, for a request that no Stub matched, and when no response
-was picked because a value of the Stub's [`variables`](#variables) failed
-to render or [the state bound](#the-state-bound) refused its writes.
+with `response` or `crud`, for a request that no Stub matched, and when no
+response was picked because a value of the Stub's [`variables`](#variables)
+failed to render, a [data write](#when-a-write-fails) failed, or
+[the state bound](#the-state-bound) refused its writes.
 `smock render` and the Admin render operation show the index the seed
 picks, and `--response <i>` (the Admin API's `response=<i>`) renders the
 response at index `i` ([Rendering a template](#rendering-a-template)).
@@ -1505,7 +1507,7 @@ response:
 
 - smock only decodes the token. It never checks the signature, the `alg`
   or a claim such as `exp`, so it reads an unsigned or forged token like
-  any other. Never rely on a mock to verify tokens.
+  any other. Never rely on a Mock to verify tokens.
 - A leading `Bearer`, in any case, is removed when spaces or tabs follow
   it, and they go with it. So `header.authorization` can be passed as it
   is.
@@ -1749,12 +1751,12 @@ fault: { seed: 7 }
 
 ### Missing values and render errors
 
-A reference is missing when it names nothing: an absent query parameter or
-header, a path segment past the end, a body path that leads nowhere, or
+A reference is missing when it names nothing: an absent query parameter,
+header or cookie, a path segment past the end, a body path that leads nowhere, or
 `body` when the body is not JSON. A missing value in `${…}` or in `$each` is
 an error unless `??` gives a fallback (`${query.lang ?? 'en'}`,
-`${body.note ?? null}`); a loop over an absent query parameter or header
-runs zero times, and in `$if` a missing value is never an error: it is
+`${body.note ?? null}`); a loop over an absent query parameter, header or
+cookie runs zero times, and in `$if` a missing value is never an error: it is
 false, and it equals no literal (so `query.x != 'a'` holds when `x` is
 absent). A call with a missing argument is missing too, and so are a JWT
 helper's call on what is not a token and a `find` that finds no element.
@@ -1811,9 +1813,9 @@ load.
 - The values are read once, at startup. Every load uses them: the first
   one, each reload and each Ephemeral Stub that is added. A reload does
   not read them again, so restart smock to change a value.
-- `smock check` and `smock render` take the same flag and variable, and
-  read the values from their own environment, so that they accept the same
-  templates as `smock serve`.
+- `smock check` and `smock render` take the same flag and environment
+  variable, and read the values from their own environment, so that they
+  accept the same templates as `smock serve`.
 - The values are not part of the
   [definition set digest](#reloading).
 
@@ -1937,8 +1939,8 @@ them take.
 Each [Journal](../README.md#the-journal) entry records the names of the
 Variables the request wrote, in the order written, as `variablesWritten`.
 It is empty for a Stub without `variables`, for a request that no Stub
-matched, when a value failed to render, and when the state bound refused
-the writes.
+matched, when a value failed to render or a data write failed, and when
+the state bound refused the writes.
 
 #### Through the Admin API
 
@@ -2025,8 +2027,8 @@ buckets](#data-buckets) cannot exhaust a small Pod.
 - smock reads the limit once at startup, for this bound and the Journal's,
   and logs the bound with its `source`: `flag`, `variable`, `memoryLimit`
   (an eighth of the limit), `minimum` (1 MiB) or `default` (64 MiB), and
-  the `memoryLimit` it read, or `memoryLimitError`, why it could not read
-  one:
+  the `memoryLimit` it read, in bytes or `max`, or `memoryLimitError`, why
+  it could not read one:
 
   ```json
   {"time":"2026-10-21T09:00:00.000Z","level":"info","msg":"state byte bound","maxBytes":6815744,"source":"memoryLimit","memoryLimit":54525952}
@@ -2075,8 +2077,8 @@ a request whose body would take the count above 1 MiB gets 507, with
 - No response is picked, and nothing is written.
 - The Scenario move stands. The Stub's delay still applies, and a
   connection Fault still replaces the response, as for a template failure.
-- The Journal entry records status 507, `responseIndex: null` and
-  `variablesWritten: []`.
+- The Journal entry records status 507, `responseIndex: null`,
+  `variablesWritten: []` and `dataWritten: []`.
 - A write that does not grow the count, such as one that replaces a value
   with a smaller one, always fits.
 
@@ -3485,9 +3487,10 @@ $ echo $?
 ```
 
 `smock check` also checks the rules the Schema cannot express, because they
-span the Mocks and files of the set: Mock names and Stub IDs are unique, no
-two Mocks claim the same Host after normalisation, at most one Mock is
-marked `default`, and every Stub names a Mock that some file declares. A
+span the Mocks and files of the set. Among them, Mock names, Stub IDs and
+the names of a Mock's Data buckets are unique, no two Mocks claim the same
+Host after normalisation, at most one Mock is marked `default`, and every
+Stub and Data bucket names a Mock that some file declares. A
 duplicate is reported where it occurs the second time, in file-name order,
 and the message names the first. It also compiles every
 [pattern](#pattern-conditions), which the Schema accepts as any string, and
