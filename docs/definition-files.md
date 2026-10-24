@@ -88,7 +88,8 @@ mocks:
 - A request's Host is the authority of an absolute-form target, such as
   `GET http://orders.example.com/orders/1 HTTP/1.1`, or else its `Host`
   header. Over [HTTP/2](http2.md), it is `:authority`, or else the `host`
-  field.
+  field. A request that sends both, naming different Hosts, gets 400
+  ([Requests smock refuses](http2.md#requests-smock-refuses)).
 - No `host` field is added for `:authority`: `header.host` and a `host`
   header condition see only a `host` field the client sent. An HTTP/2
   client that gives its Host by `:authority` alone sends none, so tell

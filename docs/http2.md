@@ -61,6 +61,49 @@ and CRUD Stubs work as over HTTP/1.1.
 A stream that the client resets before it has sent all of its request
 never reaches the Mocks: it has no Journal entry, and it moves no Scenario.
 
+## Requests smock refuses
+
+smock refuses on a stream what it refuses over HTTP/1.1, with the HTTP/1.1
+codec's own checks. Such a stream gets `400 Bad Request`, with no body:
+
+- a method that is not a token;
+- a `:path` that is not a path starting with `/`, or `*` with OPTIONS. So
+  an absolute URI gets 400, and so does a fragment (`#`);
+- a `:path` with a space, a control octet, DEL or an octet above 0x7E;
+- an `:authority` that is not a valid Host;
+- more than one `host` field, or a `host` that is not a valid Host;
+- a `host` that names another host than `:authority` (RFC 9113, section
+  8.3.1). Hosts are compared as Mock Hosts are: in any case, without the
+  port and without a trailing dot. So `:authority` `orders.example.com` and
+  `host` `ORDERS.example.com:8080` agree;
+- a field name that is not a token;
+- a field value with a control character other than tab, or with DEL.
+
+The 400 ends only its stream: it has no `connection` field, and the
+connection's other streams go on. When the client has not sent all of the
+request yet, the 400 is followed by RST_STREAM `PROTOCOL_ERROR`, so that
+the client stops sending (RFC 9113, section 8.1.1). Frames that still
+arrive on that stream are ignored. A request the client has sent in full
+gets the 400 alone.
+
+moonhttp itself resets a stream that breaks one of RFC 9113's field rules,
+with RST_STREAM `PROTOCOL_ERROR` and no status:
+
+- a field name with an upper-case letter, a space, a control octet, DEL or
+  an octet above it, or a colon, and an empty field name;
+- a field value with NUL, CR or LF, or with a space or a tab at either end;
+- a field that is specific to an HTTP/1.1 connection, such as `connection`,
+  `keep-alive`, `transfer-encoding` or `upgrade`, and a `te` other than
+  `trailers`;
+- a pseudo-header field that is missing, repeated, unknown, or after a
+  regular field;
+- a `content-length` that the body does not match.
+
+Neither kind of stream reaches the Mocks: it has no Journal entry, and it
+moves no Scenario. A stream refused with 400 counts in the request metrics
+with `mock=""` and `stub=""`, as a request the HTTP/1.1 codec rejects does.
+A stream that moonhttp resets is not counted.
+
 ## Responses
 
 A stream's response carries the Stub's status, headers and body, as an
@@ -152,6 +195,7 @@ connection.
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
 | Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. A client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
+| Header fields with empty names (CVE-2019-9516) | moonhttp refuses an empty field name. | RST_STREAM `PROTOCOL_ERROR` on that stream. |
 
 ## Connection errors
 
@@ -180,8 +224,9 @@ the `http2` package of moonbitstack/moonhttp 0.14.0, a MoonBit module with
 no I/O and no C ([ADR 0005](adr/0005-http2-comes-from-moonhttp.md)).
 smock pins it to that exact version: CI fails when the build resolves
 another one. CI also checks that moonhttp and the modules it imports bring
-no C. A new version comes only on purpose, after h2spec, the e2e tests, a
-check by hand with other clients and the benchmarks
+no C, and that [NOTICE](../NOTICE) and the image's SBOM name them all. A
+new version comes only on purpose, after h2spec, the e2e tests, a check by
+hand with other clients and the benchmarks
 ([Upgrading moonhttp](releasing.md#upgrading-moonhttp)).
 
 CI runs h2spec 2.6.0, which checks a server against RFC 7540 and RFC 7541,

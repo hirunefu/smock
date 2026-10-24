@@ -52,9 +52,11 @@ of each GitHub release include its section
   `host` field, and its Session from its own `baggage`. Several `cookie`
   fields are joined into one, so conditions see what an HTTP/1.1 client's
   one Cookie line gives. A Stub's delay delays only its own stream, while
-  the connection's other streams are answered. A body larger than the
-  client's flow-control windows goes out as the client widens them, so a
-  client with small windows still gets all of it. See
+  the connection's other streams are answered. A stream whose request
+  HTTP/1.1 would refuse gets 400 on that stream alone, and the connection's
+  other streams go on. A body larger than the client's flow-control windows
+  goes out as the client widens them, so a client with small windows still
+  gets all of it. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
@@ -70,6 +72,15 @@ of each GitHub release include its section
   RST_STREAM `REFUSED_STREAM` and never reaches the Mocks. With the body
   limit, it bounds the request bodies one connection holds. See
   [Limits and timeouts](docs/http2.md#limits-and-timeouts).
+- moonbitstack/moonhttp 0.14.0 (Apache-2.0) and the modules it imports are
+  named in NOTICE and the image's SBOM
+  ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)). smock is
+  compiled from moonhttp and moonvar. The build also resolves moondate,
+  mooncrypt and moonbase, but compiles nothing from them, so NOTICE says
+  so and the SBOM gives them `DEPENDS_ON`, not `STATIC_LINK`. The SBOM
+  lists every module the build resolves, with the licence of its own module
+  file, and CI fails on every push when NOTICE leaves out such a module or
+  gives it another version.
 
 ### Changed
 
@@ -84,6 +95,13 @@ of each GitHub release include its section
 - The HTTP/2 preface on the plain port now starts HTTP/2, instead of
   getting 505. The Journal's `version` and the Admin API's
   `RecordedRequest.version` can be `HTTP/2`.
+- The help texts of `smock_requests_total`,
+  `smock_request_duration_seconds` and `smock_unmatched_requests_total`
+  speak of a request the protocol layer rejects, and name HTTP/2's
+  statuses beside HTTP/1.1's: 400, 413 and 431 on its stream.
+- `scripts/verify-image.sh` also requires moonhttp, and every other module
+  that NOTICE names, in each SBOM. It reads NOTICE, so check an image with
+  the script and NOTICE of the image's own tag.
 
 ### Fixed
 
