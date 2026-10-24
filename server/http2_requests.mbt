@@ -83,11 +83,45 @@ fn H2Request::new(fields : Array[@header.Header]) -> H2Request {
 ///|
 /// Whether HTTP/1.1's rules refuse the request, so that its stream gets 400
 /// as a malformed request (RFC 9113, section 8.1.1), checked with the
-/// HTTP/1.1 codec's own checks: `:path` is not an origin-form target, or
-/// `*` for OPTIONS, or holds an octet outside 0x21 to 0x7E.
+/// HTTP/1.1 codec's own checks:
+///
+/// - the method is not a token;
+/// - `:path` is not an origin-form target, or `*` for OPTIONS, or holds an
+///   octet outside 0x21 to 0x7E. A CONNECT has no `:path`, as moonhttp
+///   sees to, so it has none to check;
+/// - `:authority` is not a valid Host value;
+/// - there is more than one `host` field, or its value is not a valid Host
+///   value, or it names another host than `:authority` (section 8.3.1),
+///   compared as Mock Hosts are: in any case, without the port or a
+///   trailing dot.
 fn H2Request::is_malformed(self : H2Request) -> Bool {
-  !(@http1.is_origin_or_asterisk_form(self.target, meth=self.meth) &&
-  @http1.is_visible_ascii(self.target))
+  let meth = self.meth
+  if !@http1.is_token(meth) {
+    return true
+  }
+  if meth != "CONNECT" &&
+    !(@http1.is_origin_or_asterisk_form(self.target, meth~) &&
+    @http1.is_visible_ascii(self.target)) {
+    return true
+  }
+  if self.authority is Some(authority) && !@http1.is_host_value(authority) {
+    return true
+  }
+  let mut host : String? = None
+  for header in self.headers {
+    if header.0 == "host" {
+      if host is Some(_) || !@http1.is_host_value(header.1) {
+        return true
+      }
+      host = Some(header.1)
+    }
+  }
+  // Only a request that names its Host twice pays for the comparison.
+  if self.authority is Some(authority) && host is Some(host) {
+    return @definitions.normalize_host(authority) !=
+      @definitions.normalize_host(host)
+  }
+  false
 }
 
 ///|

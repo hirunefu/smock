@@ -42,6 +42,42 @@ async test "h2c: a stream whose request HTTP/1.1 would refuse gets 400 on its st
             [],
           ),
           ("a :path of * with GET", "GET", "*", Some(orders), []),
+          ("a method that is not a token", "GE T", "/x", Some(orders), []),
+          (
+            "an :authority that is not a Host value",
+            "GET",
+            "/x",
+            Some("orders.example.com:http"),
+            [],
+          ),
+          (
+            "two host fields",
+            "GET",
+            "/x",
+            None,
+            [("host", orders), ("host", orders)],
+          ),
+          (
+            "a host field that is not a Host value",
+            "GET",
+            "/x",
+            None,
+            [("host", "orders.example.com:http")],
+          ),
+          (
+            "a host field that names another host than :authority",
+            "GET",
+            "/x",
+            Some(orders),
+            [("host", "users.example.com")],
+          ),
+          (
+            "a host field that names the host of :authority in another case, with a port and a trailing dot",
+            "GET",
+            "/x",
+            Some(orders),
+            [("host", "ORDERS.Example.com.:8080")],
+          ),
           ("then a request HTTP/1.1 takes", "GET", "/x", Some(orders), []),
         ] {
         let (label, meth, path, authority, headers) = case
@@ -63,8 +99,14 @@ async test "h2c: a stream whose request HTTP/1.1 would refuse gets 400 on its st
           #|a :path with a fragment: 400 [date: <now>, content-length: 0] 0 octets, end
           #|an absolute-form :path: 400 [date: <now>, content-length: 0] 0 octets, end
           #|a :path of * with GET: 400 [date: <now>, content-length: 0] 0 octets, end
+          #|a method that is not a token: 400 [date: <now>, content-length: 0] 0 octets, end
+          #|an :authority that is not a Host value: 400 [date: <now>, content-length: 0] 0 octets, end
+          #|two host fields: 400 [date: <now>, content-length: 0] 0 octets, end
+          #|a host field that is not a Host value: 400 [date: <now>, content-length: 0] 0 octets, end
+          #|a host field that names another host than :authority: 400 [date: <now>, content-length: 0] 0 octets, end
+          #|a host field that names the host of :authority in another case, with a port and a trailing dot: 200 [date: <now>, content-length: 11] 11 octets, end
           #|then a request HTTP/1.1 takes: 200 [date: <now>, content-length: 11] 11 octets, end
-          #|Journal entries: 1
+          #|Journal entries: 2
         ),
       )
     })
