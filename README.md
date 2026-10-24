@@ -86,7 +86,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--log-format` | `SMOCK_LOG_FORMAT` | `json`, the only format |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--template-env` | `SMOCK_TEMPLATE_ENV` | none: templates read no environment variable; a comma-separated list of names lets them read those as `env.NAME`, with values read once at startup ([Environment variables](docs/definition-files.md#environment-variables)) |
-| `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
+| `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431; over HTTP/2, a larger header list, counted as RFC 7541 counts it, gets 431 on its stream, and a header block over twice the limit closes the connection ([Header lists](docs/http2.md#header-lists)) |
 | `--header-count-limit` | `SMOCK_HEADER_COUNT_LIMIT` | 100 header fields: more get 431 |
 | `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
 | `--http2-max-concurrent-streams` | `SMOCK_HTTP2_MAX_CONCURRENT_STREAMS` | 100, from 1 to 1000: the most streams an HTTP/2 connection may have in progress at once; a stream past it gets RST_STREAM `REFUSED_STREAM` ([Limits and timeouts](docs/http2.md#limits-and-timeouts)) |
@@ -105,8 +105,9 @@ A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout, read, idle or write, closes the connection
 without a response. None is logged.
 
-Over HTTP/2, the read timeout applies to each stream alone, from the first
-frame of its request: a stream whose request is late gets RST_STREAM
+Over HTTP/2, a request over a header limit gets 431 on its stream alone,
+and the connection stays open. The read timeout applies to each stream
+alone, from the first frame of its request: a stream whose request is late gets RST_STREAM
 `CANCEL`, and the connection's other streams go on. The idle timeout
 applies to a connection with no stream in progress, and sends GOAWAY
 before the connection closes. See

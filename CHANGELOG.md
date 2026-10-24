@@ -105,6 +105,11 @@ of each GitHub release include its section
 - The help text of `--read-timeout-ms` says that over HTTP/2, a request
   that does not arrive in time resets its stream instead of closing the
   connection.
+- The help text of `--header-size-limit` says that over HTTP/2, a header
+  list is counted as RFC 7541 counts it, each field with 32 octets more,
+  and a larger one gets 431 on its stream, while a header block over twice
+  the limit closes the connection. So a head that fits over HTTP/1.1 can
+  get 431 over HTTP/2. See [Header lists](docs/http2.md#header-lists).
 
 ### Fixed
 
