@@ -58,14 +58,13 @@ fn H2Writer::new(conn : @http2.Conn) -> H2Writer {
 
 ///|
 /// Writes to `out` what the `Conn` has queued, after what a write that was
-/// cancelled left, and returns whether there was anything to write: for
-/// the reader, or with `stream`, for the task of that stream. While another
-/// task is writing, it leaves what is queued to that task, which writes it
-/// before it stops, and returns false.
+/// cancelled left, and returns whether there was anything to write. While
+/// another task is writing, it leaves what is queued to that task, which
+/// writes it before it stops, and returns false. A task that a reset may
+/// cancel while it writes calls `write_for` instead.
 async fn[S : @io.Writer] H2Writer::write(
   self : H2Writer,
   out : WatchedStream[S],
-  stream~ : Int32 = 0,
 ) -> Bool {
   if self.busy {
     self.more = true
@@ -82,12 +81,6 @@ async fn[S : @io.Writer] H2Writer::write(
     }
   }
   self.busy = true
-  self.writing_for = stream
-  defer {
-    self.busy = false
-    out.watchdog.stop_writing()
-    self.done.broadcast()
-  }
   for ;; {
     while self.written < self.taken.length() {
       self.written += @io.Writer::write_once(
@@ -104,7 +97,36 @@ async fn[S : @io.Writer] H2Writer::write(
   }
   self.taken = b""
   self.written = 0
+  self.busy = false
+  self.done.broadcast()
   true
+}
+
+///|
+/// Writes as `write` does, for the task of `stream`, which a reset of the
+/// stream cancels at once, even while it writes. Cancelled so, it stops
+/// writing before what it took from the `Conn` is all written, and leaves
+/// the rest to the reader (`abandon`).
+async fn[S : @io.Writer] H2Writer::write_for(
+  self : H2Writer,
+  out : WatchedStream[S],
+  stream : Int32,
+) -> Bool {
+  if self.busy {
+    self.more = true
+    return false
+  }
+  self.writing_for = stream
+  defer {
+    // Still busy: the write was cancelled before it ended.
+    if self.busy {
+      self.busy = false
+      out.watchdog.stop_writing()
+      self.done.broadcast()
+    }
+    self.writing_for = 0
+  }
+  self.write(out)
 }
 
 ///|
