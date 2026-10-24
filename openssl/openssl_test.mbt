@@ -243,7 +243,7 @@ test "ALPN skips h2 over a TLS 1.2 suite that RFC 9113 prohibits, anything but E
     ("RSA", rsa, "ECDHE-RSA-CHACHA20-POLY1305", both),
     ("ECDSA", ecdsa, "ECDHE-ECDSA-AES256-GCM-SHA384", both),
     ("RSA", rsa, "ECDHE-RSA-AES128-SHA256", both),
-    ("ECDSA", ecdsa, "ECDHE-ECDSA-AES128-SHA", both),
+    ("ECDSA", ecdsa, "ECDHE-ECDSA-AES256-SHA384", both),
     ("RSA", rsa, "AES128-GCM-SHA256", both),
     ("RSA", rsa, "ECDHE-RSA-AES128-SHA256", ["h2"]),
     ("RSA", rsa, "ECDHE-RSA-AES128-GCM-SHA256", ["h2"]),
@@ -275,7 +275,7 @@ test "ALPN skips h2 over a TLS 1.2 suite that RFC 9113 prohibits, anything but E
       #|RSA, TLS 1.2 ECDHE-RSA-CHACHA20-POLY1305, offers [h2, http/1.1]: client h2, server h2
       #|ECDSA, TLS 1.2 ECDHE-ECDSA-AES256-GCM-SHA384, offers [h2, http/1.1]: client h2, server h2
       #|RSA, TLS 1.2 ECDHE-RSA-AES128-SHA256, offers [h2, http/1.1]: client http/1.1, server http/1.1
-      #|ECDSA, TLS 1.2 ECDHE-ECDSA-AES128-SHA, offers [h2, http/1.1]: client http/1.1, server http/1.1
+      #|ECDSA, TLS 1.2 ECDHE-ECDSA-AES256-SHA384, offers [h2, http/1.1]: client http/1.1, server http/1.1
       #|RSA, TLS 1.2 AES128-GCM-SHA256, offers [h2, http/1.1]: client http/1.1, server http/1.1
       #|RSA, TLS 1.2 ECDHE-RSA-AES128-SHA256, offers [h2]: failed: no application protocol
       #|RSA, TLS 1.2 ECDHE-RSA-AES128-GCM-SHA256, offers [h2]: client h2, server h2
