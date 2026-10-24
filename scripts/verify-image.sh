@@ -5,11 +5,14 @@
 # - the image is one multi-architecture image for linux/amd64 and linux/arm64;
 # - cosign verifies the signature of the image and of each architecture;
 # - each architecture has a signed SPDX SBOM attestation that lists smock
-#   with the version, the MoonBit modules compiled into it, the runtime,
+#   with the version, the MoonBit modules compiled into it, moonhttp and
+#   every other module that NOTICE names (the modules the build resolves,
+#   which scripts/check-notice.sh keeps NOTICE naming), the runtime,
 #   mimalloc and simdutf that come with the toolchain (scripts/notice.jq
 #   names them), and the OpenSSL package of the base.
 #
-# It needs docker (with buildx), cosign and jq.
+# It reads NOTICE, so check an image with the script and NOTICE of the
+# image's own tag. It needs docker (with buildx), cosign and jq.
 #
 # usage: scripts/verify-image.sh <image>:<version> [cosign verification flags...]
 #   The flags say whose signatures to accept. By default they are those of
@@ -54,15 +57,18 @@ for platform in linux/amd64 linux/arm64; do
   # The attestation's payload is an in-toto statement whose predicate is the
   # SPDX document.
   cosign verify-attestation "$@" --type spdxjson "$repository@$digest" 2>/dev/null |
-    jq -r '.payload' | base64 -d | jq -e -L "$root/scripts" --arg version "$version" '
+    jq -r '.payload' | base64 -d |
+    jq -e -L "$root/scripts" --rawfile notice "$root/NOTICE" --arg version "$version" '
       include "notice";
-      .predicate.spdxVersion != null
+      [.predicate.packages[].name] as $names
+      | .predicate.spdxVersion != null
       and any(.predicate.packages[];
         .name == "smock" and .versionInfo == $version and .primaryPackagePurpose == "APPLICATION")
       and any(.predicate.packages[]; .name == "moonbitlang/async")
-      and (toolchain_parts - [.predicate.packages[].name]) == []
+      and ((["moonbitstack/moonhttp"] + [$notice | notice_modules[].name]) - $names) == []
+      and (toolchain_parts - $names) == []
       and any(.predicate.packages[]; .name | startswith("libssl3"))' >/dev/null ||
-    fail "the $platform image has no verified SPDX SBOM that lists smock $version, its MoonBit modules," \
-      "the runtime, mimalloc and simdutf, and OpenSSL"
+    fail "the $platform image has no verified SPDX SBOM that lists smock $version, its MoonBit modules" \
+      "(moonhttp and each other module NOTICE names), the runtime, mimalloc and simdutf, and OpenSSL"
   echo "verify-image: the $platform image has a signed SPDX SBOM"
 done

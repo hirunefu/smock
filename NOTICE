@@ -17,10 +17,20 @@ Version 2.0, its text is the one in LICENSE.
 - moonbitlang/core: Apache License, Version 2.0
 - moonbitlang/async: Apache License, Version 2.0
 - moonbitlang/x: Apache License, Version 2.0
+- moonbitstack/moonhttp: Apache License, Version 2.0
+- moonbitstack/moonvar: Apache License, Version 2.0
 - The MoonBit native runtime: Apache License, Version 2.0
 - mimalloc: MIT License
 - simdutf: MIT License
 - Data from the Unicode Character Database 18.0.0: Unicode License v3
+
+The build also resolves the MoonBit modules below, because moonhttp
+imports them, but smock compiles nothing from them, so they are not part
+of the binary:
+
+- moonbitstack/moondate: Apache License, Version 2.0
+- moonbitstack/mooncrypt: Apache License, Version 2.0
+- moonbitstack/moonbase: Apache License, Version 2.0
 
 smock links OpenSSL 3 and the GNU C Library dynamically, so they are not
 part of the binary. In the container image they come from its distroless
@@ -219,6 +229,66 @@ Licence: Apache License, Version 2.0
 Copyright 2025 International Digital Economy Academy
 
 It has no NOTICE file.
+
+
+moonbitstack/moonhttp
+---------------------
+
+Version 0.14.0. smock uses its packages header and http2, and through
+them hpack and huffman.
+
+Source:  https://github.com/moonbitstack/moonhttp
+Licence: Apache License, Version 2.0
+
+Its copyright notices are in its source files. It has no NOTICE file.
+
+
+moonbitstack/moonvar
+--------------------
+
+Version 0.2.0. smock uses its packages fixed and prefix, which moonhttp's
+http2 and hpack import.
+
+Source:  https://github.com/moonbitstack/moonvar
+Licence: Apache License, Version 2.0
+
+Its copyright notices are in its source files. It has no NOTICE file.
+
+
+moonbitstack/moondate
+---------------------
+
+Version 0.1.0. moonhttp's module and mooncrypt import it, but smock
+compiles nothing from it.
+
+Source:  https://github.com/moonbitstack/moondate
+Licence: Apache License, Version 2.0
+
+Its copyright notices are in its source files. It has no NOTICE file.
+
+
+moonbitstack/mooncrypt
+----------------------
+
+Version 0.3.1. moonhttp's module imports it, but smock compiles nothing
+from it.
+
+Source:  https://github.com/moonbitstack/mooncrypt
+Licence: Apache License, Version 2.0
+
+Its copyright notices are in its source files. It has no NOTICE file.
+
+
+moonbitstack/moonbase
+---------------------
+
+Version 0.4.0. moonhttp's module and mooncrypt import it, but smock
+compiles nothing from it.
+
+Source:  https://github.com/moonbitstack/moonbase
+Licence: Apache License, Version 2.0
+
+Its copyright notices are in its source files. It has no NOTICE file.
 
 
 The MoonBit native runtime
