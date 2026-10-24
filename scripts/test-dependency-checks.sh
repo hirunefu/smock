@@ -60,8 +60,9 @@ version() {
 fresh() {
   rm -rf "$copy"
   mkdir -p "$copy/scripts" "$copy/.mooncakes"
-  cp scripts/check-moonhttp-pin.sh scripts/check-no-c.sh scripts/resolved-modules.sh "$copy/scripts/"
-  cp .gitignore prebuild.py moon.work "$copy/"
+  cp scripts/check-moonhttp-pin.sh scripts/check-no-c.sh scripts/resolved-modules.sh \
+    scripts/check-notice.sh scripts/notice.jq "$copy/scripts/"
+  cp .gitignore prebuild.py moon.work NOTICE .moonbit-version "$copy/"
   for manifest in $(git ls-files 'moon.mod' '*/moon.mod' 'moon.pkg' '*/moon.pkg'); do
     mkdir -p "$copy/$(dirname "$manifest")"
     cp "$manifest" "$copy/$manifest"
@@ -247,6 +248,89 @@ fresh
 edit ".mooncakes/$moonvar/moon.mod" 's/^version = ".*"/version = "0.0.1"/'
 fails check-no-c.sh "the module in .mooncakes/ is not the version the build resolves" \
   ".mooncakes/$moonvar holds version 0.0.1, but the build resolves $(version $moonvar)"
+
+# The NOTICE check: every module the build resolves, of any owner and
+# transitive ones included, at the version the build resolves.
+
+toolchain=$(cat .moonbit-version)
+
+# without <title>: removes the section <title> from the copy's NOTICE.
+without() {
+  awk -v title="$1" '
+    { line[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (i < NR && line[i] != "" && line[i + 1] ~ /^-+$/) {
+          skip = line[i] == title
+        }
+        if (!skip) {
+          print line[i]
+        }
+      }
+    }' "$copy/NOTICE" >"$tmp/edited"
+  mv "$tmp/edited" "$copy/NOTICE"
+}
+
+# in_section <title> <sed command>: runs the sed command on the lines of the
+# section <title> of the copy's NOTICE, from its title to its Licence line.
+in_section() {
+  edit NOTICE "\\|^$1\$|,/^Licence:/$2"
+}
+
+fresh
+passes check-notice.sh "NOTICE names the toolchain and every module the build resolves" \
+  "$moonhttp@$named"
+
+fresh
+without "$moonvar"
+fails check-notice.sh "NOTICE leaves out a module that moonhttp imports" \
+  "NOTICE has no section $moonvar, which the build resolves at version $(version $moonvar)"
+
+fresh
+without moonbitlang/x
+fails check-notice.sh "NOTICE leaves out a moonbitlang module" \
+  "NOTICE has no section moonbitlang/x, which the build resolves at version $(version moonbitlang/x)"
+
+fresh
+in_section "$moondate" "s/^Version $(version $moondate)\\./Version 0.0.9./"
+fails check-notice.sh "NOTICE gives a module that moonhttp imports another version" \
+  "NOTICE gives $moondate the version 0.0.9, but the build resolves $(version $moondate)"
+
+fresh
+in_section "$moonhttp" "s/^Version $named\\./Version $earlier./"
+fails check-notice.sh "NOTICE gives moonhttp another version" \
+  "NOTICE gives $moonhttp the version $earlier, but the build resolves $named"
+
+fresh
+edit ".mooncakes/$moonvar/moon.mod" 's/^license = ".*"/license = "MIT"/'
+fails check-notice.sh "a module's own module file declares another licence than NOTICE gives" \
+  "NOTICE gives $moonvar the licence Apache-2.0, but its module file MIT"
+
+fresh
+edit ".mooncakes/$moonvar/moon.mod" 's|^repository = ".*"|repository = "https://example.com/moonvar"|'
+fails check-notice.sh "a module's own module file names another repository than NOTICE's source" \
+  "NOTICE gives $moonvar the source https://github.com/$moonvar, but its module file the repository https://example.com/moonvar"
+
+fresh
+edit server/moon.pkg '\|"moonbitstack/|d'
+fails check-notice.sh "NOTICE says smock is built from a module whose packages the binary does not reach" \
+  "NOTICE does not say that smock compiles nothing from $moonhttp, but the binary reaches none of its packages"
+
+fresh
+in_section "$moonvar" 's/^Version \(.*\)$/Version \1 But smock compiles nothing from it./'
+fails check-notice.sh "NOTICE says smock compiles nothing from a module that the binary is built from" \
+  "NOTICE says that smock compiles nothing from $moonvar, but the binary is built from its packages"
+
+fresh
+printf '\n\n%s\n%s\n\nVersion 0.2.0.\n\nSource:  https://github.com/%s\nLicence: Apache License, Version 2.0\n' \
+  "$added" "$(printf '%s' "$added" | tr '[:print:]' '-')" "$added" >>"$copy/NOTICE"
+fails check-notice.sh "NOTICE names a module the build does not resolve" \
+  "NOTICE has a section $added, but the build does not resolve it"
+
+fresh
+echo "9.9.9" >"$copy/.moonbit-version"
+fails check-notice.sh "NOTICE names another toolchain than .moonbit-version" \
+  "NOTICE names the toolchain moonc v$toolchain, but .moonbit-version says 9.9.9"
 
 echo
 echo "test-dependency-checks: $passed passed, $failed failed"
