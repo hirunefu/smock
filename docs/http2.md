@@ -189,9 +189,9 @@ Over HTTP/2, the read and idle timeouts work per stream and per connection.
 - `--idle-timeout-ms` applies to a connection with no stream in progress.
   PING, SETTINGS and WINDOW_UPDATE frames do not restart it, and a header
   block that has begun holds it off. A new stream restarts it, and it runs
-  again from the response that ends the last stream in progress. Then the
-  connection gets GOAWAY `NO_ERROR` and closes. It also bounds the wait for
-  a connection's first octet, as over HTTP/1.1, and the rest of the
+  again from the response that ends the last stream in progress. Past it,
+  the connection gets GOAWAY `NO_ERROR` and closes. It also bounds the wait
+  for a connection's first octet, as over HTTP/1.1, and the rest of the
   preface has the read timeout from that octet.
 - smock's own waits, such as a delay, count toward neither.
 - `--write-timeout-ms` closes a connection that takes nothing of what smock
