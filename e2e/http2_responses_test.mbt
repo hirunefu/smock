@@ -359,3 +359,81 @@ async test "h2c: a non-ASCII templated header value goes out as the octets of th
     })
   })
 }
+
+///|
+/// A Mock that answers every Host, with a templated body, a body file, and
+/// weighted responses whose picks a seed fixes.
+let response_kinds : Array[(String, String)] = [
+  (
+    "shop.yaml",
+    (
+      #|mocks:
+      #|  - name: shop
+      #|    hosts: [localhost]
+      #|stubs:
+      #|  - id: hello
+      #|    mock: shop
+      #|    request: { method: GET, path: /hello }
+      #|    response: { status: 200, template: true, body: "Hello, ${query.name}" }
+      #|  - id: file
+      #|    mock: shop
+      #|    request: { method: GET, path: /file }
+      #|    response: { status: 200, bodyFile: page.html }
+      #|  - id: quote
+      #|    mock: shop
+      #|    request: { method: GET, path: /quote }
+      #|    responses:
+      #|      - { weight: 2, status: 200, json: { price: 101 } }
+      #|      - { weight: 1, status: 503, body: unavailable }
+      #|      - { weight: 1, status: 201, template: true, body: "n=${query.n}" }
+      #|    fault: { seed: 2 }
+    ),
+  ),
+  ("files/page.html", "<p>Caf\u{e9}</p>\n"),
+]
+
+///|
+async test "h2c: templates, a body file and weighted responses give the statuses and bytes HTTP/1.1 gives, for the same seed" {
+  let targets = [
+    "/hello?name=Zo%C3%AB", "/file", "/quote?n=1", "/quote?n=2", "/quote?n=3", "/quote?n=4",
+    "/quote?n=5", "/quote?n=6",
+  ]
+  let shown = (status : Int32, body : Bytes) => {
+    "\{status} \{@utf8.decode_lossy(body).escape()}"
+  }
+  let h2 = []
+  let http1 = []
+  with_definitions(response_kinds, dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      for target in targets {
+        let response = client.request("GET", target, authority="localhost")
+        h2.push(shown(response.status, response.body))
+      }
+    })
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let conn = smock.connect()
+      defer conn.close()
+      for target in targets {
+        conn.write(raw_request("GET", target, host="localhost"))
+        let (status, body) = http1_status_and_body(conn)
+        http1.push(shown(status, body))
+      }
+    })
+  })
+  inspect(
+    "\{h2.join("\n")}\nthe same over HTTP/1.1: \{h2 == http1}",
+    content=(
+      #|200 "Hello, Zoë"
+      #|200 "<p>Café</p>\n"
+      #|200 "{\"price\":101}"
+      #|503 "unavailable"
+      #|201 "n=3"
+      #|200 "{\"price\":101}"
+      #|503 "unavailable"
+      #|200 "{\"price\":101}"
+      #|the same over HTTP/1.1: true
+    ),
+  )
+}
