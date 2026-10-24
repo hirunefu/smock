@@ -27,13 +27,20 @@ priv struct H2Request {
   mut body : Bytes
   /// Its body, once a second DATA has come.
   mut parts : @buffer.Buffer?
+  /// When the read timeout ends it, in `@async.now()` milliseconds: the
+  /// read timeout after the read that brought its first frame.
+  deadline : Int64
 }
 
 ///|
 /// A request that begins with the field section `fields`, as moonhttp
 /// decoded and checked it: the pseudo-header fields first, then the regular
-/// fields, in order. `:scheme` is not passed on.
-fn H2Request::new(fields : Array[@header.Header]) -> H2Request {
+/// fields, in order, and that must have arrived by `deadline`. `:scheme` is
+/// not passed on.
+fn H2Request::new(
+  fields : Array[@header.Header],
+  deadline~ : Int64,
+) -> H2Request {
   let mut meth = ""
   let mut target = ""
   let mut authority = None
@@ -77,7 +84,7 @@ fn H2Request::new(fields : Array[@header.Header]) -> H2Request {
   if cookies is Some(joined) {
     headers[cookie] = ("cookie", joined.to_string())
   }
-  { meth, target, authority, headers, body: b"", parts: None, }
+  { meth, target, authority, headers, body: b"", parts: None, deadline, }
 }
 
 ///|

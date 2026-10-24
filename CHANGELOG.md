@@ -54,9 +54,11 @@ of each GitHub release include its section
   one Cookie line gives. A Stub's delay delays only its own stream, while
   the connection's other streams are answered. A stream whose request
   HTTP/1.1 would refuse gets 400 on that stream alone, and the connection's
-  other streams go on. A body larger than the client's flow-control windows
-  goes out as the client widens them, so a client with small windows still
-  gets all of it. See
+  other streams go on. The read timeout applies to each stream alone, and
+  resets only a stream whose request is late, with `CANCEL`; an idle
+  connection gets GOAWAY before it closes. A body larger than the client's
+  flow-control windows goes out as the client widens them, so a client with
+  small windows still gets all of it. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
@@ -102,6 +104,9 @@ of each GitHub release include its section
 - `scripts/verify-image.sh` also requires moonhttp, and every other module
   that NOTICE names, in each SBOM. It reads NOTICE, so check an image with
   the script and NOTICE of the image's own tag.
+- The help text of `--read-timeout-ms` says that over HTTP/2, a request
+  that does not arrive in time resets its stream instead of closing the
+  connection.
 
 ### Fixed
 
