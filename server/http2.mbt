@@ -7,7 +7,8 @@
 //
 // - the frame reader (`FrameReader`, http2_frames.mbt), with
 //   `H2Connection::judge`, where each frame is judged before it reaches
-//   the `Conn`;
+//   the `Conn`, and counted when it does no work (`NoWorkFrames`,
+//   http2_defences.mbt);
 // - the record of the client's streams (`StreamRecord`, http2_streams.mbt),
 //   which the judge holds HEADERS frames against, which counts the streams
 //   open against `--http2-max-concurrent-streams`, and which every
@@ -319,7 +320,7 @@ fn H2Connection::judge(
   }
   if self.no_work(head, frame) is Some(kind) &&
     self.no_work_frames.count(self.read_at) {
-    self.calm("frames that do no work", frame=Some(kind))
+    self.calm("frames that do no work", frame=kind)
     return false
   }
   if !self.streams.see(head) {

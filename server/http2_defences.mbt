@@ -26,8 +26,9 @@ priv struct NoWorkFrames {
   /// How many SETTINGS acknowledgements smock is owed: one for the SETTINGS
   /// frame it opens the connection with, until it comes.
   mut settings_owed : Int32
-  /// How many PING acknowledgements smock is owed: one for each PING it
-  /// sends, until it comes. A PING smock sends adds one.
+  /// How many PING acknowledgements smock is owed: one for each PING it has
+  /// sent, until it comes. smock sends no PING of its own yet, so every
+  /// acknowledgement counts.
   mut pings_owed : Int32
 }
 
@@ -168,15 +169,18 @@ fn carries(head : @http2.FrameHeader, frame : BytesView) -> Int32 {
 }
 
 ///|
-/// Ends the connection for a defence that `pattern` names, which the frame
-/// that `frame` names, when there is one, tripped: queues GOAWAY
-/// ENHANCE_YOUR_CALM, with the name of the pattern as its debug data, and
-/// logs one line that names them. The caller then writes what is queued
-/// and ends the connection, so the line is the connection's only one.
+/// Ends the connection for the defence against the pattern `pattern`,
+/// which a frame of the kind `frame` tripped, when there is one: queues
+/// GOAWAY ENHANCE_YOUR_CALM, with the name of the pattern as its debug
+/// data, and logs one line, at level `warn`, that names them. It adds no
+/// metric. The caller then writes what is queued and ends the connection,
+/// so the line is the connection's only one, and its streams in progress
+/// end with it: their tasks are cancelled, and commit their Journal
+/// entries as they end.
 fn H2Connection::calm(
   self : H2Connection,
   pattern : String,
-  frame~ : String? = None,
+  frame? : String,
 ) -> Unit {
   self.conn.goaway(
     code=@http2.error_enhance_your_calm,
