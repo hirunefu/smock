@@ -23,7 +23,8 @@
 //   and the slow writes of bodies larger than the client's windows, which
 //   resume as the client widens them (`H2Connection::write_slowly`,
 //   http2_windows.mbt);
-// - the deadlines of the connection and of its streams, which the
+// - the deadlines of the connection and of its streams, with the write
+//   timeout of the bodies that wait for the client's windows, which the
 //   connection's one watchdog keeps (`H2Connection::expire`).
 //
 // Each stream's request takes the steps every request to the Mocks takes
@@ -33,8 +34,6 @@
 // - a Fault or a stream of Server-Sent Events ends its stream with
 //   RST_STREAM INTERNAL_ERROR, its Journal entry committed as the engine
 //   made it;
-// - no timeout applies while a body waits for the client to widen a
-//   window;
 // - for the drain, the connection is idle while no stream is in progress,
 //   and while smock drains, it closes, without GOAWAY, as soon as none is.
 
@@ -586,8 +585,15 @@ async fn[S : @io.Reader] H2Connection::discard(
 ///   open no stream, such as PING, SETTINGS and WINDOW_UPDATE, do not
 ///   restart it, and a field block that has begun holds it off. Past it,
 ///   the connection gets GOAWAY with NO_ERROR and closes.
+/// - The write timeout of the slow writes runs while they wait for the
+///   client to widen a window (`watch_windows`). Past it for the
+///   connection window, the connection closes with no GOAWAY, as for a
+///   write that timed out. Past it for a stream's own window while the
+///   connection window is open, smock resets that stream with CANCEL, and
+///   the other streams go on; while the connection window is at zero too,
+///   the stream's verdict waits for the connection's deadline.
 ///
-/// Neither is logged.
+/// None is logged.
 fn[S : @io.Writer + ReadOutput] H2Connection::expire(
   self : H2Connection,
   now : Int64,
@@ -637,7 +643,8 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
 
 ///|
 /// The earliest deadline of the connection: the idle deadline, that of
-/// each request in progress, and that of a field block still open.
+/// each request in progress, that of a field block still open, and those of
+/// the slow writes that wait for window.
 fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   let mut next = self.idle_until()
   for _, request in self.requests {
