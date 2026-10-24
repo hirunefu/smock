@@ -288,24 +288,25 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
 
 ///|
 /// Answers the request that has arrived in full on `stream`, through the
-/// steps every request to the Mocks takes. A response with a body that
-/// fits the stream's windows is queued at once: its HEADERS, then its body
-/// as DATA, which ends the stream. The Journal entry is committed just
-/// before the frame that ends the stream is queued.
+/// steps every request to the Mocks takes. A response whose body fits the
+/// stream's windows is queued at once: its HEADERS, then its body as DATA,
+/// which ends the stream. A response to HEAD, and one whose status has no
+/// content, sends no DATA: its HEADERS end the stream. The Journal entry is
+/// committed just before the frame that ends the stream is queued.
 ///
 /// For now, a delay is waited here, so the connection's other streams wait
-/// too; and a Fault, a stream of Server-Sent Events, a body that does not
-/// fit, or header fields HTTP/2 does not allow end the stream with
-/// RST_STREAM INTERNAL_ERROR instead, the entry committed first, as the
-/// engine made it.
+/// too; and a Fault, a stream of Server-Sent Events or a body that does not
+/// fit end the stream with RST_STREAM INTERNAL_ERROR instead, the entry
+/// committed first, as the engine made it.
 async fn H2Connection::respond(
   self : H2Connection,
   stream : Int32,
   request : H2Request,
 ) -> Unit {
   let ports = self.ports
+  let incoming = request.to_engine()
   let outcome = ports.decide(
-    request.to_engine(),
+    incoming,
     authority?=request.authority,
     now=self.now,
   )
@@ -315,9 +316,17 @@ async fn H2Connection::respond(
     @async.sleep(plan.delay_ms)
     self.now = @async.now()
   }
-  guard plan.fault is None &&
-    plan.body is Bytes(body) &&
-    body.length() <= self.conn.window(stream) else {
+  guard plan.fault is None && plan.body is Bytes(body) else {
+    self.reset_after(stream, outcome.journal)
+    return
+  }
+  // HEAD gets the length of the body without the body, as on HTTP/1.1.
+  let sent = if has_content(plan.status) && incoming.meth != "HEAD" {
+    body
+  } else {
+    body[0:0]
+  }
+  guard sent.length() <= self.conn.window(stream) else {
     self.reset_after(stream, outcome.journal)
     return
   }
@@ -327,7 +336,7 @@ async fn H2Connection::respond(
     body.length(),
     date=ports.dates.at(self.now),
   )
-  if body.length() == 0 {
+  if sent.length() == 0 {
     ports.commit(outcome.journal)
     self.conn.headers(stream, fields, end=true) catch {
       _ => self.reset_after(stream, None)
@@ -342,7 +351,7 @@ async fn H2Connection::respond(
   }
   ports.commit(outcome.journal)
   // The body fits the windows, so the `Conn` takes it.
-  self.conn.data(stream, body, end=true) catch {
+  self.conn.data(stream, sent, end=true) catch {
     _ => ()
   }
 }
