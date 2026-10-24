@@ -102,3 +102,45 @@ async test "h2c: with --http2-max-concurrent-streams 3, three unfinished uploads
     )
   })
 }
+
+///|
+async test "h2c: a stream past the limit is refused before the client has acknowledged smock's SETTINGS, from the first stream on, with --http2-max-concurrent-streams 1" {
+  with_definitions([("files.json", uploads)], dir => {
+    let _ = with_smock(
+      ["--dir", dir, "--port", "0", "--http2-max-concurrent-streams", "1"],
+      smock => {
+        let raw = smock.raw_h2()
+        defer raw.close()
+        // Sent at once after the preface, without reading smock's SETTINGS,
+        // so the client never acknowledges them.
+        raw.send([
+          headers_frame(
+            1,
+            raw.block(request_fields("POST", "/upload", "localhost")),
+            end_stream=false,
+          ),
+          headers_frame(
+            3,
+            raw.block(request_fields("POST", "/upload?refused", "localhost")),
+          ),
+          Data(stream_id=1, data=b"one", end_stream=true, padding=0),
+        ])
+        let out = [raw.frames_until_stream_ends(1)]
+        out.push("Journal:")
+        out.push(uploads_journaled(smock))
+        inspect(
+          out.join("\n"),
+          content=(
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=1, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS ACK
+            #|RST_STREAM 3 REFUSED_STREAM
+            #|HEADERS 1 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+            #|DATA 1 END_STREAM 6 octets
+            #|Journal:
+            #|POST /upload one 201
+          ),
+        )
+      },
+    )
+  })
+}
