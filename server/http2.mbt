@@ -258,6 +258,12 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
   out : WatchedStream[S],
 ) -> Unit {
   for ;; {
+    // After the GOAWAY of a close Fault, queued while a frame was handled,
+    // the frames already read go no further.
+    if self.closing {
+      let _ = self.read_more(stream, out)
+      return
+    }
     let octets = match self.reader.next() {
       Preface(preface) => preface
       Frame(head, frame) =>
@@ -742,8 +748,13 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
     return
   }
   match outcome.plan.fault {
-    Some(Reset) | Some(Close) => {
+    Some(Reset) => {
       self.reset_after(stream, outcome.journal)
+      ports.done(outcome, self.last_read)
+      return
+    }
+    Some(Close) => {
+      self.close_by_fault(stream, outcome.journal, out)
       ports.done(outcome, self.last_read)
       return
     }
@@ -812,8 +823,8 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
     let now = @async.now()
     let partial = outcome.plan.fault is Some(Partial)
     match (outcome.plan.fault, outcome.plan.body) {
-      (Some(Reset), _) | (Some(Close), _) =>
-        self.reset_after(stream, outcome.journal)
+      (Some(Reset), _) => self.reset_after(stream, outcome.journal)
+      (Some(Close), _) => self.close_by_fault(stream, outcome.journal, out)
       (_, Events(events)) => {
         let more = self.open_events(
           stream,
@@ -862,7 +873,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
 /// connection becomes idle; while smock drains, it closes instead.
 async fn H2Connection::answered(self : H2Connection) -> Unit {
   self.end_stream()
-  guard self.became_idle && self.reading && self.idle() else { return }
+  guard !self.closing && self.became_idle && self.reading && self.idle() else {
+    return
+  }
   if self.ports.lifecycle.is_draining() {
     self.group.return_immediately(())
     return

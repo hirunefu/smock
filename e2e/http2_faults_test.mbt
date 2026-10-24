@@ -10,7 +10,8 @@
 /// connection Faults, and partial Faults on responses with no body to
 /// halve, `/empty` (200 with no body) and `/no-content` (204), and on
 /// Server-Sent Events, `/ticks` (four events, the third two seconds after
-/// the second) and `/tick` (one event, after two seconds).
+/// the second) and `/tick` (one event, after two seconds); `/later`
+/// answers after a delay of 500 ms, and `/upload` any request at once.
 let h2_faults : String =
   #|{ "mocks": [{ "name": "m" }],
   #|  "stubs": [
@@ -40,7 +41,12 @@ let h2_faults : String =
   #|    { "id": "tick", "mock": "m", "request": { "path": "/tick" },
   #|      "response": { "status": 200, "events": [
   #|        { "delay": 2000, "data": "one" } ] },
-  #|      "fault": { "connection": { "kind": "partial" } } } ] }
+  #|      "fault": { "connection": { "kind": "partial" } } },
+  #|    { "id": "later", "mock": "m", "request": { "path": "/later" },
+  #|      "response": { "status": 200, "body": "later" },
+  #|      "fault": { "delay": { "fixed": 500 } } },
+  #|    { "id": "upload", "mock": "m", "request": { "path": "/upload" },
+  #|      "response": { "status": 201, "body": "stored" } } ] }
 
 ///|
 /// The Journal's entries, one per line: each request's method and target,
@@ -145,6 +151,84 @@ async test "h2c: a partial Fault sends HEADERS with the whole content-length and
           #|GET /ticks: status 200, fault "partial"
           #|GET /tick: status 200, fault "partial"
           #|HEAD /ticks: status 200, fault "partial"
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: a close Fault sends GOAWAY NO_ERROR naming the highest stream the client has opened, so at least every stream still open; nothing more goes out, smock discards what the client sends, and closes with a FIN a second later; its Journal entry has no status" {
+  with_definitions([("m.json", h2_faults)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      raw.send([
+        headers_frame(1, raw.block(request_fields("GET", "/fast", "localhost"))),
+      ])
+      let answered = raw.frames_until_stream_ends(1)
+      // The Fault's stream, with its body still to come, then two later
+      // streams: one that waits for its delay, and an upload in progress.
+      raw.send([
+        headers_frame(
+          3,
+          raw.block(request_fields("POST", "/close", "localhost")),
+          end_stream=false,
+        ),
+        Data(stream_id=3, data=b"abc", end_stream=false, padding=0),
+        headers_frame(
+          5,
+          raw.block(request_fields("GET", "/later", "localhost")),
+        ),
+        headers_frame(
+          7,
+          raw.block(request_fields("POST", "/upload", "localhost")),
+          end_stream=false,
+        ),
+        Data(stream_id=7, data=b"half", end_stream=false, padding=0),
+      ])
+      @async.sleep(100)
+      let start = @async.now()
+      raw.send([Data(stream_id=3, data=b"de", end_stream=true, padding=0)])
+      let goaway = raw.frames_until(start, is_goaway)
+      // The rest of the upload, and a PING, as a client might send before
+      // it reads the GOAWAY: neither is answered, and the delayed stream's
+      // response, due before the connection closes, does not come.
+      raw.send([
+        Data(stream_id=7, data=b" more", end_stream=true, padding=0),
+        Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false),
+      ])
+      let after = raw.frames_until(start, _ => false)
+      // smock carries on with other connections.
+      let fresh = smock.h2c()
+      defer fresh.close()
+      let next = fresh.request("GET", "/fast", authority="localhost")
+      inspect(
+        [
+          answered,
+          "---",
+          ..goaway.shown,
+          "GOAWAY at once: \{goaway.end_ms < 400}",
+          "then: \{after.shown.length()} frames, \{after.how}, about a second after the GOAWAY: \{after.end_ms - goaway.end_ms >= 800 && after.end_ms - goaway.end_ms < 2000}",
+          "a fresh connection: \{next.brief()}",
+          "---",
+          fault_journal(smock),
+        ].join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+          #|DATA 1 END_STREAM 4 octets
+          #|---
+          #|GOAWAY last=7 NO_ERROR
+          #|GOAWAY at once: true
+          #|then: 0 frames, a FIN, about a second after the GOAWAY: true
+          #|a fresh connection: 200 fast (end)
+          #|---
+          #|GET /fast: status 200, fault null
+          #|POST /close: status null, fault "close"
+          #|GET /later: status 200, fault null
+          #|GET /fast: status 200, fault null
         ),
       )
     })
