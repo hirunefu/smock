@@ -123,21 +123,30 @@ let anthropic_error_types : ReadOnlyArray[String] = [
 ]
 
 ///|
+/// The kind of a mid-stream error as its `type`, or `code` for
+/// `openai-responses`, writes it: checked when the definitions are loaded
+/// or the Stub is added. Only `read_error_kind` makes one.
+pub struct ErrorKind {
+  /// The type or code, as written.
+  text : String
+} derive(Debug, Eq)
+
+///|
 /// The load check of a mid-stream error's `type`, or `code` for
 /// `openai-responses`, on a Stub of `api`: the kind that `value` writes, or
 /// the message of the load error. An OpenAI type or code is any non-empty
 /// string; an `anthropic-messages` type is one of Anthropic's documented
 /// error types, which the message lists.
-pub fn read_error_kind(api : Api, value : Json) -> Result[String, String] {
+pub fn read_error_kind(api : Api, value : Json) -> Result[ErrorKind, String] {
   match api {
     OpenaiChat | OpenaiResponses =>
       match value {
-        String(kind) if kind != "" => Ok(kind)
+        String(text) if text != "" => Ok({ text, })
         _ => Err("must be a non-empty string")
       }
     AnthropicMessages =>
       match value {
-        String(kind) if anthropic_error_types.contains(kind) => Ok(kind)
+        String(text) if anthropic_error_types.contains(text) => Ok({ text, })
         _ =>
           Err(
             "must be an error type of \{api.name()}: \{listed(anthropic_error_types)}",
@@ -193,16 +202,16 @@ pub struct MidStreamError {
   after : Int32
   /// The error's `type`, or its `code` for `openai-responses`, sent as
   /// written.
-  kind : String
+  kind : ErrorKind
 } derive(Debug, Eq)
 
 ///|
 /// The error that follows `after` code points of the text, whose `type`, or
-/// `code` for `openai-responses`, is `kind`. The definitions check `kind`
-/// with `read_error_kind`, and that `after` is not past the text.
+/// `code` for `openai-responses`, is `kind`, which `read_error_kind`
+/// checked. The definitions check that `after` is not past the text.
 pub fn MidStreamError::MidStreamError(
   after~ : Int32,
-  kind~ : String,
+  kind~ : ErrorKind,
 ) -> MidStreamError {
   { after, kind, }
 }
@@ -1110,7 +1119,7 @@ fn chat_stream(
 /// `message`: an `error` object, in place of a chunk, whose `param` and
 /// `code` are null.
 fn chat_error(error : MidStreamError, message : String) -> String {
-  "{\"error\":{\"message\":\{quoted(message)},\"type\":\{quoted(error.kind)},\"param\":null,\"code\":null}}"
+  "{\"error\":{\"message\":\{quoted(message)},\"type\":\{quoted(error.kind.text)},\"param\":null,\"code\":null}}"
 }
 
 ///|
@@ -1636,7 +1645,7 @@ fn responses_stream(
 /// message `message`, between its `type` and its `sequence_number`: the
 /// error's code, the message and a null `param`.
 fn responses_error(error : MidStreamError, message : String) -> String {
-  "\"code\":\{quoted(error.kind)},\"message\":\{quoted(message)},\"param\":null"
+  "\"code\":\{quoted(error.kind.text)},\"message\":\{quoted(message)},\"param\":null"
 }
 
 ///|
@@ -2026,7 +2035,7 @@ fn content_block_stop(index : Int32) -> String {
 /// The data of Anthropic Messages' `error` event for `error` with the
 /// message `message`: an `error` object with its type and message.
 fn messages_error(error : MidStreamError, message : String) -> String {
-  "{\"type\":\"error\",\"error\":{\"type\":\{quoted(error.kind)},\"message\":\{quoted(message)}}}"
+  "{\"type\":\"error\",\"error\":{\"type\":\{quoted(error.kind.text)},\"message\":\{quoted(message)}}}"
 }
 
 ///|

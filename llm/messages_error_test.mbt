@@ -20,7 +20,10 @@ fn messages_cut(
     @llm.Declaration(
       api=AnthropicMessages,
       chunk_size?,
-      error=@llm.MidStreamError(after~, kind~),
+      error=@llm.MidStreamError(
+        after~,
+        kind=@llm.read_error_kind(AnthropicMessages, Json::string(kind)).unwrap(),
+      ),
     ),
     strings,
     request~,
