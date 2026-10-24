@@ -20,17 +20,19 @@ import {
   "moonbitlang/async/signal",
   "moonbitlang/async/socket",
   "moonbitlang/core/bench",
+  "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/base64",
   "moonbitlang/core/encoding/percent",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
+  "moonbitstack/moonhttp/header",
+  "moonbitstack/moonhttp/http2",
 }
 
 supported_targets = "native"
 
 import {
-  "moonbitlang/core/buffer",
   "moonbitlang/core/string",
 } for "wbtest"
 

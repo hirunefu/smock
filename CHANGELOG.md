@@ -43,6 +43,12 @@ of each GitHub release include its section
   smock. Both are empty by default, so no port has one: the plain port
   serves both HTTP/1.1 and h2c. See
   [Ports, Services and probes](charts/smock/README.md#ports-services-and-probes).
+- HTTP/2 over h2c on the plain port: a connection that starts with the
+  HTTP/2 preface, as `curl --http2-prior-knowledge` sends it, is served over
+  HTTP/2, by the same Mocks and Stubs, and any other is HTTP/1.1, as before.
+  HTTP/2 comes from moonbitstack/moonhttp 0.14.0
+  ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)). See
+  [docs/http2.md](docs/http2.md).
 
 ### Changed
 
@@ -54,6 +60,9 @@ of each GitHub release include its section
   from v0.10.14+7d59c7ec9, which `smock --version`, the startup log entry,
   `smock_build_info` and the Admin API status operation name. NOTICE
   follows its core library. mimalloc is still 2.1.7.
+- The HTTP/2 preface on the plain port now starts HTTP/2, instead of
+  getting 505. The Journal's `version` and the Admin API's
+  `RecordedRequest.version` can be `HTTP/2`.
 
 ### Fixed
 

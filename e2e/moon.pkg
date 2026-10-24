@@ -18,6 +18,9 @@ import {
   "smock/http1",
   "smock/re2",
   "smock/yaml",
+  "moonbitstack/moonhttp/header",
+  "moonbitstack/moonhttp/hpack",
+  "moonbitstack/moonhttp/http2",
 } for "test"
 
 supported_targets = "native"

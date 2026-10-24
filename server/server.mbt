@@ -306,7 +306,7 @@ async fn run(
           defer plain.close()
           accept_loop(plain, conn => {
             connections.serve(group, conn, connection => {
-              let _ = ports.serve(conn, conn, connection)
+              let _ = ports.serve(conn, conn, connection, h2c=true)
             })
           })
         })
@@ -322,7 +322,7 @@ async fn run(
                 TlsStream::accept(conn, name => certificates.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
-              let writable = ports.serve(stream, conn, connection)
+              let writable = ports.serve(stream, conn, connection, h2c=false)
               // A reset sends no close_notify: the RST alone ends the
               // connection. Nor does a connection whose client takes nothing
               // more, as after a write timed out: the write would wait.
@@ -420,6 +420,11 @@ priv struct MockPorts {
 /// connection with an RST, nor after a write timed out, since the client
 /// takes nothing more.
 ///
+/// With `h2c`, as on the plain port, a connection that starts with the
+/// HTTP/2 connection preface is served as HTTP/2 (`MockPorts::serve_http2`),
+/// and any other over HTTP/1.1, as below. Without it, every connection is
+/// HTTP/1.1.
+///
 /// Each request takes the steps every request to the Mocks takes
 /// (`MockPorts::decide`, `commit` and `done`), and this loop writes its
 /// response over HTTP/1.1, between them.
@@ -458,13 +463,15 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
   stream : S,
   tcp : @socket.Tcp,
   connection : Connection,
+  h2c~ : Bool,
 ) -> Bool {
   let was_reset = Ref(false)
   let headers = DecodedHeaders::new()
-  let writable = serve_connection(
+  let served = serve_connection(
     stream,
     self.settings,
     connection~,
+    h2c~,
     respond=(stream, request, stopwatch, now) => {
       let outcome = self.decide(
         to_engine_request(request, headers.of(request)),
@@ -566,7 +573,10 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       )
     },
   )
-  writable && !was_reset.val
+  match served {
+    Http1(writable~) => writable && !was_reset.val
+    Http2(read) => self.serve_http2(stream, connection, read)
+  }
 }
 
 ///|
@@ -587,8 +597,8 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 ///
 /// It reads and writes only through `stream`, so the same loop serves any
 /// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
-/// logged per request. Returns whether `stream` can still be written to:
-/// not after a write timed out.
+/// logged per request. Returns `Http1` with whether `stream` can still be
+/// written to: not after a write timed out.
 ///
 /// - `respond` writes the response to each request, or part of it, and
 ///   returns whether the connection stays open after it. It writes to
@@ -606,14 +616,22 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 ///   of the requests before them.
 /// - `connection`, when given, is kept told whether the connection is idle,
 ///   so that a drain can close it.
+/// - With `h2c`, the first octets are checked for the HTTP/2 connection
+///   preface first (`ConnectionLoop::read_preface`). A connection that
+///   starts with it is not served here: the loop returns `Http2` with the
+///   octets read so far, for the HTTP/2 loop to go on with. The idle timeout
+///   bounds the wait for the first octet, and the read timeout from it the
+///   rest of the preface, and of a request that turns out to be HTTP/1.1.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
   respond~ : async (WatchedStream[S], @http1.Request, Stopwatch, Int64) -> Bool,
   reject~ : async (WatchedStream[S], Int32, Stopwatch) -> Unit,
   connection? : Connection,
-) -> Bool {
+  h2c~ : Bool = false,
+) -> Served {
   let mut writable = true
+  let mut preface = None
   @async.with_task_group(group => {
     let now = @async.now()
     let watchdog = Watchdog::new(group, write_timeout=settings.write_timeout_ms)
@@ -639,6 +657,16 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
       read_deadline: None,
       read_since: now,
       last_read: Stopwatch::start(),
+    }
+    if h2c {
+      match state.read_preface(stream) {
+        Absent => ()
+        Present(read) => {
+          preface = Some(read)
+          return
+        }
+        Ended => return
+      }
     }
     for ;; {
       match state.parser.next() {
@@ -701,7 +729,21 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   if connection is Some(connection) {
     connection.idle = false
   }
-  writable
+  match preface {
+    Some(read) => Http2(read)
+    None => Http1(writable~)
+  }
+}
+
+///|
+/// How a connection `serve_connection` served ended.
+priv enum Served {
+  /// Served over HTTP/1.1 to its end, with whether its stream can still be
+  /// written to.
+  Http1(writable~ : Bool)
+  /// Not served: it starts with the HTTP/2 connection preface. The octets
+  /// read so far, the preface first.
+  Http2(Bytes)
 }
 
 ///|
@@ -724,7 +766,8 @@ priv struct ConnectionLoop {
   mut read_deadline : Int64?
   /// When the bytes not yet parsed began to count against the read timeout:
   /// when they were read, or, for bytes read before a response, when it was
-  /// written, since nothing is read while a response is written.
+  /// written, since nothing is read while a response is written. The bytes
+  /// of the preface check (`read_preface`) count from the first of them.
   mut read_since : Int64
   /// Started at the last read, which brought the last byte of every request
   /// the parser holds complete.

@@ -2191,7 +2191,7 @@
           },
           "version": {
             "description": "The HTTP version.",
-            "enum": ["HTTP/1.0", "HTTP/1.1"]
+            "enum": ["HTTP/1.0", "HTTP/1.1", "HTTP/2"]
           },
           "headers": {
             "description": "The header fields, in the order they were sent.",

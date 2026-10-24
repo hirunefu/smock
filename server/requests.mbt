@@ -15,7 +15,8 @@
 //
 // A request the protocol layer rejects never reaches the engine, and is
 // counted with `MockPorts::rejected` instead. The HTTP/1.1 loop
-// (`MockPorts::serve`) takes these steps for each request. They are plain
+// (`MockPorts::serve`) takes these steps for each request, and the HTTP/2
+// loop (`H2Connection::respond`) for each stream's. They are plain
 // calls that allocate nothing of their own, so that a response written at
 // once costs what it did before they were shared.
 
