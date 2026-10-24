@@ -1420,8 +1420,8 @@ fn responses_stream(
     )
     for piece in text_pieces {
       // A stream over the bound is not sent, so it stops here.
-      if out.stream.over() {
-        return out.stream.reply(request_id)
+      if out.over() {
+        return out.reply(request_id)
       }
       out.push(
         pace.piece(),
@@ -1442,12 +1442,12 @@ fn responses_stream(
       "error",
       responses_error(error, strings.error_message),
     )
-    return out.stream.reply(request_id)
+    return out.reply(request_id)
   }
   if has_message {
     // Each closing event of the item carries the whole text.
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     // A reply with no piece waits before its first closing event. With
     // tool calls after it, the text is not empty, so it has a piece.
@@ -1457,16 +1457,16 @@ fn responses_stream(
       "\{part_of},\"text\":\{quoted(strings.text)}",
       after=no_logprobs,
     )
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     out.push(
       pace.closing(),
       "response.content_part.done",
       "\{part_of},\"part\":\{@template.compact_json(output_text_part(strings.text))}",
     )
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     let item = message_item(message_id, status, strings.text)
     out.push(
@@ -1477,8 +1477,8 @@ fn responses_stream(
     output.push(item)
   }
   for k in 0..<tool_calls.length() {
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     let call = tool_calls[k]
     let output_index = output.length()
@@ -1498,8 +1498,8 @@ fn responses_stream(
     )
     let arguments_of = "\"item_id\":\{quoted(item_id)},\"output_index\":\{output_index}"
     for piece in pieces(call.arguments, declaration.chunk_size) {
-      if out.stream.over() {
-        return out.stream.reply(request_id)
+      if out.over() {
+        return out.reply(request_id)
       }
       out.push(
         pace.piece(),
@@ -1512,8 +1512,8 @@ fn responses_stream(
     // closing events, which a reply with no piece waits before.
     let last = k == tool_calls.length() - 1
     // Each closing event of the item carries the whole arguments.
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     out.push(
       if last {
@@ -1524,8 +1524,8 @@ fn responses_stream(
       "response.function_call_arguments.done",
       "\{arguments_of},\"arguments\":\{quoted(call.arguments)}",
     )
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     let item = function_call_item(
       call,
@@ -1546,8 +1546,8 @@ fn responses_stream(
     output.push(item)
   }
   // The closing event carries the whole text and every item.
-  if out.stream.over() {
-    return out.stream.reply(request_id)
+  if out.over() {
+    return out.reply(request_id)
   }
   // Until the waits are handed over, the Response completes when it is
   // received, as with no wait. An incomplete one never completes.
@@ -1577,7 +1577,7 @@ fn responses_stream(
     },
     "\"response\":\{@template.compact_json(Json::object(response))}",
   )
-  out.stream.reply(
+  out.reply(
     request_id,
     closing=if completes {
       Some({ received, response, sequence_number, })
@@ -1614,6 +1614,23 @@ priv struct ResponsesEvents {
 /// The events of a new stream, with room for `capacity` of them.
 fn ResponsesEvents::new(capacity : Int32) -> ResponsesEvents {
   { stream: Stream::new(capacity), next: 0, }
+}
+
+///|
+/// Whether the events so far take more than `max_reply_bytes`.
+fn ResponsesEvents::over(self : ResponsesEvents) -> Bool {
+  self.stream.over()
+}
+
+///|
+/// The reply of the stream, with the request-id header field `request_id`
+/// and the closing event `closing` its waits complete, none by default.
+fn ResponsesEvents::reply(
+  self : ResponsesEvents,
+  request_id : (String, String),
+  closing~ : Closing? = None,
+) -> Reply {
+  self.stream.reply(request_id, closing~)
 }
 
 ///|
