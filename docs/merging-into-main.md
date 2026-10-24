@@ -68,8 +68,9 @@ pre-merge run compares with them.
   pre-merge run of 0.3.0, has no record of them, and the report says so.
 - [ ] **Run the benchmark on GKE Autopilot** with `scripts/gke-bench.sh`
   ([On GKE Autopilot](../bench/README.md#on-gke-autopilot)). It needs gcloud
-  logged in (`gcloud auth login`), docker, kubectl, and the MoonBit
-  toolchain or a release binary, and the project and region in the
+  logged in (`gcloud auth login`), docker, kubectl, python3, setsid, curl,
+  and the MoonBit toolchain or a release binary, and the project and
+  region in the
   environment. The pre-merge run is on x86 (amd64) nodes, in zone
   us-central1-a, whatever machine starts it: Autopilot has x86 Pods in
   every region, and plenty of them, and us-central1 costs less than

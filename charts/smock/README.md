@@ -76,8 +76,9 @@ definitions:
       users/1.json: '{"id": 1, "name": "Ada"}'
 ```
 
-Definition file names must end in `.json`, `.yaml` or `.yml` and must not
-start with `.`; body file paths must stay inside the body-file
+Definition file names must end in `.json`, `.yaml` or `.yml`, must not
+start with `.`, and may hold only letters, digits, `-`, `_` and `.`, as
+ConfigMap keys do; body file paths must stay inside the body-file
 subdirectory. The chart refuses others, since smock would not read them.
 Values hold text only, and a ConfigMap holds at most 1 MiB.
 
@@ -349,16 +350,18 @@ memory, and the kernel kills a container that goes over its limit. smock
 bounds its Journal by default at the smaller of 64 MiB and a quarter of its
 memory limit (the laptop table's last column), so a small Pod keeps a small
 Journal. `SMOCK_JOURNAL_MAX_BYTES` in `env` sets another bound. Variables
-are bounded the same way, at the smaller of 64 MiB and an eighth of the
-limit, and `SMOCK_STATE_MAX_BYTES` sets another bound.
+and copies of Data buckets are bounded the same way, at the smaller of
+64 MiB and an eighth of the limit, and `SMOCK_STATE_MAX_BYTES` sets
+another bound.
 
 ## Scaling and shutdown
 
 Each Pod runs one single-threaded smock process, so a CPU limit above one
 core would not make it faster: scale with `replicas` instead
 ([ADR 0003](https://github.com/hirunefu/smock/blob/main/docs/adr/0003-one-process-per-pod.md)).
-Replicas share no state: tests that use Ephemeral Stubs, Scenarios or the
-Journal need one replica, or session affinity from a gateway or mesh.
+Replicas share no state: tests that use Ephemeral Stubs, Scenarios,
+Variables, Data buckets or the Journal need one replica, or session
+affinity from a gateway or mesh.
 
 The chart passes `replicas` to smock's replica-count setting, so that each
 Admin API response warns when state is per replica. The value goes stale

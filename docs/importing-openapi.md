@@ -14,6 +14,36 @@ A part of the document that the command does not import, such as
 [What is generated](#what-is-generated) says what becomes of each part,
 and [Limits](#limits) gives the bounds the command keeps to.
 
+## Contents
+
+- [Quick start](#quick-start)
+- [Validate the document first](#validate-the-document-first)
+- [What is generated](#what-is-generated)
+  - [Paths with parameters](#paths-with-parameters)
+  - [Servers and base paths](#servers-and-base-paths)
+  - [The main response](#the-main-response)
+  - [The other responses](#the-other-responses)
+  - [Bodies](#bodies)
+  - [Bodies from examples](#bodies-from-examples)
+  - [Samples from schemas](#samples-from-schemas)
+  - [Response headers](#response-headers)
+  - [IDs and conditions that repeat](#ids-and-conditions-that-repeat)
+- [The Mock and its Hosts](#the-mock-and-its-hosts)
+- [Selecting responses](#selecting-responses)
+  - [Selecting examples](#selecting-examples)
+  - [Through the system under test](#through-the-system-under-test)
+- [Regenerating](#regenerating)
+  - [Overrides](#overrides)
+  - [Checking that the file is current](#checking-that-the-file-is-current)
+- [References and bundling](#references-and-bundling)
+  - [References to other files](#references-to-other-files)
+  - [Bundling](#bundling)
+- [How YAML is read](#how-yaml-is-read)
+- [Problems and exit codes](#problems-and-exit-codes)
+- [Notes for Mockoon users](#notes-for-mockoon-users)
+- [Notes for Prism users](#notes-for-prism-users)
+- [Limits](#limits)
+
 ## Quick start
 
 The example is in [`examples/from-openapi/`](examples/from-openapi/): the
@@ -309,7 +339,7 @@ Stub for each response it answers, and for each further named example
 | `security`, `links`, descriptions, tags and `x-` extensions | Nothing, and no warning. |
 | A `$ref` to a Path Item, a Response, a Header, an Example or, as 3.2 allows, a Media Type, in the same document or in another file under `--ref-dir` | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). In 3.0 and 3.1, which allow no reference in place of a Media Type, a `$ref` in a media type is ignored, with a warning, and the rest of it is read as written. |
 | A `$ref` in a schema | Followed too, into other files as well. A recursive schema gives a finite sample ([Schema references and recursion](#schema-references-and-recursion)). |
-| Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
+| Fields beside a Path Item's `$ref` | Ignored, with a warning for each but an `x-` extension, since OpenAPI leaves their meaning undefined. |
 
 A Stub matches on its method and its path. The Stub of a response other
 than the main one matches on `Smock-Status` too, and the Stub of a further
@@ -405,7 +435,7 @@ first in the document.
 
 ### Servers and base paths
 
-The mock answers where the real service does: the path of a server URL
+The Mock answers where the real service does: the path of a server URL
 is put in front of every path. Take a document whose server is
 `https://api.example.com/v1`, with the path `/pets/{petId}`:
 
@@ -507,7 +537,7 @@ that the document gives there ([Bodies from examples](#bodies-from-examples)),
 else one fixed sample of that media type's schema
 ([Samples from schemas](#samples-from-schemas)). Either way, it is written
 in the file. Nothing is random and nothing is templated, so a
-reviewer sees what the mock answers, and tests repeat. A `200` response
+reviewer sees what the Mock answers, and tests repeat. A `200` response
 whose `application/json` media type has no example, and whose schema is
 
 ```yaml
@@ -1006,7 +1036,7 @@ other Mocks depends on what else the directory holds:
   ```
 
   The document's `servers` never become Hosts. They name the real
-  service, while the names that callers use for the mock are a choice of
+  service, while the names that callers use for the Mock are a choice of
   each deployment.
 - **The Mock's other fields.** To set `default`, `noMatch` or `journal`,
   declare the Mock by hand in another file, with its Hosts if it needs
@@ -1637,7 +1667,7 @@ result differs from Mockoon 9.9.0's import in these ways:
 - **One fixed sample.** Mockoon turns a schema into faker helpers, which
   give new data on every request. smock writes one fixed sample of the
   schema in the file ([Samples from schemas](#samples-from-schemas)), so a
-  reviewer sees what the mock answers, and tests repeat.
+  reviewer sees what the Mock answers, and tests repeat.
 - **The default response.** smock answers the lowest 2xx response, else
   `2XX`, else `default` ([The main response](#the-main-response)).
   Mockoon answers each route's first response, the one with the lowest

@@ -31,6 +31,30 @@ every part of an environment that has a counterpart:
   `smock check` names each, as in `/data: is not a known field` or
   `unknown helper "add"`.
 
+## Contents
+
+- [What smock does not do](#what-smock-does-not-do)
+- [How the models differ](#how-the-models-differ)
+- [A worked example](#a-worked-example)
+  - [List the routes Mockoon serves](#list-the-routes-mockoon-serves)
+  - [Declare the Mock](#declare-the-mock)
+  - [Environments told apart by port](#environments-told-apart-by-port)
+  - [One Stub per response](#one-stub-per-response)
+  - [Paths and request conditions](#paths-and-request-conditions)
+  - [Bodies, headers and templates](#bodies-headers-and-templates)
+  - [Latency, CORS and the CRUD route](#latency-cors-and-the-crud-route)
+  - [Answers that change between requests](#answers-that-change-between-requests)
+  - [The result](#the-result)
+- [Behaviour that differs](#behaviour-that-differs)
+- [Checking the migration](#checking-the-migration)
+- [Running it where Mockoon ran](#running-it-where-mockoon-ran)
+- [Mapping reference](#mapping-reference)
+  - [Environments and routes](#environments-and-routes)
+  - [Rules](#rules)
+  - [Responses](#responses)
+  - [Template helpers](#template-helpers)
+  - [Running and operating](#running-and-operating)
+
 ## What smock does not do
 
 These Mockoon features have no counterpart in smock. Where something
@@ -141,7 +165,7 @@ smock's model is flatter:
   the order they are declared, unless `priority` reorders them, so the
   order of the routes, and of the responses within each route, carries
   over.
-- A *Scenario* is a named state within a Mock, which starts in the state
+- A *Scenario* is a named state machine within a Mock, which starts in the state
   `Started`. A Stub can require one of its states and move it to
   another, so that the same request gets different answers at different
   points of a flow.
@@ -1616,9 +1640,11 @@ requests, as below.
 
 `smock render` shows, without a server, what one Stub answers to a
 sample request, and which of the Stub's conditions the sample fails. The
-sample is JSON, `{method, path, query, headers, body}`, with the path and
-the query values decoded and the cookies in `headers.Cookie`, and
-`--seed` makes the fake data repeatable:
+sample is JSON,
+`{method, path, query, headers, body, session, vars, data}`, every
+member optional, with the path and the query values decoded and the
+cookies in `headers.Cookie`, and `--seed` makes the fake data
+repeatable:
 
 ```sh
 echo '{"method":"GET","path":"/api/v1/users/42","query":{"lang":"ja"}}' >sample.json
