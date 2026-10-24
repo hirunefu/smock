@@ -1091,8 +1091,10 @@ Autopilot before an integration branch is merged into `main` (see
 
 The MoonBit toolchain version is pinned in `.moonbit-version`, and CI installs
 exactly that version, as does the release workflow; the release notes name
-it. A weekly CI job also builds and tests with the latest stable MoonBit and
-opens an issue when that fails.
+it. A weekly CI job also builds and tests with the latest stable MoonBit,
+the modules smock imports included, and opens an issue when that fails.
+moonbitstack/moonhttp is pinned to one exact version, and raised only on
+purpose ([Upgrading moonhttp](docs/releasing.md#upgrading-moonhttp)).
 
 ## Build and test
 
@@ -1103,7 +1105,9 @@ moon check --deny-warn --target all
 moon fmt --check
 moon bench -p smock/smock/engine --release   # match index lookups: 100 vs 10,000 Stubs
 scripts/check-no-io.sh         # no I/O in the protocol modules, the packages that decide a response and the OpenAPI converter
-scripts/check-no-c.sh          # the C boundary of ADR 0001
+scripts/check-no-c.sh          # the C boundary of ADR 0001, in smock and in the modules it resolves (after moon check; needs jq)
+scripts/check-moonhttp-pin.sh  # the build resolves the moonhttp that moon.mod names (needs jq)
+scripts/test-dependency-checks.sh    # the two checks above, on copies of the modules they scan (after moon check; needs jq)
 scripts/test-openssl-asan.sh   # the OpenSSL bindings under AddressSanitizer and LeakSanitizer
 scripts/build-release.sh       # dist/smock
 dist/smock --version

@@ -80,3 +80,8 @@ labels as HTTP/1.1 ones.
 smock's HTTP/2 framing, header compression and connection state come from
 the `http2` package of moonbitstack/moonhttp 0.14.0, a MoonBit module with
 no I/O and no C ([ADR 0005](adr/0005-http2-comes-from-moonhttp.md)).
+smock pins it to that exact version: CI fails when the build resolves
+another one. CI also checks that moonhttp and the modules it imports bring
+no C. A new version comes only on purpose, after h2spec, the e2e tests, a
+check by hand with other clients and the benchmarks
+([Upgrading moonhttp](releasing.md#upgrading-moonhttp)).
