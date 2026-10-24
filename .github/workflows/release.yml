@@ -10,9 +10,10 @@
 #    combines them into one multi-architecture image tagged with the
 #    version, signs it and each architecture with cosign (keyless, with the
 #    workflow's GitHub OIDC identity), attests an SPDX SBOM for each
-#    architecture (the base's packages, which syft finds, and smock with its
-#    MoonBit modules, which scripts/add-smock-to-sbom.sh adds), and verifies
-#    all of that as the README does (scripts/verify-image.sh).
+#    architecture (the base's packages, which syft finds, and smock with
+#    the MoonBit modules that the build of that architecture resolved, which
+#    scripts/add-smock-to-sbom.sh adds), and verifies all of that as the
+#    README does (scripts/verify-image.sh).
 # 3. chart and publish-chart: packages the Helm chart with the version as its
 #    version and app version, so it runs the image published in step 2
 #    (scripts/package-helm-chart.sh), pushes it as an OCI artifact to
@@ -102,19 +103,6 @@ jobs:
           grep -qF "$TOOLCHAIN" release-notes.md
           grep -qF "need OpenSSL 3" release-notes.md
 
-      # NOTICE names the toolchain and the MoonBit modules the binary is
-      # built from, with their versions (docs/releasing.md).
-      - name: Check that NOTICE names the toolchain and the modules' versions
-        env:
-          TOOLCHAIN: ${{ steps.plan.outputs.toolchain }}
-        run: |
-          grep -qF "$TOOLCHAIN" NOTICE
-          for module in $(grep -oE '"moonbitlang/[a-z]+@[0-9][0-9.]*"' moon.mod | tr -d '"'); do
-            awk -v name="${module%@*}" -v version="Version ${module#*@}." \
-              '$0 == name { found = 1 } found && index($0, version) == 1 { ok = 1; exit } END { exit !ok }' NOTICE ||
-              { echo "::error::NOTICE does not name $module with its version"; exit 1; }
-          done
-
       - uses: actions/upload-artifact@v7
         with:
           name: release-notes
@@ -154,6 +142,12 @@ jobs:
       - name: Check smock --version
         run: scripts/check-version.sh dist/smock "$SMOCK_VERSION" "$SMOCK_COMMIT" "$TOOLCHAIN"
 
+      # NOTICE names the toolchain and every MoonBit module the build
+      # resolves, with its version, and says which of them smock compiles
+      # nothing from (docs/releasing.md). CI runs it on every push too.
+      - name: Check that NOTICE names the toolchain and every module the build resolves
+        run: scripts/check-notice.sh
+
       # No --platform: the image is for this runner's own architecture.
       - name: Build the image
         run: >-
@@ -165,11 +159,14 @@ jobs:
       - name: Smoke-test the image
         run: scripts/smoke-test-image.sh "smock:$ARCH" "$SMOCK_VERSION" "$SMOCK_COMMIT" "$TOOLCHAIN"
 
-      - name: Keep the binary and the image
+      # With the modules the build resolved, from which publish-image makes
+      # the image's SBOM without moon.
+      - name: Keep the binary, the image and the resolved modules
         run: |
           mkdir out
           cp dist/smock "out/smock-$SMOCK_VERSION-linux-$ARCH"
           docker save "smock:$ARCH" | gzip >"out/image-linux-$ARCH.tar.gz"
+          scripts/resolved-modules.sh --json >"out/modules-linux-$ARCH.json"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -231,8 +228,9 @@ jobs:
           cosign sign --yes --recursive "$IMAGE@$digest"
 
       # syft finds the packages of the distroless base but not the MoonBit
-      # binary, so smock and its modules are added to what it finds. The
-      # SBOM must agree with NOTICE before it is attested.
+      # binary, so smock and its modules are added to what it finds: the
+      # modules that the build of that architecture resolved. The SBOM must
+      # agree with NOTICE before it is attested.
       - name: Make and attest the SBOM of each architecture
         env:
           SYFT: ${{ steps.syft.outputs.cmd }}
@@ -243,7 +241,7 @@ jobs:
               '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest')
             sbom="sbom/smock-$VERSION-linux-$arch.spdx.json"
             "$SYFT" scan "registry:$IMAGE@$digest" --output "spdx-json=$sbom"
-            scripts/add-smock-to-sbom.sh "$sbom" "$VERSION" "$GITHUB_SHA"
+            scripts/add-smock-to-sbom.sh "$sbom" "$VERSION" "$GITHUB_SHA" "out/modules-linux-$arch.json"
             scripts/check-sbom-notice.sh "$sbom"
             cosign attest --yes --type spdxjson --predicate "$sbom" "$IMAGE@$digest"
           done

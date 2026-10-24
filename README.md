@@ -889,12 +889,16 @@ attestation. It lists the packages of the distroless base and smock itself:
 the binary with the release's version, the commit and MoonBit toolchain it
 was built from, the MoonBit modules compiled into it, the MoonBit native
 runtime, mimalloc and simdutf, which come with the toolchain and are linked
-into it, and its dynamic link to the base's OpenSSL. The runtime, mimalloc
-and simdutf have the licences that [NOTICE](NOTICE) gives them. The runtime
-has the toolchain's version and mimalloc the one NOTICE gives; simdutf's is
-`NOASSERTION`, since the toolchain does not record it. To verify the SBOM
-of the linux/arm64 image and save it as `smock.spdx.json` (use `amd64` for
-linux/amd64):
+into it, and its dynamic link to the base's OpenSSL. It also lists the
+modules that the build resolves but compiles nothing from, such as
+moondate, mooncrypt and moonbase, which moonhttp imports: smock depends on
+them (`DEPENDS_ON`), but does not link them. Each module has the version
+the build resolves and the licence of its own module file. The runtime,
+mimalloc and simdutf have the licences that [NOTICE](NOTICE) gives them.
+The runtime has the toolchain's version and mimalloc the one NOTICE gives;
+simdutf's is `NOASSERTION`, since the toolchain does not record it. To
+verify the SBOM of the linux/arm64 image and save it as `smock.spdx.json`
+(use `amd64` for linux/amd64):
 
 ```sh
 digest=$(docker buildx imagetools inspect --raw ghcr.io/hirunefu/smock:<version> |
@@ -909,9 +913,11 @@ The same `cosign verify` flags verify that architecture's signature with
 `"ghcr.io/hirunefu/smock@$digest"`. The GitHub release also has the SBOMs as
 files, `smock-<version>-linux-<arch>.spdx.json`.
 `scripts/verify-image.sh ghcr.io/hirunefu/smock:<version>` runs all of these
-checks. The SBOMs of 0.3.0 and earlier releases do not list the runtime,
-mimalloc and simdutf, so check an image of 0.3.0 or earlier with the script
-from its own tag, such as `git show v0.3.0:scripts/verify-image.sh`.
+checks. It expects every module that NOTICE names, so run it from a
+checkout of the image's own tag. The SBOMs of 0.3.0 and earlier releases do
+not list the runtime, mimalloc and simdutf, so check an image of 0.3.0 or
+earlier with the script from its own tag, such as
+`git show v0.3.0:scripts/verify-image.sh`.
 
 ### Verify the Helm chart
 
@@ -1124,7 +1130,8 @@ moon bench -p smock/smock/engine --release   # match index lookups: 100 vs 10,00
 scripts/check-no-io.sh         # no I/O in the protocol modules, the packages that decide a response and the OpenAPI converter
 scripts/check-no-c.sh          # the C boundary of ADR 0001, in smock and in the modules it resolves (after moon check; needs jq)
 scripts/check-moonhttp-pin.sh  # the build resolves the moonhttp that moon.mod names (needs jq)
-scripts/test-dependency-checks.sh    # the two checks above, on copies of the modules they scan (after moon check; needs jq)
+scripts/check-notice.sh        # NOTICE names the toolchain and every module the build resolves (needs jq)
+scripts/test-dependency-checks.sh    # the three checks above, on copies of the modules they read (after moon check; needs jq)
 scripts/test-openssl-asan.sh   # the OpenSSL bindings under AddressSanitizer and LeakSanitizer
 scripts/build-release.sh       # dist/smock
 dist/smock --version

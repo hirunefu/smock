@@ -70,6 +70,15 @@ of each GitHub release include its section
   RST_STREAM `REFUSED_STREAM` and never reaches the Mocks. With the body
   limit, it bounds the request bodies one connection holds. See
   [Limits and timeouts](docs/http2.md#limits-and-timeouts).
+- moonbitstack/moonhttp 0.14.0 (Apache-2.0) and the modules it imports are
+  named in NOTICE and the image's SBOM
+  ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)). smock is
+  compiled from moonhttp and moonvar. The build also resolves moondate,
+  mooncrypt and moonbase, but compiles nothing from them, so NOTICE says
+  so and the SBOM gives them `DEPENDS_ON`, not `STATIC_LINK`. The SBOM
+  lists every module the build resolves, with the licence of its own module
+  file, and CI fails on every push when NOTICE leaves out such a module or
+  gives it another version.
 - HTTP/2 over TLS (h2) on the TLS port: a connection whose client chooses
   `h2` by ALPN is served over HTTP/2, by the same Mocks and Stubs as h2c,
   with any certificate: the certificate files, the self-signed certificate
@@ -104,6 +113,9 @@ of each GitHub release include its section
   `smock_request_duration_seconds` and `smock_unmatched_requests_total`
   speak of a request the protocol layer rejects, and name HTTP/2's
   statuses beside HTTP/1.1's: 400, 413 and 431 on its stream.
+- `scripts/verify-image.sh` also requires moonhttp, and every other module
+  that NOTICE names, in each SBOM. It reads NOTICE, so check an image with
+  the script and NOTICE of the image's own tag.
 
 ### Fixed
 

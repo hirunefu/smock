@@ -1,11 +1,13 @@
 #!/bin/sh
 # Tests of scripts/add-smock-to-sbom.sh and scripts/check-sbom-notice.sh.
-# They run on a small SBOM in the shape syft makes of the image, and on a
-# small NOTICE that a test changes to disagree with the SBOM. The check
-# must find each such disagreement about the software that comes with the
-# MoonBit toolchain. A last test makes and checks the SBOM with this
-# repository's NOTICE. CI makes and checks the real image's SBOM in
-# build-test.yml.
+# They run on a small SBOM in the shape syft makes of the image, with a
+# small modules file in the shape scripts/resolved-modules.sh --json
+# prints, and on a small NOTICE that a test changes to disagree with the
+# SBOM. The check must find each such disagreement about the software that
+# comes with the MoonBit toolchain and about the modules. A last test makes
+# and checks the SBOM with this repository's NOTICE and the modules it
+# names. CI makes and checks the real image's SBOM, with the modules the
+# build resolves, in build-test.yml.
 #
 # It needs jq.
 #
@@ -30,8 +32,11 @@ fail() {
 }
 
 # A repository with the scripts, a moon.mod that imports one module from
-# mooncakes, a toolchain, and a NOTICE that names the toolchain and the
-# software that comes with it.
+# mooncakes, a toolchain, a NOTICE that names the toolchain, the software
+# that comes with it and the modules the build resolves, and those modules
+# as scripts/resolved-modules.sh --json lists them: one that moon.mod
+# imports, one that it imports in turn, and one that the build resolves
+# but compiles nothing from.
 fixture=$tmp/repo
 mkdir -p "$fixture/scripts"
 cp scripts/add-smock-to-sbom.sh scripts/check-sbom-notice.sh scripts/notice.jq "$fixture/scripts/"
@@ -59,9 +64,13 @@ The smock binary is built with the MoonBit toolchain moonc v1.2.3+test,
 which smock --version names.
 
 - moonbitlang/async: Apache License, Version 2.0
+- example/parser: MIT License
 - The MoonBit native runtime: Apache License, Version 2.0
 - mimalloc: MIT License
 - simdutf: MIT License
+
+The build also resolves example/unused, but smock compiles nothing from
+it.
 
 
 moonbitlang/async
@@ -69,6 +78,26 @@ moonbitlang/async
 
 Version 0.22.4.
 
+Source:  https://github.com/moonbitlang/async
+Licence: Apache License, Version 2.0
+
+
+example/parser
+--------------
+
+Version 1.2.0. moonbitlang/async imports it.
+
+Source:  https://example.com/parser
+Licence: MIT License
+
+
+example/unused
+--------------
+
+Version 0.3.0. moonbitlang/async imports it, but smock compiles nothing
+from it.
+
+Source:  https://example.com/unused
 Licence: Apache License, Version 2.0
 
 
@@ -100,6 +129,17 @@ Source:  https://github.com/simdutf/simdutf
 Licence: MIT License
 EOF
 
+cat >"$tmp/modules.json" <<'EOF'
+[
+  {"name": "example/parser", "version": "1.2.0", "licence": "MIT", "repository": "https://example.com/parser",
+   "compiled": true, "packages": ["lexer"]},
+  {"name": "example/unused", "version": "0.3.0", "licence": "Apache-2.0", "repository": "https://example.com/unused",
+   "compiled": false, "packages": []},
+  {"name": "moonbitlang/async", "version": "0.22.4", "licence": "Apache-2.0",
+   "repository": "https://github.com/moonbitlang/async", "compiled": true, "packages": ["", "io"]}
+]
+EOF
+
 # The image's SBOM as syft makes it: the image, which the document
 # describes, and the base's OpenSSL.
 cat >"$tmp/syft.spdx.json" <<'EOF'
@@ -126,26 +166,29 @@ cat >"$tmp/syft.spdx.json" <<'EOF'
 }
 EOF
 
-# add <name> [repository]: runs the repository's add-smock-to-sbom.sh (the
-# fixture's by default) on a copy of syft's SBOM, $tmp/<name>.spdx.json.
+# add <name> [repository [modules]]: runs the repository's
+# add-smock-to-sbom.sh (the fixture's by default) on a copy of syft's SBOM,
+# $tmp/<name>.spdx.json, with the modules file (the fixture's by default).
 add() {
   cp "$tmp/syft.spdx.json" "$tmp/$1.spdx.json"
   if ! "${2:-$fixture}/scripts/add-smock-to-sbom.sh" "$tmp/$1.spdx.json" 1.0.0 0123456789abcdef \
-    >/dev/null 2>"$tmp/$1.err"; then
+    "${3:-$tmp/modules.json}" >/dev/null 2>"$tmp/$1.err"; then
     fail "$1: add-smock-to-sbom.sh failed: $(cat "$tmp/$1.err")"
   fi
 }
 
 # check <name> <description> <jq filter>: the filter, run on
 # $tmp/<name>.spdx.json, must give true. It may use package($name), the
-# SBOM's one package of that name, and static($name), whether smock links
-# that package statically.
+# SBOM's one package of that name, static($name), whether smock links that
+# package statically, and depends($name), whether smock depends on it.
 defs='
 def package($name): [.packages[] | select(.name == $name)] | if length == 1 then .[0] else null end;
-def static($name):
+def related($name; $type):
   package($name).SPDXID as $id
   | any(.relationships[]; .spdxElementId == "SPDXRef-Package-smock" and .relatedSpdxElement == $id
-                          and .relationshipType == "STATIC_LINK");
+                          and .relationshipType == $type);
+def static($name): related($name; "STATIC_LINK");
+def depends($name): related($name; "DEPENDS_ON");
 '
 check() {
   if jq -e "$defs $3" "$tmp/$1.spdx.json" >/dev/null 2>"$tmp/jq.err"; then
@@ -180,11 +223,35 @@ check sbom "their identifiers follow the SBOM's scheme, and every identifier is 
   all(package("The MoonBit native runtime", "mimalloc", "simdutf"); .SPDXID | startswith("SPDXRef-Package-"))
   and ([.packages[].SPDXID] | length == (unique | length))'
 
+check sbom "a module compiled into smock has its version and the licence of its module file" '
+  package("example/parser") | .versionInfo == "1.2.0" and .licenseDeclared == "MIT"'
+check sbom "smock links a module compiled into it statically" 'static("example/parser")'
+check sbom "a module that moon.mod imports has the licence of its module file" '
+  package("moonbitlang/async") | .versionInfo == "0.22.4" and .licenseDeclared == "Apache-2.0"'
+check sbom "a module smock compiles nothing from has its version and the licence of its module file" '
+  package("example/unused") | .versionInfo == "0.3.0" and .licenseDeclared == "Apache-2.0"'
+check sbom "smock depends on a module it compiles nothing from, but does not link it" '
+  depends("example/unused") and (static("example/unused") | not)'
+check sbom "the comment of a module smock compiles nothing from says so" '
+  package("example/unused").comment | test("compiles nothing from")'
+
+# The modules file must list each module that moon.mod imports.
+jq 'map(select(.name != "moonbitlang/async"))' "$tmp/modules.json" >"$tmp/no-async.json"
+cp "$tmp/syft.spdx.json" "$tmp/no-async.spdx.json"
+if "$fixture/scripts/add-smock-to-sbom.sh" "$tmp/no-async.spdx.json" 1.0.0 0123456789abcdef "$tmp/no-async.json" \
+  >/dev/null 2>"$tmp/no-async.err"; then
+  fail "no-async: add-smock-to-sbom.sh accepts modules that leave out moonbitlang/async, which moon.mod imports"
+elif grep -q 'does not list moonbitlang/async, which moon.mod imports' "$tmp/no-async.err"; then
+  pass "no-async: add-smock-to-sbom.sh fails when the modules leave out one that moon.mod imports"
+else
+  fail "no-async: add-smock-to-sbom.sh fails, but not because the modules leave out moonbitlang/async: $(cat "$tmp/no-async.err")"
+fi
+
 # NOTICE must name each part of the toolchain the script adds.
 variant no-simdutf '/^simdutf$/,$d'
 cp "$tmp/syft.spdx.json" "$tmp/no-simdutf.spdx.json"
 if "$tmp/no-simdutf/scripts/add-smock-to-sbom.sh" "$tmp/no-simdutf.spdx.json" 1.0.0 0123456789abcdef \
-  >/dev/null 2>"$tmp/no-simdutf.err"; then
+  "$tmp/modules.json" >/dev/null 2>"$tmp/no-simdutf.err"; then
   fail "no-simdutf: add-smock-to-sbom.sh adds simdutf, which NOTICE does not name"
 elif grep -q 'NOTICE should have one section simdutf' "$tmp/no-simdutf.err"; then
   pass "no-simdutf: add-smock-to-sbom.sh fails when NOTICE does not name simdutf"
@@ -254,8 +321,42 @@ edit unlinked 'package("The MoonBit native runtime").SPDXID as $id
 rejects "the check finds that smock does not link the runtime statically" unlinked "$fixture/NOTICE" \
   'smock does not link The MoonBit native runtime statically'
 
-# This repository's NOTICE, toolchain and moon.mod.
-add repository "$PWD"
+variant parser-version '/^example\/parser$/,/^Licence/s/^Version 1\.2\.0\./Version 1.2.1./'
+rejects "the check finds that NOTICE gives a module another version" sbom "$tmp/parser-version/NOTICE" \
+  'NOTICE gives example/parser the version 1.2.1, the SBOM 1.2.0'
+
+edit no-parser 'del(.packages[] | select(.name == "example/parser"))'
+rejects "the check finds that the SBOM does not list a module NOTICE names" no-parser "$fixture/NOTICE" \
+  'the SBOM has no package example/parser, which NOTICE names'
+
+edit parser-licence '(.packages[] | select(.name == "example/parser") | .licenseDeclared) = "Apache-2.0"'
+rejects "the check finds that the SBOM gives a module another licence" parser-licence "$fixture/NOTICE" \
+  'NOTICE gives example/parser the licence MIT, the SBOM Apache-2.0'
+
+edit parser-unlinked 'package("example/parser").SPDXID as $id
+  | del(.relationships[] | select(.relatedSpdxElement == $id))'
+rejects "the check finds that smock does not link statically a module NOTICE says it is compiled from" \
+  parser-unlinked "$fixture/NOTICE" 'smock does not link example/parser statically'
+
+edit unused-linked 'package("example/unused").SPDXID as $id
+  | (.relationships[] | select(.relatedSpdxElement == $id) | .relationshipType) = "STATIC_LINK"'
+rejects "the check finds that smock links statically a module NOTICE says it compiles nothing from" \
+  unused-linked "$fixture/NOTICE" 'smock links example/unused statically, but NOTICE says that smock compiles nothing from it'
+
+edit unused-unrelated 'package("example/unused").SPDXID as $id
+  | del(.relationships[] | select(.relatedSpdxElement == $id))'
+rejects "the check finds that smock does not depend on a module NOTICE says it compiles nothing from" \
+  unused-unrelated "$fixture/NOTICE" 'smock does not depend on example/unused'
+
+# This repository's NOTICE, toolchain and moon.mod, with the modules that
+# NOTICE names, which scripts/check-notice.sh checks against the build on
+# every push.
+jq -n -L scripts --rawfile notice NOTICE '
+  include "notice";
+  $notice | notice_modules
+  | map({name, version, licence, repository: .source, compiled, packages: []})' >"$tmp/repository-modules.json"
+add repository "$PWD" "$tmp/repository-modules.json"
+check repository "smock links moonhttp statically" 'static("moonbitstack/moonhttp")'
 check repository "mimalloc has a version from this NOTICE, and the runtime the toolchain's" '
   (package("mimalloc").versionInfo | test("^[0-9]+[.][0-9]+"))
   and package("The MoonBit native runtime").versionInfo == "'"$(cat .moonbit-version)"'"'

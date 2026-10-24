@@ -65,7 +65,14 @@ jobs:
       - name: Check the C boundary (ADR 0001), in smock and in its resolved modules
         run: scripts/check-no-c.sh
 
-      - name: Test the moonhttp pin check and the C check of the resolved modules
+      # NOTICE names every module the build resolves, of any owner and
+      # transitive ones included, at the version the build resolves, and
+      # says which of them smock compiles nothing from (ADR 0005). The
+      # release workflow runs the same check.
+      - name: Check that NOTICE names the toolchain and every module the build resolves
+        run: scripts/check-notice.sh
+
+      - name: Test the moonhttp pin check, the C check of the resolved modules and the NOTICE check
         run: scripts/test-dependency-checks.sh
 
       - name: Test every module natively
@@ -123,15 +130,21 @@ jobs:
       # The release workflow makes the published image's SBOM the same way,
       # but only for a tag: this checks on every push that smock, its
       # MoonBit modules, and the runtime, mimalloc and simdutf of the
-      # toolchain get into it, the last three as NOTICE names them.
+      # toolchain get into it. The modules are every module the build
+      # resolves, moonhttp and the modules it imports among them; they and
+      # the last three must be as NOTICE names them.
       - name: Make the image's SBOM as the release workflow does
         env:
           SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
+          scripts/resolved-modules.sh --json >modules.json
           "$SYFT" scan docker:smock:ci --output spdx-json=sbom.spdx.json
-          scripts/add-smock-to-sbom.sh sbom.spdx.json "$SMOCK_VERSION" "$GITHUB_SHA"
-          jq -e --arg version "$SMOCK_VERSION" \
-            'any(.packages[]; .name == "smock" and .versionInfo == $version)' sbom.spdx.json
+          scripts/add-smock-to-sbom.sh sbom.spdx.json "$SMOCK_VERSION" "$GITHUB_SHA" modules.json
+          jq -e --arg version "$SMOCK_VERSION" --slurpfile modules modules.json '
+            [.packages[] | "\(.name)@\(.versionInfo)"] as $packages
+            | ($packages | index("smock@\($version)")) != null
+            and any(.packages[]; .name == "moonbitstack/moonhttp")
+            and ([$modules[0][] | "\(.name)@\(.version)"] - $packages) == []' sbom.spdx.json
           scripts/check-sbom-notice.sh sbom.spdx.json
 
       - name: Install helm, kubectl and kind

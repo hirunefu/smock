@@ -109,17 +109,29 @@ built, when a tag that is not a pre-release has no section of its own. A
 pre-release tag, such as `v<version>-rc.1`, takes its own section if there
 is one, else the section of `<version>`, else `Unreleased`.
 
-When `.moonbit-version` or the imports in `moon.mod` changed since the
-last release, check that [NOTICE](../NOTICE) still names what the binary
-holds, with the right versions. The release workflow fails when NOTICE
-does not name the toolchain or a module of `moon.mod` with its version.
+[NOTICE](../NOTICE) names the toolchain and every MoonBit module the
+build resolves, of any owner and transitive ones included. CI, on every
+push, and the release workflow fail when NOTICE leaves out a module the
+build resolves or names one it does not, when it gives a module another
+version than the build resolves, or another licence or source than the
+module's own module file, or when it names another toolchain than
+`.moonbit-version` (`scripts/check-notice.sh`). The section of a module
+that the build resolves but compiles nothing from, such as moondate,
+mooncrypt and moonbase, which moonhttp imports, says "smock compiles
+nothing from it", and the check fails when that does not match the
+build. When `.moonbit-version` or the modules changed since the last
+release, check the rest by hand: the packages that each module's section
+names, and the copyright lines and NOTICE files it quotes.
+
 The runtime, mimalloc and simdutf come with the toolchain. The image's
-SBOM takes their licences and mimalloc's version from NOTICE, and CI fails
-when the SBOM and NOTICE disagree, or when NOTICE names another toolchain
-than `.moonbit-version` (`scripts/check-sbom-notice.sh`). Nothing reads
-mimalloc's version from the toolchain, so check it by hand after a
-toolchain update. mimalloc's `mi_version` returns it as one number, 217
-for 2.1.7, which this shows:
+SBOM takes their licences and mimalloc's version from NOTICE, and the
+modules from what the build resolves
+(`scripts/resolved-modules.sh --json`). CI fails when the SBOM and NOTICE
+disagree, on those parts or on a module's version, licence or link, or
+when NOTICE names another toolchain than `.moonbit-version`
+(`scripts/check-sbom-notice.sh`). Nothing reads mimalloc's version from
+the toolchain, so check it by hand after a toolchain update. mimalloc's
+`mi_version` returns it as one number, 217 for 2.1.7, which this shows:
 
 ```sh
 objdump -d --disassemble=mi_version ~/.moon/lib/libmoonbitrun.o
@@ -236,5 +248,7 @@ modules it imports bring no C. `scripts/check-no-c.sh` scans every module
 the build resolves outside moonbitlang, at the version the build resolves,
 so a module that the upgrade adds is scanned too. It fails on a C source,
 an `extern "C"`, a native stub, a C compiler or link flag, or a prebuild
-script in any of them. Check NOTICE for the modules the upgrade adds or
-drops, as [Every release after](#every-release-after) says.
+script in any of them. CI also fails until NOTICE names each module the
+upgrade adds, and drops each one the build no longer resolves, with the
+versions the build resolves, as [Every release after](#every-release-after)
+says. The image's SBOM follows on its own.
