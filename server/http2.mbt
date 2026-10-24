@@ -9,7 +9,8 @@
 //   `H2Connection::judge`, where each frame is judged before it reaches
 //   the `Conn`;
 // - the record of the client's streams (`StreamRecord`, http2_streams.mbt),
-//   which the judge holds HEADERS frames against, and which every
+//   which the judge holds HEADERS frames against, which counts the streams
+//   open against `--http2-max-concurrent-streams`, and which every
 //   RST_STREAM smock sends goes into, through `H2Connection::reset`;
 // - the mapping from a stream onto the engine's request (`H2Request`,
 //   http2_requests.mbt);
@@ -229,11 +230,19 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
         return true
       }
       Request(stream~, fields~) => {
+        self.streams.opened(stream)
+        // moonhttp refuses a stream past the limit before it reports one,
+        // since smock advertised the limit; this holds the bound whatever
+        // a version of moonhttp enforces.
+        if self.streams.open_count() >
+          self.ports.settings.http2_max_concurrent_streams {
+          self.reset(stream, @http2.error_refused_stream)
+          continue
+        }
         if self.requests.is_empty() {
           self.read_deadline = self.read_at + self.read_timeout
         }
         self.requests[stream] = H2Request::new(fields)
-        self.streams.opened(stream)
       }
       Data(stream~, data~) => {
         if self.requests.get(stream) is Some(request) {
