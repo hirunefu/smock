@@ -14,11 +14,14 @@ words, separated by spaces; a line that starts with # is a comment. Why is
   #<issue>  the case fails until that issue is done.
 
 It prints how many cases passed, every listed case with its outcome and
-reason, and every case that failed and is not listed, with what h2spec
-expected and got. It exits with 1 when such a case failed, and with 2 when
-it cannot read the list or the report.
+reason, the listed cases that passed, which can come off the list, and
+every case that failed and is not listed, with what h2spec expected and
+got. On GitHub Actions, a listed case that passed is also a notice on its
+line of the list. It exits with 1 when a case that is not listed failed,
+and with 2 when it cannot read the list or the report.
 """
 
+import os
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -57,7 +60,7 @@ def cases(report):
 
 
 def read_list(path):
-    """The entries of a list, by case: {ID: (why, reason)}."""
+    """The entries of a list, by case: {ID: (why, reason, line number)}."""
     entries = {}
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip() or line.startswith("#"):
@@ -68,7 +71,7 @@ def read_list(path):
         case, why, reason = fields
         if not re.fullmatch(r"#[0-9]+", why):
             raise ListError(f"{path.name}:{number}: {case} is listed as {why!r}, not as #<issue>")
-        entries[case] = (why, reason.strip())
+        entries[case] = (why, reason.strip(), number)
     return entries
 
 
@@ -90,11 +93,24 @@ def main(argv):
 
     if listed:
         print(f"h2spec {port}: listed in {path.name}, with the reason:")
+    passing = []
     for case, description, outcome, detail in run:
         if case not in listed:
             continue
-        why, reason = listed[case]
-        print(f"  {case} {outcome}, as listed until {why}: {reason}")
+        why, reason, line = listed[case]
+        if outcome == "passed":
+            passing.append((case, line))
+            print(f"  {case} passed, listed until {why}: {reason}")
+        else:
+            print(f"  {case} {outcome}, as listed until {why}: {reason}")
+    if passing:
+        print(f"h2spec {port}: {len(passing)} listed {'case' if len(passing) == 1 else 'cases'} passed, "
+              f"so {'it' if len(passing) == 1 else 'they'} can come off {path.name}: "
+              + " ".join(case for case, _ in passing))
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            for case, line in passing:
+                print(f"::notice file={path},line={line},title=h2spec {port}::"
+                      f"{case} passes now, so it can come off the list")
 
     unlisted = 0
     for case, description, outcome, detail in run:

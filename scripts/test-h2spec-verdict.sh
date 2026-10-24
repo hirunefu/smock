@@ -61,11 +61,16 @@ list() {
   done
 }
 
-# verdict <name>: runs the verdict on $tmp/plain.txt and $tmp/report.xml
-# into $tmp/<name>.out, and its exit status into $tmp/<name>.status.
+# verdict <name> [github]: runs the verdict on $tmp/plain.txt and
+# $tmp/report.xml into $tmp/<name>.out, and its exit status into
+# $tmp/<name>.status; with github, as on GitHub Actions, and otherwise as
+# elsewhere, wherever the tests run.
 verdict() {
+  github=""
+  [ "${2:-}" = github ] && github=true
   status=0
-  python3 scripts/h2spec-verdict.py "$tmp/plain.txt" "$tmp/report.xml" >"$tmp/$1.out" 2>&1 || status=$?
+  env GITHUB_ACTIONS="$github" python3 scripts/h2spec-verdict.py "$tmp/plain.txt" "$tmp/report.xml" \
+    >"$tmp/$1.out" 2>&1 || status=$?
   echo "$status" >"$tmp/$1.status"
 }
 
@@ -121,6 +126,19 @@ exits listed-failure 0
 says listed-failure "h2spec plain: listed in plain.txt, with the reason:"
 says listed-failure "  http2/3.5/2 failed, as listed until #150: The TLS port does not serve HTTP/2 yet."
 says listed-failure "h2spec plain: every case passed or is listed"
+
+# A listed case that passes is reported, so that it can come off the list,
+# but does not fail the run. On GitHub Actions, it is also a notice on its
+# line of the list.
+report pass pass pass pass
+list "generic/1/1  #147  Not yet." "http2/3.5/2  #150  The TLS port does not serve HTTP/2 yet."
+verdict listed-pass
+exits listed-pass 0
+says listed-pass "  http2/3.5/2 passed, listed until #150: The TLS port does not serve HTTP/2 yet."
+says listed-pass "h2spec plain: 2 listed cases passed, so they can come off plain.txt: generic/1/1 http2/3.5/2"
+says listed-pass "h2spec plain: every case passed or is listed"
+verdict listed-pass-on-github github
+says listed-pass-on-github "::notice file=$tmp/plain.txt,line=3,title=h2spec plain::http2/3.5/2 passes now, so it can come off the list"
 
 echo
 echo "$passed passed, $failed failed"
