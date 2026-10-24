@@ -247,7 +247,7 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
         if remote {
           self.streams.reset_by_client(stream)
         } else {
-          self.streams.remember(stream, Moonhttp)
+          self.streams.remember(stream, by_smock=false)
         }
         if self.requests.contains(stream) {
           self.requests.remove(stream)
@@ -385,7 +385,28 @@ fn H2Connection::reset_after(
   entry : @engine.JournalEntry?,
 ) -> Unit {
   self.ports.commit(entry)
-  self.conn.reset(stream, code=@http2.error_internal_error) catch {
-    _ => ()
+  self.reset(stream, @http2.error_internal_error)
+}
+
+///|
+/// Ends `stream` with RST_STREAM `code`, and records that smock reset it,
+/// so that frames the client sent on it before it learnt of the reset are
+/// ignored (RFC 9113, section 5.1). Every RST_STREAM smock sends goes
+/// through here; moonhttp's own come as `Reset` events. A request still in
+/// progress on the stream ends with it.
+fn H2Connection::reset(
+  self : H2Connection,
+  stream : Int32,
+  code : Int32,
+) -> Unit {
+  self.conn.reset(stream, code~) catch {
+    // The stream is not open, or the connection has failed: nothing is
+    // sent.
+    _ => return
+  }
+  self.streams.remember(stream, by_smock=true)
+  if self.requests.contains(stream) {
+    self.requests.remove(stream)
+    self.end_stream()
   }
 }

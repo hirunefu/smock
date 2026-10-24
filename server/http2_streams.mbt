@@ -15,17 +15,6 @@
 let remembered_resets : Int32 = 256
 
 ///|
-/// Who, on this side, reset a stream.
-priv enum Resetter {
-  /// smock, through `H2Connection::reset`.
-  Smock
-  /// moonhttp, for a stream error the client's frames caused: with a
-  /// `Reset` event, or by refusing a new stream at open, which it reports
-  /// with no event.
-  Moonhttp
-} derive(Eq, Debug)
-
-///|
 /// Where a client stream ID stands, as the record knows it.
 priv enum StreamState {
   /// Above every client stream ID seen, so not used yet.
@@ -33,13 +22,17 @@ priv enum StreamState {
   /// Begun with a `Request` event, and neither reset nor ended by both
   /// sides.
   Open
-  /// Reset by this side, and still remembered.
-  Reset(Resetter)
+  /// Reset by this side, and still remembered: by smock, through
+  /// `H2Connection::reset`, or else by moonhttp, for a stream error the
+  /// client's frames caused, with a `Reset` event, or by refusing a new
+  /// stream at open, which it reports with no event. The record keeps
+  /// which.
+  Reset
   /// Used, and neither open nor remembered as reset by this side: ended by
   /// both sides, reset by the client, skipped by a higher stream ID, or
   /// reset and forgotten.
   Closed
-} derive(Eq, Debug)
+}
 
 ///|
 /// Which sides have ended a stream that is open.
@@ -62,8 +55,9 @@ priv struct StreamRecord {
   /// The IDs of the streams this side reset, oldest first until there are
   /// `remembered_resets`; then a ring, whose oldest is at `oldest`.
   resets : Array[Int32]
-  /// Who reset each stream in `resets`, at the same index.
-  resetters : Array[Resetter]
+  /// Whether smock, not moonhttp, reset each stream in `resets`, at the
+  /// same index.
+  by_smock : Array[Bool]
   mut oldest : Int32
   /// A new stream whose field block has had no `Request` event yet, or 0.
   mut opening : Int32
@@ -79,7 +73,7 @@ fn StreamRecord::new() -> StreamRecord {
     highest: 0,
     open: Map([]),
     resets: [],
-    resetters: [],
+    by_smock: [],
     oldest: 0,
     opening: 0,
     in_block: false,
@@ -101,7 +95,7 @@ fn StreamRecord::state(self : StreamRecord, id : Int32) -> StreamState {
   for k = 1; k <= n; k = k + 1 {
     let i = (self.oldest + n - k) % n
     if self.resets[i] == id {
-      return Reset(self.resetters[i])
+      return Reset
     }
   }
   Closed
@@ -129,11 +123,13 @@ fn StreamRecord::see(self : StreamRecord, head : @http2.FrameHeader) -> Bool {
   if head.ftype != @http2.frame_headers || self.in_block || id % 2 == 0 {
     return true
   }
-  if id > self.highest {
-    self.highest = id
-    self.opening = id
-  } else if self.state(id) is Closed {
-    return false
+  match self.state(id) {
+    Idle => {
+      self.highest = id
+      self.opening = id
+    }
+    Open | Reset => ()
+    Closed => return false
   }
   self.in_block = !ends_block
   true
@@ -154,7 +150,7 @@ fn StreamRecord::opened(self : StreamRecord, id : Int32) -> Unit {
 /// moonhttp refused at open, which it reports with no event.
 fn StreamRecord::settle(self : StreamRecord) -> Unit {
   if self.opening != 0 && !self.in_block {
-    self.remember(self.opening, Moonhttp)
+    self.remember(self.opening, by_smock=false)
     self.opening = 0
   }
 }
@@ -186,20 +182,20 @@ fn StreamRecord::reset_by_client(self : StreamRecord, id : Int32) -> Unit {
 }
 
 ///|
-/// This side has reset the stream `id`: `by` says who. The oldest reset
-/// stream is forgotten once there are `remembered_resets`.
+/// This side has reset the stream `id`: smock if `by_smock`, else moonhttp.
+/// The oldest reset stream is forgotten once there are `remembered_resets`.
 fn StreamRecord::remember(
   self : StreamRecord,
   id : Int32,
-  by : Resetter,
+  by_smock~ : Bool,
 ) -> Unit {
   self.open.remove(id)
   if self.resets.length() < remembered_resets {
     self.resets.push(id)
-    self.resetters.push(by)
+    self.by_smock.push(by_smock)
   } else {
     self.resets[self.oldest] = id
-    self.resetters[self.oldest] = by
+    self.by_smock[self.oldest] = by_smock
     self.oldest = (self.oldest + 1) % remembered_resets
   }
 }
