@@ -374,6 +374,13 @@ So a list just over the limit gets a 431, which tells the client why,
 while what moonhttp holds of one header block, and of the list it decodes
 to, stays within twice the limit.
 
+moonhttp 0.14.0 counts a decoded list in 32 bits, so its count wraps past
+2^31 octets, and moonhttp then passes the list on instead of resetting the
+stream. A block reaches that only when it may be over 524,288 octets, with
+a `--header-size-limit` over 262,144: each octet names at most one table
+entry, of at most 4,096 octets. smock's own count still refuses such a list
+with 431.
+
 ### Timeouts
 
 Over HTTP/2, the read and idle timeouts work per stream and per connection.

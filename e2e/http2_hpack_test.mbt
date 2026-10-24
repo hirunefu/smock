@@ -6,8 +6,9 @@
 //   SETTINGS_HEADER_TABLE_SIZE to 4,096 before moonhttp sees it.
 // - A block that names a large table entry over and over is held to the
 //   header limits (431), and past moonhttp's bound, twice
-//   `--header-size-limit`, to RST_STREAM ENHANCE_YOUR_CALM. moonhttp keeps
-//   no fields past that bound.
+//   `--header-size-limit`, to RST_STREAM ENHANCE_YOUR_CALM. Past 2^31
+//   decoded octets, where moonhttp 0.14.0's count wraps, smock's own check
+//   still gives 431.
 // - A block that does not decode, or that asks for a decoding table larger
 //   than 4,096 octets, ends the connection with GOAWAY COMPRESSION_ERROR.
 
