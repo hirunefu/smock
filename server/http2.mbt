@@ -35,19 +35,26 @@
 // - no body or header limit applies beyond moonhttp's own.
 
 ///|
-/// The settings smock advertises on every HTTP/2 connection: RFC 9113's
-/// defaults for the header table (4,096 octets), the initial window (65,535
-/// octets), the frame size (16,384 octets) and extended CONNECT (off), with
-/// at most 100 concurrent streams, and moonhttp's own bound on a header
-/// list, 64 KiB.
-let h2_settings : @http2.Settings = @http2.Settings::new(
-  header_table_size=4096,
-  max_concurrent_streams=Some(100),
-  initial_window_size=65535,
-  max_frame_size~,
-  max_header_list_size=Some(65536),
-  enable_connect_protocol=false,
-)
+/// The settings smock advertises on every HTTP/2 connection of a process
+/// with the settings `settings`: RFC 9113's defaults for the header table
+/// (4,096 octets), the initial window (65,535 octets), the frame size
+/// (16,384 octets) and extended CONNECT (off), with at most
+/// `--http2-max-concurrent-streams` concurrent streams, and moonhttp's own
+/// bound on a header list, 64 KiB.
+///
+/// The `Conn` holds the client to these from the first stream, before the
+/// client acknowledges them: moonhttp applies the limits that protect this
+/// side as soon as it sends them.
+fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
+  @http2.Settings::new(
+    header_table_size=4096,
+    max_concurrent_streams=Some(settings.http2_max_concurrent_streams),
+    initial_window_size=65535,
+    max_frame_size~,
+    max_header_list_size=Some(65536),
+    enable_connect_protocol=false,
+  )
+}
 
 ///|
 /// Serves one HTTP/2 connection, `stream`, whose client has sent the octets
@@ -81,7 +88,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
     let idle_timeout = self.settings.idle_timeout_ms.to_int64()
     let h2 : H2Connection = {
       ports: self,
-      conn: @http2.Conn::new(Server, settings=h2_settings),
+      conn: @http2.Conn::new(Server, settings=h2_settings(self.settings)),
       reader: FrameReader::new(read),
       requests: Map([]),
       streams: StreamRecord::new(),
