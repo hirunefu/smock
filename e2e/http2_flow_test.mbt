@@ -388,8 +388,8 @@ async test "h2c: streams waiting on the connection window get it in the order th
       let rest = raw.runs_until(all_ended([1, 3, 5])).split("\n").collect()
       // Stream 3 waited first; streams 1 and 5 began to wait again at about
       // the same time.
-      out.push(rest[0].to_string())
-      let after = rest[1:].iter().map(line => line.to_string()).collect()
+      out.push(rest[0].to_owned())
+      let after = rest[1:].iter().map(line => line.to_owned()).collect()
       after.sort()
       out.append(after)
       inspect(
@@ -456,6 +456,59 @@ async test "h2c: a fast stream is answered at once while a large body on the sam
           #|---
           #|/item: stub "item", status 200
           #|/big: stub "big", status 200
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: a stream reset while its body waits for window ends its slow write at once: its entry is committed, no more of its body is sent, and the window it was woken for goes to the stream waiting after it" {
+  with_definitions(flow_definitions(), dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      let out = []
+      // Stream 1 takes the connection window and waits for more; stream 3,
+      // with a short body, waits behind it.
+      raw.send([
+        Settings(
+          params=[(@http2.settings_initial_window_size, 1_000_000)],
+          ack=false,
+        ),
+        raw.get(1, "/big"),
+        raw.get(3, "/item"),
+      ])
+      out.push(raw.runs_until(frame => frame is Headers(stream_id=3, ..)))
+      // The window wakes stream 1, and the reset in the same read ends it
+      // before it sends: stream 3 gets the window instead.
+      out.push("--- the connection window widened by 10, and stream 1 reset")
+      raw.send([
+        WindowUpdate(stream_id=0, increment=10),
+        RstStream(stream_id=1, error_code=@http2.error_cancel),
+      ])
+      out.push(raw.runs_until(frame => ends_stream(frame, 3)))
+      out.push("--- nothing more on stream 1")
+      raw.send([WindowUpdate(stream_id=0, increment=200_000), fence])
+      let more = raw.frames_until_ping_ack()
+      out.push(if more == "" { "(no frame)" } else { more })
+      out.push("---")
+      out.append(smock.journal_once(2, within=1000))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 150000]
+          #|DATA 1: 4 frames, 65535 octets
+          #|HEADERS 3 END_HEADERS [:status: 200, date: <now>, content-length: 5]
+          #|--- the connection window widened by 10, and stream 1 reset
+          #|DATA 3 END_STREAM: 1 frames, 5 octets
+          #|--- nothing more on stream 1
+          #|(no frame)
+          #|---
+          #|/big: stub "big", status 200
+          #|/item: stub "item", status 200
         ),
       )
     })
