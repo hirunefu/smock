@@ -346,6 +346,36 @@ fn Strings::text_pieces(self : Strings, size : Int32) -> ArrayView[String] {
 }
 
 ///|
+/// Whether a stream of `self` sends any of its text: always without a
+/// mid-stream error, and with one only when it cuts the text after more
+/// than 0 code points.
+fn Declaration::sends_text(self : Declaration) -> Bool {
+  match self.error {
+    Some(error) => error.after > 0
+    None => true
+  }
+}
+
+///|
+/// The pieces of the text that a stream of `declaration` sends, in order:
+/// those of `text_pieces` at the declaration's chunk size, up to the cut
+/// of its mid-stream error when it declares one. None when the error cuts
+/// the text at 0, or when the reply carries no content.
+fn Strings::sent_pieces(
+  self : Strings,
+  declaration : Declaration,
+) -> ArrayView[String] {
+  if !declaration.sends_text() {
+    return no_pieces
+  }
+  let pieces = self.text_pieces(declaration.chunk_size)
+  match declaration.error {
+    Some(error) => pieces_before(pieces, error.after)
+    None => pieces
+  }
+}
+
+///|
 /// What smock sends for an LLM response, beside its status and the Stub's
 /// own header fields.
 pub struct Reply {
@@ -988,11 +1018,7 @@ fn chat_stream(
   let chunks = ChatChunks::new(id~, created~, model~, usage~)
   let tool_calls = strings.tool_calls
   let pace = Pace::new()
-  let text_pieces = match declaration.error {
-    Some(error) =>
-      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
-    None => strings.text_pieces(declaration.chunk_size)
-  }
+  let text_pieces = strings.sent_pieces(declaration)
   let opening = if strings.has_content() {
     "{\"role\":\"assistant\",\"content\":\"\"}"
   } else {
@@ -1371,16 +1397,8 @@ fn responses_stream(
   let tool_calls = strings.tool_calls
   // The message item, the reply's first, unless tool calls follow empty
   // text, or a mid-stream error cuts the text at 0.
-  let has_message = match declaration.error {
-    Some(error) => strings.has_content() && error.after > 0
-    None => strings.has_content()
-  }
-  let text_pieces = match declaration.error {
-    _ if !has_message => no_pieces
-    Some(error) =>
-      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
-    None => strings.text_pieces(declaration.chunk_size)
-  }
+  let has_message = strings.has_content() && declaration.sends_text()
+  let text_pieces = strings.sent_pieces(declaration)
   let pace = Pace::new()
   let out = ResponsesEvents::new(
     text_pieces.length() + 4 * tool_calls.length() + 8,
@@ -1835,15 +1853,11 @@ fn messages_stream(
   // Empty text has no block, as in the JSON reply, even when `chunks`
   // gives empty pieces, so that both give the same message. Nor has text
   // that a mid-stream error cuts at 0.
-  let has_text = match declaration.error {
-    Some(error) => strings.text != "" && error.after > 0
-    None => strings.text != ""
-  }
-  let text_pieces = match declaration.error {
-    _ if !has_text => no_pieces
-    Some(error) =>
-      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
-    None => strings.text_pieces(declaration.chunk_size)
+  let has_text = strings.text != "" && declaration.sends_text()
+  let text_pieces = if has_text {
+    strings.sent_pieces(declaration)
+  } else {
+    no_pieces
   }
   let tool_calls = strings.tool_calls
   let pace = Pace::new()
