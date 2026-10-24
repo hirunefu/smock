@@ -1,18 +1,22 @@
 #!/bin/sh
-# Tests of scripts/check-moonhttp-pin.sh and of the scan of the resolved
-# dependencies in scripts/check-no-c.sh. Each test runs a check, as CI does,
-# in a fresh copy of what it reads: the scripts, this workspace's module
-# files, prebuild.py, .gitignore, and the modules outside moonbitlang that
-# moon downloaded into .mooncakes/. moon resolves the copy's modules itself,
-# from the registry index, as it resolves the build's. A test changes the
-# copy so that the build resolves another moonhttp than moon.mod names, or
-# so that a scanned module brings C, and the check must fail and say so.
-# Both checks must pass on the copy as it is.
+# Tests of what scripts/resolved-modules.sh --json says of each module the
+# build resolves, of scripts/check-moonhttp-pin.sh and of the scan of the
+# resolved dependencies in scripts/check-no-c.sh. Each test runs a script,
+# as CI does, in a fresh copy of what it reads: the scripts, this
+# workspace's module and package files, prebuild.py, .gitignore, and the
+# modules outside moonbitlang that moon downloaded into .mooncakes/. moon
+# resolves the copy's modules itself, from the registry index, as it
+# resolves the build's. A test changes the copy so that the build resolves
+# another moonhttp than moon.mod names, or so that a scanned module brings
+# C, and the check must fail and say so. Both checks must pass on the copy
+# as it is.
 #
 # It needs moon, with the registry index updated (moon update), and jq, and
 # the modules downloaded: run it after moon check, as CI does.
 #
 # usage: scripts/test-dependency-checks.sh
+#
+# shellcheck disable=SC2016 # jq filters are in single quotes on purpose
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -58,7 +62,7 @@ fresh() {
   mkdir -p "$copy/scripts" "$copy/.mooncakes"
   cp scripts/check-moonhttp-pin.sh scripts/check-no-c.sh scripts/resolved-modules.sh "$copy/scripts/"
   cp .gitignore prebuild.py moon.work "$copy/"
-  for manifest in $(git ls-files 'moon.mod' '*/moon.mod'); do
+  for manifest in $(git ls-files 'moon.mod' '*/moon.mod' 'moon.pkg' '*/moon.pkg'); do
     mkdir -p "$copy/$(dirname "$manifest")"
     cp "$manifest" "$copy/$manifest"
   done
@@ -106,6 +110,44 @@ fails() {
     fail "$1: $2: the check fails, but does not say \"$3\": $(cat "$tmp/out")"
   fi
 }
+
+# lists <description> <jq filter>: the filter, run on what
+# scripts/resolved-modules.sh --json prints for the copy, gives true. It may
+# use entry($name), the one module of that name, and $resolved, what
+# scripts/resolved-modules.sh prints for this repository.
+lists() {
+  if ! "$copy/scripts/resolved-modules.sh" --json >"$tmp/out" 2>"$tmp/err"; then
+    fail "resolved-modules.sh --json: $1: it fails: $(cat "$tmp/err")"
+  elif jq -e --arg resolved "$resolved" \
+    "def entry(\$name): [.[] | select(.name == \$name)] | if length == 1 then .[0] else null end; $2" \
+    "$tmp/out" >/dev/null 2>"$tmp/err"; then
+    pass "resolved-modules.sh --json: $1"
+  else
+    fail "resolved-modules.sh --json: $1: $(cat "$tmp/err" "$tmp/out")"
+  fi
+}
+
+# What the build resolves, with what NOTICE and the SBOM need of each
+# module.
+
+fresh
+lists "it lists the modules the build resolves, at the versions it resolves" \
+  '[.[] | "\(.name)@\(.version)"] == ($resolved | split("\n"))'
+lists "moonhttp, whose http2 smock's server imports, is compiled into smock" \
+  'entry("moonbitstack/moonhttp") | .compiled and (.packages | index("http2") and index("header"))'
+lists "each module has the licence and repository of its own module file" \
+  'all(.[]; .licence != "" and (.repository | startswith("https://")))'
+
+fresh
+edit ".mooncakes/moonbitstack/moonvar/moon.mod" 's/^license = ".*"/license = "MIT"/'
+lists "a module that declares another licence has that one" \
+  'entry("moonbitstack/moonvar").licence == "MIT"'
+
+# The e2e tests still import moonhttp, but the binary does not reach them.
+fresh
+edit server/moon.pkg '\|"moonbitstack/|d'
+lists "a module that the build resolves but whose packages the binary does not reach is not compiled in" \
+  'entry("moonbitstack/moonhttp") | (.compiled | not) and .packages == []'
 
 # The resolved-version check.
 
