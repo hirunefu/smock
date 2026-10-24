@@ -34,8 +34,29 @@ priv struct WindowWait {
 fn H2Connection::window_updated(self : H2Connection, stream : Int32) -> Unit {
   if stream == 0 {
     self.window_deadline = forever
+  } else if self.blocked.get(stream) is Some(wait) {
+    wait.deadline = forever
   }
   self.widened(stream)
+}
+
+///|
+/// The client's SETTINGS, now in force, are `settings`. One that raised the
+/// initial window has widened every stream's window by as much: progress,
+/// which restarts the write timeout of the slow writes that wait for their
+/// own windows. Then the slow writes that can send now are woken
+/// (`widened`).
+fn H2Connection::settings_received(
+  self : H2Connection,
+  settings : @http2.Settings,
+) -> Unit {
+  if settings.initial_window_size > self.initial_window {
+    for _, wait in self.blocked {
+      wait.deadline = forever
+    }
+  }
+  self.initial_window = settings.initial_window_size
+  self.widened(0)
 }
 
 ///|

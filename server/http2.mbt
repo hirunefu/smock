@@ -134,6 +134,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       blocked: Map([]),
       claimed: 0,
       window_deadline: forever,
+      initial_window: 65535,
       group,
       watchdog,
       connection,
@@ -205,6 +206,9 @@ priv struct H2Connection {
   /// window, when the write timeout closes the connection; `forever` while
   /// none waits for it (`watch_windows`).
   mut window_deadline : Int64
+  /// The initial window of the client's streams, as its SETTINGS last set
+  /// it: 65,535 octets until they set it.
+  mut initial_window : Int32
   /// The task group the connection is served in, where the tasks of
   /// waiting streams run. They end with the connection.
   group : @async.TaskGroup[Unit]
@@ -429,7 +433,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
       // A window the client widened, of a stream or of the connection, or
       // every stream's, by a SETTINGS frame that raised the initial window.
       WindowUpdated(stream~, ..) => self.window_updated(stream)
-      Settings(_) => self.widened(0)
+      Settings(settings) => self.settings_received(settings)
       // A reset from the client, or one moonhttp sent for the client's
       // frames.
       Reset(stream~, remote~, ..) => {

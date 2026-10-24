@@ -116,3 +116,145 @@ async test "h2c: a stream whose own window stays at zero for the write timeout w
     inspect(log_entries(stopped.logs), content=startup_only_h2c)
   })
 }
+
+///|
+/// Reads frames until DATA or RST_STREAM ends `stream`, or smock ends the
+/// connection, and after each DATA frame on it that does not, waits
+/// `pause_ms`, then sends `grant(n)`, a frame that widens a window, for the
+/// `n`th time, counting from 1. Returns
+/// the DATA and RST_STREAM frames of `stream`, as `render_frame` shows
+/// them, and then `closed` if smock ended the connection.
+async fn RawH2::granting(
+  self : RawH2,
+  stream : Int32,
+  grant : (Int32) -> @http2.Frame,
+  pause_ms~ : Int32,
+) -> Array[String] {
+  let out = []
+  let mut granted = 0
+  for ;; {
+    guard self.read_frame() is Some(frame) else {
+      out.push("closed")
+      break
+    }
+    match frame {
+      Data(stream_id~, end_stream~, ..) if stream_id == stream => {
+        out.push(self.render_frame(frame))
+        if end_stream {
+          break
+        }
+        @async.sleep(pause_ms)
+        granted += 1
+        self.send([grant(granted)])
+      }
+      RstStream(stream_id~, ..) if stream_id == stream => {
+        out.push(self.render_frame(frame))
+        break
+      }
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+async test "h2c: a client that widens its windows slowly but steadily keeps its connection past the write timeout, by WINDOW_UPDATE on the stream or on the connection, or by SETTINGS that raise the initial window" {
+  with_definitions(flow_definitions(), dir => {
+    let _ = with_smock(
+      ["--dir", dir, "--port", "0", "--write-timeout-ms", "500"],
+      smock => {
+        let out = []
+        let raw = smock.raw_h2(settings=false)
+        defer raw.close()
+        // On the stream: a window of one octet for "hello", widened by one
+        // octet every 200 ms, so that the body takes about 800 ms in all.
+        raw.send([
+          Settings(params=[(@http2.settings_initial_window_size, 1)], ack=false),
+          raw.get(1, "/item"),
+        ])
+        let start = @async.now()
+        out.append(
+          raw.granting(
+            1,
+            _ => WindowUpdate(stream_id=1, increment=1),
+            pause_ms=200,
+          ),
+        )
+        out.push(
+          "by WINDOW_UPDATE on the stream, longer than the write timeout: \{@async.now() - start > 500}",
+        )
+        // By SETTINGS: the initial window, still one octet, raised by one
+        // octet every 200 ms.
+        raw.send([raw.get(3, "/item")])
+        let start = @async.now()
+        out.append(
+          raw.granting(
+            3,
+            n => {
+              Settings(
+                params=[(@http2.settings_initial_window_size, n + 1)],
+                ack=false,
+              )
+            },
+            pause_ms=200,
+          ),
+        )
+        out.push(
+          "by SETTINGS, longer than the write timeout: \{@async.now() - start > 500}",
+        )
+        // On the connection: wide stream windows, and a body nine octets
+        // larger than the connection window, which widens by three octets
+        // every 200 ms once it is used.
+        let raw = smock.raw_h2(settings=false)
+        defer raw.close()
+        raw.send([
+          Settings(
+            params=[(@http2.settings_initial_window_size, 1_000_000)],
+            ack=false,
+          ),
+          raw.get(1, "/medium"),
+        ])
+        let start = @async.now()
+        let frames = raw.granting(
+          1,
+          _ => WindowUpdate(stream_id=0, increment=3),
+          pause_ms=200,
+        )
+        // The first four frames take the connection window as it opened.
+        for line in frames[4:] {
+          out.push(line)
+        }
+        out.push(
+          "by WINDOW_UPDATE on the connection, longer than the write timeout: \{@async.now() - start > 500}",
+        )
+        out.push("---")
+        out.append(smock.journal_once(3, within=1000))
+        inspect(
+          out.join("\n"),
+          content=(
+            #|DATA 1 1 octets
+            #|DATA 1 1 octets
+            #|DATA 1 1 octets
+            #|DATA 1 1 octets
+            #|DATA 1 END_STREAM 1 octets
+            #|by WINDOW_UPDATE on the stream, longer than the write timeout: true
+            #|DATA 3 1 octets
+            #|DATA 3 1 octets
+            #|DATA 3 1 octets
+            #|DATA 3 1 octets
+            #|DATA 3 END_STREAM 1 octets
+            #|by SETTINGS, longer than the write timeout: true
+            #|DATA 1 3 octets
+            #|DATA 1 3 octets
+            #|DATA 1 END_STREAM 3 octets
+            #|by WINDOW_UPDATE on the connection, longer than the write timeout: true
+            #|---
+            #|/item: stub "item", status 200
+            #|/item: stub "item", status 200
+            #|/medium: stub "medium", status 200
+          ),
+        )
+      },
+    )
+  })
+}
