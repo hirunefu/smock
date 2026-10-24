@@ -3,7 +3,9 @@
 // each marked as reset by smock or by moonhttp. `H2Connection::judge`
 // (http2.mbt) holds each HEADERS frame against it before the `Conn` sees
 // the frame, so that HEADERS on a stream ID already used end the connection
-// whatever moonhttp does with them (RFC 9113, section 5.1.1).
+// whatever moonhttp does with them (RFC 9113, section 5.1.1). It also tells
+// the count of frames that do no work which streams are closed, and which
+// this side reset (`H2Connection::no_work`, http2_defences.mbt).
 
 ///|
 /// How many reset streams a connection remembers. Past it, the oldest is
