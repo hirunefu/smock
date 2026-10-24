@@ -1,13 +1,19 @@
 // The response encoding of an HTTP/2 stream: the header fields of the
-// response the engine's plan describes, which the connection's `Conn`
-// compresses into HEADERS, with the body sent as DATA after them.
+// response the engine's plan describes, adapted to HTTP/2's rules, which
+// the connection's `Conn` compresses into HEADERS, with the body sent as
+// DATA after them.
 
 ///|
 /// The header fields of the HTTP/2 response with the status `status`, the
 /// header fields `headers` and a body of `length` octets: `:status`, then
-/// each of `headers` with its name in lower case and its value as the UTF-8
-/// octets the HTTP/1.1 encoder writes, then `date` with the value `date`,
-/// unless `headers` give one, and `content-length`.
+/// each of `headers` with its name in lower case and its value trimmed of
+/// spaces and tabs, then `date` with the value `date`, unless `headers`
+/// give one, and `content-length`.
+///
+/// Names and values are the octets the HTTP/1.1 encoder writes. The fields
+/// HTTP/2 forbids in a response (RFC 9113, section 8.2.2) are left out:
+/// `keep-alive`, `upgrade`, `proxy-connection` and `te`, which a Stub may
+/// give, and `connection` and `transfer-encoding`, which it may not.
 fn response_fields(
   status : Int32,
   headers : ArrayView[(String, String)],
@@ -19,16 +25,58 @@ fn response_fields(
   let mut has_date = false
   for header in headers {
     let name = lower_case(header.0)
+    if is_connection_specific(name) {
+      continue
+    }
     if name == b"date" {
       has_date = true
     }
-    fields.push({ name, value: @utf8.encode(header.1), })
+    fields.push({ name, value: @http1.field_octets(trimmed(header.1)), })
   }
   if !has_date {
-    fields.push({ name: b"date", value: @utf8.encode(date), })
+    fields.push({ name: b"date", value: @http1.field_octets(date), })
   }
   fields.push({ name: b"content-length", value: decimal(length), })
   fields
+}
+
+///|
+/// Whether `name`, a field name in lower case, is one that HTTP/2 forbids
+/// in a response, since it is specific to an HTTP/1.1 connection (RFC 9113,
+/// section 8.2.2).
+fn is_connection_specific(name : Bytes) -> Bool {
+  name == b"keep-alive" ||
+  name == b"upgrade" ||
+  name == b"proxy-connection" ||
+  name == b"te" ||
+  name == b"connection" ||
+  name == b"transfer-encoding"
+}
+
+///|
+/// `value` without the spaces and tabs at either end, which HTTP/2 does not
+/// allow there (RFC 9113, section 8.2.1). A value without them is returned
+/// as it is.
+fn trimmed(value : String) -> String {
+  let mut start = 0
+  let mut end = value.length()
+  while start < end && is_space_or_tab(value[start]) {
+    start += 1
+  }
+  while end > start && is_space_or_tab(value[end - 1]) {
+    end -= 1
+  }
+  if start == 0 && end == value.length() {
+    value
+  } else {
+    value.view(start_offset=start, end_offset=end).to_owned()
+  }
+}
+
+///|
+/// Whether the code unit `c` is a space or a tab.
+fn is_space_or_tab(c : UInt16) -> Bool {
+  c == ' ' || c == '\t'
 }
 
 ///|
