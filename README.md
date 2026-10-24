@@ -630,7 +630,7 @@ curl localhost:8080/users/1                                           # 200, fro
 - The Session keeps its own copy of each
   [Data bucket](docs/definition-files.md#data-buckets) it writes to, and
   reads the bucket's initial value until then. The copy lives until a
-  reset, a reload that changes its bucket, a `DELETE` or a restart.
+  reset, a reload that drops it, a `DELETE` or a restart.
   `GET /v1/mocks/{mock}/data` lists the Mock's buckets, with whether the
   Session holds a copy of each; `GET /v1/mocks/{mock}/data/{bucket}` reads
   one with the value the Session reads; `PUT` with a JSON value as the body
