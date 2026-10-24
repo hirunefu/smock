@@ -13,6 +13,7 @@ words, separated by spaces; a line that starts with # is a comment. Why is
 one of
 
   skipped   h2spec skips the case.
+  left-out  the case runs, but its outcome does not count.
   #<issue>  the case fails until that issue is done.
 
 It prints how many cases passed, every listed case with its outcome and
@@ -43,13 +44,19 @@ class Entry:
         self.reason = reason
         self.line = line
 
-    def expects(self):
-        """The outcome the case is listed with."""
-        return "skipped" if self.why == "skipped" else "failed"
+    def allows(self, outcome):
+        """Whether the case may have this outcome, other than passing."""
+        if self.why == "left-out":
+            return True
+        return outcome == ("skipped" if self.why == "skipped" else "failed")
 
     def how(self):
         """How the case is listed, in words."""
-        return "as skipped" if self.why == "skipped" else f"until {self.why}"
+        if self.why == "skipped":
+            return "as skipped"
+        if self.why == "left-out":
+            return "as left out"
+        return f"until {self.why}"
 
 
 def cases(report):
@@ -89,8 +96,9 @@ def read_list(path):
         if len(fields) < 3:
             raise ListError(f"{path.name}:{number}: give the case, why it is listed, and the reason")
         case, why, reason = fields
-        if why != "skipped" and not re.fullmatch(r"#[0-9]+", why):
-            raise ListError(f"{path.name}:{number}: {case} is listed as {why!r}, not as skipped or #<issue>")
+        if why not in ("skipped", "left-out") and not re.fullmatch(r"#[0-9]+", why):
+            raise ListError(f"{path.name}:{number}: {case} is listed as {why!r}, "
+                            "not as skipped, left-out or #<issue>")
         entries[case] = Entry(why, reason.strip(), number)
     return entries
 
@@ -140,7 +148,7 @@ def main(argv):
     wrong = 0
     for case, description, outcome, detail in run:
         entry = listed.get(case)
-        if outcome == "passed" or (entry is not None and entry.expects() == outcome):
+        if outcome == "passed" or (entry is not None and entry.allows(outcome)):
             continue
         wrong += 1
         if entry is None:

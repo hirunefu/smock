@@ -169,6 +169,26 @@ exits failure-listed-as-skipped 1
 says failure-listed-as-skipped "h2spec plain: http2/3.5/2 failed, but is listed as skipped: Sends invalid connection preface"
 says failure-listed-as-skipped "    Error: unexpected EOF"
 
+# --- Cases left out ----------------------------------------------------------
+
+# A case left out runs, but its outcome does not count, unless it passes:
+# then it is reported, as any listed case that passes is.
+list "http2/3.5/2  left-out  On the plain port, octets that are not the preface are HTTP/1.1."
+verdict left-out-failure
+exits left-out-failure 0
+says left-out-failure "  http2/3.5/2 failed, listed as left out: On the plain port, octets that are not the preface are HTTP/1.1."
+says left-out-failure "h2spec plain: every case passed or is listed"
+
+report pass pass skip pass
+verdict left-out-skip
+exits left-out-skip 0
+says left-out-skip "  http2/3.5/2 skipped, listed as left out: On the plain port, octets that are not the preface are HTTP/1.1."
+
+report pass pass pass pass
+verdict left-out-pass
+exits left-out-pass 0
+says left-out-pass "h2spec plain: 1 listed case passed, so it can come off plain.txt: http2/3.5/2"
+
 echo
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]
