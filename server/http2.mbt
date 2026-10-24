@@ -12,7 +12,8 @@
 //   which the judge holds HEADERS frames against, and which every
 //   RST_STREAM smock sends goes into, through `H2Connection::reset`;
 // - the mapping from a stream onto the engine's request (`H2Request`,
-//   http2_requests.mbt);
+//   http2_requests.mbt), with the checks of HTTP/1.1's rules, which refuse
+//   a stream with 400 (`H2Connection::refuse`);
 // - the response encoding (`response_fields`, http2_responses.mbt);
 // - the writing of what the `Conn` queues (`write_queued`,
 //   http2_output.mbt).
@@ -60,7 +61,8 @@ let h2_settings : @http2.Settings = @http2.Settings::new(
 /// again, it writes what the `Conn` queued. A stream's request reaches the
 /// engine when the client ends the stream, and its response is queued
 /// while that event is handled. A stream the client resets before it ends
-/// never reaches the engine.
+/// never reaches the engine, nor does one whose request HTTP/1.1's rules
+/// refuse, which gets 400 instead.
 async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
   self : MockPorts,
   stream : S,
