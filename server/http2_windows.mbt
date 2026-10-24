@@ -40,8 +40,6 @@ priv struct WindowWait {
 fn H2Connection::window_updated(self : H2Connection, stream : Int32) -> Unit {
   if stream == 0 {
     self.window_deadline = forever
-  } else if self.blocked.get(stream) is Some(wait) {
-    wait.deadline = forever
   }
   self.widened(stream)
 }
@@ -124,10 +122,11 @@ fn H2Connection::room(self : H2Connection, stream : Int32) -> Int32 {
 }
 
 ///|
-/// The client has widened the window of `stream`, or, for 0, that of the
-/// connection, or every stream's with SETTINGS: the slow writes that can
-/// send now are woken, in the order they began to wait, until the free
-/// part of the connection window is set aside.
+/// The client has widened the window of `stream` with WINDOW_UPDATE, which
+/// restarts the write timeout of its slow write, if it waits, or, for 0,
+/// that of the connection, or every stream's with SETTINGS: the slow writes
+/// that can send now are woken, in the order they began to wait, until the
+/// free part of the connection window is set aside.
 fn H2Connection::widened(self : H2Connection, stream : Int32) -> Unit {
   if self.blocked.is_empty() {
     return
@@ -135,6 +134,7 @@ fn H2Connection::widened(self : H2Connection, stream : Int32) -> Unit {
   let free = self.conn.window(0) - self.claimed
   if stream != 0 {
     if self.blocked.get(stream) is Some(wait) {
+      wait.deadline = forever
       let _ = self.wake(stream, wait, free)
     }
     return
