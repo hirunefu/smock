@@ -642,8 +642,12 @@ test "the snapshot holds a Stub's responses in the order written, each with its 
     }
     for i, weighted in ordinary.responses {
       let response = weighted.response
+      let headers = match response.headers {
+        Written(fields) => fields.length()
+        Templated(fields) => fields.length()
+      }
       out.push(
-        "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, headers \{response.headers.length()}, template \{response.body is Template(_)}",
+        "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, headers \{headers}, template \{response.body is Template(_)}",
       )
     }
   }

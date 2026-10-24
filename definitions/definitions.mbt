@@ -785,15 +785,6 @@ pub enum ResponseHeaders {
 } derive(Debug, Eq)
 
 ///|
-/// The number of header fields.
-pub fn ResponseHeaders::length(self : ResponseHeaders) -> Int32 {
-  match self {
-    Written(fields) => fields.length()
-    Templated(fields) => fields.length()
-  }
-}
-
-///|
 /// Whether one of the header values is a template for which `text` holds.
 fn ResponseHeaders::reads(
   self : ResponseHeaders,
