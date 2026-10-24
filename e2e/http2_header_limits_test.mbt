@@ -187,3 +187,74 @@ async test "h2c: a header list just over --header-size-limit, counted as RFC 754
     })
   })
 }
+
+///|
+async test "h2c: a header list with more regular fields than --header-count-limit gets 431 on its stream, where pseudo-header fields do not count and cookie fields split across several count as one" {
+  with_definitions([("files.json", hello_and_uploads)], dir => {
+    let args = ["--dir", dir, "--port", "0", "--header-count-limit", "3"]
+    let _ = with_smock(args, smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let out = []
+      for
+        case in [
+          ("three fields", [("x-a", "1"), ("x-b", "2"), ("x-c", "3")]),
+          (
+            "four fields",
+            [("x-a", "1"), ("x-b", "2"), ("x-c", "3"), ("x-d", "4")],
+          ),
+          (
+            "two fields and three cookie fields",
+            [
+              ("x-a", "1"),
+              ("cookie", "a=1"),
+              ("x-b", "2"),
+              ("cookie", "b=2"),
+              ("cookie", "c=3"),
+            ],
+          ),
+          (
+            "three fields and two cookie fields",
+            [
+              ("x-a", "1"),
+              ("cookie", "a=1"),
+              ("x-b", "2"),
+              ("x-c", "3"),
+              ("cookie", "b=2"),
+            ],
+          ),
+        ] {
+        let (label, headers) = case
+        let response = client.request(
+          "GET",
+          "/hello",
+          authority="localhost",
+          headers~,
+        )
+        out.push("\{label}: \{response.line()}")
+      }
+      let (_, journal) = smock.journal()
+      guard journal is Object({ "entries": Array(entries), .. }) else {
+        fail("no entries: \{journal.stringify()}")
+      }
+      for entry in entries {
+        guard entry
+          is Object({ "request": Object({ "headers": headers, .. }), .. }) else {
+          fail("an entry without headers: \{entry.stringify()}")
+        }
+        out.push("Journal: \{headers.stringify()}")
+      }
+      inspect(
+        out.join("\n"),
+        content=(
+          #|three fields: 200 [smock-mock: files; via=default, date: <now>, content-length: 2] 2 octets, end
+          #|four fields: 431 [date: <now>, content-length: 0] 0 octets, end
+          #|two fields and three cookie fields: 200 [smock-mock: files; via=default, date: <now>, content-length: 2] 2 octets, end
+          #|three fields and two cookie fields: 431 [date: <now>, content-length: 0] 0 octets, end
+          #|Journal: [{"name":"x-a","value":"1"},{"name":"x-b","value":"2"},{"name":"x-c","value":"3"}]
+          #|Journal: [{"name":"x-a","value":"1"},{"name":"cookie","value":"a=1; b=2; c=3"},{"name":"x-b","value":"2"}]
+        ),
+      )
+    })
+  })
+}

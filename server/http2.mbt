@@ -158,10 +158,11 @@ priv struct H2Connection {
   streams : StreamRecord
   /// The stream whose request smock refuses with `refused_status` for the
   /// frame being handled, or 0: 400 for a request HTTP/1.1's rules refuse,
-  /// 431 for a header list over `--header-size-limit`. It gets that status
-  /// once it is known whether that frame ended the stream: on its `End`
-  /// event, or else once the frame's events are all taken. One frame brings
-  /// at most one such stream.
+  /// 431 for a header list over `--header-size-limit` or with more fields
+  /// than `--header-count-limit`. It gets that status once it is known
+  /// whether that frame ended the stream: on its `End` event, or else once
+  /// the frame's events are all taken. One frame brings at most one such
+  /// stream.
   mut refused : Int32
   /// The status `refused` gets.
   mut refused_status : Int32
@@ -332,6 +333,12 @@ fn[S : @io.Writer] H2Connection::hand(
           fields,
           deadline=self.header_at + self.read_timeout,
         )
+        // Cookies are joined by now, so they count as one field.
+        if request.headers.length() > self.ports.settings.header_count_limit {
+          self.refused = stream
+          self.refused_status = 431
+          continue
+        }
         if request.is_malformed() {
           self.refused = stream
           self.refused_status = 400
@@ -763,8 +770,9 @@ fn H2Connection::queue(
 /// Answers `stream`, whose request smock refuses, with `status` and no
 /// body, as HTTP/1.1 answers such a request, and counts it as rejected
 /// traffic: 400 for a request HTTP/1.1's rules refuse, 431 for a header
-/// list over `--header-size-limit`. The request never reaches the engine,
-/// so it has no Journal entry. A request that has not `ended` is then reset
+/// list over `--header-size-limit` or with more fields than
+/// `--header-count-limit`. The request never reaches the engine, so it has
+/// no Journal entry. A request that has not `ended` is then reset
 /// with PROTOCOL_ERROR, as a malformed one (RFC 9113, section 8.1.1); one
 /// that has gets its status alone. No `connection` field is sent: the
 /// response ends only its stream.
