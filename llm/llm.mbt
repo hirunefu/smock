@@ -633,10 +633,23 @@ pub let max_reply_bytes : Int32 = @template.max_output
 pub fn Reply::check_size(self : Reply) -> Result[Unit, String] {
   guard self.over else { return Ok(()) }
   match self.body {
-    Json(_) => Err("the reply takes more than 1 MiB as a JSON body")
-    Events(_) => Err("the reply takes more than 1 MiB as a stream")
+    Json(_) => Err(json_over)
+    Events(_) => Err(stream_over)
   }
 }
+
+///|
+/// The message of a JSON reply over `max_reply_bytes`.
+let json_over : String = "the reply takes more than 1 MiB as a JSON body"
+
+///|
+/// The message of a stream over `max_reply_bytes`.
+let stream_over : String = "the reply takes more than 1 MiB as a stream"
+
+///|
+/// The message of the load check when both forms of a reply are over
+/// `max_reply_bytes`.
+let both_over : String = "the reply takes more than 1 MiB as a JSON body and as a stream"
 
 ///|
 /// The time a load check encodes a reply at, 2026-10-23T00:00:00Z, in
@@ -677,10 +690,9 @@ pub fn check_reply_size(
   )
   match (json.over, stream.over) {
     (false, false) => Ok(())
-    (true, false) => Err("the reply takes more than 1 MiB as a JSON body")
-    (false, true) => Err("the reply takes more than 1 MiB as a stream")
-    (true, true) =>
-      Err("the reply takes more than 1 MiB as a JSON body and as a stream")
+    (true, false) => Err(json_over)
+    (false, true) => Err(stream_over)
+    (true, true) => Err(both_over)
   }
 }
 
@@ -1783,9 +1795,7 @@ fn messages_reply(
     "stop_reason": Json::string(stop_reason),
     "stop_sequence": messages_stop_sequence(stop_reason, request),
   }
-  if stop_reason == "refusal" {
-    body["stop_details"] = refusal_details
-  }
+  add_stop_details(body, stop_reason)
   body["usage"] = messages_usage(declaration.usage)
   json_reply(Json::object(body), request_id)
 }
@@ -1968,9 +1978,7 @@ fn messages_stream(
     "stop_reason": Json::string(stop_reason),
     "stop_sequence": messages_stop_sequence(stop_reason, request),
   }
-  if stop_reason == "refusal" {
-    delta["stop_details"] = refusal_details
-  }
+  add_stop_details(delta, stop_reason)
   let message_delta : Json = {
     "type": "message_delta",
     "delta": Json::object(delta),
@@ -2028,6 +2036,16 @@ let refusal_details : Json = {
   "type": "refusal",
   "category": Json::null(),
   "explanation": Json::null(),
+}
+
+///|
+/// Adds `stop_details` to `members`, the stop members of a Messages reply
+/// or of its `message_delta`, after the ones it has, when the stop reason
+/// `stop_reason` is a refusal. No other stop reason carries it.
+fn add_stop_details(members : Map[String, Json], stop_reason : String) -> Unit {
+  if stop_reason == "refusal" {
+    members["stop_details"] = refusal_details
+  }
 }
 
 ///|
