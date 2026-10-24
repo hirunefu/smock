@@ -258,3 +258,79 @@ async test "h2c: a client that widens its windows slowly but steadily keeps its 
     )
   })
 }
+
+///|
+async test "h2c: a Stub's delay longer than the write timeout does not count toward it: the delayed response arrives, and a delayed body that then waits for window has the whole write timeout from when it waits" {
+  let definitions = [
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m", "hosts": ["localhost"] }],
+        #|  "stubs": [
+        #|    { "id": "late", "mock": "m", "request": { "path": "/late" },
+        #|      "response": { "status": 200, "body": "hello" },
+        #|      "fault": { "delay": { "fixed": 800 } } },
+        #|    { "id": "late-big", "mock": "m", "request": { "path": "/late-big" },
+        #|      "response": { "status": 200, "bodyFile": "big.txt" },
+        #|      "fault": { "delay": { "fixed": 800 } } } ] }
+      ),
+    ),
+    ("files/big.txt", big_body),
+  ]
+  with_definitions(definitions, dir => {
+    let _ = with_smock(
+      ["--dir", dir, "--port", "0", "--write-timeout-ms", "500"],
+      smock => {
+        let out = []
+        let client = smock.h2c()
+        defer client.close()
+        let start = @async.now()
+        let late = client.request("GET", "/late", authority="localhost")
+        out.push(
+          "/late: \{late.brief()}, after its delay: \{@async.now() - start >= 800}",
+        )
+        let again = client.request("GET", "/late", authority="localhost")
+        out.push("/late again, on the same connection: \{again.brief()}")
+        // Wide stream windows: once the delay is over, the body takes the
+        // connection window and waits for more. The client widens it 300 ms
+        // later, past the write timeout from the request but within it from
+        // when the body began to wait.
+        let raw = smock.raw_h2(settings=false)
+        defer raw.close()
+        raw.send([
+          Settings(
+            params=[(@http2.settings_initial_window_size, 1_000_000)],
+            ack=false,
+          ),
+          raw.get(1, "/late-big"),
+        ])
+        out.push("---")
+        out.push(raw.runs_until(data_seen(1, 65535)))
+        @async.sleep(300)
+        out.push("--- the connection window widened by 100000, 300 ms later")
+        raw.send([WindowUpdate(stream_id=0, increment=100_000)])
+        out.push(raw.runs_until(frame => ends_stream(frame, 1)))
+        out.push("---")
+        out.append(smock.journal_once(3, within=1000))
+        inspect(
+          out.join("\n"),
+          content=(
+            #|/late: 200 hello (end), after its delay: true
+            #|/late again, on the same connection: 200 hello (end)
+            #|---
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+            #|SETTINGS ACK
+            #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 150000]
+            #|DATA 1: 4 frames, 65535 octets
+            #|--- the connection window widened by 100000, 300 ms later
+            #|DATA 1 END_STREAM: 6 frames, 84465 octets
+            #|---
+            #|/late: stub "late", status 200
+            #|/late: stub "late", status 200
+            #|/late-big: stub "late-big", status 200
+          ),
+        )
+      },
+    )
+  })
+}
