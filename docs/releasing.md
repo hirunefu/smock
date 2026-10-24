@@ -171,10 +171,13 @@ the same Schemas again.
 - **The MoonBit toolchain** in `.moonbit-version`. The weekly Latest
   MoonBit workflow (`.github/workflows/latest-toolchain.yml`) builds and
   tests with the latest stable toolchain, and opens an issue when that
-  fails. The maintainer moves the pin by hand.
+  fails. It builds the modules smock imports with the rest, moonhttp
+  among them, so a toolchain release that breaks moonhttp shows there
+  first. The maintainer moves the pin by hand.
 - **The MoonBit modules** imported in `moon.mod`. The maintainer moves
   them by hand, and checks NOTICE as
-  [Every release after](#every-release-after) says.
+  [Every release after](#every-release-after) says. moonhttp moves only
+  through its own gate: [Upgrading moonhttp](#upgrading-moonhttp).
 - **The cosign and syft versions**, which the workflows pass to the
   actions that install them: cosign's once, as `COSIGN_RELEASE` in
   `release.yml`'s `env`, which the image's and the chart's jobs both
@@ -195,3 +198,43 @@ the same Schemas again.
   kind's node image (`scripts/test-helm-chart-on-kind.sh`) and
   check-jsonschema (`scripts/check-schema.sh`). The maintainer moves them
   by hand.
+
+### Upgrading moonhttp
+
+smock's HTTP/2 comes from moonbitstack/moonhttp, which `moon.mod` imports
+at one exact version
+([ADR 0005](adr/0005-http2-comes-from-moonhttp.md)). moon takes the
+version that a module file gives an import as a minimum, and the build
+resolves the highest version that any module asks for. So any change that
+raises the moonhttp version the build resolves is an upgrade, even with
+`moon.mod` unchanged: a new or upgraded module that needs a later moonhttp
+raises it too. CI fails on every push where the version the build resolves
+differs from the one `moon.mod` names, and names both
+(`scripts/check-moonhttp-pin.sh`). `moon tree` shows which module asks for
+which version.
+
+moonhttp is raised only on purpose, on an integration branch of its own
+(`integration/<name>`): change its version in `moon.mod` there, with
+whatever the new version needs in smock. Before that branch merges into
+`main`, it needs:
+
+- **h2spec** against both traffic ports, with every case passing. CI
+  runs it against the plain port
+  ([Build and test](../README.md#build-and-test)).
+- **The e2e tests**, which CI runs. They check the limits and rules that
+  moonhttp enforces as well as smock's own, so an upgrade that drops one
+  fails them.
+- **The interop check by hand**: curl over h2c and over TLS, a Go client,
+  JVM clients and a browser over TLS, each with its version, recorded in
+  the merge record.
+- **The pre-merge local and GKE benchmark runs**, compared with the
+  previous runs, as [Before merging into main](merging-into-main.md) says
+  for every integration branch.
+
+On that branch, as on every other, CI also checks that moonhttp and the
+modules it imports bring no C. `scripts/check-no-c.sh` scans every module
+the build resolves outside moonbitlang, at the version the build resolves,
+so a module that the upgrade adds is scanned too. It fails on a C source,
+an `extern "C"`, a native stub, a C compiler or link flag, or a prebuild
+script in any of them. Check NOTICE for the modules the upgrade adds or
+drops, as [Every release after](#every-release-after) says.

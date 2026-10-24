@@ -153,3 +153,14 @@ opens a new connection for the rest.
 smock's HTTP/2 framing, header compression and connection state come from
 the `http2` package of moonbitstack/moonhttp 0.14.0, a MoonBit module with
 no I/O and no C ([ADR 0005](adr/0005-http2-comes-from-moonhttp.md)).
+smock pins it to that exact version: CI fails when the build resolves
+another one. CI also checks that moonhttp and the modules it imports bring
+no C. A new version comes only on purpose, after h2spec, the e2e tests, a
+check by hand with other clients and the benchmarks
+([Upgrading moonhttp](releasing.md#upgrading-moonhttp)).
+
+CI runs h2spec 2.6.0, which checks a server against RFC 7540 and RFC 7541,
+against the plain port on every push.
+[`scripts/h2spec/plain.txt`](../scripts/h2spec/plain.txt) lists the cases
+that do not pass yet, each with its reason
+([Build and test](../README.md#build-and-test)).
