@@ -54,9 +54,9 @@ priv struct TlsStream {
   // create, so this one uses the buffer of a pipe that is never read.
   buffer : @io.PipeRead
   input : FixedArray[Byte]
-  /// Whether a read leaves what OpenSSL writes for the client while it
-  /// reads for the connection's writer to send (`ReadOutput`), as on an
-  /// HTTP/2 connection, rather than send it itself.
+  /// Whether a read leaves the records OpenSSL writes for the client while
+  /// it reads to the connection's writer (`ReadOutput`), as on an HTTP/2
+  /// connection, rather than send them itself.
   mut holds_read_output : Bool
   /// Whether a read may have left output that nothing has sent since.
   mut read_output_left : Bool

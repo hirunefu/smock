@@ -1,9 +1,9 @@
 // HTTP/2 connections, h2c on the plain port and h2 on the TLS port, served
-// through the `http2` package of moonbitstack/moonhttp (ADR 0005). Each connection has one moonhttp
-// `Conn`, which keeps its frames, stream states, flow control, settings,
-// field validation and header compression; smock owns the I/O, the mapping
-// onto the engine and the timeouts. The loop here ties together parts that
-// change apart:
+// through the `http2` package of moonbitstack/moonhttp (ADR 0005). Each
+// connection has one moonhttp `Conn`, which keeps its frames, stream
+// states, flow control, settings, field validation and header compression;
+// smock owns the I/O, the mapping onto the engine and the timeouts. The
+// loop here ties together parts that change apart:
 //
 // - the frame reader (`FrameReader`, http2_frames.mbt), with
 //   `H2Connection::judge`, where each frame is judged before it reaches
