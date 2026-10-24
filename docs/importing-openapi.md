@@ -405,7 +405,7 @@ first in the document.
 
 ### Servers and base paths
 
-The mock answers where the real service does: the path of a server URL
+The Mock answers where the real service does: the path of a server URL
 is put in front of every path. Take a document whose server is
 `https://api.example.com/v1`, with the path `/pets/{petId}`:
 
@@ -507,7 +507,7 @@ that the document gives there ([Bodies from examples](#bodies-from-examples)),
 else one fixed sample of that media type's schema
 ([Samples from schemas](#samples-from-schemas)). Either way, it is written
 in the file. Nothing is random and nothing is templated, so a
-reviewer sees what the mock answers, and tests repeat. A `200` response
+reviewer sees what the Mock answers, and tests repeat. A `200` response
 whose `application/json` media type has no example, and whose schema is
 
 ```yaml
@@ -1006,7 +1006,7 @@ other Mocks depends on what else the directory holds:
   ```
 
   The document's `servers` never become Hosts. They name the real
-  service, while the names that callers use for the mock are a choice of
+  service, while the names that callers use for the Mock are a choice of
   each deployment.
 - **The Mock's other fields.** To set `default`, `noMatch` or `journal`,
   declare the Mock by hand in another file, with its Hosts if it needs
@@ -1637,7 +1637,7 @@ result differs from Mockoon 9.9.0's import in these ways:
 - **One fixed sample.** Mockoon turns a schema into faker helpers, which
   give new data on every request. smock writes one fixed sample of the
   schema in the file ([Samples from schemas](#samples-from-schemas)), so a
-  reviewer sees what the mock answers, and tests repeat.
+  reviewer sees what the Mock answers, and tests repeat.
 - **The default response.** smock answers the lowest 2xx response, else
   `2XX`, else `default` ([The main response](#the-main-response)).
   Mockoon answers each route's first response, the one with the lowest

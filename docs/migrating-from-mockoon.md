@@ -141,7 +141,7 @@ smock's model is flatter:
   the order they are declared, unless `priority` reorders them, so the
   order of the routes, and of the responses within each route, carries
   over.
-- A *Scenario* is a named state within a Mock, which starts in the state
+- A *Scenario* is a named state machine within a Mock, which starts in the state
   `Started`. A Stub can require one of its states and move it to
   another, so that the same request gets different answers at different
   points of a flow.
