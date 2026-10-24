@@ -68,7 +68,7 @@ pub fn Registry::counter(
   self : Registry,
   name : String,
   help~ : String,
-  labels? : Array[String] = [],
+  labels~ : Array[String] = [],
 ) -> Counter {
   { family: self.register(name, help, Counter, labels), }
 }
@@ -82,7 +82,7 @@ pub fn Counter::labels(self : Counter, values : Array[String]) -> CounterSeries 
 
 ///|
 /// Adds `by`, which must not be negative, to the counter.
-pub fn CounterSeries::inc(self : CounterSeries, by? : Double = 1.0) -> Unit {
+pub fn CounterSeries::inc(self : CounterSeries, by~ : Double = 1.0) -> Unit {
   if !(by >= 0.0) {
     abort("metrics: a counter cannot go down by \{by}")
   }
@@ -120,7 +120,7 @@ pub fn Registry::gauge(
   self : Registry,
   name : String,
   help~ : String,
-  labels? : Array[String] = [],
+  labels~ : Array[String] = [],
 ) -> Gauge {
   { family: self.register(name, help, Gauge, labels), }
 }
@@ -168,7 +168,7 @@ pub fn Registry::histogram(
   self : Registry,
   name : String,
   help~ : String,
-  labels? : Array[String] = [],
+  labels~ : Array[String] = [],
   buckets~ : Array[Double],
 ) -> Histogram {
   if labels.contains("le") {

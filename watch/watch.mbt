@@ -128,8 +128,8 @@ fn Watch::failed(self : Watch, err : Error) -> Unit {
 pub async fn Watch::run(
   self : Watch,
   on_check : async (Check) -> Unit,
-  on_error? : (Error) -> Unit = _ => (),
-  on_ahead? : (String, Int64) -> Unit = (_, _) => (),
+  on_error~ : (Error) -> Unit = _ => (),
+  on_ahead~ : (String, Int64) -> Unit = (_, _) => (),
 ) -> Unit {
   for ;; {
     if self.unreported is Some(err) {

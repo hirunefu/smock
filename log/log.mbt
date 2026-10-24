@@ -35,7 +35,7 @@ pub fn Logger::Logger(
 pub fn Logger::info(
   self : Logger,
   msg : String,
-  fields? : Map[String, Json] = {},
+  fields~ : Map[String, Json] = {},
 ) -> Unit {
   self.write("info", msg, fields)
 }
@@ -45,7 +45,7 @@ pub fn Logger::info(
 pub fn Logger::warn(
   self : Logger,
   msg : String,
-  fields? : Map[String, Json] = {},
+  fields~ : Map[String, Json] = {},
 ) -> Unit {
   self.write("warn", msg, fields)
 }
@@ -55,7 +55,7 @@ pub fn Logger::warn(
 pub fn Logger::error(
   self : Logger,
   msg : String,
-  fields? : Map[String, Json] = {},
+  fields~ : Map[String, Json] = {},
 ) -> Unit {
   self.write("error", msg, fields)
 }
@@ -112,7 +112,7 @@ pub fn floor_div(a : Int64, b : Int64) -> Int64 {
 }
 
 ///|
-fn pad(n : Int64, width : Int) -> String {
+fn pad(n : Int64, width : Int32) -> String {
   let digits = n.to_string()
   let out = StringBuilder()
   for _ in digits.length()..<width {
@@ -132,7 +132,7 @@ pub fn parse_time(text : String) -> Int64? {
   let c = text.iter().collect()
   // The number that the `count` digits from `start` write, if they are
   // digits.
-  let number = (start : Int, count : Int) => {
+  let number = (start : Int32, count : Int32) => {
     if start + count > c.length() {
       return None
     }
@@ -143,7 +143,7 @@ pub fn parse_time(text : String) -> Int64? {
     }
     Some(n)
   }
-  let at = (i : Int, chars : String) => {
+  let at = (i : Int32, chars : String) => {
     i < c.length() && chars.contains_char(c[i])
   }
   guard number(0, 4) is Some(year) &&
@@ -214,7 +214,7 @@ pub fn parse_time(text : String) -> Int64? {
 ///|
 /// The number of days in `month` of `year`, in the proleptic Gregorian
 /// calendar.
-pub fn days_in_month(year : Int, month : Int) -> Int {
+pub fn days_in_month(year : Int32, month : Int32) -> Int32 {
   match month {
     2 =>
       if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
@@ -231,7 +231,7 @@ pub fn days_in_month(year : Int, month : Int) -> Int {
 /// The number of days from 1970-01-01 to the date `year`-`month`-`day`, in
 /// the proleptic Gregorian calendar, for years from 0 to 9999, after Howard
 /// Hinnant's `days_from_civil`. `civil_from_days` is its inverse.
-pub fn days_from_civil(year : Int, month : Int, day : Int) -> Int64 {
+pub fn days_from_civil(year : Int32, month : Int32, day : Int32) -> Int64 {
   // Years start in March, so that the leap day ends them.
   let y = (if month <= 2 { year - 1 } else { year }).to_int64()
   let era = floor_div(y, 400L)

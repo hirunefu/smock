@@ -234,7 +234,7 @@ fn string_value(
 /// unchanged. Either way, the result is bounded before it is built.
 fn padded(
   text : String,
-  length : Int,
+  length : Int32,
   pad : String,
   at_start : Bool,
   name : String,
@@ -295,8 +295,8 @@ fn padded(
 /// `length` gives an empty text.
 fn substring(
   text : String,
-  from : Int,
-  length : Int?,
+  from : Int32,
+  length : Int32?,
   name : String,
   at : String,
 ) -> String raise RenderError {
@@ -330,7 +330,7 @@ fn substring(
 /// The code-point index of the first occurrence of `search` in `text` at or
 /// after the code point `from`, or -1 when there is none. A negative `from`
 /// counts as 0, and a `from` past the end gives -1.
-fn index_of(text : String, search : String, from : Int) -> Int {
+fn index_of(text : String, search : String, from : Int32) -> Int32 {
   let from = if from < 0 { 0 } else { from }
   if from > text.char_length() {
     return -1
@@ -496,7 +496,7 @@ fn joined(
 ///|
 /// The offset, in UTF-16 code units, `chars` code points of `text` after
 /// the offset `from`, or the end of `text` when fewer follow it.
-fn char_offset(text : String, chars : Int, from : Int) -> Int {
+fn char_offset(text : String, chars : Int32, from : Int32) -> Int32 {
   let mut offset = from
   for _ in 0..<chars {
     if offset >= text.length() {

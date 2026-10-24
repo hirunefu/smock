@@ -84,7 +84,7 @@ test "input that is not well-formed UTF-8 is rejected where the bad byte is" {
 
 ///|
 /// `depth` elements `a`, each inside the one before.
-fn nested(depth : Int) -> String {
+fn nested(depth : Int32) -> String {
   "<a>".repeat(depth) + "</a>".repeat(depth)
 }
 

@@ -10,7 +10,7 @@ priv enum ByteRange {
   /// The whole body, with 200: no range, or a `Range` field ignored.
   Whole
   /// The bytes from `first` to `last`, both included, with 206.
-  Part(Int, Int)
+  Part(Int32, Int32)
   /// No byte of the body, with 416: the range starts at or past its end,
   /// or is a suffix of 0 bytes.
   Unsatisfiable
@@ -78,7 +78,7 @@ fn range_response(
 /// says to ignore `Range` then.
 fn requested_range(
   headers : Array[(String, String)],
-  length : Int,
+  length : Int32,
 ) -> ByteRange {
   let mut value = None
   for i in 0..<headers.length() {
@@ -114,7 +114,7 @@ fn requested_range(
 /// `int-range` or `suffix-range` are served; the list may hold empty
 /// elements, as RFC 9110 lets a list do. Anything else, an `int-range`
 /// whose last position is below its first included, is the whole body.
-fn byte_range(value : String, length : Int) -> ByteRange {
+fn byte_range(value : String, length : Int32) -> ByteRange {
   guard value.find("=") is Some(eq) && is_name(value[:eq], "bytes") else {
     return Whole
   }
@@ -229,7 +229,7 @@ fn significant(digits : StringView) -> StringView {
 ///|
 /// The number the digits `digits` write, or `length` when it is `length` or
 /// more, so that no number overflows, however many digits it has.
-fn position(digits : StringView, length : Int) -> Int {
+fn position(digits : StringView, length : Int32) -> Int32 {
   let mut n = 0L
   for i in 0..<digits.length() {
     n = n * 10 + (digits[i] - '0').to_int64()

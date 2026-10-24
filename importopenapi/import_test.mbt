@@ -3,7 +3,7 @@
 /// a Definition file for the Mock `mock`, and renders what came out: every
 /// problem, one per line, then the numbers of Stubs and operations and the
 /// file, or `nothing written`.
-fn import_json(document : String, mock? : String = "petstore") -> String {
+fn import_json(document : String, mock~ : String = "petstore") -> String {
   let options = @importopenapi.Options(
     root="petstore.json",
     mock~,

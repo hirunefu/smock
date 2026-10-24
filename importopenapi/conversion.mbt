@@ -24,7 +24,7 @@ priv struct Conversion {
 /// a JSON Pointer into the document numbered `document`, its number among
 /// the documents given, or into the root document for `None`.
 priv struct Place {
-  document : Int?
+  document : Int32?
   pointer : String
 } derive(Eq)
 
@@ -122,7 +122,7 @@ fn Conversion::place(self : Conversion, pointer : Place) -> String {
 ///|
 /// How problems name the document numbered `number`, or the root for
 /// `None`.
-fn Conversion::file_name(self : Conversion, number : Int?) -> String {
+fn Conversion::file_name(self : Conversion, number : Int32?) -> String {
   match number {
     None => self.options.root_label
     Some(number) => self.documents.others[number].path

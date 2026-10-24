@@ -12,7 +12,7 @@ priv enum ArithmeticHelper {
   Integral(Rounding)
   /// `toFixed(x, places)`: rounded half away from zero, and written with
   /// exactly `places` decimals.
-  ToFixed(Int)
+  ToFixed(Int32)
 }
 
 ///|
@@ -115,7 +115,7 @@ fn exact_literal(json : Json, text : String) -> Json {
 ///|
 /// Checks the literals that argument `k` (from 0) can give: each must be
 /// numeric, and within the bounds.
-fn CallSite::numeric(self : CallSite, k : Int) -> Unit raise Syntax {
+fn CallSite::numeric(self : CallSite, k : Int32) -> Unit raise Syntax {
   let (at, arg) = self.args[k]
   for literal in literals(arg) {
     if decimal_value(self.name, k, literal) is Err(message) {
@@ -130,7 +130,7 @@ fn CallSite::numeric(self : CallSite, k : Int) -> Unit raise Syntax {
 /// string that is a JSON number as its own text.
 fn decimal_value(
   name : String,
-  k : Int,
+  k : Int32,
   json : Json,
 ) -> Result[Decimal, String] {
   let text = match json {
@@ -151,7 +151,7 @@ fn decimal_value(
 /// decimal. Raises a render error at `at` when it is not one.
 fn decimal_argument(
   name : String,
-  k : Int,
+  k : Int32,
   json : Json,
   at : String,
 ) -> Decimal raise RenderError {

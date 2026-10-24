@@ -685,7 +685,7 @@ fn Harness::render_vars(
   self : Harness,
   id : String,
   sample : Json,
-  response_index? : Int,
+  response_index? : Int32,
 ) -> String raise {
   let rendering = self.engine.render(
     id,

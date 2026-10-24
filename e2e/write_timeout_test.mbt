@@ -12,7 +12,7 @@ let big_line : String = "0123456789abcde\n"
 /// The size of the large body file, 16 MiB: more than the socket buffers of
 /// both ends hold on loopback, so that smock's write waits on a client that
 /// reads slowly or not at all.
-let big_size : Int = 16 * 1024 * 1024
+let big_size : Int32 = 16 * 1024 * 1024
 
 ///|
 /// Mock `big`, whose Stubs answer `GET /big` with the large body file at

@@ -73,7 +73,7 @@ pub fn session_of(
 
 ///|
 /// Whether `s[start:end]` is empty or only optional whitespace.
-fn is_ows_only(s : String, start : Int, end : Int) -> Bool {
+fn is_ows_only(s : String, start : Int32, end : Int32) -> Bool {
   for i in start..<end {
     if s[i] != ' ' && s[i] != '\t' {
       return false

@@ -9,7 +9,7 @@
 /// as the JSON file writes it, with the line breaks and the indentation
 /// taken out, so that each number shows the exact text the file holds; or
 /// `nothing written`.
-fn number_of(schema : String, openapi? : String = "3.1.0") -> String {
+fn number_of(schema : String, openapi~ : String = "3.1.0") -> String {
   let document = "{ \"openapi\": \"\{openapi}\", \"paths\": { \"/r\": { \"get\": { \"responses\": { \"200\": { \"content\": { \"application/json\": { \"schema\": \{schema} } } } } } } } }"
   let conversion = @importopenapi.convert(
     [("petstore.json", @utf8.encode(document))],
@@ -60,7 +60,7 @@ fn number_of(schema : String, openapi? : String = "3.1.0") -> String {
 ///|
 /// What `number_of` gives for each of `schemas`, each on its own line,
 /// after the schema.
-fn numbers_of(schemas : Array[String], openapi? : String = "3.1.0") -> String {
+fn numbers_of(schemas : Array[String], openapi~ : String = "3.1.0") -> String {
   let out = StringBuilder()
   for schema in schemas {
     out.write_string("\{schema} => \{number_of(schema, openapi~)}\n")

@@ -31,7 +31,7 @@ test "the startup snapshot has a digest: the first 12 hex digits of SHA-256 over
 /// text) pairs and body files as (name, bytes) pairs.
 fn digest_of(
   files : Array[(String, String)],
-  body_files? : Array[(String, Bytes)] = [],
+  body_files~ : Array[(String, Bytes)] = [],
 ) -> String {
   harness(files, body_files~).engine.status().digest
 }
@@ -158,8 +158,8 @@ let reload_time : Int64 = 1_791_815_460_000L
 fn Harness::reload(
   self : Harness,
   files : Array[(String, String)],
-  body_files? : Array[(String, Bytes)] = [],
-  read_problems? : Array[@definitions.Diagnostic] = [],
+  body_files~ : Array[(String, Bytes)] = [],
+  read_problems~ : Array[@definitions.Diagnostic] = [],
 ) -> @engine.ReloadResult {
   self.engine.reload(
     { files: files.map(file => (file.0, @utf8.encode(file.1))), body_files, },

@@ -18,7 +18,7 @@ fn in_memory(options : Options, document : Document) -> Conversion {
 
 ///|
 /// An array nested `levels` deep, empty ones included.
-fn nested(levels : Int) -> Json {
+fn nested(levels : Int32) -> Json {
   let mut json = Json::array([])
   for _ in 1..<levels {
     json = Json::array([json])

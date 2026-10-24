@@ -1,6 +1,6 @@
 ///|
 /// `n` copies of `s`.
-fn repeat(s : String, n : Int) -> String {
+fn repeat(s : String, n : Int32) -> String {
   let b = StringBuilder()
   for _ in 0..<n {
     b.write_string(s)

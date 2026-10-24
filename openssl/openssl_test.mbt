@@ -21,7 +21,7 @@ fn server_config(chain : String, key : String) -> @openssl.ServerConfig raise {
 ///|
 /// A client that trusts only the test root CA and checks the server's
 /// certificate for `localhost`.
-fn client(alpn? : Array[String] = []) -> @openssl.Connection raise {
+fn client(alpn~ : Array[String] = []) -> @openssl.Connection raise {
   @openssl.ClientConfig(trusted=bytes(@testcerts.root_ca), alpn~).connect(
     server_name="localhost",
   )

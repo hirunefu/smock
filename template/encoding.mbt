@@ -217,11 +217,11 @@ priv suberror NotDecodable {
 ///|
 /// The value of the character `c` in the base64 alphabet, or in the
 /// base64url one, or -1 when it is not in it.
-fn base64_value(c : Char, url : Bool) -> Int {
+fn base64_value(c : Char, url : Bool) -> Int32 {
   match c {
-    'A'..='Z' => c.to_int() - 'A'.to_int()
-    'a'..='z' => c.to_int() - 'a'.to_int() + 26
-    '0'..='9' => c.to_int() - '0'.to_int() + 52
+    'A'..<='Z' => c.to_int() - 'A'.to_int()
+    'a'..<='z' => c.to_int() - 'a'.to_int() + 26
+    '0'..<='9' => c.to_int() - '0'.to_int() + 52
     '+' if !url => 62
     '/' if !url => 63
     '-' if url => 62
@@ -237,7 +237,7 @@ fn base64_value(c : Char, url : Bool) -> Int {
 /// `=`: a last group of 2 characters takes 2 or none, a last group of 3
 /// takes 1 or none, and whole groups of 4 take none. Bits beyond the last
 /// byte are ignored.
-fn base64_length(text : StringView, url : Bool) -> Int raise NotDecodable {
+fn base64_length(text : StringView, url : Bool) -> Int32 raise NotDecodable {
   let alphabet = if url { "base64url" } else { "base64" }
   // Characters of the alphabet, `=` after them, and where the first `=`
   // is, counted in characters from 1.
@@ -294,7 +294,7 @@ fn base64_length(text : StringView, url : Bool) -> Int raise NotDecodable {
 ///|
 /// The `length` bytes that `text`, which `base64_length` has checked,
 /// decodes to, in base64, or in base64url.
-fn base64_decoded(text : StringView, url : Bool, length : Int) -> Bytes {
+fn base64_decoded(text : StringView, url : Bool, length : Int32) -> Bytes {
   let out = @buffer.Buffer(size_hint=length)
   let mut group = 0
   let mut count = 0
@@ -327,7 +327,7 @@ fn base64_decoded(text : StringView, url : Bool, length : Int) -> Bytes {
 /// Whether the byte `b` is an unreserved character of RFC 3986 §2.3,
 /// which percent-encoding leaves as it is: `A-Z a-z 0-9 - . _ ~`.
 fn is_unreserved(b : Byte) -> Bool {
-  b is (b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~')
+  b is (b'A'..<=b'Z' | b'a'..<=b'z' | b'0'..<=b'9' | b'-' | b'.' | b'_' | b'~')
 }
 
 ///|
@@ -381,11 +381,11 @@ pub fn write_url_encoded(out : StringBuilder, text : StringView) -> Unit {
 ///|
 /// The value of the hex digit `c`, in either case, or -1 when it is not
 /// one.
-fn hex_value(c : Char) -> Int {
+fn hex_value(c : Char) -> Int32 {
   match c {
-    '0'..='9' => c.to_int() - '0'.to_int()
-    'A'..='F' => c.to_int() - 'A'.to_int() + 10
-    'a'..='f' => c.to_int() - 'a'.to_int() + 10
+    '0'..<='9' => c.to_int() - '0'.to_int()
+    'A'..<='F' => c.to_int() - 'A'.to_int() + 10
+    'a'..<='f' => c.to_int() - 'a'.to_int() + 10
     _ => -1
   }
 }
@@ -394,7 +394,7 @@ fn hex_value(c : Char) -> Int {
 /// How many bytes `text` decodes to with its percent-escapes decoded: one
 /// for each escape, and the UTF-8 of every other character, `+` included.
 /// Raises `NotDecodable` at a `%` that two hex digits do not follow.
-fn percent_length(text : StringView) -> Int raise NotDecodable {
+fn percent_length(text : StringView) -> Int32 raise NotDecodable {
   let mut length = 0
   // The hex digits still to come after a `%`, and where that `%` is,
   // counted in characters from 1.
@@ -429,7 +429,7 @@ fn percent_length(text : StringView) -> Int raise NotDecodable {
 ///|
 /// The `length` bytes that `text`, which `percent_length` has checked,
 /// decodes to.
-fn percent_decoded(text : StringView, length : Int) -> Bytes {
+fn percent_decoded(text : StringView, length : Int32) -> Bytes {
   let out = @buffer.Buffer(size_hint=length)
   let mut pending = 0
   let mut value = 0

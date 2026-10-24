@@ -11,7 +11,7 @@
 /// compact JSON, `no body`, or `nothing written`. A body longer than 200
 /// characters is given by its length. Pointers into the media type are
 /// written from `/schema`.
-fn sized(schema : String, schemas? : String = "{}") -> String raise {
+fn sized(schema : String, schemas~ : String = "{}") -> String raise {
   let document = "{ \"openapi\": \"3.1.0\", \"paths\": { \"/r\": { \"get\": { \"responses\": { \"200\": { \"content\": { \"application/json\": { \"schema\": \{schema} } } } } } } }, \"components\": { \"schemas\": \{schemas} } }"
   let conversion = @importopenapi.convert(
     [("petstore.json", @utf8.encode(document))],
@@ -99,7 +99,7 @@ test "a sample whose compact JSON would pass 64 KiB is made again with only the 
 ///|
 test "the bound is on the compact JSON of the sample: 64 KiB exactly is not cut, one byte more is" {
   // {"a":{"b":{"s":"…"}}} is 20 bytes and the string's length.
-  let schema = fn(length : Int) {
+  let schema = fn(length : Int32) {
     "{ \"type\": \"object\", \"properties\": { \"a\": { \"type\": \"object\", \"properties\": { \"b\": { \"type\": \"object\", \"properties\": { \"s\": { \"type\": \"string\", \"minLength\": \{length} } } } } } } }"
   }
   inspect(

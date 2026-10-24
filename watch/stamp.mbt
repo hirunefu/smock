@@ -122,7 +122,7 @@ pub async fn Stamp::note_file(
 
 ///|
 /// A file time, seconds and nanoseconds, in milliseconds, rounded up.
-fn ms_up(time : (Int64, Int)) -> Int64 {
+fn ms_up(time : (Int64, Int32)) -> Int64 {
   time.0 * 1000 + ((time.1 + 999_999) / 1_000_000).to_int64()
 }
 

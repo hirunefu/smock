@@ -1,7 +1,7 @@
 ///|
 /// The largest file the converter writes: 64 MiB. smock serve holds the
 /// whole definition set in memory.
-let max_file_bytes : Int = 64 * 1024 * 1024
+let max_file_bytes : Int32 = 64 * 1024 * 1024
 
 ///|
 /// The Definition file of the imported operations, unless a problem so far
@@ -245,7 +245,7 @@ fn Stub::to_json(self : Stub, mock : String) -> Json {
 fn Conversion::checked(
   self : Conversion,
   bytes : Bytes,
-  max_bytes~ : Int,
+  max_bytes~ : Int32,
 ) -> Bool {
   let output = self.options.output
   if bytes.length() > max_bytes {
@@ -287,7 +287,7 @@ fn Conversion::stand_in(self : Conversion) -> (String, Bytes) {
 ///|
 /// `bytes` as a size: in MiB when it is a whole number of them, such as
 /// `64 MiB`, else in bytes.
-fn size_text(bytes : Int) -> String {
+fn size_text(bytes : Int32) -> String {
   let mib = 1024 * 1024
   if bytes >= mib && bytes % mib == 0 {
     "\{bytes / mib} MiB"

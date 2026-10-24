@@ -34,7 +34,7 @@ fn outcome(pieces : Array[BytesView]) -> Array[String] {
 ///|
 /// The positions `i` at which feeding `stream[:i]` and then `stream[i:]`
 /// gives another outcome than feeding `stream` whole.
-fn splits_that_differ(stream : Bytes) -> Array[Int] {
+fn splits_that_differ(stream : Bytes) -> Array[Int32] {
   let whole = outcome([stream[:]])
   (0)
   .until(stream.length(), inclusive=true)
@@ -47,7 +47,7 @@ fn splits_that_differ(stream : Bytes) -> Array[Int] {
 fn random_pieces(
   stream : Bytes,
   rand : @random.Rand,
-  longest~ : Int,
+  longest~ : Int32,
 ) -> Array[BytesView] {
   let pieces = []
   let mut offset = 0

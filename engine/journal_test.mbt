@@ -25,10 +25,10 @@ fn Harness::record(
   self : Harness,
   meth : String,
   target : String,
-  headers? : Array[(String, String)] = [],
-  body? : String = "",
+  headers~ : Array[(String, String)] = [],
+  body~ : String = "",
   session? : String,
-  duration_ms? : Int64 = 1,
+  duration_ms~ : Int64 = 1,
 ) -> Bool {
   let outcome = self.send(meth, target, headers~, body~, session?)
   guard outcome.journal is Some(entry) else { return false }
@@ -43,7 +43,7 @@ fn Harness::record(
 fn Harness::query(
   self : Harness,
   session : String?,
-  query? : String = "{}",
+  query~ : String = "{}",
 ) -> Json raise {
   let query = @engine.JournalQuery::from_json(@json.parse(query))
   ToJson::to_json(self.engine.query_journal(query, session~))
@@ -112,7 +112,7 @@ test "a committed entry records the request, its Session, Host and Mock, the Stu
 fn Harness::listed(
   self : Harness,
   session : String?,
-  query? : String = "{}",
+  query~ : String = "{}",
 ) -> String raise {
   let page = self.engine.query_journal(
     @engine.JournalQuery::from_json(@json.parse(query)),
@@ -750,7 +750,7 @@ test "a query or a filter that does not have the shape of the Admin API document
 fn Harness::outcome(
   self : Harness,
   session : String?,
-  query? : String = "{}",
+  query~ : String = "{}",
 ) -> String raise {
   let parsed = @engine.JournalQuery::from_json(@json.parse(query))
   let _ = self.engine.query_journal(parsed, session~) catch {

@@ -85,7 +85,7 @@ fn broken_rules(
 /// member `key_member`, whose key text is `key`, if one has it. A string
 /// key has the text it holds, and an integer key the text of its digits,
 /// so no key text is written out to find an item.
-fn item_index(items : Array[Json], key_member : String, key : String) -> Int? {
+fn item_index(items : Array[Json], key_member : String, key : String) -> Int32? {
   let number = @definitions.key_text_integer(key)
   for i, item in items {
     guard item is Object(members) else { continue }
@@ -104,7 +104,7 @@ fn item_index(items : Array[Json], key_member : String, key : String) -> Int? {
 /// key text `key`. Returns the item's own key value, which the item keeps.
 fn kept_key(
   items : Array[Json],
-  j : Int,
+  j : Int32,
   key_member : String,
   key : String,
   value : Map[String, Json],
@@ -128,7 +128,7 @@ fn kept_key(
 /// stored key value. Returns the item stored.
 fn WorkingCopies::set_item(
   self : WorkingCopies,
-  i : Int,
+  i : Int32,
   bucket : @definitions.DataBucket,
   key_member : String,
   key : String,
@@ -161,7 +161,7 @@ fn WorkingCopies::set_item(
 /// value. Returns the item after the merge.
 fn WorkingCopies::merge_item(
   self : WorkingCopies,
-  i : Int,
+  i : Int32,
   bucket : @definitions.DataBucket,
   key_member : String,
   key : String,
@@ -185,7 +185,7 @@ fn WorkingCopies::merge_item(
 /// index `i`, keyed by `key_member`. Returns the item removed.
 fn WorkingCopies::remove_item(
   self : WorkingCopies,
-  i : Int,
+  i : Int32,
   bucket : @definitions.DataBucket,
   key_member : String,
   key : String,
@@ -215,7 +215,7 @@ fn WorkingCopies::remove_item(
 /// `uuid` key draws from `rand`. Returns the item stored.
 fn WorkingCopies::append_item(
   self : WorkingCopies,
-  i : Int,
+  i : Int32,
   bucket : @definitions.DataBucket,
   key_member : String,
   value : Json,

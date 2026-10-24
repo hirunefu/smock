@@ -37,7 +37,7 @@ fn Sample::label(self : Sample, name : String) -> String? {
 fn metric_lines(
   text : String,
   prefix : String,
-  help? : Bool = false,
+  help~ : Bool = false,
 ) -> Array[String] {
   let about = (line : StringView) => {
     for comment in ["# HELP ", "# TYPE "] {
@@ -234,7 +234,7 @@ fn number(text : StringView, line : String) -> Double raise {
     "NaN" => @double.not_a_number
     _ => {
       let ok = text != "" &&
-        text.iter().all(c => c is ('0'..='9' | '.' | 'e' | 'E' | '+' | '-'))
+        text.iter().all(c => c is ('0'..<='9' | '.' | 'e' | 'E' | '+' | '-'))
       guard ok else { fail("not a value: \{line}") }
       @string.parse_double(text) catch {
         _ => fail("not a value: \{line}")
@@ -248,9 +248,9 @@ fn number(text : StringView, line : String) -> Double raise {
 fn check_name(name : String, colon~ : Bool) -> Unit raise {
   let mut ok = name != ""
   for i, c in name {
-    if !(c is ('a'..='z' | 'A'..='Z' | '_') ||
+    if !(c is ('a'..<='z' | 'A'..<='Z' | '_') ||
       (colon && c == ':') ||
-      (i > 0 && c is ('0'..='9'))) {
+      (i > 0 && c is ('0'..<='9'))) {
       ok = false
     }
   }

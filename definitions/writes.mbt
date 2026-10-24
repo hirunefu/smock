@@ -55,7 +55,7 @@ pub fn DataOp::name(self : DataOp) -> String {
 
 ///|
 /// The most writes a Stub's `dataWrites` holds.
-pub let max_data_writes : Int = 100
+pub let max_data_writes : Int32 = 100
 
 ///|
 /// What a Stub without `dataWrites` writes: nothing.

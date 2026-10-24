@@ -15,9 +15,9 @@ fn no_document() -> Document {
 /// `max_bytes`, one per line, then whether it passed.
 fn checked(
   text : String,
-  max_bytes? : Int = max_file_bytes,
-  output? : String = "defs/m.json",
-  declare_mock? : Bool = true,
+  max_bytes~ : Int32 = max_file_bytes,
+  output~ : String = "defs/m.json",
+  declare_mock~ : Bool = true,
 ) -> String {
   let conversion = in_memory(
     Options(root="api.json", mock="m", output~, declare_mock~),

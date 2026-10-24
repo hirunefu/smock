@@ -23,7 +23,7 @@ let input_pieces : Array[Bytes] = [
 ///|
 /// A random pattern of nested concatenations, alternations, groups and
 /// repetitions, `depth` levels deep at most.
-fn random_pattern(rand : @random.Rand, depth : Int) -> String {
+fn random_pattern(rand : @random.Rand, depth : Int32) -> String {
   let pick = (items : Array[String]) => items[rand.int(limit=items.length())]
   if depth == 0 || rand.int(limit=3) == 0 {
     return pick(atoms)

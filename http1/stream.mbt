@@ -75,10 +75,10 @@ priv enum BodyEnd {
 /// value after `headers`, unless they give a Date field of their own, as
 /// for `encode_response`.
 pub fn ResponseStream::ResponseStream(
-  status : Int,
+  status : Int32,
   headers : ArrayView[(String, String)],
   request? : Request,
-  close? : Bool = false,
+  close~ : Bool = false,
   date? : String,
 ) -> ResponseStream {
   // The head says how the body is delimited, even in a response to HEAD.

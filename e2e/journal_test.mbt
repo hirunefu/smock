@@ -36,8 +36,8 @@ let journal_defs : String =
 async fn Smock::journal(
   self : Smock,
   session? : String,
-  query? : String = "{}",
-) -> (Int, Json) {
+  query~ : String = "{}",
+) -> (Int32, Json) {
   let response = self.admin(
     "POST",
     "/v1/journal/query",
@@ -53,7 +53,7 @@ async fn Smock::journal_count(
   self : Smock,
   session : String,
   query : String,
-) -> Int {
+) -> Int32 {
   match self.journal(session~, query~) {
     (200, Object({ "entries": Array(entries), .. })) => entries.length()
     (status, body) => fail("the query failed: \{status} \{body.stringify()}")
@@ -90,8 +90,8 @@ async fn Smock::request(
   self : Smock,
   meth : String,
   target : String,
-  headers? : Array[(String, String)] = [],
-  body? : String = "",
+  headers~ : Array[(String, String)] = [],
+  body~ : String = "",
 ) -> String {
   let conn = self.connect()
   defer conn.close()

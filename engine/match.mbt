@@ -34,7 +34,7 @@ priv enum ParsedBody {
 /// form. Names and values are decoded only when they are compared.
 priv enum FormBody {
   NotRead
-  Fields(FixedArray[Int])
+  Fields(FixedArray[Int32])
   NotForm
 }
 
@@ -271,7 +271,7 @@ fn Incoming::form_values(self : Incoming, name : String) -> Array[String] {
 /// Where each field of the request body starts, as `field_starts` finds
 /// them, or `None` when the body is not a form, as `is_form` says. They are
 /// found at most once.
-fn Incoming::form_fields(self : Incoming) -> FixedArray[Int]? {
+fn Incoming::form_fields(self : Incoming) -> FixedArray[Int32]? {
   match self.form {
     Fields(starts) => return Some(starts)
     NotForm => return None

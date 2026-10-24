@@ -225,8 +225,8 @@ fn explanation(
   h : Harness,
   meth : String,
   target : String,
-  headers? : Array[(String, String)] = [],
-  body? : String = "",
+  headers~ : Array[(String, String)] = [],
+  body~ : String = "",
 ) -> Json raise {
   guard h.send(meth, target, headers~, body~).near_miss is Some(near_miss) else {
     fail("no Near miss")

@@ -49,7 +49,7 @@ fn with_faults(
 fn decide_faults(
   stub : @definitions.Stub,
   draw : UInt64,
-) -> (Int, @definitions.ConnectionKind?) {
+) -> (Int32, @definitions.ConnectionKind?) {
   guard stub.fault is Some(fault) &&
     (fault.delay is Some(_) || fault.connection is Some(_)) else {
     return (0, None)
@@ -70,7 +70,10 @@ fn decide_faults(
 
 ///|
 /// A delay drawn from `distribution`, in whole milliseconds.
-fn sample(distribution : @definitions.Distribution, g : @prng.Generator) -> Int {
+fn sample(
+  distribution : @definitions.Distribution,
+  g : @prng.Generator,
+) -> Int32 {
   match distribution {
     Fixed(ms) => ms
     Uniform(min~, max~) => {
@@ -101,7 +104,7 @@ fn standard_normal(g : @prng.Generator) -> Double {
 ///|
 /// `ms` rounded to whole milliseconds, from 0 to the longest delay a
 /// Definition file can give, `@definitions.max_milliseconds`.
-fn milliseconds(ms : Double) -> Int {
+fn milliseconds(ms : Double) -> Int32 {
   if ms.is_nan() || ms <= 0.0 {
     // NaN comes only from a median of 0 times an infinite factor.
     0

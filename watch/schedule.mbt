@@ -36,8 +36,8 @@ pub(all) enum Check {
 /// - `poll_ms` is the poll interval: 10 s by default.
 pub fn Schedule::Schedule(
   now~ : Int64,
-  quiet_ms? : Int = 250,
-  poll_ms? : Int = 10_000,
+  quiet_ms~ : Int32 = 250,
+  poll_ms~ : Int32 = 10_000,
 ) -> Schedule {
   {
     quiet_ms: quiet_ms.to_int64(),

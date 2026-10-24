@@ -12,11 +12,11 @@ fn sse(data : String, event? : String, id? : String) -> String {
 /// each CRLF shown as `\r\n` at the end of a line. Then whether the
 /// connection stays open after it.
 fn streamed(
-  status : Int,
+  status : Int32,
   headers : Array[(String, String)],
   parts : Array[String],
   request? : @http1.Request,
-  close? : Bool = false,
+  close~ : Bool = false,
   date? : String,
 ) -> String {
   let stream = @http1.ResponseStream(status, headers, request?, close~, date?)

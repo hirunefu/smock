@@ -9,7 +9,7 @@
 /// `count` Stubs `GET /items/<i>`, a path-pattern Stub in the middle of
 /// the matching order and a Stub without conditions last. Also returns the
 /// requests the benchmark sends: 16 paths spread over the Stubs.
-fn bench_set(count : Int) -> (Twins, Array[@engine.Request]) raise {
+fn bench_set(count : Int32) -> (Twins, Array[@engine.Request]) raise {
   let stubs = StringBuilder()
   for i in 0..<count {
     if i == count / 2 {

@@ -1,20 +1,20 @@
 ///|
 /// The largest code point.
-const MAX_CHAR : Int = 0x10FFFF
+const MAX_CHAR : Int32 = 0x10FFFF
 
 ///|
 /// A set of code points: sorted, non-overlapping, non-adjacent ranges stored
 /// as `[lo0, hi0, lo1, hi1, ...]`, both ends included.
 priv struct CharSet {
-  ranges : FixedArray[Int]
+  ranges : FixedArray[Int32]
 }
 
 ///|
 /// The set of the given inclusive ranges, in any order, possibly overlapping.
-fn CharSet::of(ranges : Array[(Int, Int)]) -> CharSet {
+fn CharSet::of(ranges : Array[(Int32, Int32)]) -> CharSet {
   let sorted = ranges.copy()
   sorted.sort_by((a, b) => a.0.compare(b.0))
-  let out : Array[Int] = []
+  let out : Array[Int32] = []
   for r in sorted {
     let (lo, hi) = r
     let n = out.length()
@@ -33,7 +33,7 @@ fn CharSet::of(ranges : Array[(Int, Int)]) -> CharSet {
 ///|
 /// Every code point not in `self`.
 fn CharSet::negate(self : CharSet) -> CharSet {
-  let out : Array[(Int, Int)] = []
+  let out : Array[(Int32, Int32)] = []
   let mut next = 0
   let r = self.ranges
   for i = 0; i < r.length(); i = i + 2 {
@@ -49,7 +49,7 @@ fn CharSet::negate(self : CharSet) -> CharSet {
 }
 
 ///|
-fn CharSet::contains(self : CharSet, c : Int) -> Bool {
+fn CharSet::contains(self : CharSet, c : Int32) -> Bool {
   let r = self.ranges
   // Binary search for the last range whose start is <= c.
   let mut lo = 0

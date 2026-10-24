@@ -7,7 +7,7 @@
 /// with the bucket `orders`, keyed by `id`, from `orders.json`
 /// (`data_body_files`), and the CRUD Stub `orders` with a CORS header; then
 /// `stubs`, given as YAML list items, after it in the same file.
-fn crud_shop(stubs? : String = "") -> Array[(String, String)] {
+fn crud_shop(stubs~ : String = "") -> Array[(String, String)] {
   [
     (
       "shop.yaml",
@@ -37,8 +37,8 @@ fn Harness::shop(
   self : Harness,
   meth : String,
   target : String,
-  headers? : Array[(String, String)] = [],
-  body? : String = "",
+  headers~ : Array[(String, String)] = [],
+  body~ : String = "",
   session? : String,
 ) -> @engine.Outcome {
   self.send(

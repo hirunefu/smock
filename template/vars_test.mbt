@@ -27,7 +27,7 @@ let with_body : @template.Input = {
 /// of a Variable when `variable`, or gives its problems, one per line.
 fn parsed(
   source : String,
-  variable? : Bool = true,
+  variable~ : Bool = true,
 ) -> Result[@template.Structured, String] {
   let json = @json.parse(source) catch { _ => panic() }
   match

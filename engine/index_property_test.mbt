@@ -45,7 +45,7 @@ fn twins(files : Array[(String, String)]) -> Twins raise {
 fn Twins::send(
   self : Twins,
   request : @engine.Request,
-  session? : String? = None,
+  session~ : String? = None,
 ) -> @engine.Outcome raise {
   let indexed = self.indexed.handle(
     request,
@@ -96,11 +96,11 @@ fn generated_data(engine : @engine.Engine) -> String raise {
 
 ///|
 /// How many definition sets the property test generates.
-let index_cases : Int = 300
+let index_cases : Int32 = 300
 
 ///|
 /// How many requests each generated definition set is checked with.
-let index_requests_per_case : Int = 40
+let index_requests_per_case : Int32 = 40
 
 ///|
 /// What the generated requests matched, to show that the property test
@@ -119,7 +119,7 @@ struct IndexTally {
   /// or kept it in the same one; the number of each CRUD operation, from a
   /// file or an Ephemeral Stub, whatever its answer; and the numbers of
   /// requests that wrote a Data bucket by a CRUD Stub and by `dataWrites`.
-  counts : Map[String, Int]
+  counts : Map[String, Int32]
 }
 
 ///|
@@ -194,7 +194,7 @@ test "the match index picks the same Stub, makes the same Scenario moves and lea
 /// drawn from a seed of their own, and checks every request against both
 /// engines, adding what it matched to `tally`. After the requests, both
 /// engines must hold the same data.
-fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
+fn check_index_case(case : Int32, tally : IndexTally) -> Unit raise {
   let rand = @random.Rand::chacha8(seed=index_case_seed(case))
   let generated = gen_definition_set(rand)
   let files = generated.files
@@ -301,7 +301,7 @@ fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
 
 ///|
 /// The 32-byte seed of case number `case`.
-fn index_case_seed(case : Int) -> Bytes {
+fn index_case_seed(case : Int32) -> Bytes {
   let number = case.to_string().pad_start(5, '0')
   @utf8.encode("smock-match-index-property-\{number}")
 }
@@ -309,7 +309,7 @@ fn index_case_seed(case : Int) -> Bytes {
 ///|
 /// The 32-byte seed of the Ephemeral Stubs and Sessions of case number
 /// `case`.
-fn ephemeral_case_seed(case : Int) -> Bytes {
+fn ephemeral_case_seed(case : Int32) -> Bytes {
   let number = case.to_string().pad_start(5, '0')
   @utf8.encode("smock-match-index-sessions-\{number}")
 }
@@ -373,7 +373,7 @@ fn pick(rand : @random.Rand, choices : Array[String]) -> String {
 ///|
 /// Whether a draw from `rand` that succeeds `percent` times in 100
 /// succeeds.
-fn chance(rand : @random.Rand, percent : Int) -> Bool {
+fn chance(rand : @random.Rand, percent : Int32) -> Bool {
   rand.int(limit=100) < percent
 }
 

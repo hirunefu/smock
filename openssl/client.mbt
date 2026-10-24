@@ -6,7 +6,7 @@
 
 ///|
 #borrow(ctx, pem)
-extern "C" fn ctx_trust_ffi(ctx : Ctx, pem : Bytes) -> Int = "smock_openssl_ctx_trust"
+extern "C" fn ctx_trust_ffi(ctx : Ctx, pem : Bytes) -> Int32 = "smock_openssl_ctx_trust"
 
 ///|
 #borrow(ssl, name)
@@ -27,7 +27,7 @@ pub struct ClientConfig {
 /// `trusted` and offers the protocols in `alpn` by ALPN, if any.
 pub fn ClientConfig::ClientConfig(
   trusted~ : Bytes,
-  alpn? : Array[String] = [],
+  alpn~ : Array[String] = [],
 ) -> ClientConfig raise TlsError {
   let wire = alpn_wire(alpn)
   let ctx = new_ctx(server=false)

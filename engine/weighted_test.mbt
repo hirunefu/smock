@@ -4,7 +4,7 @@
 ///|
 /// The status of the response each of `n` requests for `GET path` gets, in
 /// order.
-fn statuses(h : Harness, path : String, n : Int) -> Array[Int] {
+fn statuses(h : Harness, path : String, n : Int32) -> Array[Int32] {
   Array::makei(n, _ => h.send("GET", path).plan.status)
 }
 
@@ -72,7 +72,7 @@ test "with fault.seed, a Stub's picks are pinned and the same on every run, what
 ///|
 /// A Definition file with Mock `m` and the Stub `GET /pick`, whose
 /// `responses` have `weights`; response `i` answers 200 with the body `i`.
-fn weighted_file(weights : Array[Int]) -> (String, String) {
+fn weighted_file(weights : Array[Int32]) -> (String, String) {
   let responses = weights.mapi((i, weight) => {
     "{ \"weight\": \{weight}, \"status\": 200, \"body\": \"\{i}\" }"
   })
@@ -84,7 +84,7 @@ fn weighted_file(weights : Array[Int]) -> (String, String) {
 
 ///|
 /// The index of the response a request for `GET /pick` gets.
-fn picked(h : Harness) -> Int {
+fn picked(h : Harness) -> Int32 {
   guard h.send("GET", "/pick").plan.body is Bytes(body) else {
     abort("not a body")
   }
@@ -97,7 +97,7 @@ fn picked(h : Harness) -> Int {
 ///|
 /// How many of `n` requests for `GET /pick` got each of `count` responses,
 /// by index.
-fn picks(h : Harness, count : Int, n : Int) -> Array[Int] {
+fn picks(h : Harness, count : Int32, n : Int32) -> Array[Int32] {
   let out = Array::make(count, 0)
   for _ in 0..<n {
     out[picked(h)] += 1
@@ -243,7 +243,7 @@ fn Harness::render_pick(
   self : Harness,
   id : String,
   seed? : UInt64,
-  response_index? : Int,
+  response_index? : Int32,
 ) -> String {
   try
     self.engine.render(

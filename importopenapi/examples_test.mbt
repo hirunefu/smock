@@ -9,7 +9,7 @@
 /// JSON text, into a YAML file, and renders its problems, one per line,
 /// then its Stubs as the file writes them, with their comments, or
 /// `nothing written`.
-fn examples_of(responses : String, openapi? : String = "3.2.0") -> String {
+fn examples_of(responses : String, openapi~ : String = "3.2.0") -> String {
   let document = "{ \"openapi\": \"\{openapi}\", \"paths\": { \"/r\": { \"get\": { \"operationId\": \"r\", \"responses\": \{responses} } } } }"
   let conversion = @importopenapi.convert(
     [("petstore.json", @utf8.encode(document))],
@@ -180,7 +180,7 @@ test "every further named example gets a Stub selected by Smock-Example, after S
 /// `json` or `body`, if any.
 fn selectors_of(
   responses : String,
-  openapi? : String = "3.2.0",
+  openapi~ : String = "3.2.0",
 ) -> String raise {
   let document = "{ \"openapi\": \"\{openapi}\", \"paths\": { \"/r\": { \"get\": { \"operationId\": \"r\", \"responses\": \{responses} } } } }"
   let conversion = @importopenapi.convert(

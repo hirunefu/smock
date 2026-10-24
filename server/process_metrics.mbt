@@ -319,7 +319,7 @@ async fn ProcessMetrics::update(self : ProcessMetrics) -> Unit {
 fn advance(
   counter : @metrics.CounterSeries?,
   count : Int64?,
-  per_second? : Double = 1.0,
+  per_second~ : Double = 1.0,
 ) -> Unit {
   if counter is Some(counter) && count is Some(count) {
     counter.advance_to(count.to_double() / per_second)

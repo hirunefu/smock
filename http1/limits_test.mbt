@@ -4,7 +4,7 @@
 ///|
 /// A request head of exactly `size` bytes, request line and final empty line
 /// included, with a Host field and one padding field.
-fn head_of_size(size : Int) -> String {
+fn head_of_size(size : Int32) -> String {
   // "GET / HTTP/1.1\r\n" + "Host: a\r\n" + "X: " + padding + "\r\n" + "\r\n"
   "GET / HTTP/1.1\r\nHost: a\r\nX: \{"p".repeat(size - 32)}\r\n\r\n"
 }
@@ -90,7 +90,7 @@ test "a request head gets 431 as soon as it grows past the header size limit, wi
 
 ///|
 /// A request head with `count` header fields, Host among them.
-fn head_with_fields(count : Int) -> String {
+fn head_with_fields(count : Int32) -> String {
   let fields = (1).until(count).map(i => "X-\{i}: \{i}\r\n").collect()
   "GET / HTTP/1.1\r\nHost: a\r\n\{fields.join("")}\r\n"
 }
@@ -248,7 +248,7 @@ test "the body limit counts the body, not the chunk sizes, extensions and traile
 fn fed_in_pieces(
   make : () -> @http1.Parser,
   stream : String,
-  piece : Int,
+  piece : Int32,
 ) -> String {
   let parser = make()
   let bytes = @utf8.encode(stream)

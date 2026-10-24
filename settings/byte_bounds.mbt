@@ -24,7 +24,7 @@ pub(all) enum MemoryLimit {
 /// per-Session state's: the most bytes it lets what it bounds count, and
 /// what chose it.
 pub(all) struct ByteBound {
-  max_bytes : Int
+  max_bytes : Int32
   source : ByteBoundSource
 } derive(Debug, Eq)
 
@@ -51,7 +51,7 @@ pub(all) enum ByteBoundSource {
 /// keeps a tiny limit recording something: it holds about 28 entries with a
 /// full 16 KiB request head and a 4 KiB body (about 36 KiB each, as entries
 /// count), and about 650 of the benchmark's request mix (about 1.6 KB each).
-let min_byte_bound : Int = 1024 * 1024
+let min_byte_bound : Int32 = 1024 * 1024
 
 ///|
 /// The Journal's byte bound without an explicit one: a quarter of `limit`,
@@ -75,7 +75,7 @@ pub fn ByteBound::state(limit : MemoryLimit) -> ByteBound {
 /// ADR 0004's rule: one of `parts` equal parts of `limit`, rounded down, at
 /// least `min_byte_bound` and at most `default`. Without a limit, or when it
 /// could not be read, `default`.
-fn share_of(limit : MemoryLimit, parts~ : Int64, default~ : Int) -> ByteBound {
+fn share_of(limit : MemoryLimit, parts~ : Int64, default~ : Int32) -> ByteBound {
   match limit {
     Limited(bytes) => {
       let share = bytes / parts

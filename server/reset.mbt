@@ -5,7 +5,7 @@
 ///|
 /// Sets SO_LINGER with a zero timeout on the socket `fd`. Returns 0, or the
 /// errno of the failure.
-extern "C" fn reset_on_close_ffi(fd : Int) -> Int = "smock_reset_on_close"
+extern "C" fn reset_on_close_ffi(fd : Int32) -> Int32 = "smock_reset_on_close"
 
 ///|
 /// Makes closing `conn` reset the connection with an RST, instead of ending

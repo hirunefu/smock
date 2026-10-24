@@ -41,7 +41,7 @@ async fn Smock::call(
 async fn Smock::user(
   self : Smock,
   session? : String,
-  meth? : String = "GET",
+  meth~ : String = "GET",
 ) -> String {
   let response = self.send(meth, "/users/1", headers=session_headers(session))
   let lines = response.split("\n").collect()
@@ -56,7 +56,7 @@ async fn Smock::user(
 
 ///|
 /// An Ephemeral Stub that answers `GET /users/1` with `status` and `body`.
-fn ephemeral_user(status : Int, body : String) -> String {
+fn ephemeral_user(status : Int32, body : String) -> String {
   "{\"request\":{\"method\":\"GET\",\"path\":\"/users/1\"},\"response\":{\"status\":\{status},\"body\":\"\{body}\"}}"
 }
 

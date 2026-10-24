@@ -5,9 +5,9 @@
 ///|
 /// The octets from 0x00 to 0xFF for which `accepts` holds, as ranges such
 /// as `21-7e`. Each octet is given as the character with its value.
-fn accepted_octets(accepts : (Int) -> Bool) -> String {
+fn accepted_octets(accepts : (Int32) -> Bool) -> String {
   let ranges = []
-  let mut first : Int? = None
+  let mut first : Int32? = None
   for octet in 0..<=256 {
     let ok = octet < 256 && accepts(octet)
     match (first, ok) {
@@ -31,8 +31,8 @@ fn accepted_octets(accepts : (Int) -> Bool) -> String {
 
 ///|
 /// The character with the value `octet`.
-fn octet_char(octet : Int) -> String {
-  Int::unsafe_to_char(octet).to_string()
+fn octet_char(octet : Int32) -> String {
+  Int32::unsafe_to_char(octet).to_string()
 }
 
 ///|

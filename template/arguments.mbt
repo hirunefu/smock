@@ -66,8 +66,8 @@ fn Kind::accepts(self : Kind, json : Json) -> Bool {
 fn CallSite::takes(
   self : CallSite,
   kinds : Array[Kind],
-  least~ : Int,
-  most~ : Int,
+  least~ : Int32,
+  most~ : Int32,
 ) -> Unit raise Syntax {
   self.count_between(least~, most~)
   for k in 0..<self.args.length() {
@@ -83,7 +83,7 @@ fn CallSite::takes(
 /// `kind`.
 fn CallSite::check_kind(
   self : CallSite,
-  k : Int,
+  k : Int32,
   kind : Kind,
 ) -> Unit raise Syntax {
   let (at, arg) = self.args[k]
@@ -98,8 +98,8 @@ fn CallSite::check_kind(
 /// Checks that the call has from `least` to `most` arguments.
 fn CallSite::count_between(
   self : CallSite,
-  least~ : Int,
-  most~ : Int,
+  least~ : Int32,
+  most~ : Int32,
 ) -> Unit raise Syntax {
   let n = self.args.length()
   if least == most {
@@ -117,7 +117,12 @@ fn CallSite::count_between(
 ///|
 /// What is wrong with `json`, argument `k` (from 0) of the helper `name`,
 /// which is not of the kind `kind`.
-fn argument_problem(name : String, k : Int, kind : Kind, json : Json) -> String {
+fn argument_problem(
+  name : String,
+  k : Int32,
+  kind : Kind,
+  json : Json,
+) -> String {
   "\{name}(): argument \{k + 1} must be \{kind.wanted()}, not \{described(json)}"
 }
 
@@ -149,7 +154,7 @@ fn scalar_text(json : Json) -> String? {
 /// text. Raises a render error at `at` when it is not one.
 fn text_argument(
   name : String,
-  k : Int,
+  k : Int32,
   json : Json,
   at : String,
 ) -> String raise RenderError {
@@ -177,7 +182,7 @@ fn numeric_value(json : Json) -> Json? {
 /// is the decimal its text writes, whose fraction its float can lose. It is
 /// clamped to the range of an `Int`, which is beyond the length of any
 /// text.
-fn integer_value(json : Json) -> Int? {
+fn integer_value(json : Json) -> Int32? {
   guard numeric_value(json) is Some(Number(n, ..)) && n == n.floor() else {
     return None
   }
@@ -237,7 +242,7 @@ fn writes_integer(text : String) -> Bool {
     }
   }
   for i in 0..<point {
-    if text[i] is ('1'..='9') && point - i <= -shift {
+    if text[i] is ('1'..<='9') && point - i <= -shift {
       return false
     }
   }
@@ -249,10 +254,10 @@ fn writes_integer(text : String) -> Bool {
 /// an integer. Raises a render error at `at` when it is not one.
 fn integer_argument(
   name : String,
-  k : Int,
+  k : Int32,
   json : Json,
   at : String,
-) -> Int raise RenderError {
+) -> Int32 raise RenderError {
   match integer_value(json) {
     Some(n) => n
     None =>

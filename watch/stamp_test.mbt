@@ -9,7 +9,7 @@
 async fn stamp_of(
   path : String,
   at~ : Int64,
-  names? : String = "users.json",
+  names~ : String = "users.json",
 ) -> @watch.Stamp {
   let stamp = @watch.Stamp(now=at)
   stamp.note(names)

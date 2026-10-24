@@ -213,7 +213,7 @@ async fn Smock::unmatched(
   self : Smock,
   session : String,
   limit? : String,
-) -> (Int, Json) {
+) -> (Int32, Json) {
   let path = match limit {
     Some(limit) => "/v1/journal/unmatched?limit=\{limit}"
     None => "/v1/journal/unmatched"
@@ -397,7 +397,7 @@ async test "the unmatched requests come at most limit at a time; a limit that is
 ///|
 /// The entries of a Journal page, `body`, as their sequence numbers and
 /// targets, then `more`; or the status and body of a refusal.
-fn page_of(status : Int, body : Json) -> String {
+fn page_of(status : Int32, body : Json) -> String {
   guard status == 200 &&
     body is Object({ "entries": Array(entries), "more": more, .. }) else {
     return "\{status} \{body.stringify()}"

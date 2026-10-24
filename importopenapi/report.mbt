@@ -10,14 +10,14 @@ priv struct Report {
   /// of its problems is reported once, where it is written.
   reported : Set[String]
   /// How many of the problems are errors.
-  mut errors : Int
+  mut errors : Int32
   /// Where the problems with the file end. They are found last, but come
   /// first.
-  mut output_end : Int
+  mut output_end : Int32
   /// Where the document-level problems end, so that one found after the
   /// operations, such as that there is no operation to import, goes with
   /// them.
-  mut document_end : Int
+  mut document_end : Int32
 }
 
 ///|
@@ -70,8 +70,8 @@ fn Report::add(self : Report, problem : Problem) -> Bool {
 /// where the document-level ones end, so that those reported after it can
 /// be dropped.
 priv struct Mark {
-  problems : Int
-  document_end : Int
+  problems : Int32
+  document_end : Int32
 }
 
 ///|

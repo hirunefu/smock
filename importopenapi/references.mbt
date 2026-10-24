@@ -21,7 +21,7 @@ fn Conversion::followed(
   self : Conversion,
   pointer : Place,
   json : Json,
-  path_item? : Bool = false,
+  path_item~ : Bool = false,
 ) -> Part? {
   let mut pointer = pointer
   let mut json = json
@@ -70,7 +70,7 @@ fn Conversion::followed_object(
   self : Conversion,
   pointer : Place,
   json : Json,
-  path_item? : Bool = false,
+  path_item~ : Bool = false,
 ) -> (Place, Map[String, Json])? {
   guard self.followed(pointer, json, path_item~) is Some({ pointer, json, }) else {
     return None
@@ -152,7 +152,7 @@ let no_urls : String = "smock reads no URLs and no absolute paths: bundle the do
 /// The tree of the document numbered `number`, or of the root document
 /// for `None`. A reference is followed only from a document that was
 /// parsed.
-fn Conversion::tree(self : Conversion, number : Int?) -> Json {
+fn Conversion::tree(self : Conversion, number : Int32?) -> Json {
   match number {
     None => Json::object(self.document.top)
     Some(number) =>
@@ -178,7 +178,7 @@ fn Conversion::referenced_document(
   self : Conversion,
   pointer : Place,
   path : String,
-) -> (Int?, Json)? {
+) -> (Int32?, Json)? {
   let path = @percent.decode_lossy(path)
   if path.has_prefix("/") {
     self.error_at(pointer, no_urls)
@@ -261,9 +261,9 @@ priv struct Documents {
   mut root : Content?
   others : Array[Given]
   /// The number of each other document, by name.
-  numbers : Map[String, Int]
+  numbers : Map[String, Int32]
   /// How many bytes were given in all, until they pass `max_read_bytes`.
-  mut bytes : Int
+  mut bytes : Int32
   /// The document with which the bytes given passed `max_read_bytes`, if
   /// any. It is not parsed.
   mut passed : String?
@@ -298,7 +298,7 @@ fn Documents::new(options : Options) -> Documents {
 
 ///|
 /// How many documents were given, the root included.
-fn Documents::count(self : Documents) -> Int {
+fn Documents::count(self : Documents) -> Int32 {
   self.others.length() + (if self.root is Some(_) { 1 } else { 0 })
 }
 
@@ -350,8 +350,8 @@ pub fn has_scheme(reference : String) -> Bool {
   for i, c in reference {
     match c {
       ':' => return i > 0
-      'a'..='z' | 'A'..='Z' => ()
-      '0'..='9' | '+' | '-' | '.' if i > 0 => ()
+      'a'..<='z' | 'A'..<='Z' => ()
+      '0'..<='9' | '+' | '-' | '.' if i > 0 => ()
       _ => return false
     }
   }
@@ -415,7 +415,7 @@ fn step(json : Json, key : String) -> Json? {
 /// The array index that the JSON Pointer token `token` gives: `0`, or
 /// digits without a leading zero. `None` for any other token, `-` among
 /// them, which names no item.
-fn array_index(token : String) -> Int? {
+fn array_index(token : String) -> Int32? {
   guard token != "" && token.length() <= 9 && is_digits(token) else {
     return None
   }

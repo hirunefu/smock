@@ -8,12 +8,12 @@
 priv enum FakeHelper {
   Uuid
   Int(Int64, Int64)
-  FakeDecimal(Int64, Int64, Int)
+  FakeDecimal(Int64, Int64, Int32)
   Bool
   Pick(Array[Json])
-  Hex(Int)
+  Hex(Int32)
   Word
-  Words(Int)
+  Words(Int32)
   FirstName
   LastName
   Name
@@ -129,7 +129,7 @@ let hex_digits : String = "0123456789abcdef"
 
 ///|
 /// `n` lower-case hex digits of `u`, from its most significant end.
-fn hex(u : UInt64, n : Int) -> String {
+fn hex(u : UInt64, n : Int32) -> String {
   let out = StringBuilder()
   for i in 0..<n {
     let nibble = ((u >> (60 - 4 * i)) & 0xFUL).to_int()

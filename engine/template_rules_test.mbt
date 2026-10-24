@@ -8,7 +8,7 @@
 /// as JSON, and answers every request.
 fn one_response(
   response : String,
-  body_files? : Array[(String, Bytes)] = [],
+  body_files~ : Array[(String, Bytes)] = [],
   fault? : String,
 ) -> Harness {
   let fault = match fault {
@@ -32,9 +32,9 @@ fn one_response(
 fn Harness::body(
   self : Harness,
   target : String,
-  headers? : Array[(String, String)] = [],
-  body? : String = "",
-  meth? : String = "GET",
+  headers~ : Array[(String, String)] = [],
+  body~ : String = "",
+  meth~ : String = "GET",
 ) -> String {
   let outcome = self.send(
     meth,
@@ -58,9 +58,9 @@ fn Harness::body(
 /// `json` template, `json`.
 fn json_body(
   json : String,
-  target? : String = "/",
-  headers? : Array[(String, String)] = [],
-  body? : String = "",
+  target~ : String = "/",
+  headers~ : Array[(String, String)] = [],
+  body~ : String = "",
 ) -> String {
   one_response("{ \"status\": 200, \"template\": true, \"json\": \{json} }").body(
     target,
@@ -563,7 +563,7 @@ fn escaped(
   content_type : String?,
   body : String,
   target : String,
-  request_body? : String = "",
+  request_body~ : String = "",
 ) -> String {
   let headers = match content_type {
     Some(value) => "\"headers\": { \"Content-Type\": \"\{value}\" }, "

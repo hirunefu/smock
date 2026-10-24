@@ -25,19 +25,19 @@ let news : String =
 ///|
 /// When the events of `/events` in `news` are due, in milliseconds after
 /// the request.
-let news_due : Array[Int] = [400, 700, 700]
+let news_due : Array[Int32] = [400, 700, 700]
 
 ///|
 /// How late an event may arrive after it is due, in milliseconds, before
 /// the test says so. It is generous, so a busy machine does not fail the
 /// test, yet shorter than the gaps between the events of `news`.
-let lateness : Int = 250
+let lateness : Int32 = 250
 
 ///|
 /// `at <due> ms` when an event that arrived `elapsed` milliseconds after
 /// the request was due `due` milliseconds after it: not before, and less
 /// than `lateness` after. Otherwise when it arrived.
-fn arrival(elapsed : Int64, due : Int) -> String {
+fn arrival(elapsed : Int64, due : Int32) -> String {
   // Timers and clocks tick in whole milliseconds.
   if elapsed >= (due - 2).to_int64() && elapsed < (due + lateness).to_int64() {
     "at \{due} ms"
@@ -50,7 +50,7 @@ fn arrival(elapsed : Int64, due : Int) -> String {
 /// `before <first> ms` when the head arrived `elapsed` milliseconds after
 /// the request, before the first event was due at `first`. Otherwise when
 /// it arrived.
-fn head_arrival(elapsed : Int64, first : Int) -> String {
+fn head_arrival(elapsed : Int64, first : Int32) -> String {
   if elapsed < first.to_int64() {
     "before \{first} ms"
   } else {
@@ -200,7 +200,7 @@ async test "while a stream waits for an event's delay, smock answers requests on
 
 ///|
 /// How many files, sockets included, the process `pid` has open.
-async fn open_files(pid : Int) -> Int {
+async fn open_files(pid : Int32) -> Int32 {
   @fs.readdir("/proc/\{pid}/fd").length()
 }
 

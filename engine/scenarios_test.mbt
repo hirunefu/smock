@@ -45,7 +45,7 @@ fn Harness::step(
   self : Harness,
   meth : String,
   path : String,
-  host? : String = "payments.svc",
+  host~ : String = "payments.svc",
   session? : String,
 ) -> String {
   let outcome = self.send(meth, "http://\{host}\{path}", session?)
@@ -237,7 +237,7 @@ let mishaps : Array[(String, String)] = [
 fn Harness::mishap(
   self : Harness,
   path : String,
-  host? : String = "m.svc",
+  host~ : String = "m.svc",
 ) -> String {
   let outcome = self.send("GET", "http://\{host}\{path}")
   let plan = outcome.plan

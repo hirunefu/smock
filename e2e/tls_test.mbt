@@ -250,8 +250,8 @@ async fn Smock::s_client(
   certs : Certificates,
   options : Array[String],
   request : String,
-  ca? : String = certs.ca,
-  show? : Array[Array[String]] = [
+  ca~ : String = certs.ca,
+  show~ : Array[Array[String]] = [
     ["ALPN protocol:", "No ALPN negotiated"],
     ["Verify return code:"],
     ["HTTP/"],

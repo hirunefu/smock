@@ -223,7 +223,7 @@ pub(all) struct Rendering {
   /// counted from 0: the one asked for, or else the one the seed picks.
   /// `None` for a Stub with `response`, for a CRUD Stub, and when no
   /// response was picked because the Stub's writes failed.
-  response_index : Int?
+  response_index : Int32?
   /// The values the Stub's `variables` would write, by name, in the order
   /// written: none when it has none, or when its writes failed. Rendering
   /// writes none of them.
@@ -233,7 +233,7 @@ pub(all) struct Rendering {
   /// operation, if it makes one and it does not fail. Rendering writes none
   /// of them.
   data_writes : Array[RenderedWrite]
-  status : Int
+  status : Int32
   /// The header fields smock sends, in order, without those that depend on
   /// the connection, such as Content-Length.
   headers : Array[(String, String)]
@@ -284,7 +284,7 @@ pub suberror RenderFailure {
   UnknownStub(String)
   /// The Stub `stub` has no response at `index`: it has `count`, with the
   /// indexes 0 to `count - 1`. A CRUD Stub has none.
-  UnknownResponse(stub~ : String, index~ : Int, count~ : Int)
+  UnknownResponse(stub~ : String, index~ : Int32, count~ : Int32)
   /// The sample's `data` gives a value for the Data bucket `bucket`, which
   /// the Stub's Mock `mock` does not declare.
   UnknownSampleBucket(mock~ : String, bucket~ : String)
@@ -408,7 +408,7 @@ pub fn Engine::render(
   sample : SampleRequest,
   now~ : Int64,
   seed? : UInt64,
-  response_index? : Int,
+  response_index? : Int32,
   fresh_seed~ : () -> UInt64,
 ) -> Rendering raise RenderFailure {
   guard self.file_stub(id) is Some((stub, mock)) else { raise UnknownStub(id) }
@@ -824,7 +824,7 @@ pub impl ToJson for Rendering with fn to_json(self) {
 /// The `Body` schema of the Admin API document: the bytes as text when they
 /// are UTF-8, otherwise in base64. `bytes` are the first bytes of a body of
 /// `size` bytes, by default all of them.
-fn body_json(bytes : BytesView, size? : Int = bytes.length()) -> Json {
+fn body_json(bytes : BytesView, size~ : Int32 = bytes.length()) -> Json {
   let (encoding, data) = try @utf8.decode(bytes) catch {
     _ => ("base64", @base64.encode(bytes))
   } noraise {

@@ -9,9 +9,9 @@
 /// `root_label`, and the other documents under `ref_dir`.
 fn import_files(
   documents : Array[(String, String)],
-  root? : String = "openapi.yaml",
-  root_label? : String = "api/openapi.yaml",
-  ref_dir? : String = "api/",
+  root~ : String = "openapi.yaml",
+  root_label~ : String = "api/openapi.yaml",
+  ref_dir~ : String = "api/",
 ) -> String {
   let options = @importopenapi.Options(
     root~,
@@ -480,7 +480,7 @@ test "a reference in another document may lead back into the root document, and 
 ///|
 /// A root document whose paths `/p0`, `/p1`, ... each refer to a document
 /// of their own, `p0.yaml`, `p1.yaml`, ..., `count` of them.
-fn referring_to(count : Int) -> String {
+fn referring_to(count : Int32) -> String {
   let paths = StringBuilder()
   for i in 0..<count {
     paths.write_string("  /p\{i}:\n    $ref: p\{i}.yaml\n")

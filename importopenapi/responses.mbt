@@ -2,9 +2,9 @@
 /// A key of a Responses Object.
 priv enum ResponseKey {
   /// An explicit status code from 100 to 599, such as `404`.
-  Code(Int)
+  Code(Int32)
   /// A range from `1XX` to `5XX`, by its first digit.
-  Range(Int)
+  Range(Int32)
   Default
   /// An `x-` extension, which is ignored.
   Extension
@@ -54,7 +54,7 @@ fn ResponseKey::is_informational(self : ResponseKey) -> Bool {
 /// the status it answers with.
 priv struct Response {
   key : String
-  status : Int
+  status : Int32
   /// Whether it is the main response, which a request gets without
   /// `Smock-Status`. A request gets any other one with `Smock-Status: <key>`.
   main : Bool
@@ -68,8 +68,8 @@ priv struct Response {
 /// then `3XX`, `4XX` and `5XX`. An explicit code answers itself, `default`
 /// answers 200, and a range its first code. `None` when there is none.
 fn main_of(keys : Array[(String, ResponseKey)]) -> Response? {
-  let mut lowest_success : (String, Int)? = None
-  let mut lowest_other : (String, Int)? = None
+  let mut lowest_success : (String, Int32)? = None
+  let mut lowest_other : (String, Int32)? = None
   let ranges : Array[String?] = [None, None, None, None, None, None]
   let mut default = None
   for entry in keys {

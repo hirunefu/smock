@@ -35,7 +35,7 @@ let pick_mask : UInt64 = 0xE7037ED1A0B428DB
 /// running total holds that number, in the order written. A Stub with
 /// `response` takes no pick and draws nothing: `None`, for its one
 /// response.
-fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
+fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int32? {
   guard ordinary.total_weight is Some(total) else { return None }
   let mut n = @prng.Generator(draw ^ pick_mask)
     .below(total.to_uint64())
@@ -128,7 +128,7 @@ fn template_input(incoming : Incoming) -> @template.Input {
 /// Renders `template`: header values in the order written, then the body or
 /// the events in order.
 fn render_template(
-  status : Int,
+  status : Int32,
   template : @definitions.ResponseTemplate,
   context : @template.Context,
 ) -> ResponsePlan raise @template.RenderError {
@@ -194,7 +194,7 @@ fn template_failed(stub : String, error : TemplateError) -> ResponsePlan {
 ///|
 /// A response of smock's own that says what went wrong: `status`, with
 /// `body` in compact JSON, as `application/json`, and no delay or Fault.
-fn json_failure(status : Int, body : Json) -> ResponsePlan {
+fn json_failure(status : Int32, body : Json) -> ResponsePlan {
   {
     status,
     headers: [("Content-Type", "application/json")],

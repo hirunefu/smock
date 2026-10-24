@@ -9,11 +9,11 @@
 /// What a verification checks the count against.
 pub(all) enum CountCheck {
   /// The count must be exactly this.
-  Exactly(Int)
+  Exactly(Int32)
   /// The count must be at least this.
-  AtLeast(Int)
+  AtLeast(Int32)
   /// The count must be at most this.
-  AtMost(Int)
+  AtMost(Int32)
 } derive(Debug, Eq)
 
 ///|
@@ -41,10 +41,10 @@ pub struct Verification {
   /// Whether the check passed.
   ok : Bool
   /// How many of the Session's entries pass the filter.
-  count : Int
+  count : Int32
   /// How many of the Session's entries the bound has evicted since its
   /// last reset.
-  evicted : Int
+  evicted : Int32
   /// Why the check failed, or `None` when it passed.
   reason : VerifyFailure?
 } derive(Debug)
@@ -52,7 +52,7 @@ pub struct Verification {
 ///|
 /// The members that give the check, in the `VerifyRequest` schema, each
 /// with the check it gives for a count.
-let check_members : Array[(String, (Int) -> CountCheck)] = [
+let check_members : Array[(String, (Int32) -> CountCheck)] = [
   ("exactly", n => Exactly(n)),
   ("atLeast", n => AtLeast(n)),
   ("atMost", n => AtMost(n)),

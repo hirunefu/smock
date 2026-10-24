@@ -172,7 +172,7 @@ priv struct MockDecl {
   /// The JSON Pointer of `default` when it is true.
   default : String?
   /// The status of the response when no Stub matches.
-  no_match_status : Int
+  no_match_status : Int32
   /// The header fields of the response when no Stub matches.
   no_match_headers : Array[(String, String)]
   /// Whether the Journal records the requests the Mock answers.
@@ -469,7 +469,7 @@ fn File::read_no_match(
   self : File,
   pointer : String,
   json : Json,
-) -> (Int, Array[(String, String)]) {
+) -> (Int32, Array[(String, String)]) {
   let mut status = 404
   let mut headers = []
   guard json is Object(fields) else {
@@ -492,7 +492,7 @@ fn File::read_no_match(
 
 ///|
 /// Reads a response status: an integer from 200 to 599.
-fn File::read_status(self : File, pointer : String, json : Json) -> Int {
+fn File::read_status(self : File, pointer : String, json : Json) -> Int32 {
   self
   .read_integer(pointer, json, min=200L, max=599L)
   .map_or(0, n => n.to_int())
@@ -893,7 +893,11 @@ fn File::read_probability(self : File, pointer : String, json : Json) -> Double 
 ///|
 /// Reads a duration in whole milliseconds: an integer from 0 to
 /// `max_milliseconds`.
-fn File::read_milliseconds(self : File, pointer : String, json : Json) -> Int? {
+fn File::read_milliseconds(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> Int32? {
   self
   .read_integer(pointer, json, min=0L, max=max_milliseconds.to_int64())
   .map(n => n.to_int())
@@ -923,7 +927,7 @@ fn no_conditions() -> Conditions {
 
 ///|
 /// Reads a priority: a 32-bit integer.
-fn File::read_priority(self : File, pointer : String, json : Json) -> Int? {
+fn File::read_priority(self : File, pointer : String, json : Json) -> Int32? {
   self
   .read_integer(
     pointer,
@@ -1188,7 +1192,7 @@ fn File::read_value_conditions(
   self : File,
   pointer : String,
   json : Json,
-  header_names? : Bool = false,
+  header_names~ : Bool = false,
 ) -> Array[(String, ValueCondition)] {
   let out = []
   guard json is Object(conditions) else {
@@ -1505,7 +1509,7 @@ fn File::read_headers(
   self : File,
   pointer : String,
   json : Json,
-  set_by_smock? : Array[String] = response_names_set_by_smock,
+  set_by_smock~ : Array[String] = response_names_set_by_smock,
 ) -> Array[(String, String, String)] {
   let out = []
   guard json is Object(headers) else {

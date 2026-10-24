@@ -8,8 +8,8 @@
 /// if anything, to stderr, with `dir` written `<dir>`.
 async fn import_openapi(
   args : Array[String],
-  dir? : String = "",
-  cwd? : String = ".",
+  dir~ : String = "",
+  cwd~ : String = ".",
 ) -> String {
   let report = exit_report(smock_output(["import-openapi", ..args], cwd~))
   if dir == "" {

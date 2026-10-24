@@ -1,32 +1,32 @@
 ///|
 /// The deepest the file nests collections, empty ones included: the limit
 /// of the parsers, which the loader and the YAML writer share.
-let max_nesting : Int = 1024
+let max_nesting : Int32 = 1024
 
 ///|
 /// How deep a body may nest collections: the file's root, `stubs`, the
 /// Stub and its `response` hold it.
-let body_nesting : Int = max_nesting - 4
+let body_nesting : Int32 = max_nesting - 4
 
 ///|
 /// The most items a sampled array has.
-let max_sample_items : Int = 100
+let max_sample_items : Int32 = 100
 
 ///|
 /// The most collections a sample nests: an object or an array inside as
 /// many others is null.
-let max_sample_depth : Int = 32
+let max_sample_depth : Int32 = 32
 
 ///|
 /// The most bytes of compact JSON that a sample with every property takes:
 /// 64 KiB. A larger one is made again, cut to its required parts below the
 /// first level.
-let max_full_sample_bytes : Int = 64 * 1024
+let max_full_sample_bytes : Int32 = 64 * 1024
 
 ///|
 /// The most bytes of compact JSON that a cut sample takes: 1 MiB. A larger
 /// one leaves the body empty.
-let max_cut_sample_bytes : Int = 1024 * 1024
+let max_cut_sample_bytes : Int32 = 1024 * 1024
 
 ///|
 /// The sample of each `format` that has its own, from the table in the
@@ -135,7 +135,7 @@ priv struct Sampler {
   /// their required properties, and arrays only `minItems` items.
   cut : Bool
   /// How many more bytes of compact JSON the sample may take.
-  mut left : Int
+  mut left : Int32
 }
 
 ///|
@@ -179,7 +179,7 @@ fn Conversion::body_sample(
   self : Conversion,
   pointer : Place,
   json : Json,
-  part? : String = "the body",
+  part~ : String = "the body",
 ) -> BodySample {
   let mark = self.report.mark()
   for cut in [false, true] {
@@ -200,7 +200,7 @@ fn Conversion::body_sample(
 ///|
 /// Takes `bytes` from what the sample may still take, or stops it when
 /// they are more.
-fn Sampler::charge(self : Sampler, bytes : Int) -> Unit raise Passed {
+fn Sampler::charge(self : Sampler, bytes : Int32) -> Unit raise Passed {
   if bytes > self.left {
     raise Passed
   }
@@ -218,7 +218,7 @@ fn Sampler::charged(self : Sampler, json : Json) -> Json raise Passed {
 ///|
 /// Whether a collection inside `depth` sampled collections is cut: in a
 /// cut sample, those nested more than one level below the body are.
-fn Sampler::cuts(self : Sampler, depth : Int) -> Bool {
+fn Sampler::cuts(self : Sampler, depth : Int32) -> Bool {
   self.cut && depth >= 2
 }
 
@@ -281,7 +281,7 @@ fn Sampler::sample(
   self : Sampler,
   pointer : Place,
   json : Json,
-  depth : Int,
+  depth : Int32,
 ) -> Json? raise Passed {
   let merged = Merged::new()
   self.merge(merged, pointer, json, branch=false)
@@ -519,7 +519,7 @@ fn is_only_null(json : Json) -> Bool {
 fn Sampler::merged_sample(
   self : Sampler,
   merged : Merged,
-  depth : Int,
+  depth : Int32,
 ) -> Json? raise Passed {
   if merged.never || merged.recursive {
     return None
@@ -629,7 +629,7 @@ fn Conversion::copied(
   self : Conversion,
   pointer : Place,
   value : Json,
-  room : Int,
+  room : Int32,
 ) -> Json? {
   if nests_deeper(value, room) {
     self.warning_at(
@@ -644,7 +644,7 @@ fn Conversion::copied(
 ///|
 /// Whether `json` nests more than `levels` collections, empty ones
 /// included.
-fn nests_deeper(json : Json, levels : Int) -> Bool {
+fn nests_deeper(json : Json, levels : Int32) -> Bool {
   match json {
     Array(items) => {
       if levels <= 0 {
@@ -767,7 +767,7 @@ fn Sampler::count(
   self : Sampler,
   merged : Merged,
   keyword : String,
-) -> (Place, Int)? {
+) -> (Place, Int32)? {
   for layer in merged.layers {
     let at = layer.pointer.child(keyword)
     match layer.schema.get(keyword) {
@@ -823,7 +823,7 @@ fn Sampler::string(self : Sampler, merged : Merged) -> Json raise Passed {
 fn Sampler::array(
   self : Sampler,
   merged : Merged,
-  depth : Int,
+  depth : Int32,
 ) -> Json raise Passed {
   self.charge(2)
   let items : Array[Json] = []
@@ -937,7 +937,7 @@ fn Sampler::required(self : Sampler, merged : Merged) -> Array[String] {
 fn Sampler::object(
   self : Sampler,
   merged : Merged,
-  depth : Int,
+  depth : Int32,
 ) -> Json raise Passed {
   self.charge(2)
   let cut = self.cuts(depth)
@@ -1035,7 +1035,7 @@ fn Sampler::write_only(self : Sampler, merged : Merged) -> Bool {
 /// The length of `json` as compact JSON in UTF-8, as smock writes it, or a
 /// length above `limit` as soon as it passes it, so that a large value is
 /// not walked to its end.
-fn compact_size(json : Json, limit : Int) -> Int {
+fn compact_size(json : Json, limit : Int32) -> Int32 {
   match json {
     Null | True => 4
     False => 5

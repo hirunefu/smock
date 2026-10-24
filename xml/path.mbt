@@ -35,7 +35,7 @@ pub impl Debug for Path with fn to_repr(self) {
 /// problem is, counted in characters (code points) from 0, and `message`
 /// says what the problem is.
 pub(all) suberror PathError {
-  PathError(position~ : Int, message~ : String)
+  PathError(position~ : Int32, message~ : String)
 } derive(Eq, Debug)
 
 ///|
@@ -150,7 +150,7 @@ pub fn compile_path(source : String) -> Path raise PathError {
 ///|
 /// Raises the error for XPath syntax, named by `what`, that smock's paths
 /// leave out.
-fn unsupported(position : Int, what : String) -> Unit raise PathError {
+fn unsupported(position : Int32, what : String) -> Unit raise PathError {
   raise PathError(
     position~,
     message="\{what} is not supported in smock's XML paths",

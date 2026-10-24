@@ -27,8 +27,8 @@ priv enum DfaSlot {
 /// Where a match was found: `input[start:end]` is the matched text. Both are
 /// byte offsets into the input, and both fall on character boundaries.
 pub(all) struct Match {
-  start : Int
-  end : Int
+  start : Int32
+  end : Int32
 } derive(Eq, Debug)
 
 ///|
@@ -41,7 +41,7 @@ pub(all) struct Match {
 /// names syntax that RE2 does not have, such as a backreference or a
 /// lookahead.
 pub(all) suberror CompileError {
-  CompileError(position~ : Int, message~ : String)
+  CompileError(position~ : Int32, message~ : String)
 } derive(Eq, Debug)
 
 ///|
@@ -110,7 +110,7 @@ pub fn Regex::search(self : Regex, input : BytesView) -> Match? {
 /// one instruction of the compiled program, so the count grows linearly with
 /// the length of the input. It is a measure of work that does not depend on
 /// the machine, for tests and benchmarks.
-pub fn Regex::full_match_steps(self : Regex, input : BytesView) -> Int {
+pub fn Regex::full_match_steps(self : Regex, input : BytesView) -> Int32 {
   run(self.insts, input, Full).1
 }
 
@@ -119,6 +119,6 @@ pub fn Regex::full_match_steps(self : Regex, input : BytesView) -> Int {
 /// instruction of the compiled program, so the count grows linearly with the
 /// length of the input. It is a measure of work that does not depend on the
 /// machine, for tests and benchmarks.
-pub fn Regex::search_steps(self : Regex, input : BytesView) -> Int {
+pub fn Regex::search_steps(self : Regex, input : BytesView) -> Int32 {
   run(self.insts, input, Search).1
 }

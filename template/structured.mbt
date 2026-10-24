@@ -105,7 +105,7 @@ fn literal_value(node : Node) -> Json? {
 
 ///|
 /// The most loop iterations one response runs, in all.
-let max_iterations : Int = 10_000
+let max_iterations : Int32 = 10_000
 
 ///|
 /// Parses `source` as a structured template, for the field at `pointer`,
@@ -116,8 +116,8 @@ let max_iterations : Int = 10_000
 pub fn Structured::parse(
   source : Json,
   pointer~ : String,
-  env? : Env = no_env,
-  buckets? : Buckets = no_buckets,
+  env~ : Env = no_env,
+  buckets~ : Buckets = no_buckets,
   role? : String,
 ) -> Result[Structured, Array[Problem]] {
   let problems = []

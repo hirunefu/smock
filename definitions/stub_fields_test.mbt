@@ -7,7 +7,7 @@
 /// `body_files`, and renders every diagnostic, one per line, or `valid`.
 fn stub_problems(
   stubs : Array[String],
-  body_files? : Array[(String, Bytes)] = [],
+  body_files~ : Array[(String, Bytes)] = [],
 ) -> String {
   let file = "{ \"mocks\": [{ \"name\": \"m\" }], \"stubs\": [\{stubs.join(", ")}] }"
   let set : @definitions.DefinitionSet = {
@@ -187,7 +187,7 @@ test "a pattern that does not compile is a diagnostic at the JSON Pointer of its
 
 ///|
 test "a pattern with syntax outside smock's RE2 subset, or that is not RE2 syntax, is rejected the same way" {
-  let stub = (i : Int, pattern : String) => {
+  let stub = (i : Int32, pattern : String) => {
     stub_with(
       "s\{i}",
       "\"request\": { \"path\": { \"pattern\": \{pattern.escape()} } }",
@@ -511,7 +511,7 @@ test "a Mock's noMatch.headers follow the rules of a Stub's response headers, an
 
 ///|
 test "a body file is named by a path relative to the body-file subdirectory, and must exist there" {
-  let response = (i : Int, body_file : String) => {
+  let response = (i : Int32, body_file : String) => {
     "{ \"id\": \"s\{i}\", \"mock\": \"m\", \"response\": { \"status\": 200, \"bodyFile\": \{body_file.escape()} } }"
   }
   inspect(
@@ -531,7 +531,7 @@ test "a body file is named by a path relative to the body-file subdirectory, and
 
 ///|
 test "a body-file path that would leave the body-file subdirectory is a diagnostic, even when such a file is given" {
-  let response = (i : Int, body_file : Json) => {
+  let response = (i : Int32, body_file : Json) => {
     "{ \"id\": \"s\{i}\", \"mock\": \"m\", \"response\": { \"status\": 200, \"bodyFile\": \{body_file.stringify()} } }"
   }
   let paths : Array[Json] = [
@@ -561,7 +561,7 @@ test "a body-file path that would leave the body-file subdirectory is a diagnost
 
 ///|
 test "a response gives at most one of body, bodyFile, json and events" {
-  let response = (i : Int, fields : String) => {
+  let response = (i : Int32, fields : String) => {
     "{ \"id\": \"s\{i}\", \"mock\": \"m\", \"response\": { \"status\": 200, \{fields} } }"
   }
   inspect(
@@ -660,10 +660,10 @@ test "the snapshot holds a Stub's responses in the order written, each with its 
 
 ///|
 test "a Stub gives exactly one of response and responses, 1 to 100 responses, each weight an integer from 1 to 1,000,000" {
-  let stub = (i : Int, fields : String) => {
+  let stub = (i : Int32, fields : String) => {
     "{ \"id\": \"s\{i}\", \"mock\": \"m\", \{fields} }"
   }
-  let many = (n : Int) => {
+  let many = (n : Int32) => {
     "\"responses\": [\{Array::make(n, "{ \"status\": 200 }").join(", ")}]"
   }
   inspect(
@@ -733,7 +733,7 @@ test "a template error inside one of responses points at it, counted from 0, and
 
 ///|
 /// A Stub of Mock `m` whose response streams `events`, given as JSON.
-fn events_stub(i : Int, events : String) -> String {
+fn events_stub(i : Int32, events : String) -> String {
   "{ \"id\": \"s\{i}\", \"mock\": \"m\", \"response\": { \"status\": 200, \"events\": \{events} } }"
 }
 

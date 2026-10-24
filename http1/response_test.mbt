@@ -1,6 +1,6 @@
 ///|
 fn encoded(
-  status : Int,
+  status : Int32,
   headers : Array[(String, String)],
   body : String,
 ) -> String {

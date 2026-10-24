@@ -26,7 +26,7 @@ pub fn BuildInfo::version_line(self : BuildInfo) -> String {
 pub fn BuildInfo::log_startup(
   self : BuildInfo,
   logger : @log.Logger,
-  fields? : Map[String, Json] = {},
+  fields~ : Map[String, Json] = {},
 ) -> Unit {
   let entry : Map[String, Json] = {
     "version": Json::string(self.version),

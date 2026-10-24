@@ -31,7 +31,7 @@ fn Bound::allows_below(self : Bound, value : Decimal) -> Bool {
 ///|
 /// The bound's value, moved by `step` when the bound is exclusive: the
 /// nearest number it allows, 1 inside it.
-fn Bound::inside(self : Bound, step : Int) -> Decimal {
+fn Bound::inside(self : Bound, step : Int32) -> Decimal {
   if self.exclusive {
     self.value.plus(step)
   } else {

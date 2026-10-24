@@ -29,7 +29,7 @@ struct Presented {
 ///|
 /// Runs `openssl <args>` and returns its exit status and its standard
 /// output.
-async fn run_openssl(args : Array[String], stdin? : String) -> (Int, String) {
+async fn run_openssl(args : Array[String], stdin? : String) -> (Int32, String) {
   let result = @async.with_timeout_opt(patience_ms, () => {
     match stdin {
       Some(path) =>
@@ -111,7 +111,7 @@ async fn Smock::verify_for(
   dir : String,
   ca : String,
   name : String,
-  path? : String = "/",
+  path~ : String = "/",
   header? : String,
 ) -> String {
   let is_ipv6 = name.contains(":")
@@ -311,7 +311,7 @@ async test "a log entry at startup says that a self-signed certificate is in use
 /// `mocks`, with a Stub `GET /x` that answers with `status`.
 fn mocks_with_stubs(
   mocks : Array[(String, String)],
-  status? : Int = 200,
+  status~ : Int32 = 200,
 ) -> String {
   let declared = mocks.map(mock => {
     "{ \"name\": \"\{mock.0}\", \"hosts\": [\"\{mock.1}\"] }"

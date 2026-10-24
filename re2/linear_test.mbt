@@ -14,7 +14,7 @@ let pathological : Array[String] = [
 
 ///|
 /// `a` repeated `n` times, then `!`: no pattern above matches it.
-fn input_of(n : Int) -> Bytes {
+fn input_of(n : Int32) -> Bytes {
   @utf8.encode(repeat("a", n) + "!")
 }
 

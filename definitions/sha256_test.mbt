@@ -15,7 +15,7 @@ fn sha256_hex(data : Bytes) -> String {
 
 ///|
 /// `n` bytes of `a`.
-fn a_times(n : Int) -> Bytes {
+fn a_times(n : Int32) -> Bytes {
   Bytes::make(n, b'a')
 }
 

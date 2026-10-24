@@ -38,7 +38,7 @@ pub fn is_field(name : StringView) -> Bool {
 ///
 /// It returns an index, rather than an optional view, so that a search
 /// allocates nothing.
-pub fn find(field : String, name : String, from? : Int = 0) -> Int {
+pub fn find(field : String, name : String, from~ : Int32 = 0) -> Int32 {
   for start = from; start <= field.length(); {
     let end = part_end(field, start)
     let first = name_start(field, start, end)
@@ -56,7 +56,7 @@ pub fn find(field : String, name : String, from? : Int = 0) -> Int {
 ///|
 /// Where the value that starts at `start` in `field`, as `find` gives it,
 /// ends: at the end of its part, without the spaces and tabs before it.
-pub fn value_end(field : String, start : Int) -> Int {
+pub fn value_end(field : String, start : Int32) -> Int32 {
   let mut end = part_end(field, start)
   while end > start && is_blank(field[end - 1]) {
     end -= 1
@@ -94,7 +94,7 @@ pub fn parse(headers : Array[(String, String)]) -> Map[String, Array[String]] {
 ///|
 /// The end of the part of `field`, a `Cookie` field value, that starts at
 /// `start`: the index of the next `;`, or the length of `field`.
-fn part_end(field : String, start : Int) -> Int {
+fn part_end(field : String, start : Int32) -> Int32 {
   let mut i = start
   while i < field.length() && field[i] != ';' {
     i += 1
@@ -105,7 +105,7 @@ fn part_end(field : String, start : Int) -> Int {
 ///|
 /// Where the name of the part `field[start:end]` starts: after the spaces
 /// and tabs at its start.
-fn name_start(field : String, start : Int, end : Int) -> Int {
+fn name_start(field : String, start : Int32, end : Int32) -> Int32 {
   let mut start = start
   while start < end && is_blank(field[start]) {
     start += 1
@@ -116,7 +116,7 @@ fn name_start(field : String, start : Int, end : Int) -> Int {
 ///|
 /// The index of the first `=` in `field[start:end]`, which ends the name of
 /// a cookie, or -1 when the part has none and so holds no cookie.
-fn equals_at(field : String, start : Int, end : Int) -> Int {
+fn equals_at(field : String, start : Int32, end : Int32) -> Int32 {
   for i in start..<end {
     if field[i] == '=' {
       return i
@@ -128,7 +128,7 @@ fn equals_at(field : String, start : Int, end : Int) -> Int {
 ///|
 /// Whether `field`, from `start` on, starts with `name`, compared exactly.
 /// The caller checks that `field` is long enough.
-fn same_name(field : String, start : Int, name : String) -> Bool {
+fn same_name(field : String, start : Int32, name : String) -> Bool {
   for i in 0..<name.length() {
     if field[start + i] != name[i] {
       return false

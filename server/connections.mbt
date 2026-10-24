@@ -15,8 +15,8 @@ priv struct Connection {
 ///|
 /// The connections being served.
 priv struct Connections {
-  live : Map[Int, Connection]
-  mut next_id : Int
+  live : Map[Int32, Connection]
+  mut next_id : Int32
   /// Signalled when a connection ends.
   ended : @async.CondVar
 }
@@ -71,7 +71,7 @@ async fn Connections::wait_all_ended(self : Connections) -> Unit {
 ///|
 /// Cuts every connection still open, whatever it is doing, and returns
 /// how many there were.
-fn Connections::cut(self : Connections) -> Int {
+fn Connections::cut(self : Connections) -> Int32 {
   for _, connection in self.live {
     if connection.task is Some(task) {
       task.cancel()

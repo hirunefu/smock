@@ -133,7 +133,7 @@ pub fn keyed_problems(value : Json, key~ : String) -> Array[KeyedProblem] {
   }
   let problems = []
   // The index of the item that has each key text so far.
-  let seen : Map[String, Int] = Map([])
+  let seen : Map[String, Int32] = Map([])
   for i, item in items {
     let at = child_pointer("", i.to_string())
     guard item is Object(members) else {
@@ -175,8 +175,8 @@ pub fn keyed_problems(value : Json, key~ : String) -> Array[KeyedProblem] {
 /// 2 more)`.
 pub fn keyed_problems_text(
   problems : Array[KeyedProblem],
-  at? : String = "",
-  limit? : Int,
+  at~ : String = "",
+  limit? : Int32,
 ) -> String {
   let shown = match limit {
     Some(limit) => limit.min(problems.length())

@@ -61,7 +61,7 @@ fn first_certificate_der(pem : Bytes) -> BytesView? {
 ///|
 /// The DER element that starts at `pos` in `data`: its tag, its contents
 /// and where the next element starts. `None` when it does not fit.
-fn der_element(data : BytesView, pos : Int) -> (Int, BytesView, Int)? {
+fn der_element(data : BytesView, pos : Int32) -> (Int32, BytesView, Int32)? {
   if pos + 2 > data.length() {
     return None
   }
@@ -92,7 +92,7 @@ fn der_element(data : BytesView, pos : Int) -> (Int, BytesView, Int)? {
 /// A UTCTime (tag 0x17, `YYMMDDHHMMSSZ`) or GeneralizedTime (tag 0x18,
 /// `YYYYMMDDHHMMSSZ`) as DER writes them, in milliseconds since the Unix
 /// epoch: read as the RFC 3339 date-time with the same fields.
-fn der_time(tag : Int, value : BytesView) -> Int64? {
+fn der_time(tag : Int32, value : BytesView) -> Int64? {
   let digits = match (tag, value.length()) {
     (0x17, 13) | (0x18, 15) => value[:value.length() - 1]
     _ => return None

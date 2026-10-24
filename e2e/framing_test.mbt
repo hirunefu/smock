@@ -185,7 +185,7 @@ async test "after malformed or ambiguous framing, smock answers what came before
 
 ///|
 /// Reads `n` responses and joins them, separated by `---` lines.
-async fn read_responses(conn : Conn, n : Int) -> String {
+async fn read_responses(conn : Conn, n : Int32) -> String {
   let responses = []
   for _ in 0..<n {
     responses.push(read_response(conn))

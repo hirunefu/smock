@@ -5,8 +5,8 @@
 /// of each Stub as the YAML file writes it, or `nothing written`.
 fn responses_of(
   responses : String,
-  openapi? : String = "3.1.0",
-  meth? : String = "get",
+  openapi~ : String = "3.1.0",
+  meth~ : String = "get",
 ) -> String raise {
   let document = "{ \"openapi\": \"\{openapi}\", \"paths\": { \"/r\": { \"\{meth}\": { \"operationId\": \"r\", \"responses\": \{responses} } } } }"
   let conversion = @importopenapi.convert(

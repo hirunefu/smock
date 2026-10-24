@@ -9,7 +9,7 @@
 /// them; or `valid`.
 fn template_problems(
   stubs : String,
-  body_files? : Array[(String, Bytes)] = [],
+  body_files~ : Array[(String, Bytes)] = [],
 ) -> String {
   let set : @definitions.DefinitionSet = {
     files: [("m.yaml", @utf8.encode("mocks:\n  - name: m\nstubs:\n\{stubs}"))],
@@ -24,7 +24,7 @@ fn template_problems(
 ///|
 /// A Stub `s<i>` with `template` on and the response members `members`,
 /// given in YAML flow style.
-fn templated(i : Int, members : String) -> String {
+fn templated(i : Int32, members : String) -> String {
   "  - { id: s\{i}, mock: m, response: { status: 200, template: true, \{members} } }\n"
 }
 

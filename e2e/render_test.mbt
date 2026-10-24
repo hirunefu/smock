@@ -60,7 +60,7 @@ let render_definitions : Array[(String, String)] = [
 /// and, if anything, to stderr.
 async fn render(
   args : Array[String],
-  env? : Map[String, String] = Map([]),
+  env~ : Map[String, String] = Map([]),
 ) -> String {
   exit_report(render_output(args, env~))
 }
@@ -113,8 +113,8 @@ fn time_and_seed(json : Json, time_given~ : Bool, seed_given~ : Bool) -> String 
 /// environment, and returns its exit status, stdout and stderr.
 async fn render_output(
   args : Array[String],
-  env? : Map[String, String] = Map([]),
-) -> (Int, String, String) {
+  env~ : Map[String, String] = Map([]),
+) -> (Int32, String, String) {
   smock_output(["render", ..args], env~)
 }
 
@@ -326,8 +326,8 @@ async fn Smock::render(
   id : String,
   sample? : String,
   body? : String,
-  query? : String = "",
-  token? : String? = Some(test_token),
+  query~ : String = "",
+  token~ : String? = Some(test_token),
 ) -> AdminResponse {
   let body = match (sample, body) {
     (Some(file), _) => Some(@fs.read_file(file).text())
