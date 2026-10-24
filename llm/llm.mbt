@@ -27,18 +27,25 @@ pub fn Api::name(self : Api) -> String {
 }
 
 ///|
+/// Every API, in the order the load error of `api` lists their names.
+let apis : ReadOnlyArray[Api] = [OpenaiChat, OpenaiResponses, AnthropicMessages]
+
+///|
 /// The load check of `api`: the API that `value` names, or the message of
 /// the load error when it names none, which lists the names it can take.
 pub fn read_api(value : Json) -> Result[Api, String] {
-  match value {
-    String("openai-chat") => Ok(OpenaiChat)
-    String("openai-responses") => Ok(OpenaiResponses)
-    String("anthropic-messages") => Ok(AnthropicMessages)
-    _ =>
-      Err(
-        "must be \"openai-chat\", \"openai-responses\" or \"anthropic-messages\"",
-      )
+  if value is String(name) {
+    for api in apis {
+      if api.name() == name {
+        return Ok(api)
+      }
+    }
   }
+  let names = Array(capacity=apis.length())
+  for api in apis {
+    names.push(api.name())
+  }
+  Err("must be \{listed(ReadOnlyArray::from_array(names))}")
 }
 
 ///|
@@ -476,7 +483,7 @@ pub fn reply(
   match declaration.api {
     OpenaiChat => {
       let id = reply_id(strings, "chatcmpl-", ids)
-      let request_id = ("x-request-id", "req_" + ids.request)
+      let request_id = ids.request_id("x-request-id")
       if asks_to_stream(request) {
         chat_stream(
           declaration,
@@ -503,7 +510,7 @@ pub fn reply(
     OpenaiResponses => {
       let id = reply_id(strings, "resp_", ids)
       let message_id = "msg_" + ids.message
-      let request_id = ("x-request-id", "req_" + ids.request)
+      let request_id = ids.request_id("x-request-id")
       if asks_to_stream(request) {
         responses_stream(
           declaration,
@@ -534,7 +541,7 @@ pub fn reply(
     }
     AnthropicMessages => {
       let id = reply_id(strings, "msg_", ids)
-      let request_id = ("request-id", "req_" + ids.request)
+      let request_id = ids.request_id("request-id")
       if asks_to_stream(request) {
         messages_stream(
           declaration,
@@ -826,6 +833,13 @@ priv struct Ids {
   calls : FixedArray[String]
   /// The request id of the request-id header, without its prefix.
   request : String
+}
+
+///|
+/// The request-id header field named `name`, the API's, in lower case:
+/// `req_` and the request id's slot of `self`.
+fn Ids::request_id(self : Ids, name : String) -> (String, String) {
+  (name, "req_" + self.request)
 }
 
 ///|
