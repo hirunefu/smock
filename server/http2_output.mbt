@@ -172,9 +172,9 @@ async fn H2Writer::wait(self : H2Writer) -> Unit {
 ///|
 /// Waits until no other task is writing, then writes to `out` `frames`,
 /// which smock built itself rather than the `Conn`, ahead of what the
-/// `Conn` has queued, which follows, as `write` writes it. A caller that
-/// must decide, once the wait is over, whether to write at all waits first
-/// itself (`wait`): this one then starts to write at once.
+/// `Conn` has queued, which `write` then writes. A caller that must decide,
+/// once the wait is over, whether to write at all waits first itself
+/// (`wait`): this one then starts to write at once.
 async fn[S : @io.Writer + ReadOutput] H2Writer::write_first(
   self : H2Writer,
   out : WatchedStream[S],
@@ -183,11 +183,10 @@ async fn[S : @io.Writer + ReadOutput] H2Writer::write_first(
   self.wait()
   self.busy = true
   @io.Writer::write(out, frames)
-  write_queued(out, self.conn.take())
-  while self.more {
-    self.more = false
-    write_queued(out, self.conn.take())
-  }
   self.busy = false
-  self.done.broadcast()
+  // It wakes the tasks that wait for the writer once it is done, unless it
+  // had nothing to write.
+  if !self.write(out) {
+    self.done.broadcast()
+  }
 }
