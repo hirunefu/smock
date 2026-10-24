@@ -156,3 +156,167 @@ async test "h2c: a body that passes --body-limit gets 413, then RST_STREAM NO_ER
     })
   })
 }
+
+///|
+/// A raw connection that keeps to the connection's flow-control window, as
+/// a client must: it sends DATA only within the window, and reads smock's
+/// frames, WINDOW_UPDATE among them, while the window is shut. So it waits
+/// for good if smock does not hand back what it takes.
+struct Uploader {
+  raw : RawH2
+  /// The DATA octets the connection's window still allows.
+  mut window : Int32
+  /// The DATA octets sent.
+  mut sent : Int32
+  /// The octets smock handed back to the connection's window.
+  mut handed_back : Int32
+  /// The frames read, as `render_frame` shows them, without WINDOW_UPDATE.
+  frames : Array[String]
+}
+
+///|
+/// An uploader on `raw`, whose window is RFC 9113's initial 65,535 octets.
+fn Uploader::new(raw : RawH2) -> Uploader {
+  { raw, window: 65535, sent: 0, handed_back: 0, frames: [], }
+}
+
+///|
+/// Reads the next frame from smock: a WINDOW_UPDATE of the connection
+/// widens the window, and any frame other than a WINDOW_UPDATE is kept.
+async fn Uploader::read(self : Uploader) -> @http2.Frame {
+  guard self.raw.read_frame() is Some(frame) else {
+    fail("smock closed the connection")
+  }
+  match frame {
+    WindowUpdate(stream_id=0, increment~) => {
+      self.window += increment
+      self.handed_back += increment
+    }
+    WindowUpdate(..) => ()
+    _ => self.frames.push(self.raw.render_frame(frame))
+  }
+  frame
+}
+
+///|
+/// Reads frames until smock resets `stream`.
+async fn Uploader::until_reset(self : Uploader, stream : Int32) -> Unit {
+  for ;; {
+    if self.read() is RstStream(stream_id~, ..) && stream_id == stream {
+      return
+    }
+  }
+}
+
+///|
+/// Reads frames until smock ends `stream` with END_STREAM.
+async fn Uploader::until_ends(self : Uploader, stream : Int32) -> Unit {
+  for ;; {
+    match self.read() {
+      Data(stream_id~, end_stream=true, ..)
+      | Headers(stream_id~, end_stream=true, ..) if stream_id == stream =>
+        return
+      _ => ()
+    }
+  }
+}
+
+///|
+/// Sends `size` octets of DATA on `stream`, in frames of at most 16,384
+/// octets, the frame size smock allows, each once the window has room for
+/// it. The last ends the stream when `end` is true.
+async fn Uploader::data(
+  self : Uploader,
+  stream : Int32,
+  size : Int32,
+  end~ : Bool = false,
+) -> Unit {
+  let mut left = size
+  while left > 0 {
+    let n = if left < 16384 { left } else { 16384 }
+    while self.window < n {
+      self.read() |> ignore
+    }
+    self.raw.send([
+      Data(
+        stream_id=stream,
+        data=Bytes::make(n, b'x'),
+        end_stream=end && n == left,
+        padding=0,
+      ),
+    ])
+    self.window -= n
+    self.sent += n
+    left -= n
+  }
+}
+
+///|
+async test "h2c: on one connection, several uploads past --body-limit and one still arriving after a 400 are handed back to the connection's window, so a normal upload after them completes" {
+  with_definitions([("files.json", uploads)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0", "--body-limit", "10"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let up = Uploader::new(raw)
+      up.frames.push(raw.acknowledge_settings())
+      let upload = request_fields("POST", "/upload", "localhost")
+      // Each upload past the limit sends three frames of 16,384 octets,
+      // 49,152 in all, two of them after smock has answered. Four take
+      // three times the connection's initial window.
+      for stream in [1, 3] {
+        // The body passes the limit by its first DATA.
+        raw.send([headers_frame(stream, raw.block(upload), end_stream=false)])
+        up.data(stream, 16384)
+        up.until_reset(stream)
+        up.data(stream, 2 * 16384, end=true)
+      }
+      // A content-length over the limit.
+      raw.send([
+        headers_frame(5, raw.block(upload_fields(49152)), end_stream=false),
+      ])
+      up.until_reset(5)
+      up.data(5, 3 * 16384, end=true)
+      // A malformed request.
+      raw.send([
+        headers_frame(
+          7,
+          raw.block(request_fields("POST", "/upload x", "localhost")),
+          end_stream=false,
+        ),
+      ])
+      up.until_reset(7)
+      up.data(7, 3 * 16384, end=true)
+      raw.send([headers_frame(9, raw.block(upload), end_stream=false)])
+      up.data(9, 10, end=true)
+      up.until_ends(9)
+      up.frames.push(
+        "\{up.sent} DATA octets sent, \{up.handed_back} handed back to the connection's window",
+      )
+      up.frames.push("Journal:")
+      up.frames.push(uploads_journaled(smock))
+      up.frames.push(requests_counted(smock))
+      inspect(
+        up.frames.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
+          #|RST_STREAM 1 NO_ERROR
+          #|HEADERS 3 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
+          #|RST_STREAM 3 NO_ERROR
+          #|HEADERS 5 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
+          #|RST_STREAM 5 NO_ERROR
+          #|HEADERS 7 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0]
+          #|RST_STREAM 7 PROTOCOL_ERROR
+          #|HEADERS 9 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 9 END_STREAM 6 octets
+          #|196618 DATA octets sent, 196608 handed back to the connection's window
+          #|Journal:
+          #|POST /upload xxxxxxxxxx 201
+          #|smock_requests_total{mock="",stub=""} 4
+          #|smock_requests_total{mock="files",stub="upload"} 1
+        ),
+      )
+    })
+  })
+}
