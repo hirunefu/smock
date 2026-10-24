@@ -133,7 +133,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
     let _ = self.trickle(stream, rest, outcome.journal, out)
     self.waiting.remove(stream)
     let _ = self.writer.write(out)
-    self.answered()
+    self.answered(out)
   })
   self.waiting[stream] = task
 }
