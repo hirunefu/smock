@@ -43,9 +43,10 @@ fn times(frame : @http2.Frame, n : Int32) -> Array[@http2.Frame] {
 }
 
 ///|
-/// What a fresh connection gets for `GET /fast`, as a test shows it.
-async fn Smock::fresh(self : Smock) -> String {
-  let client = self.h2c()
+/// What a fresh connection gets for `GET /fast`, as a test shows it: to the
+/// plain port, or with `tls` to the TLS port.
+async fn Smock::fresh(self : Smock, tls~ : Bool = false) -> String {
+  let client = if tls { self.h2() } else { self.h2c() }
   defer client.close()
   let response = client.request("GET", "/fast", authority="localhost")
   "then a fresh connection: \{response.status} \{@utf8.decode_lossy(response.body)}"
@@ -209,15 +210,17 @@ async test "h2c: a client that sends a PING after each DATA frame it receives is
 /// makes, in one write, and shows, after `label`, what smock sends until
 /// it ends the connection, then what a fresh connection gets. The client's
 /// SETTINGS is one frame that does no work, so a flood that comes to 100
-/// more passes the bound with its last frame.
+/// more passes the bound with its last frame. With `tls`, both connections
+/// go to the TLS port.
 async fn Smock::flood(
   self : Smock,
   label : String,
   setup~ : (RawH2) -> Array[@http2.Frame] = _ => [],
   ready~ : (@http2.Frame) -> Bool = frame => frame is Settings(ack=true, ..),
+  tls~ : Bool = false,
   flood : (RawH2) -> Array[@http2.Frame],
 ) -> String {
-  let raw = self.raw_h2()
+  let raw = self.raw_h2(tls~)
   defer raw.close()
   raw.send(setup(raw))
   let before = raw.frames_until(@async.now(), frame => {
@@ -229,7 +232,7 @@ async fn Smock::flood(
     runs(before.shown),
     "flood:",
     raw.runs_until_closed(),
-    self.fresh(),
+    self.fresh(tls~),
   ].join("\n")
 }
 
@@ -449,5 +452,71 @@ async test "h2c: floods of empty DATA frames, padded or not, of WINDOW_UPDATE, R
         #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"HEADERS on a stream smock reset"}
       ),
     )
+  })
+}
+
+///|
+async test "h2c: when a defence closes the connection, its streams in progress end with it: a delayed stream's task is cancelled at once, and its entry is committed then" {
+  with_definitions([("faults.json", faults)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let start = @async.now()
+      // `GET /slow` waits 1,500 ms before its response.
+      let flooded = smock.flood(
+        "a PING flood while a delayed stream waits",
+        setup=raw => [raw.get(1, "/slow")],
+        _ => times(ping, 100),
+      )
+      let entries = smock.journal_once(2, within=1000)
+      let committed_ms = @async.now() - start
+      inspect(
+        [
+          flooded,
+          "both committed before the delay was over: \{entries.length() == 2 && committed_ms < 1500}",
+          ..entries,
+        ].join("\n"),
+        content=(
+          #|a PING flood while a delayed stream waits:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|flood:
+          #|PING ACK x99
+          #|GOAWAY last=1 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+          #|both committed before the delay was over: true
+          #|/slow: stub "slow", status 200
+          #|/fast: stub "fast", status 200
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2 over TLS: a PING flood gets GOAWAY ENHANCE_YOUR_CALM and one log line, and a fresh connection is served" {
+  with_definitions([("faults.json", faults)], dir => {
+    with_certificates(certs => {
+      let stopped = with_smock(["--dir", dir, "--port", "0", ..certs.args()], smock => {
+        inspect(
+          smock.flood("PING over TLS", tls=true, _ => times(ping, 100)),
+          content=(
+            #|PING over TLS:
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+            #|SETTINGS ACK
+            #|flood:
+            #|PING ACK x99
+            #|GOAWAY last=0 ENHANCE_YOUR_CALM
+            #|then a FIN
+            #|then a fresh connection: 200 fast
+          ),
+        )
+      })
+      inspect(
+        defence_entries(stopped.logs),
+        content=(
+          #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}
+        ),
+      )
+    })
   })
 }
