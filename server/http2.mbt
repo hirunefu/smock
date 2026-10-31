@@ -8,7 +8,8 @@
 // - the frame reader (`FrameReader`, http2_frames.mbt), which caps the
 //   header table size the client's SETTINGS allow, with
 //   `H2Connection::judge`, where each frame is judged before it reaches
-//   the `Conn`;
+//   the `Conn`, and counted when it does no work (`NoWorkFrames`,
+//   http2_defences.mbt);
 // - the record of the client's streams (`StreamRecord`, http2_streams.mbt),
 //   which the judge holds HEADERS frames against, which counts the streams
 //   open against `--http2-max-concurrent-streams`, and which every
@@ -25,7 +26,8 @@
 //   resume as the client widens them (`H2Connection::write_slowly`,
 //   http2_windows.mbt), and the streams of Server-Sent Events
 //   (`H2Connection::start_events`, http2_events.mbt);
-// - the deadlines of the connection and of its streams, which the
+// - the deadlines of the connection and of its streams, with the write
+//   timeout of the bodies that wait for the client's windows, which the
 //   connection's one watchdog keeps (`H2Connection::expire`).
 //
 // Each stream's request takes the steps every request to the Mocks takes
@@ -34,8 +36,6 @@
 //
 // - a Fault ends its stream with RST_STREAM INTERNAL_ERROR, its Journal
 //   entry committed as the engine made it;
-// - no timeout applies while a body waits for the client to widen a
-//   window;
 // - for the drain, the connection is idle while no stream is in progress,
 //   and while smock drains, it closes, without GOAWAY, as soon as none is.
 
@@ -132,6 +132,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       writer: H2Writer::new(conn),
       requests: Map([]),
       streams: StreamRecord::new(),
+      no_work_frames: NoWorkFrames::new(),
       refused: 0,
       refused_status: 0,
       continuing: 0,
@@ -139,6 +140,8 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       waiting: Map([]),
       blocked: Map([]),
       claimed: 0,
+      window_deadline: forever,
+      initial_window: 65535,
       group,
       watchdog,
       connection,
@@ -178,6 +181,8 @@ priv struct H2Connection {
   /// The client's streams: the highest ID seen, the streams open, and the
   /// streams this side reset.
   streams : StreamRecord
+  /// The frames that do no work the client has sent lately.
+  no_work_frames : NoWorkFrames
   /// The stream whose request smock refuses with `refused_status` for the
   /// frame being handled, or 0: 400 for a request HTTP/1.1's rules refuse,
   /// 413 for a body over `--body-limit`, 431 for a header list over
@@ -212,6 +217,13 @@ priv struct H2Connection {
   /// `blocked`, whose tasks have not run yet, are to send, so that no other
   /// stream takes them meanwhile.
   mut claimed : Int32
+  /// While a slow write waits for the client to widen the connection
+  /// window, when the write timeout closes the connection; `forever` while
+  /// none waits for it (`watch_windows`).
+  mut window_deadline : Int64
+  /// The initial window of the client's streams, as its SETTINGS last set
+  /// it: 65,535 octets until they set it.
+  mut initial_window : Int32
   /// The task group the connection is served in, where the tasks of
   /// waiting streams run. They end with the connection.
   group : @async.TaskGroup[Unit]
@@ -263,17 +275,14 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
   for ;; {
     let octets = match self.reader.next() {
       Preface(preface) => preface
-      Frame(head, frame) =>
-        match self.judge(head, frame) {
-          None => frame
-          Some(code) => {
-            self.conn.goaway(code~) catch {
-              _ => ()
-            }
-            self.writer.write_last(out)
-            return
-          }
+      Frame(head, frame) => {
+        if !self.judge(head, frame) {
+          // The GOAWAY the judge queued goes out first.
+          self.writer.write_last(out)
+          return
         }
+        frame
+      }
       TooLarge => {
         self.conn.goaway(code=@http2.error_frame_size_error) catch {
           _ => ()
@@ -299,29 +308,40 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
 ///|
 /// Judges `frame`, a whole frame from the client whose header is `head`,
 /// against the stream state the frames before it left, before the `Conn`
-/// sees it: `None` hands it to the `Conn`, and `Some(code)` ends the
-/// connection with GOAWAY `code` instead. HEADERS on a client stream ID
-/// already used, whose stream is neither open nor reset by this side, get
-/// `PROTOCOL_ERROR` (RFC 9113, section 5.1.1); the `Conn` enforces the rest
-/// of RFC 9113's rules.
+/// sees it, and returns whether it goes to the `Conn`. When it does not,
+/// the judge has queued a GOAWAY, and the connection ends:
+///
+/// - HEADERS on a client stream ID already used, whose stream is neither
+///   open nor reset by this side, get `PROTOCOL_ERROR` (RFC 9113, section
+///   5.1.1); the `Conn` enforces the rest of RFC 9113's rules.
+/// - A frame that does no work, past `no_work_bound` of them in one second,
+///   gets `ENHANCE_YOUR_CALM`, and the connection's one log line
+///   (`H2Connection::calm`).
 ///
 /// HEADERS that begin a field block start the read timeout of its stream's
 /// request: its first frame.
 fn H2Connection::judge(
   self : H2Connection,
   head : @http2.FrameHeader,
-  _frame : BytesView,
-) -> Int32? {
+  frame : BytesView,
+) -> Bool {
   if head.ftype == @http2.frame_headers && !self.streams.in_block {
     self.header_at = self.read_at
     self.header_stream = head.stream_id
     self.watchdog.read_by(self.read_at + self.read_timeout, self.now)
   }
-  if self.streams.see(head) {
-    None
-  } else {
-    Some(@http2.error_protocol_error)
+  if self.no_work(head, frame) is Some(kind) &&
+    self.no_work_frames.count(self.read_at) {
+    self.calm("frames that do no work", frame=kind)
+    return false
   }
+  if !self.streams.see(head) {
+    self.conn.goaway(code=@http2.error_protocol_error) catch {
+      _ => ()
+    }
+    return false
+  }
+  true
 }
 
 ///|
@@ -455,8 +475,8 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
       }
       // A window the client widened, of a stream or of the connection, or
       // every stream's, by a SETTINGS frame that raised the initial window.
-      WindowUpdated(stream~, ..) => self.widened(stream)
-      Settings(_) => self.widened(0)
+      WindowUpdated(stream~, ..) => self.window_updated(stream)
+      Settings(settings) => self.settings_received(settings)
       // A reset from the client, or one moonhttp sent for the client's
       // frames.
       Reset(stream~, remote~, ..) => {
@@ -545,6 +565,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::read_more(
     self.discard(stream)
     return false
   }
+  self.watch_windows(self.now)
   let idle = self.idle()
   if idle && self.became_idle {
     self.idle_deadline = self.now + self.idle_timeout
@@ -608,8 +629,15 @@ async fn[S : @io.Reader] H2Connection::discard(
 ///   open no stream, such as PING, SETTINGS and WINDOW_UPDATE, do not
 ///   restart it, and a field block that has begun holds it off. Past it,
 ///   the connection gets GOAWAY with NO_ERROR and closes.
+/// - The write timeout of the slow writes runs while they wait for the
+///   client to widen a window (`watch_windows`). Past it for the
+///   connection window, the connection closes with no GOAWAY, as for a
+///   write that timed out. Past it for a stream's own window while the
+///   connection window is open, smock resets that stream with CANCEL, and
+///   the other streams go on; while the connection window is at zero too,
+///   the stream's verdict waits for the connection's deadline.
 ///
-/// Neither is logged.
+/// None is logged.
 fn[S : @io.Writer + ReadOutput] H2Connection::expire(
   self : H2Connection,
   now : Int64,
@@ -617,6 +645,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
 ) -> Int64 {
   if self.closing {
     return self.close_at
+  }
+  self.watch_windows(now)
+  if self.window_deadline <= now {
+    self.watchdog.time_out_writing(now)
+    return forever
   }
   if self.idle_until() <= now || self.block_deadline() <= now {
     self.go_away(out)
@@ -626,6 +659,18 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
   for stream, request in self.requests {
     if request.deadline <= now {
       late.push(stream)
+    }
+  }
+  // While the connection window is at zero too, the connection's deadline
+  // decides first.
+  let open = self.conn.window(0) > 0
+  for stream, wait in self.blocked {
+    if wait.deadline <= now {
+      if open {
+        late.push(stream)
+      } else {
+        wait.deadline = self.window_deadline
+      }
     }
   }
   if late.length() > 0 {
@@ -642,7 +687,8 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
 
 ///|
 /// The earliest deadline of the connection: the idle deadline, that of
-/// each request in progress, and that of a field block still open.
+/// each request in progress, that of a field block still open, and those of
+/// the slow writes that wait for window.
 fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   let mut next = self.idle_until()
   for _, request in self.requests {
@@ -653,6 +699,14 @@ fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   let block = self.block_deadline()
   if block < next {
     next = block
+  }
+  if self.window_deadline < next {
+    next = self.window_deadline
+  }
+  for _, wait in self.blocked {
+    if wait.deadline < next {
+      next = wait.deadline
+    }
   }
   next
 }
@@ -841,12 +895,13 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
 /// connection becomes idle; while smock drains, it closes instead.
 async fn H2Connection::answered(self : H2Connection) -> Unit {
   self.end_stream()
+  let now = @async.now()
+  self.watch_windows(now)
   guard self.became_idle && self.reading && self.idle() else { return }
   if self.ports.lifecycle.is_draining() {
     self.group.return_immediately(())
     return
   }
-  let now = @async.now()
   self.became_idle = false
   self.idle_deadline = now + self.idle_timeout
   self.connection.idle = true

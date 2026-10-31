@@ -97,7 +97,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--http2-max-concurrent-streams` | `SMOCK_HTTP2_MAX_CONCURRENT_STREAMS` | 100, from 1 to 1000: the most streams an HTTP/2 connection may have in progress at once; a stream past it gets RST_STREAM `REFUSED_STREAM` ([Limits and timeouts](docs/http2.md#limits-and-timeouts)) |
 | `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte, or, when it was pipelined behind a response, of that response; over HTTP/2, a stream whose request is late gets RST_STREAM `CANCEL` alone ([Limits and timeouts](docs/http2.md#limits-and-timeouts)) |
 | `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
-| `--write-timeout-ms` | `SMOCK_WRITE_TIMEOUT_MS` | 30000: a connection closes when a write to it makes no progress for 30 s, as when the client stops reading |
+| `--write-timeout-ms` | `SMOCK_WRITE_TIMEOUT_MS` | 30000: a connection closes when a write to it makes no progress for 30 s, as when the client stops reading; over HTTP/2, also when a response waits that long for the client to widen the connection window, and a stream whose own window stays at zero that long gets RST_STREAM `CANCEL` alone ([Timeouts](docs/http2.md#timeouts)) |
 | `--drain-timeout-ms` | `SMOCK_DRAIN_TIMEOUT_MS` | 20000: how long smock drains after SIGTERM before it cuts what is still running |
 | `--seed` | `SMOCK_SEED` | none: smock picks the seed of its random generator, from 0 to 9007199254740991, and logs it ([Faults](docs/definition-files.md#seeds)) |
 | `--journal` | `SMOCK_JOURNAL` | `on`: requests are recorded in the [Journal](#the-journal); `off` records none |
@@ -109,6 +109,13 @@ exits with status 2. `smock serve --help` lists the settings:
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout, read, idle or write, closes the connection
 without a response. None is logged.
+
+Over HTTP/2, smock also bounds what a client can make one connection cost,
+such as a flood of PING or SETTINGS frames. A connection that passes such a
+bound gets GOAWAY `ENHANCE_YOUR_CALM` and closes, and smock logs one line
+for it, at level `warn`, that names the pattern, such as
+`{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}`.
+No metric counts it. See [Defences](docs/http2.md#defences).
 
 Over HTTP/2, a body over `--body-limit` gets 413 on its stream alone, and
 the connection's other streams go on. When the client is still sending the
@@ -123,7 +130,7 @@ The idle timeout applies to a connection with no stream in progress, and
 sends GOAWAY before the connection closes. See
 [Limits and timeouts](docs/http2.md#limits-and-timeouts).
 
-The write timeout runs only while a write waits on the client to take its
+The write timeout runs while a write waits on the client to take its
 bytes, on every port and for every write: a response, whole or in part,
 each event of a stream, a `100 Continue`, a rejection and an Admin API
 reply. It starts again each time the write goes on, so a client that reads
@@ -133,6 +140,16 @@ socket's send buffer: about a third of it, on Linux. On the TLS port, it
 goes on a whole TLS record, up to 16 KiB, at a time. smock's own waits,
 such as a delay or the time between the events of a stream, do not count.
 smock sends no `close_notify` on a TLS connection the write timeout closes.
+
+Over HTTP/2, the write timeout also runs while a response body waits for
+the client to widen its flow-control windows. When the connection window
+stays at zero that long, the connection closes, without GOAWAY. When only
+a stream's own window does, that stream gets RST_STREAM `CANCEL`, and the
+connection's other streams go on. Each WINDOW_UPDATE for the window waited
+for, and each SETTINGS frame that raises the initial window of the
+streams, starts it again, so a client that widens its windows slowly but
+steadily gets the whole response. See
+[Timeouts](docs/http2.md#timeouts).
 
 Known limitation: after answering a request with 400, 413, 431, 501 or 505,
 smock closes the connection without reading the rest of the request. A

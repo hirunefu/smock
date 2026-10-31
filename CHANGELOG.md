@@ -59,7 +59,9 @@ of each GitHub release include its section
   resets only a stream whose request is late, with `CANCEL`; an idle
   connection gets GOAWAY before it closes. A body larger than the client's
   flow-control windows goes out as the client widens them, so a client with
-  small windows still gets all of it. `--body-limit` applies to each stream
+  small windows still gets all of it, while the write timeout closes a
+  connection whose connection window stays at zero, and resets with
+  `CANCEL` a stream whose own window does. `--body-limit` applies to each stream
   too: a body over it gets 413 on that stream alone, and
   `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. A CONNECT
   reaches the Mocks as soon as its HEADERS arrive, with `:authority` as its
@@ -67,9 +69,12 @@ of each GitHub release include its section
   body. An events Stub streams one event stream per HTTP/2 stream, several
   at once on one connection: the DATA of its last event ends the HTTP/2
   stream, and a client that resets the HTTP/2 stream ends the event stream
-  at once. The HPACK table smock encodes responses with stays at 4,096
-  octets, however large a table the client allows, and a header block that
-  does not decode ends the connection with GOAWAY `COMPRESSION_ERROR`. See
+  at once. A client that sends more than 100 frames that do no work in one
+  second, such as a flood of PING or SETTINGS frames, gets GOAWAY
+  `ENHANCE_YOUR_CALM`, and smock logs one line that names the pattern. The
+  HPACK table smock encodes responses with stays at 4,096 octets, however
+  large a table the client allows, and a header block that does not decode
+  ends the connection with GOAWAY `COMPRESSION_ERROR`. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,

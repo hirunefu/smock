@@ -256,6 +256,9 @@ window, they get it in the order they began to wait, and a stream that has
 sent what it was given waits behind the others. Priority signals are
 accepted and ignored.
 
+A client that keeps a window at zero does not hold a body for good: the
+write timeout runs while the body waits ([Timeouts](#timeouts)).
+
 A stream that the client resets during its delay, or while its body waits
 for window, stops waiting at once, and gets no more of its response. So do
 a stream that smock resets because a frame the client sent on it breaks the
@@ -413,7 +416,8 @@ with 431.
 
 ### Timeouts
 
-Over HTTP/2, the read and idle timeouts work per stream and per connection.
+Over HTTP/2, the read, idle and write timeouts work per stream and per
+connection.
 
 - `--read-timeout-ms` applies to each stream alone, from the first frame of
   its request to its end. A stream whose request has not all arrived by
@@ -431,9 +435,33 @@ Over HTTP/2, the read and idle timeouts work per stream and per connection.
   rest of the preface has the read timeout from that octet. On the TLS
   port, where ALPN has already chosen HTTP/2, the idle timeout bounds the
   whole preface.
-- smock's own waits, such as a delay, count toward neither.
 - `--write-timeout-ms` closes a connection that takes nothing of what smock
-  writes for that long, without GOAWAY, as over HTTP/1.1.
+  writes for that long, without GOAWAY, as over HTTP/1.1. It also runs
+  while a response body waits for the client to widen a flow-control
+  window, so that a client cannot hold the body for good by keeping its
+  windows at zero:
+  - While a body waits for the connection window, the write timeout runs
+    for the connection. A WINDOW_UPDATE for the connection starts it again.
+    Past it, the connection closes, without GOAWAY, as when the client
+    takes nothing.
+  - While a body waits for its stream's own window, and the connection
+    window is open, the write timeout runs for that stream alone. A
+    WINDOW_UPDATE for the stream, or a SETTINGS frame that raises the
+    initial window, starts it again. Past it, the stream gets RST_STREAM
+    `CANCEL`, and the connection's other streams go on. Its request is in
+    the Journal, as a request whose client goes away is.
+
+  So a client that widens its windows slowly but steadily, a few octets at
+  a time, gets its whole response, however long it takes in all. A
+  WINDOW_UPDATE for one stream does not start the connection's write
+  timeout again, nor does a SETTINGS frame, since neither lets smock send
+  while the connection window is at zero. A client that stops widening a
+  window for longer than the write timeout, as one that pauses to limit
+  its download rate may, is cut, even where an HTTP/1.1 client pausing as
+  long would not be, since the socket's buffers can take what smock writes
+  meanwhile. Keep `--write-timeout-ms` above the longest pause your
+  clients make.
+- smock's own waits, such as a delay, count toward none of them.
 
 After a GOAWAY with `NO_ERROR`, smock reads what the client still sends and
 discards it, until the client closes the connection, or for one second at
@@ -452,9 +480,58 @@ connection.
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
 | HPACK bomb: a small header block that decodes to a large list, such as one that names a large table entry over and over | moonhttp keeps no more of a decoded list than twice `--header-size-limit`, counted as RFC 7541 counts it. smock then holds the list to `--header-size-limit` and `--header-count-limit` ([Header lists](#header-lists)). The table smock decodes header blocks with is 4,096 octets. So is the one it encodes responses with, however large a table the client allows: smock lowers a larger SETTINGS_HEADER_TABLE_SIZE to 4,096 before moonhttp sees it, since an encoder may use any table up to the size the client allows (RFC 7541, section 4.2). | 431 for a list over `--header-size-limit` or with too many fields. RST_STREAM `ENHANCE_YOUR_CALM`, with no status, for a list over twice it. GOAWAY `COMPRESSION_ERROR` for a block that does not decode ([Connection errors](#connection-errors)). |
-| Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. A client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
+| Frames that do no work: SETTINGS, PING, PRIORITY, reset and empty-frame floods (CVE-2019-9512, -9513, -9514, -9515, -9518) | At most 100 in any one second ([Frames that do no work](#frames-that-do-no-work)). | GOAWAY `ENHANCE_YOUR_CALM`, and the connection closes. |
+| A client that stops reading or keeps its windows at zero (CVE-2019-9517) | `--write-timeout-ms`: a write that makes no progress, or a body that waits for a window, for that long ([Timeouts](#timeouts)). | The connection closes, without GOAWAY. A stream whose own window alone stays at zero gets RST_STREAM `CANCEL`, and the connection goes on. |
+| Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. Each window update lets smock send, which starts the write timeout again, so a client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
 | Header fields with empty names (CVE-2019-9516) | moonhttp refuses an empty field name. | RST_STREAM `PROTOCOL_ERROR` on that stream. |
 | Request bodies | `--body-limit` per stream, under the concurrent-streams limit. | 413, then RST_STREAM `NO_ERROR` on that stream ([Request bodies](#request-bodies)). |
+
+A defence that closes a connection with GOAWAY uses `ENHANCE_YOUR_CALM`,
+and names the pattern in the GOAWAY's debug data. The connection then
+closes at once. Its streams in progress end with it. A response still
+waiting, for its delay or for the client's windows, goes no further, and
+its request's Journal entry is committed then. A request still arriving
+never reaches the Mocks. The client opens a new connection for the rest.
+
+Unlike a timeout, such a close is logged: one line per connection, at
+level `warn`, that names the pattern and the kind of frame that passed the
+bound. No metric counts it.
+
+```json
+{"time":"2026-10-25T09:00:00.000Z","level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}
+```
+
+### Frames that do no work
+
+Some frames cost smock a little work each, or make it queue a reply, but
+ask nothing of the Mocks. A client that sends more than 100 of them in any
+one second, on one connection, gets GOAWAY `ENHANCE_YOUR_CALM`, as above.
+The log line's `frame` names the kind of the frame that passed the bound.
+These frames count:
+
+- SETTINGS frames (`SETTINGS`). An acknowledgement counts only beyond the
+  one smock is owed for its own SETTINGS (`SETTINGS acknowledgement`).
+- PING frames (`PING`), each only when smock has sent no HEADERS or DATA
+  since the client's last PING. gRPC counts PINGs this way, so a client
+  that sends a PING for each DATA frame it receives, to estimate its
+  bandwidth, is not cut while responses stream to it. A PING
+  acknowledgement counts when it answers no PING that smock sent
+  (`PING acknowledgement`).
+- PRIORITY frames (`PRIORITY`): smock ignores priority signals.
+- DATA frames that carry no data, padded or not, and do not end their
+  stream (`empty DATA`).
+- DATA, WINDOW_UPDATE and RST_STREAM frames on a stream that has closed
+  (`DATA on a closed stream`, and so on), and HEADERS on a stream that
+  smock reset, which are ignored (`HEADERS on a stream smock reset`).
+  HEADERS on another stream that has closed end the connection at once
+  ([Connection errors](#connection-errors)).
+- Frames of a type that HTTP/2 does not define (`unknown type`).
+
+The bound holds for any one second, however long the connection lives: a
+client that sends such frames now and then is never cut. Frames that do
+some work never count: HEADERS that open a stream, DATA that carries a
+body, and WINDOW_UPDATE frames on the connection or on a stream in
+progress.
 
 ## Connection errors
 
@@ -467,6 +544,8 @@ opens a new connection for the rest.
   gets `FRAME_SIZE_ERROR`.
 - A header block over twice `--header-size-limit` as received gets
   `ENHANCE_YOUR_CALM` ([Header lists](#header-lists)).
+- A connection that a defence closes with GOAWAY gets `ENHANCE_YOUR_CALM`,
+  and is logged ([Defences](#defences)).
 - A header block that does not decode gets `COMPRESSION_ERROR`: one with a
   Huffman code that holds EOS or is badly padded, an index that names no
   entry, or a table size update past 4,096 octets, the size of the table
