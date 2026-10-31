@@ -12,8 +12,9 @@
 //   http2_defences.mbt);
 // - the record of the client's streams (`StreamRecord`, http2_streams.mbt),
 //   which the judge holds HEADERS frames against, which counts the streams
-//   open against `--http2-max-concurrent-streams`, and which every
-//   RST_STREAM smock sends goes into, through `H2Connection::reset`;
+//   open against `--http2-max-concurrent-streams`, and the streams reset
+//   before smock finished them against the bound on Rapid Reset, and which
+//   every RST_STREAM smock sends goes into, through `H2Connection::reset`;
 // - the mapping from a stream onto the engine's request (`H2Request`,
 //   http2_requests.mbt), with the header limits, which refuse a stream
 //   with 431, and the checks of HTTP/1.1's rules and of `--body-limit`,
@@ -131,6 +132,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       requests: Map([]),
       streams: StreamRecord::new(),
       no_work_frames: NoWorkFrames::new(),
+      settings_acked: false,
       refused: 0,
       refused_status: 0,
       continuing: 0,
@@ -189,6 +191,9 @@ priv struct H2Connection {
   streams : StreamRecord
   /// The frames that do no work the client has sent lately.
   no_work_frames : NoWorkFrames
+  /// Whether the client has acknowledged smock's SETTINGS, and so knows
+  /// the concurrent-streams limit.
+  mut settings_acked : Bool
   /// The stream whose request smock refuses with `refused_status` for the
   /// frame being handled, or 0: 400 for a request HTTP/1.1's rules refuse,
   /// 413 for a body over `--body-limit`, 431 for a header list over
@@ -376,10 +381,11 @@ fn H2Connection::judge(
 ///|
 /// Hands the `Conn` `octets`, the preface or one whole frame, and handles
 /// the events they produce, in order, until the `Conn` needs more. Returns
-/// false when they break the connection: the `Conn` has then queued its
-/// GOAWAY, and the connection ends. A header block past its bound as
-/// received is logged as a CONTINUATION flood (`flooded`). A stream's task
-/// writes to `out`.
+/// false when they break the connection, and the `Conn` has queued its
+/// GOAWAY, or when a stream they end reset passes the bound on Rapid Reset
+/// (`reset_early`), which queues its own; the connection then ends. A
+/// header block past its bound as received is logged as a CONTINUATION
+/// flood (`flooded`). A stream's task writes to `out`.
 fn[S : @io.Writer + ReadOutput] H2Connection::hand(
   self : H2Connection,
   octets : BytesView,
@@ -424,8 +430,12 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           }
         }
         // A new stream whose field block brought no `Request` event was
-        // refused by moonhttp, which reports nothing for it.
-        self.streams.settle()
+        // refused by moonhttp, which reports nothing for it, or ignored
+        // after the final GOAWAY of a drain.
+        let refused = self.streams.settle()
+        if refused != 0 && self.refused_at_open(refused, octets) {
+          return false
+        }
         return true
       }
       Request(stream~, fields~) => {
@@ -436,6 +446,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         if self.streams.open_count() >
           self.ports.settings.http2_max_concurrent_streams {
           self.reset(stream, @http2.error_refused_stream)
+          // Once the client knows the limit, the refusal counts toward the
+          // bound on Rapid Reset, as moonhttp's does (`refused_at_open`).
+          if self.settings_acked && self.reset_early(octets) {
+            return false
+          }
           continue
         }
         // Counted as received, before the fields are mapped.
@@ -517,12 +532,18 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
       // A reset from the client, or one moonhttp sent for the client's
       // frames.
       Reset(stream~, remote~, ..) => {
+        // Reset before smock finished its response: the defence against
+        // Rapid Reset and MadeYouReset counts it, below. Spec F's exception
+        // goes here: a client reset of a gRPC call that its deadline is
+        // about to end does not count, once per stream. A call that smock
+        // has ended with DEADLINE_EXCEEDED is finished already.
+        let early = self.streams.unfinished(stream)
         // smock's own resets give no event, so one not from the client is
         // moonhttp's.
         if remote {
           self.streams.reset_by_client(stream)
         } else {
-          self.streams.remember(stream, by_smock=false)
+          self.streams.remember(stream)
         }
         // moonhttp reset a refused request for one of RFC 9113's own
         // rules, such as a `content-length` that HEADERS ending the stream
@@ -539,7 +560,12 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         } else {
           self.stop_waiting(stream)
         }
+        if early && self.reset_early(octets) {
+          return false
+        }
       }
+      // The client knows the concurrent-streams limit from here on.
+      SettingsAcked(_) => self.settings_acked = true
       // The client has read the first GOAWAY of the drain, which went out
       // just before the PING.
       PingAcked(payload) =>
@@ -1358,7 +1384,7 @@ fn H2Connection::reset(
     // sent.
     _ => return
   }
-  self.streams.remember(stream, by_smock=true)
+  self.streams.remember(stream)
   if self.requests.contains(stream) {
     self.requests.remove(stream)
     self.end_stream()

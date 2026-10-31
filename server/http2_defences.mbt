@@ -2,7 +2,10 @@
 // for nothing. `H2Connection::judge` (http2.mbt) counts each frame that
 // does no work before the `Conn` sees it, and past the bound the connection
 // ends with GOAWAY ENHANCE_YOUR_CALM (`H2Connection::calm`), as every
-// defence that closes a connection ends it. A header block past moonhttp's
+// defence that closes a connection ends it. `H2Connection::hand` counts
+// the streams that end reset before smock has finished their responses,
+// against Rapid Reset and MadeYouReset (`H2Connection::reset_early`), which
+// ends the connection the same way. A header block past moonhttp's
 // bound as received, a CONTINUATION flood, is the `Conn`'s own connection
 // error, which smock logs the same way (`H2Connection::flooded`).
 
@@ -176,6 +179,86 @@ fn carries(head : @http2.FrameHeader, frame : BytesView) -> Int32 {
     1
   } else {
     head.length - 1 - frame[9].to_int()
+  }
+}
+
+///|
+/// How many streams a client may have had reset before smock finished their
+/// responses, by its own RST_STREAM or by moonhttp for a stream error its
+/// frames caused, before the defence against Rapid Reset (CVE-2023-44487)
+/// and MadeYouReset (CVE-2025-8671) closes its connection: past it, once
+/// they are also more than half of all the streams it began.
+let early_reset_bound : Int32 = 100
+
+///|
+/// Counts a stream the client began that ended reset before smock had
+/// finished its response, in the wake of `frame`, a whole frame with its
+/// header, and returns whether that passes the bound
+/// (`early_reset_bound`): the connection then ends with GOAWAY
+/// ENHANCE_YOUR_CALM (`calm`). The count only grows, so a client that
+/// cancels a stream now and then among many it lets finish is never cut.
+fn H2Connection::reset_early(self : H2Connection, frame : BytesView) -> Bool {
+  let streams = self.streams
+  streams.cut += 1
+  // More than half of the streams begun: more than the rest of them.
+  guard streams.cut > early_reset_bound &&
+    streams.cut > streams.begun - streams.cut else {
+    return false
+  }
+  self.calm("Rapid Reset", frame=frame_name(frame))
+  true
+}
+
+///|
+/// Records `stream`, a new client stream whose field block, which ended in
+/// `frame`, a whole frame with its header, brought no `Request` event, as
+/// reset by this side, and returns whether it passes the bound on Rapid
+/// Reset (`reset_early`):
+///
+/// - After the final GOAWAY of a drain, the `Conn` ignored it, since its ID
+///   is above the last that the GOAWAY names. It does not count.
+/// - Otherwise moonhttp refused it at open, which moonhttp reports with no
+///   event, so smock cannot read the code it used. A stream refused while
+///   as many streams are open as `--http2-max-concurrent-streams` allows
+///   got REFUSED_STREAM (moonhttp 0.14.0 checks the limit before the
+///   fields), which counts only once the client has acknowledged smock's
+///   SETTINGS: before that, it may not know the limit. Any other got
+///   `PROTOCOL_ERROR` or `ENHANCE_YOUR_CALM`, which counts. A list past
+///   moonhttp's bound at the limit is taken for REFUSED_STREAM, so it too
+///   counts only once the SETTINGS are acknowledged.
+fn H2Connection::refused_at_open(
+  self : H2Connection,
+  stream : Int32,
+  frame : BytesView,
+) -> Bool {
+  self.streams.remember(stream)
+  if self.drain is Told {
+    return false
+  }
+  if !self.settings_acked &&
+    self.streams.open_count() >=
+    self.ports.settings.http2_max_concurrent_streams {
+    return false
+  }
+  self.reset_early(frame)
+}
+
+///|
+/// The type of `frame`, a whole frame with its header, as RFC 9113 names
+/// it, for the log line of a defence.
+fn frame_name(frame : BytesView) -> String {
+  match frame[3].to_int() {
+    0x0 => "DATA"
+    0x1 => "HEADERS"
+    0x2 => "PRIORITY"
+    0x3 => "RST_STREAM"
+    0x4 => "SETTINGS"
+    0x5 => "PUSH_PROMISE"
+    0x6 => "PING"
+    0x7 => "GOAWAY"
+    0x8 => "WINDOW_UPDATE"
+    0x9 => "CONTINUATION"
+    ftype => "type \{ftype}"
   }
 }
 

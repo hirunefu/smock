@@ -78,7 +78,11 @@ of each GitHub release include its section
   that names the pattern. So does a header block over twice
   `--header-size-limit` as received, such as a flood of CONTINUATION
   frames makes, and empty CONTINUATION frames count among the frames that
-  do no work. The HPACK table smock encodes responses with
+  do no work. So does a client whose streams end reset before smock has
+  finished their responses, by the client or by moonhttp for the client's
+  frames, once more than 100 have and they are more than half of its
+  streams (Rapid Reset and MadeYouReset). smock's own resets never count.
+  The HPACK table smock encodes responses with
   stays at 4,096 octets, however large a table the client allows, and a
   header block that does not decode ends the connection with GOAWAY
   `COMPRESSION_ERROR`. A client that stops reading makes smock stop reading

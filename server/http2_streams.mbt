@@ -1,11 +1,13 @@
 // The record an HTTP/2 connection keeps of its client's streams: the highest
-// client stream ID seen, the streams open, and the streams this side reset,
-// each marked as reset by smock or by moonhttp. `H2Connection::judge`
-// (http2.mbt) holds each HEADERS frame against it before the `Conn` sees
-// the frame, so that HEADERS on a stream ID already used end the connection
-// whatever moonhttp does with them (RFC 9113, section 5.1.1). It also tells
+// client stream ID seen, the streams open, and the streams this side reset.
+// `H2Connection::judge` (http2.mbt) holds each HEADERS frame against it
+// before the `Conn` sees the frame, so that HEADERS on a stream ID already
+// used end the connection whatever moonhttp does with them (RFC 9113,
+// section 5.1.1). It also tells
 // the count of frames that do no work which streams are closed, and which
-// this side reset (`H2Connection::no_work`, http2_defences.mbt).
+// this side reset (`H2Connection::no_work`, http2_defences.mbt), and keeps
+// the counts of the defence against Rapid Reset and MadeYouReset
+// (`H2Connection::reset_early`).
 
 ///|
 /// How many reset streams a connection remembers. Past it, the oldest is
@@ -27,8 +29,9 @@ priv enum StreamState {
   /// Reset by this side, and still remembered: by smock, through
   /// `H2Connection::reset`, or else by moonhttp, for a stream error the
   /// client's frames caused, with a `Reset` event, or by refusing a new
-  /// stream at open, which it reports with no event. The record keeps
-  /// which.
+  /// stream at open, which it reports with no event. A new stream that
+  /// moonhttp ignored after the final GOAWAY of a drain is remembered so
+  /// too, since the `Conn` ignores the frames that follow on it.
   Reset
   /// Used, and neither open nor remembered as reset by this side: ended by
   /// both sides, reset by the client, skipped by a higher stream ID, or
@@ -57,14 +60,18 @@ priv struct StreamRecord {
   /// The IDs of the streams this side reset, oldest first until there are
   /// `remembered_resets`; then a ring, whose oldest is at `oldest`.
   resets : Array[Int32]
-  /// Whether smock, not moonhttp, reset each stream in `resets`, at the
-  /// same index.
-  by_smock : Array[Bool]
   /// Once `resets` is full, the index of its oldest ID, which the next
   /// reset stream replaces.
   mut oldest : Int32
   /// A new stream whose field block has had no `Request` event yet, or 0.
   mut opening : Int32
+  /// How many streams the client has begun: HEADERS on a client stream ID
+  /// it had not used.
+  mut begun : Int32
+  /// How many of them ended reset before smock had finished their
+  /// responses, as the defence against Rapid Reset and MadeYouReset counts
+  /// them (`H2Connection::reset_early`).
+  mut cut : Int32
   /// Whether a field block is in progress: from HEADERS without
   /// END_HEADERS until the CONTINUATION frame with it.
   mut in_block : Bool
@@ -77,9 +84,10 @@ fn StreamRecord::new() -> StreamRecord {
     highest: 0,
     open: Map([]),
     resets: [],
-    by_smock: [],
     oldest: 0,
     opening: 0,
+    begun: 0,
+    cut: 0,
     in_block: false,
   }
 }
@@ -131,6 +139,7 @@ fn StreamRecord::see(self : StreamRecord, head : @http2.FrameHeader) -> Bool {
     Idle => {
       self.highest = id
       self.opening = id
+      self.begun += 1
     }
     Open | Reset => ()
     Closed => return false
@@ -159,12 +168,14 @@ fn StreamRecord::open_count(self : StreamRecord) -> Int32 {
 ///|
 /// The `Conn` has taken a frame and given all its events. A field block for
 /// a new stream that has completed with no `Request` event is a stream that
-/// moonhttp refused at open, which it reports with no event.
-fn StreamRecord::settle(self : StreamRecord) -> Unit {
-  if self.opening != 0 && !self.in_block {
-    self.remember(self.opening, by_smock=false)
-    self.opening = 0
-  }
+/// moonhttp refused at open, which it reports with no event, or ignored
+/// after the final GOAWAY of a drain: returns that stream, which the caller
+/// records (`H2Connection::refused_at_open`), or 0.
+fn StreamRecord::settle(self : StreamRecord) -> Int32 {
+  guard self.opening != 0 && !self.in_block else { return 0 }
+  let id = self.opening
+  self.opening = 0
+  id
 }
 
 ///|
@@ -188,26 +199,28 @@ fn StreamRecord::ended_by_smock(self : StreamRecord, id : Int32) -> Unit {
 }
 
 ///|
+/// Whether smock has yet to finish its response on the open stream `id`:
+/// it has not ended the stream from its side.
+fn StreamRecord::unfinished(self : StreamRecord, id : Int32) -> Bool {
+  self.open.get(id) is Some(Neither | ByClient)
+}
+
+///|
 /// The client has reset the open stream `id`.
 fn StreamRecord::reset_by_client(self : StreamRecord, id : Int32) -> Unit {
   self.open.remove(id)
 }
 
 ///|
-/// This side has reset the stream `id`: smock if `by_smock`, else moonhttp.
-/// The oldest reset stream is forgotten once there are `remembered_resets`.
-fn StreamRecord::remember(
-  self : StreamRecord,
-  id : Int32,
-  by_smock~ : Bool,
-) -> Unit {
+/// This side has reset the stream `id`, smock or moonhttp, or moonhttp
+/// ignored the new stream `id` after the final GOAWAY of a drain. The
+/// oldest such stream is forgotten once there are `remembered_resets`.
+fn StreamRecord::remember(self : StreamRecord, id : Int32) -> Unit {
   self.open.remove(id)
   if self.resets.length() < remembered_resets {
     self.resets.push(id)
-    self.by_smock.push(by_smock)
   } else {
     self.resets[self.oldest] = id
-    self.by_smock[self.oldest] = by_smock
     self.oldest = (self.oldest + 1) % remembered_resets
   }
 }

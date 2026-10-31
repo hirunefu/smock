@@ -119,15 +119,16 @@ async fn RawH2::frames_until_end_of(self : RawH2, stream : Int32) -> String {
 ///|
 /// The Journal's entries, each shown as its target, its Stub and its
 /// status, once there are `count` of them, or as they are after `within`
-/// milliseconds.
+/// milliseconds: the first 100, or the first `limit`.
 async fn Smock::journal_once(
   self : Smock,
   count : Int32,
   within~ : Int32,
+  limit~ : Int32 = 100,
 ) -> Array[String] {
   let start = @async.now()
   for ;; {
-    let (_, journal) = self.journal()
+    let (_, journal) = self.journal(query="{\"limit\":\{limit}}")
     guard journal is Object({ "entries": Array(entries), .. }) else {
       fail("no entries: \{journal.stringify()}")
     }
