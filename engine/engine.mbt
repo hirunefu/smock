@@ -63,6 +63,21 @@ pub(all) struct Outcome {
   /// clause of the Stub that matched, with the state before and after.
   /// There is none when no Stub matched, or when the Stub has no clause.
   scenario : ScenarioMove?
+  /// Why the template of the Stub that matched could not be rendered, a
+  /// value of its `variables` or `dataWrites` included, when it could not:
+  /// the response is then the 500 `template failed`. The Journal entry, when
+  /// there is one, holds the same.
+  template_error : TemplateError?
+  /// Why a write of the Stub's `dataWrites` could not be applied, when one
+  /// could not: the response is then the 500 `data write failed`. The
+  /// Journal entry, when there is one, holds the same.
+  data_error : DataError?
+  /// The path of the Stub that matched, as written, when the request has a
+  /// template error or a data error: its exact path, the text of its path
+  /// pattern, or a CRUD Stub's list path. There is none for a Stub with no
+  /// path condition, and none for a request with neither error, so that a
+  /// request answered as planned pays nothing for it.
+  failed_stub_path : String?
 } derive(Debug)
 
 ///|
@@ -485,6 +500,7 @@ pub fn Engine::handle(
   let mut data_error = None
   let mut crud_called = None
   let mut template_error = None
+  let mut failed_stub_path = None
   let mut near_miss = None
   let plan : ResponsePlan = match matched {
     // The match decision: one sequence of steps, each taken in turn, which
@@ -560,10 +576,12 @@ pub fn Engine::handle(
             catch {
               ValueFailed(error) => {
                 template_error = Some(error)
+                failed_stub_path = written_path(stub)
                 failed = Some(template_failed(stub.id, error))
               }
               ApplyFailed(error) => {
                 data_error = Some(error)
+                failed_stub_path = written_path(stub)
                 failed = Some(data_write_failed(stub.id, error))
               }
               StateLimitReached(message) =>
@@ -609,6 +627,7 @@ pub fn Engine::handle(
                 RenderError(at~, message~) => {
                   let error = TemplateError::{ at, message, }
                   template_error = Some(error)
+                  failed_stub_path = written_path(stub)
                   template_failed(stub.id, error)
                 }
               }
@@ -704,7 +723,35 @@ pub fn Engine::handle(
   } else {
     None
   }
-  { resolution, plan, journal, near_miss, matched: source, scenario, }
+  {
+    resolution,
+    plan,
+    journal,
+    near_miss,
+    matched: source,
+    scenario,
+    template_error,
+    data_error,
+    failed_stub_path,
+  }
+}
+
+///|
+/// The path of `stub` as written: an ordinary Stub's exact path or the text
+/// of its path pattern, or a CRUD Stub's list path. There is none for an
+/// ordinary Stub with no path condition.
+fn written_path(stub : @definitions.Stub) -> String? {
+  match stub.serves {
+    Ordinary(ordinary) =>
+      match ordinary.request.path {
+        Some(Has(Exact(path))) => Some(path)
+        Some(Has(Pattern(pattern))) => Some(pattern.source)
+        // A path condition is an exact path or a pattern, never an
+        // operator.
+        Some(Has(Any) | Not(_) | Exists(_)) | None => None
+      }
+    Crud(crud) => Some(crud.path)
+  }
 }
 
 ///|

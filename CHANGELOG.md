@@ -156,16 +156,21 @@ of each GitHub release include its section
   and no status, and a `partial` Fault logs the status it wrote. A delayed
   response logs after its delay, and a Server-Sent Event stream once, when
   it ends. A request whose client goes away, whose write times out or that
-  the drain cuts logs its planned status when it ends. Each line is
-  written whole and at once, also to a pipe, and a line that cannot be
-  written is dropped. Requests the HTTP/1.1 codec rejects, Admin API
-  calls, probes and scrapes get no line. Every other line smock writes
-  goes to stdout too, in the same envelope: `app`, `level`, `message` and
-  `timestamp`, with the line's own fields beside them, keys sorted at
-  every depth. Those lines keep their messages and fields, fatal startup
-  errors included, and stderr carries only usage errors. `json` stays the
-  default, on stderr, and costs nothing more per request. See
-  [Run](README.md#run).
+  the drain cuts logs its planned status when it ends. When a Stub's
+  template cannot be rendered or its data write cannot be applied, the
+  `Error while serving the content: <message>` line, at level `error`,
+  with the Stub's path as written (`routePath`, left out for a Stub with
+  no path condition) and its ID (`routeUUID`), comes just before the
+  request's line, also with the Journal off and when a connection Fault
+  replaces the 500. Each line is written whole and at once, also to a
+  pipe, and a line that cannot be written is dropped. Requests the
+  HTTP/1.1 codec rejects, Admin API calls, probes and scrapes get no line.
+  Every other line smock writes goes to stdout too, in the same envelope:
+  `app`, `level`, `message` and `timestamp`, with the line's own fields
+  beside them, keys sorted at every depth. Those lines keep their messages
+  and fields, fatal startup errors included, and stderr carries only usage
+  errors. `json` stays the default, on stderr, and costs nothing more per
+  request. See [Run](README.md#run).
 
 ### Changed
 
