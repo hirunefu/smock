@@ -68,6 +68,7 @@ fn NoWorkFrames::count(self : NoWorkFrames, at : Int64) -> Bool {
 /// - a PING acknowledgement that answers no PING smock sent;
 /// - a PRIORITY frame, since smock ignores priority signals;
 /// - a DATA frame that carries no data, padded or not, and ends no stream;
+/// - a CONTINUATION frame with no octets that ends no header block;
 /// - a DATA, WINDOW_UPDATE or RST_STREAM frame on a stream already closed,
 ///   and HEADERS on a stream this side reset, which the `Conn` ignores, as
 ///   the record of the client's streams (`StreamRecord`) tells them;
@@ -140,6 +141,14 @@ fn H2Connection::no_work(
     }
   } else if ftype == @http2.frame_priority {
     Some("PRIORITY")
+  } else if ftype == @http2.frame_continuation {
+    // Outside a header block, or on a stream other than its own, it is a
+    // connection error that the `Conn` raises.
+    if head.length == 0 && (head.flags & @http2.flag_end_headers) == 0 {
+      Some("empty CONTINUATION")
+    } else {
+      None
+    }
   } else if ftype > @http2.frame_continuation {
     Some("unknown type")
   } else {
