@@ -68,7 +68,7 @@ Recent systemd delegates them by default; otherwise add a drop-in for
 scripts/build-release.sh                 # dist/smock, which the benchmark runs
 python3 bench/bench.py run               # the whole plan, about 20 minutes
 python3 bench/bench.py run --cases http-keep-alive --cpu-limits 1   # one case under one limit
-python3 bench/bench.py run --plan bench/plan-autopilot.json            # the profiles the targets hold under, about 43 minutes
+python3 bench/bench.py run --plan bench/plan-autopilot.json            # the profiles the targets hold under, about 54 minutes
 python3 bench/bench.py run --plan bench/plan-autopilot.json --profiles autopilot-burst-min   # one profile
 python3 bench/bench.py run --plan bench/plan-autopilot.json --definitions bench/definitions-scenarios   # with Scenario Stubs
 python3 bench/bench.py run --plan bench/plan-autopilot.json --definitions bench/definitions-crud   # with CRUD Stubs, sent their own mix
@@ -102,7 +102,8 @@ defaults, so if they do not fit a memory limit, the run shows OOM kills
 rather than hiding them; the Journal's byte bound follows the memory limit
 ([The Journal](../README.md#the-journal)): 13 MiB under 52Mi, 64 MiB under the others.
 Each profile measures idle RSS, then plain HTTP, TLS, and HTTP/2 as h2c
-and over TLS ([HTTP/2 cases](#http2-cases)), all with keep-alive
+and over TLS, and h2c with several streams on each connection
+([HTTP/2 cases](#http2-cases)), all with keep-alive
 connections, each at a ladder of fixed rates from 2,500 to 80,000 requests
 a second per CPU (125 to 4,000 under 50m), 20 seconds a step. The top of
 each ladder is about where smock uses up its CPU over TLS. Every ladder
@@ -111,7 +112,7 @@ and of the arm64 ones under 50m and 250m (250 and 5,000). Plain HTTP's
 ladder, which the HTTP/2 cases share, also has 30,000 a second per CPU,
 the rate of arm64's target under 1 CPU, and 50,000 a second per CPU, by
 which smock had used up its CPU under each profile in the arm64 GKE probe
-those targets come from. A full run takes about 43 minutes; it prints its
+those targets come from. A full run takes about 54 minutes; it prints its
 estimate before it starts.
 
 Before a full run:
@@ -137,41 +138,69 @@ says so too.
 
 ## HTTP/2 cases
 
-`bench/plan-autopilot.json` measures HTTP/2 beside HTTP/1.1, with two
+`bench/plan-autopilot.json` measures HTTP/2 beside HTTP/1.1, with three
 cases:
 
 | Case | Protocol | Port | How oha sends it |
 |---|---|---|---|
 | `h2c-keep-alive` | `h2c` | plain | HTTP/2 over plain TCP, by prior knowledge: no `Upgrade` |
 | `h2-keep-alive` | `h2` | TLS | HTTP/2 over TLS, offering only `h2` by ALPN |
+| `h2c-multiplexed` | `h2c` | plain | As `h2c-keep-alive`, but 4 requests at once on each of 16 connections ([The multiplexed case](#the-multiplexed-case)) |
 
-Each is `http-keep-alive` but for the protocol: 64 keep-alive
+The first two are `http-keep-alive` but for the protocol: 64 keep-alive
 connections, one request at a time on each (oha's `-p 1`), the same
 request mix, and `http-keep-alive`'s ladders. oha 1.16.0, the pinned load
 generator, drives them with `--http2`. Whether a case uses TLS (protocol
 `https` or `h2`) decides its port, its URL's scheme, oha's `--insecure`,
 and the port that `--connect-to` redirects; `h2c` and `h2` also add
-`--http2 -p 1`. A plan that names another protocol is refused before
-anything starts.
+`--http2 -p 1`, or `-p` with the case's `streams_per_connection`. A plan
+that names another protocol is refused before anything starts.
 
-Both are held to `http-keep-alive`'s [targets](#targets), at the same
-profile, rate and limits, h2 over TLS included. A miss on either is
-reported like any other
+`h2c-keep-alive` and `h2-keep-alive` are held to `http-keep-alive`'s
+[targets](#targets), at the same profile, rate and limits, h2 over TLS
+included. A miss on either is reported like any other
 ([Targets for several cases](#targets-for-several-cases)).
 
 oha's `--disable-keepalive` does not work with HTTP/2. So only the
 keep-alive cases have HTTP/2 twins, and a plan whose HTTP/2 case opens a
 new connection for each request is refused too.
 
-The two cases make each run of the plan about 22 minutes longer, on your
-machine and on GKE: 2 cases, 3 profiles and 8 rates, at about 27 seconds a
-step. A full run takes about 43 minutes on your machine and about 75 on
-GKE. On GKE, the load generator's traffic check also sends a request over
-HTTP/2 to each port a step sends HTTP/2 to ([On GKE Autopilot](#on-gke-autopilot)).
+`h2c-keep-alive` and `h2-keep-alive` make each run of the plan about 22
+minutes longer, on your machine and on GKE: 2 cases, 3 profiles and 8 rates, at
+about 27 seconds a step. The multiplexed case adds about 11 minutes more
+on your machine alone. A full run takes about 54 minutes on your machine
+and about 75 on GKE. On GKE, the load generator's traffic check also sends
+a request over HTTP/2 to each port a step sends HTTP/2 to
+([On GKE Autopilot](#on-gke-autopilot)).
 
 Runs from before these cases have no steps for them: `bench/compare.py`
 lists their steps as only in the newer run, and compares the HTTP/1.1
 cases as usual ([Comparing runs](#comparing-runs)).
+
+### The multiplexed case
+
+With `-p 1`, no connection carries two streams at once, so the first two
+cases never measure what HTTP/2 is for: one reader and one writer on a
+connection serving many streams. `h2c-multiplexed` does. It has 16
+keep-alive connections, which the requests of the mix share by weight as
+in the other cases, at least one each, and each connection carries 4
+requests at once (`"streams_per_connection": 4`, oha's `-p 4`). So about
+64 requests are in flight, as in the other cases. Its mix and ladders are
+`http-keep-alive`'s.
+
+- **No target.** No entry of `bench/targets.json` names it. `summary.md`
+  and `summary.json` report it like any other case, and
+  `bench/compare.py` compares it with an earlier run that has it, so a
+  regression at or below its profile's target rate still fails the
+  comparison. A run from before it only lists its steps.
+- **On your machine only.** The plan marks it `"local_only": true`. It
+  adds about 11 minutes to a local run: 3 profiles and 8 rates, at about
+  27 seconds a step. The GKE run leaves it out, so GKE time grows only by
+  `h2c-keep-alive` and `h2-keep-alive`. Naming it in the GKE run's `--cases` is
+  refused.
+- **HTTP/2 only.** A case with more than one stream per connection over
+  `http` or `https` is refused before anything starts, since HTTP/1.1
+  carries one request at a time on a connection.
 
 ## Scenarios in the benchmark
 
@@ -370,7 +399,11 @@ architecture the targets file has no set for.
   TLS with a new connection per request, plain HTTP with 1000 idle
   connections held open during the load, and a 10-minute run under 1 CPU
   that records RSS every second. A case's protocol is `http`, `https`,
-  `h2c` or `h2` ([HTTP/2 cases](#http2-cases)).
+  `h2c` or `h2` ([HTTP/2 cases](#http2-cases)). Over HTTP/2, a case may
+  carry several requests at once on each connection
+  (`streams_per_connection`, 1 by default), and a case marked `local_only`
+  runs on your machine but not on GKE
+  ([The multiplexed case](#the-multiplexed-case)).
 - **CPU limits and pinning.** smock runs in its own systemd scope with a
   CPU quota over the 100 ms period Kubernetes also uses, pinned to the
   fastest CPUs, as many as the largest CPU limit of the plan needs (two for
@@ -632,7 +665,9 @@ compare, such as for a summary of another `format`.
 
 `scripts/gke-bench.sh` runs `bench/plan-autopilot.json` on real GKE
 Autopilot: smock in a Pod with each profile's limits as its requests, the
-load from another node over the Pod network. It is part of the
+load from another node over the Pod network. It runs every case of the
+plan but `h2c-multiplexed`, which runs on your machine only
+([The multiplexed case](#the-multiplexed-case)). It is part of the
 [checklist before merging into main](../docs/merging-into-main.md), and costs
 money: about $0.40 to $0.48 a run on x86 nodes (us-central1 or
 asia-northeast1), and about $0.31 on Arm nodes in us-central1, at the

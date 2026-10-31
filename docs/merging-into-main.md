@@ -39,7 +39,7 @@ pre-merge run compares with them.
   moonhttp version the build resolves is such an upgrade, and CI fails on
   it until `moon.mod` names the new version.
 - [ ] **Run the local Autopilot plan** on the usual machine, the full plan
-  (about 43 minutes), as the benchmark's
+  (about 54 minutes), as the benchmark's
   [GKE Autopilot profiles](../bench/README.md#gke-autopilot-profiles) section
   says: plugged in, other programs closed, the CPU frequency governor at
   `performance`.
@@ -75,7 +75,9 @@ pre-merge run compares with them.
   ([Comparing runs](../bench/README.md#comparing-runs)). A previous run from
   before the [HTTP/2 cases](../bench/README.md#http2-cases) has no steps
   for them: they are listed as only in the newer run, and the HTTP/1.1
-  cases are compared as usual. Its first lines say
+  cases are compared as usual. `h2c-multiplexed`, which runs only here and
+  has no target, is likewise listed against a run from before it, and
+  compared like any case against a run that has it. Its first lines say
   whether the machine, the plan or anything else besides smock differed,
   and which steps count. A change to the plan's `about` alone is no
   difference, but a run from before runs recorded the plan's hash without
