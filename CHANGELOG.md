@@ -71,7 +71,10 @@ of each GitHub release include its section
   stream, and a client that resets the HTTP/2 stream ends the event stream
   at once. A client that sends more than 100 frames that do no work in one
   second, such as a flood of PING or SETTINGS frames, gets GOAWAY
-  `ENHANCE_YOUR_CALM`, and smock logs one line that names the pattern. See
+  `ENHANCE_YOUR_CALM`, and smock logs one line that names the pattern. The
+  HPACK table smock encodes responses with stays at 4,096 octets, however
+  large a table the client allows, and a header block that does not decode
+  ends the connection with GOAWAY `COMPRESSION_ERROR`. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,

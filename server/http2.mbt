@@ -5,7 +5,8 @@
 // smock owns the I/O, the mapping onto the engine and the timeouts. The
 // loop here ties together parts that change apart:
 //
-// - the frame reader (`FrameReader`, http2_frames.mbt), with
+// - the frame reader (`FrameReader`, http2_frames.mbt), which caps the
+//   header table size the client's SETTINGS allow, with
 //   `H2Connection::judge`, where each frame is judged before it reaches
 //   the `Conn`, and counted when it does no work (`NoWorkFrames`,
 //   http2_defences.mbt);
@@ -44,7 +45,9 @@
 /// (4,096 octets), the initial window (65,535 octets), the frame size
 /// (16,384 octets) and extended CONNECT (off), with at most
 /// `--http2-max-concurrent-streams` concurrent streams, and a header list
-/// of at most `header_list_bound`.
+/// of at most `header_list_bound`. The header table is the one smock decodes
+/// requests with; the one it encodes responses with stays at 4,096 octets
+/// too, whatever the client allows (`FrameReader::cap_header_table`).
 ///
 /// The `Conn` holds the client to these from the first stream, before the
 /// client acknowledges them: moonhttp applies the limits that protect this
