@@ -887,18 +887,21 @@ def option_value(command, option):
 class Protocols(unittest.TestCase):
     """A case's protocol says how oha sends its requests: `http` and `h2c`
     to smock's plain port, `https` and `h2` over TLS to its TLS port, and
-    `h2c` and `h2` over HTTP/2, one request at a time on each connection.
-    Whether a case uses TLS alone decides its port, the URL's scheme, oha's
-    --insecure and the port --connect-to redirects."""
+    `h2c` and `h2` over HTTP/2, one request at a time on each connection
+    unless the case says how many streams each carries at once. Whether a
+    case uses TLS alone decides its port, the URL's scheme, oha's --insecure
+    and the port --connect-to redirects."""
 
     REQUEST = {"name": "get-order", "method": "POST", "host": "orders.bench.internal", "target": "/orders?page=2",
                "headers": [["Accept", "application/json"], ["baggage", "smock-session=bench-get-order"]],
                "body": '{"id": 7}'}
 
-    def command(self, protocol, connection="keep-alive"):
-        """The oha command line of a step of a case over `protocol`, sent to
-        smock at 10.0.0.7, on the port of the protocol's kind."""
-        spec = {"protocol": protocol, "connection": connection, "ramp_s": 2, "duration_s": 20, "tail_s": 3}
+    def command(self, protocol, connection="keep-alive", streams=1):
+        """The oha command line of a step of a case over `protocol`, with
+        `streams` streams at once on each connection, sent to smock at
+        10.0.0.7, on the port of the protocol's kind."""
+        spec = {"protocol": protocol, "connection": connection, "streams_per_connection": streams, "ramp_s": 2,
+                "duration_s": 20, "tail_s": 3}
         port = {"plain": "8080", "tls": "8443"}[harness.traffic_port(protocol)]
         return harness.oha_command("oha", spec, self.REQUEST, "120.000000", 7, Path("/r/oha.json"),
                                    Path("/r/oha.sqlite"), "10.0.0.7", port)
@@ -941,6 +944,15 @@ class Protocols(unittest.TestCase):
         # A new connection for each request, over HTTP/1.1.
         for protocol in ("http", "https"):
             self.assertIn("--disable-keepalive", self.command(protocol, "new-per-request"), protocol)
+
+    def test_a_multiplexed_case_sends_as_many_requests_at_once_on_each_connection_as_it_has_streams(self):
+        # oha's -p: it runs connections times streams requests at once, each
+        # connection carrying that many streams.
+        for protocol in ("h2c", "h2"):
+            command = self.command(protocol, streams=4)
+            self.assertIn("--http2", command, protocol)
+            self.assertEqual((option_value(command, "-c"), option_value(command, "-p"), command.count("-p")),
+                             ("7", "4", 1), protocol)
 
     def test_an_unknown_protocol_or_a_new_connection_per_request_over_http2_is_refused_before_anything_starts(self):
         # oha's --disable-keepalive does not work with HTTP/2.

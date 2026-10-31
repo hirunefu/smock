@@ -1022,6 +1022,7 @@ def case_spec(run, case, profile, rate, ladder):
         "protocol": case["protocol"],
         "connection": case["connection"],
         "connections": case["connections"],
+        "streams_per_connection": case.get("streams_per_connection", 1),
         "idle_connections": case.get("idle_connections", 0),
         "rate": rate,
         "ramp_s": run.ramp_s,
@@ -1116,16 +1117,16 @@ def over_http2(protocol):
     return PROTOCOLS[protocol][1]
 
 
-def oha_request(protocol, request, address, port):
+def oha_request(protocol, request, address, port, streams=1):
     """oha's arguments that send one request of the mix over `protocol` to
     smock at `address` and `port`: the port its URL implies, 443 over TLS
-    and 80 otherwise, redirected there; over HTTP/2, one request at a time
-    on each connection; its method, headers and body; over TLS, any
-    certificate accepted; and its URL, last."""
+    and 80 otherwise, redirected there; over HTTP/2, `streams` requests at
+    once on each connection (oha's -p), one by default; its method, headers
+    and body; over TLS, any certificate accepted; and its URL, last."""
     tls, http2 = PROTOCOLS[protocol]
     arguments = ["--connect-to", f"{request['host']}:{443 if tls else 80}:{address}:{port}"]
     if http2:
-        arguments += ["--http2", "-p", "1"]
+        arguments += ["--http2", "-p", str(streams)]
     arguments += ["-m", request["method"]]
     for name, value in request["headers"]:
         arguments += ["-H", f"{name}: {value}"]
@@ -1140,8 +1141,9 @@ def oha_request(protocol, request, address, port):
 def oha_command(oha, spec, request, rate, connections, report, database, address, port):
     """The command line of the oha process that sends one request of the
     mix in a step, at `rate` (as request_rates gives it) over `connections`,
-    to smock at `address` and `port`, for the step's whole load. It writes
-    its report to `report` and each request's times to `database`."""
+    each with the step's streams at once over HTTP/2, to smock at `address`
+    and `port`, for the step's whole load. It writes its report to `report`
+    and each request's times to `database`."""
     total_ms = round((spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]) * 1000)
     command = [
         oha, "--no-tui", "--output-format", "json", "-o", str(report), "--db-url", str(database),
@@ -1150,7 +1152,7 @@ def oha_command(oha, spec, request, rate, connections, report, database, address
     ]
     if spec["connection"] == "new-per-request":
         command.append("--disable-keepalive")
-    return command + oha_request(spec["protocol"], request, address, port)
+    return command + oha_request(spec["protocol"], request, address, port, spec["streams_per_connection"])
 
 
 def start_load(run, smock, spec, raw):
