@@ -148,8 +148,11 @@ a stream's own window does, that stream gets RST_STREAM `CANCEL`, and the
 connection's other streams go on. Each WINDOW_UPDATE for the window waited
 for, and each SETTINGS frame that raises the initial window of the
 streams, starts it again, so a client that widens its windows slowly but
-steadily gets the whole response. See
-[Timeouts](docs/http2.md#timeouts).
+steadily gets the whole response. A client that stops reading makes smock
+stop reading too, once what smock has queued for the connection and not
+yet written passes 16 KiB, so the client cannot make it hold its
+responses. See [Timeouts](docs/http2.md#timeouts) and
+[The output bound](docs/http2.md#the-output-bound).
 
 Known limitation: after answering a request with 400, 413, 431, 501 or 505,
 smock closes the connection without reading the rest of the request. A

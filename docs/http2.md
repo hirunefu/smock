@@ -257,7 +257,10 @@ sent what it was given waits behind the others. Priority signals are
 accepted and ignored.
 
 A client that keeps a window at zero does not hold a body for good: the
-write timeout runs while the body waits ([Timeouts](#timeouts)).
+write timeout runs while the body waits ([Timeouts](#timeouts)). Nor does a
+client that stops reading: a stream that waits sends at most 16 KiB at a
+time, and more only once that has gone out
+([The output bound](#the-output-bound)).
 
 A stream that the client resets during its delay, or while its body waits
 for window, stops waiting at once, and gets no more of its response. So do
@@ -331,6 +334,26 @@ concurrent-streams limit times the body limit: 100 × 10 MiB with the
 defaults, against 10 MiB for an HTTP/1.1 connection. For a small Pod, lower
 either flag, such as `--http2-max-concurrent-streams 10` or a smaller
 `--body-limit`.
+
+### The output bound
+
+What smock queues for one connection to write is bounded too, by 16 KiB
+(16,384 octets):
+
+- Once the output smock has queued for the connection, and not yet
+  written, passes 16 KiB, smock writes it before it reads the client's
+  next frame. That output is everything smock sends: responses, resets,
+  and the replies it owes, such as PING acknowledgements.
+- A stream that waits, for its delay, for window or between its events,
+  sends at most 16 KiB at a time, its DATA frame's header included, and
+  only once what was queued before has gone out.
+
+So a client that stops reading makes smock stop reading too, even with
+its windows open wide. One connection then holds no more than 16 KiB of
+output, plus the replies and responses to the last frame smock read, such
+as a body that fits the client's windows, and the write timeout closes
+the connection in the end ([Timeouts](#timeouts)). A client that pauses
+and then reads again gets every response.
 
 ### Request bodies
 
@@ -473,7 +496,7 @@ connection.
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
 | Frames that do no work: SETTINGS, PING, PRIORITY, reset and empty-frame floods (CVE-2019-9512, -9513, -9514, -9515, -9518) | At most 100 in any one second ([Frames that do no work](#frames-that-do-no-work)). | GOAWAY `ENHANCE_YOUR_CALM`, and the connection closes. |
-| A client that stops reading or keeps its windows at zero (CVE-2019-9517) | `--write-timeout-ms`: a write that makes no progress, or a body that waits for a window, for that long ([Timeouts](#timeouts)). | The connection closes, without GOAWAY. A stream whose own window alone stays at zero gets RST_STREAM `CANCEL`, and the connection goes on. |
+| A client that stops reading or keeps its windows at zero (CVE-2019-9517) | The output bound: once what smock has queued for the connection and not yet written passes 16 KiB, it stops reading and queues no more ([The output bound](#the-output-bound)). Then `--write-timeout-ms`: a write that makes no progress, or a body that waits for a window, for that long ([Timeouts](#timeouts)). | The connection closes, without GOAWAY. A stream whose own window alone stays at zero gets RST_STREAM `CANCEL`, and the connection goes on. |
 | Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. Each window update lets smock send, which starts the write timeout again, so a client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
 | Header fields with empty names (CVE-2019-9516) | moonhttp refuses an empty field name. | RST_STREAM `PROTOCOL_ERROR` on that stream. |
 | Request bodies | `--body-limit` per stream, under the concurrent-streams limit. | 413, then RST_STREAM `NO_ERROR` on that stream ([Request bodies](#request-bodies)). |
@@ -523,7 +546,8 @@ The bound holds for any one second, however long the connection lives: a
 client that sends such frames now and then is never cut. Frames that do
 some work never count: HEADERS that open a stream, DATA that carries a
 body, and WINDOW_UPDATE frames on the connection or on a stream in
-progress.
+progress. The replies these frames make smock owe fall under
+[the output bound](#the-output-bound).
 
 ## Connection errors
 

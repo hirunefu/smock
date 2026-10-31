@@ -71,7 +71,10 @@ of each GitHub release include its section
   stream, and a client that resets the HTTP/2 stream ends the event stream
   at once. A client that sends more than 100 frames that do no work in one
   second, such as a flood of PING or SETTINGS frames, gets GOAWAY
-  `ENHANCE_YOUR_CALM`, and smock logs one line that names the pattern. See
+  `ENHANCE_YOUR_CALM`, and smock logs one line that names the pattern. A
+  client that stops reading makes smock stop reading too, once what smock
+  has queued for the connection and not yet written passes 16 KiB, and the
+  write timeout then closes the connection. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
