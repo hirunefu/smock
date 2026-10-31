@@ -248,3 +248,104 @@ async test "h2c: delayed responses to a client that opens wide windows and never
     inspect(log_entries(stopped.logs), content=startup_only_h2c)
   })
 }
+
+///|
+async test "h2c: a client that opens wide windows, sends many HEAD and GET requests for a large body and pauses before it reads makes smock stop reading meanwhile, and gets every response in full once it reads" {
+  with_definitions(output_definitions(), dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      raw.send(wide_open)
+      // 600 requests in one write: 200 each of HEAD and GET for 128 KiB,
+      // and GET for a short body. Their responses, 25 MiB in all, fill the
+      // socket's buffers long before the client reads.
+      let paths = ["/large", "/large", "/small"]
+      let frames = []
+      for i in 0..<600 {
+        let meth = if i % 3 == 0 { "HEAD" } else { "GET" }
+        frames.push(raw.ask(2 * i + 1, meth, paths[i % 3]))
+      }
+      raw.send(frames)
+      @async.sleep(500)
+      let (_, samples) = smock.metrics()
+      let mut before = 0.0
+      for sample in samples {
+        if sample.name == "smock_requests_total" {
+          before += sample.value
+        }
+      }
+      // Each stream's status, DATA octets, whether its DATA is the Stub's
+      // body so far, and whether it has ended.
+      let statuses = Map([])
+      let octets = Map([])
+      let as_given = Map([])
+      let ended = []
+      let others = []
+      let expected = @utf8.encode(large_body)
+      while ended.length() + others.length() < 600 {
+        guard raw.read_frame() is Some(frame) else {
+          others.push("closed")
+          break
+        }
+        match frame {
+          Headers(stream_id~, fragment~, end_stream~, ..) => {
+            for field in raw.fields(fragment) {
+              if field.0 == ":status" {
+                statuses[stream_id] = field.1
+              }
+            }
+            if end_stream {
+              ended.push(stream_id)
+            }
+          }
+          Data(stream_id~, data~, end_stream~, ..) => {
+            let at = octets.get(stream_id).unwrap_or(0)
+            let fits = at + data.length() <= expected.length() &&
+              data[:] == expected[at:at + data.length()]
+            as_given[stream_id] = as_given.get(stream_id).unwrap_or(true) &&
+              fits
+            octets[stream_id] = at + data.length()
+            if end_stream {
+              ended.push(stream_id)
+            }
+          }
+          Settings(..) => ()
+          _ => others.push(raw.render_frame(frame))
+        }
+      }
+      // What each kind of request got, one line per kind and outcome.
+      let got = Map([])
+      for stream in ended {
+        let i = (stream - 1) / 2
+        let length = octets.get(stream).unwrap_or(0)
+        let body = match i % 3 {
+          0 => "no body"
+          1 =>
+            "\{length} octets, as the Stub gives them: \{as_given.get(stream).unwrap_or(false)}"
+          _ => "\{length} octets"
+        }
+        let line = "\{if i % 3 == 0 { "HEAD" } else { "GET" }} \{paths[i % 3]}: \{statuses.get(stream).unwrap_or("no status")}, \{body}"
+        got[line] = got.get(line).unwrap_or(0) + 1
+      }
+      // Sorted as `String` compares, shorter lines first.
+      let lines = []
+      for line, count in got {
+        lines.push("\{line}: \{count}")
+      }
+      lines.sort()
+      inspect(
+        [
+          "before the client read, fewer requests reached the Mocks than it sent: \{before < 600.0}",
+          ..lines,
+          ..others,
+        ].join("\n"),
+        content=(
+          #|before the client read, fewer requests reached the Mocks than it sent: true
+          #|GET /small: 200, 5 octets: 200
+          #|HEAD /large: 200, no body: 200
+          #|GET /large: 200, 131072 octets, as the Stub gives them: true: 200
+        ),
+      )
+    })
+  })
+}
