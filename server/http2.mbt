@@ -12,8 +12,9 @@
 //   http2_defences.mbt);
 // - the record of the client's streams (`StreamRecord`, http2_streams.mbt),
 //   which the judge holds HEADERS frames against, which counts the streams
-//   open against `--http2-max-concurrent-streams`, and which every
-//   RST_STREAM smock sends goes into, through `H2Connection::reset`;
+//   open against `--http2-max-concurrent-streams`, and the streams reset
+//   before smock finished them against the bound on Rapid Reset, and which
+//   every RST_STREAM smock sends goes into, through `H2Connection::reset`;
 // - the mapping from a stream onto the engine's request (`H2Request`,
 //   http2_requests.mbt), with the header limits, which refuse a stream
 //   with 431, and the checks of HTTP/1.1's rules and of `--body-limit`,
@@ -380,10 +381,11 @@ fn H2Connection::judge(
 ///|
 /// Hands the `Conn` `octets`, the preface or one whole frame, and handles
 /// the events they produce, in order, until the `Conn` needs more. Returns
-/// false when they break the connection: the `Conn` has then queued its
-/// GOAWAY, and the connection ends. A header block past its bound as
-/// received is logged as a CONTINUATION flood (`flooded`). A stream's task
-/// writes to `out`.
+/// false when they break the connection, and the `Conn` has queued its
+/// GOAWAY, or when a stream they end reset passes the bound on Rapid Reset
+/// (`reset_early`), which queues its own; the connection then ends. A
+/// header block past its bound as received is logged as a CONTINUATION
+/// flood (`flooded`). A stream's task writes to `out`.
 fn[S : @io.Writer + ReadOutput] H2Connection::hand(
   self : H2Connection,
   octets : BytesView,
@@ -531,7 +533,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
       // frames.
       Reset(stream~, remote~, ..) => {
         // Reset before smock finished its response: the defence against
-        // Rapid Reset and MadeYouReset counts it, below.
+        // Rapid Reset and MadeYouReset counts it, below. Spec F's exception
+        // goes here: a client reset of a gRPC call that its deadline is
+        // about to end does not count, once per stream. A call that smock
+        // has ended with DEADLINE_EXCEEDED is finished already.
         let early = self.streams.unfinished(stream)
         // smock's own resets give no event, so one not from the client is
         // moonhttp's.

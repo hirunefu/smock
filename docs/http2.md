@@ -533,6 +533,7 @@ connection.
 
 | Pattern | Bound | Past it |
 |---|---|---|
+| Rapid Reset (CVE-2023-44487) and MadeYouReset (CVE-2025-8671): streams opened, then reset before smock has finished their responses | More than 100 such streams, which are also more than half of all the streams the client opened. A stream counts when the client resets it, or when moonhttp resets it for a stream error the client's frames caused, whatever the code: a WINDOW_UPDATE of 0 or one that overflows the window, DATA or HEADERS after the end of the request, or a PRIORITY frame that makes the stream depend on itself. A stream refused at open counts too, but `REFUSED_STREAM` past the concurrent-streams limit only once the client has acknowledged smock's SETTINGS, since it may not know the limit before. smock's own resets never count: Faults, timeouts, a stream window held at zero, and the resets after 400, 413 and 431. Nor do the streams ignored after the final GOAWAY of [the drain](#the-drain). A stream that smock answered at once has ended before the client's reset arrives, so that reset is a frame that does no work instead ([Frames that do no work](#frames-that-do-no-work)). A reset stream stops at once ([Streams that wait](#streams-that-wait)). | GOAWAY `ENHANCE_YOUR_CALM`, and the connection closes. |
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
 | CONTINUATION flood (2024): a header block that never ends, as CONTINUATION frames keep coming | A header block, its HEADERS and CONTINUATION frames together, holds at most twice `--header-size-limit` octets as received, the bound moonhttp keeps ([Header lists](#header-lists)), and ends within `--read-timeout-ms` ([Timeouts](#timeouts)). An empty CONTINUATION frame that does not end its block is a frame that does no work ([Frames that do no work](#frames-that-do-no-work)). | GOAWAY `ENHANCE_YOUR_CALM`, and the connection closes, for a block over the bound. A block still open at the read timeout is a timeout instead: GOAWAY `NO_ERROR`, and the connection closes, with no log line. |
 | HPACK bomb: a small header block that decodes to a large list, such as one that names a large table entry over and over | moonhttp keeps no more of a decoded list than twice `--header-size-limit`, counted as RFC 7541 counts it. smock then holds the list to `--header-size-limit` and `--header-count-limit` ([Header lists](#header-lists)). The table smock decodes header blocks with is 4,096 octets. So is the one it encodes responses with, however large a table the client allows: smock lowers a larger SETTINGS_HEADER_TABLE_SIZE to 4,096 before moonhttp sees it, since an encoder may use any table up to the size the client allows (RFC 7541, section 4.2). | 431 for a list over `--header-size-limit` or with too many fields. RST_STREAM `ENHANCE_YOUR_CALM`, with no status, for a list over twice it. A block that does not decode is a connection error, not a defence: GOAWAY `COMPRESSION_ERROR`, with no log line ([Connection errors](#connection-errors)). |
@@ -556,11 +557,16 @@ Unlike a timeout, such a close is logged: one line per connection, at
 level `warn`, that names the pattern and the kind of frame that passed the
 bound. No metric counts it. For a header block over the bound, the
 pattern is `CONTINUATION flood`, and the frame `HEADERS` or
-`CONTINUATION`, whichever took the block past the bound.
+`CONTINUATION`, whichever took the block past the bound. For Rapid Reset
+and MadeYouReset, the pattern is `Rapid Reset`, and the frame the one that
+made the last stream count: `RST_STREAM` for the client's reset, the frame
+for which moonhttp reset the stream, such as `WINDOW_UPDATE`, or `HEADERS`
+or `CONTINUATION` for a stream refused at open.
 
 ```json
 {"time":"2026-10-25T09:00:00.000Z","level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}
 {"time":"2026-10-25T09:00:00.000Z","level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"CONTINUATION flood","frame":"CONTINUATION"}
+{"time":"2026-10-25T09:00:00.000Z","level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"Rapid Reset","frame":"RST_STREAM"}
 ```
 
 ### Frames that do no work

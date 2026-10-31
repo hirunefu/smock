@@ -1,9 +1,9 @@
 // The record an HTTP/2 connection keeps of its client's streams: the highest
 // client stream ID seen, the streams open, and the streams this side reset.
-// `H2Connection::judge`
-// (http2.mbt) holds each HEADERS frame against it before the `Conn` sees
-// the frame, so that HEADERS on a stream ID already used end the connection
-// whatever moonhttp does with them (RFC 9113, section 5.1.1). It also tells
+// `H2Connection::judge` (http2.mbt) holds each HEADERS frame against it
+// before the `Conn` sees the frame, so that HEADERS on a stream ID already
+// used end the connection whatever moonhttp does with them (RFC 9113,
+// section 5.1.1). It also tells
 // the count of frames that do no work which streams are closed, and which
 // this side reset (`H2Connection::no_work`, http2_defences.mbt), and keeps
 // the counts of the defence against Rapid Reset and MadeYouReset
@@ -212,8 +212,9 @@ fn StreamRecord::reset_by_client(self : StreamRecord, id : Int32) -> Unit {
 }
 
 ///|
-/// This side has reset the stream `id`: smock, or moonhttp. The oldest
-/// reset stream is forgotten once there are `remembered_resets`.
+/// This side has reset the stream `id`, smock or moonhttp, or moonhttp
+/// ignored the new stream `id` after the final GOAWAY of a drain. The
+/// oldest such stream is forgotten once there are `remembered_resets`.
 fn StreamRecord::remember(self : StreamRecord, id : Int32) -> Unit {
   self.open.remove(id)
   if self.resets.length() < remembered_resets {

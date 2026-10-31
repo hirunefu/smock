@@ -2,7 +2,10 @@
 // for nothing. `H2Connection::judge` (http2.mbt) counts each frame that
 // does no work before the `Conn` sees it, and past the bound the connection
 // ends with GOAWAY ENHANCE_YOUR_CALM (`H2Connection::calm`), as every
-// defence that closes a connection ends it. A header block past moonhttp's
+// defence that closes a connection ends it. `H2Connection::hand` counts
+// the streams that end reset before smock has finished their responses,
+// against Rapid Reset and MadeYouReset (`H2Connection::reset_early`), which
+// ends the connection the same way. A header block past moonhttp's
 // bound as received, a CONTINUATION flood, is the `Conn`'s own connection
 // error, which smock logs the same way (`H2Connection::flooded`).
 
@@ -197,8 +200,7 @@ let early_reset_bound : Int32 = 100
 fn H2Connection::reset_early(self : H2Connection, frame : BytesView) -> Bool {
   let streams = self.streams
   streams.cut += 1
-  // Both counts stay under 2^30, the client stream IDs there are, so the
-  // difference cannot overflow.
+  // More than half of the streams begun: more than the rest of them.
   guard streams.cut > early_reset_bound &&
     streams.cut > streams.begun - streams.cut else {
     return false

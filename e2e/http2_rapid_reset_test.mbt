@@ -730,12 +730,15 @@ async test "h2c: a stream whose response smock has finished does not count when 
         frames.push(RstStream(stream_id=stream, error_code=@http2.error_cancel))
       }
       raw.send(frames)
-      inspect(raw.fenced(), content=(
-        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
-        #|SETTINGS ACK
-        #|HEADERS n END_STREAM END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>] x101
-        #|PING ACK
-      ))
+      inspect(
+        raw.fenced(),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|HEADERS n END_STREAM END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>] x101
+          #|PING ACK
+        ),
+      )
     })
     inspect(defence_entries(stopped.logs), content="")
   })
