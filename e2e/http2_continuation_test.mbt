@@ -239,3 +239,71 @@ async test "h2c: a header block that passes moonhttp's bound as received, twice 
     )
   })
 }
+
+///|
+async test "h2c: a header block whose small CONTINUATION frames keep coming, under the size bound, gets GOAWAY NO_ERROR at the read timeout, unlogged, as the read timeout decides; smock then discards what still comes, closes with a FIN a second later, and a fresh connection is served" {
+  with_definitions([("faults.json", faults)], dir => {
+    let stopped = with_smock(
+      [
+        "--dir", dir, "--port", "0", "--read-timeout-ms", "600", "--idle-timeout-ms",
+        "10000",
+      ],
+      smock => {
+        let raw = smock.raw_h2()
+        defer raw.close()
+        // A stream answered first, so that the GOAWAY names it.
+        raw.send([raw.get(1, "/fast")])
+        let answered = raw.frames_until_stream_ends(1)
+        let start = @async.now()
+        raw.send([opening(3, b"\x82")])
+        // A CONTINUATION frame of 100 octets every 50 ms, until the GOAWAY
+        // has come.
+        let warned = Ref(false)
+        let sent = Ref(0)
+        let (goaway, before, after) = @async.with_task_group(group => {
+          group.spawn_bg(() => {
+            while !warned.val {
+              @async.sleep(50)
+              raw.send([
+                Continuation(
+                  stream_id=3,
+                  fragment=Bytes::make(100, b'\x00'),
+                  end_headers=false,
+                ),
+              ])
+              sent.val += 1
+            }
+          })
+          let goaway = raw.frames_until(start, is_goaway)
+          warned.val = true
+          let before = sent.val
+          (goaway, before, raw.frames_until(start, _ => false))
+        })
+        inspect(
+          [
+            answered,
+            "---",
+            ..goaway.shown,
+            "GOAWAY after at least 600 ms: \{goaway.end_ms >= 600}, before 900 ms: \{goaway.end_ms < 900}",
+            "CONTINUATION frames until then, at least 5: \{before >= 5}, and the block under the bound: \{1 + 100 * sent.val <= 32768}",
+            "then: \{after.shown.length()} frames, \{after.how}, about a second after the GOAWAY: \{after.end_ms - goaway.end_ms >= 800 && after.end_ms - goaway.end_ms < 2000}",
+            smock.fresh(),
+          ].join("\n"),
+          content=(
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+            #|SETTINGS ACK
+            #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+            #|DATA 1 END_STREAM 4 octets
+            #|---
+            #|GOAWAY last=1 NO_ERROR
+            #|GOAWAY after at least 600 ms: true, before 900 ms: true
+            #|CONTINUATION frames until then, at least 5: true, and the block under the bound: true
+            #|then: 0 frames, a FIN, about a second after the GOAWAY: true
+            #|then a fresh connection: 200 fast
+          ),
+        )
+      },
+    )
+    inspect(log_entries(stopped.logs), content=startup_only_h2c)
+  })
+}
