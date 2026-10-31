@@ -1,7 +1,8 @@
 // Seam 2 tests of the mockoon log format: with `SMOCK_LOG_FORMAT=mockoon`
 // or `--log-format mockoon`, smock writes a Transaction recorded line to
-// stdout for each request a Mock handles. Lines are compared whole, byte for
-// byte, with only the value of `timestamp` masked, once its form is checked.
+// stdout for each request a Mock handles, once, when it ends, however it
+// ends. Lines are compared whole, byte for byte, with only the value of
+// `timestamp` masked, once its form is checked.
 
 ///|
 /// Two Mocks, neither of them the Default Mock: `users`, at the Hosts

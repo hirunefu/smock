@@ -40,8 +40,8 @@ pub(all) enum TransactionEnd {
 ///|
 /// The `Transaction recorded` line of a request that `prefix`
 /// (`mockoon_prefix`) says who answered, with the method `meth` and the
-/// request target `target` as sent, that `ended` as it says, written at
-/// `at`, in milliseconds since the Unix epoch, such as
+/// request target `target` as sent, which ended as `ended` says, written
+/// at `at`, in milliseconds since the Unix epoch, such as
 /// `{"app":"smock","environmentName":"users","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/users/1","requestProxied":false,"responseStatus":200,"timestamp":"2026-10-31T09:00:01.250Z"}`.
 /// A reset or a close Fault puts `fault`, with the Journal's name for it,
 /// between the prefix and `level`, and leaves out `responseStatus`.
