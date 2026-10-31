@@ -198,7 +198,9 @@ with `AllowHTTP` set and a `DialTLSContext` that dials plain TCP. A
 transport with the default protocols speaks HTTP/1.1 to the plain port.
 
 Over TLS, Go's default transport, which `http.Get` uses, offers `h2` and
-`http/1.1`, and gets HTTP/2 when the system trusts smock's certificate. A
+`http/1.1`, and gets HTTP/2 when the system trusts smock's certificate.
+On Linux, `SSL_CERT_FILE=smock.pem` makes a Go program trust smock's
+self-signed certificate in place of the system's certificates. A
 transport with a `TLSClientConfig` of its own, such as one that trusts
 smock's self-signed certificate, turns HTTP/2 off, and gets HTTP/1.1,
 unless `ForceAttemptHTTP2` is set:
@@ -240,9 +242,18 @@ HttpResponse<String> response =
 ```
 
 To trust smock's self-signed certificate, add it to a trust store with
-`keytool -importcert`, and give the JVM that trust store with
-`-Djavax.net.ssl.trustStore`, or build the client with an `SSLContext`
-that trusts it.
+`keytool -importcert`, and give the JVM that trust store and its password,
+or build the client with an `SSLContext` that trusts it. The password is
+needed: `keytool` encrypts the certificates in the PKCS12 store it makes,
+so a JVM given the store without its password finds no certificate in it,
+and the handshake fails. OkHttp, below, reads the same store.
+
+```sh
+keytool -importcert -noprompt -alias smock -file smock.pem \
+  -keystore smock.p12 -storepass changeit
+java -Djavax.net.ssl.trustStore=smock.p12 \
+  -Djavax.net.ssl.trustStorePassword=changeit ...
+```
 
 OkHttp sends the preface by prior knowledge when
 `Protocol.H2_PRIOR_KNOWLEDGE` is its only protocol, so such a client speaks

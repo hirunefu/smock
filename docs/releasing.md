@@ -230,15 +230,25 @@ moonhttp is raised only on purpose, on an integration branch of its own
 whatever the new version needs in smock. Before that branch merges into
 `main`, it needs:
 
-- **h2spec** against both traffic ports, with every case passing. CI
-  runs it against both
+- **h2spec** against both traffic ports, with every case passing but
+  those its lists give a reason for, and none of them waiting for an
+  issue. CI runs it against both
   ([Build and test](../README.md#build-and-test)).
 - **The e2e tests**, which CI runs. They check the limits and rules that
   moonhttp enforces as well as smock's own, so an upgrade that drops one
   fails them.
-- **The interop check by hand**: curl over h2c and over TLS, a Go client,
-  JVM clients and a browser over TLS, each with its version, recorded in
-  the merge record.
+- **The interop check by hand**, against a release build of the branch:
+  - curl, with h2c by prior knowledge and over TLS;
+  - Go, with h2c by prior knowledge and with its default transport over
+    TLS;
+  - the JVM, with OkHttp's h2c by prior knowledge, and Java's built-in
+    client over TLS and on the plain port, where it gets HTTP/1.1;
+  - a browser over TLS, with a certificate it trusts.
+
+  Each gets the Stub's response, over the protocol that the HTTP/2
+  guide's [Clients](http2.md#clients) table gives, and each Journal
+  entry's `version` says the same. The results, with each client's
+  version, go in the merge record.
 - **The pre-merge local and GKE benchmark runs**, compared with the
   previous runs, as [Before merging into main](merging-into-main.md) says
   for every integration branch.
