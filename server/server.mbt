@@ -183,8 +183,13 @@ async fn sleep_forever() -> Unit {
 /// once. The responses in progress go on, and end with
 /// `Connection: close`; Server-Sent Event streams and delays go on too. When
 /// none is left, or when the drain timeout expires and cuts those still
-/// open, the drain ends. The admin port serves throughout, so the probes can
-/// be read during the drain.
+/// open and they have ended, the drain ends. The admin port serves
+/// throughout, so the probes can be read during the drain.
+///
+/// In the mockoon log format, the `Server started on port …` line of each
+/// Mock comes right after the TLS port's `listening` line, and the
+/// `Server stopped` line of each Mock served then right after `drain ended`.
+/// A reload writes neither.
 async fn run(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
