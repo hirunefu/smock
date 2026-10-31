@@ -321,7 +321,7 @@ async test "h2c: a Stub's delay longer than the write timeout does not count tow
             #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
             #|SETTINGS ACK
             #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 150000]
-            #|DATA 1: 4 frames, 65535 octets
+            #|DATA 1: 5 frames, 65535 octets
             #|--- the connection window widened by 100000, 300 ms later
             #|DATA 1 END_STREAM: 6 frames, 84465 octets
             #|---
