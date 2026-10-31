@@ -53,7 +53,10 @@ pre-merge run compares with them.
   CPU architecture: `bench/targets.json` has a set for arm64 and one for
   amd64, a run checks the set of the architecture it ran on (arm64 on the
   M1), and the line above the table says which. A missed target is a
-  finding to resolve or to record before the merge.
+  finding to resolve or to record before the merge. The targets of
+  `http-keep-alive` hold for the two HTTP/2 cases too, so a miss on one of
+  them is such a finding as well
+  ([Targets for several cases](../bench/README.md#targets-for-several-cases)).
 - [ ] **Compare it with the previous pre-merge local run**, from the same
   machine:
 

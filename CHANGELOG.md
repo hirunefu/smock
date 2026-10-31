@@ -133,7 +133,11 @@ of each GitHub release include its section
   port, which are `http-keep-alive` over HTTP/2, sent by oha with
   `--http2`, locally and on GKE. They make each run of the plan about 22
   minutes longer, so `scripts/gke-bench.sh`'s default time limit is now 100
-  minutes. See [HTTP/2 cases](bench/README.md#http2-cases).
+  minutes. Both are held to `http-keep-alive`'s targets, h2 over TLS
+  included: an entry of `bench/targets.json` may name several cases
+  (`cases`), and a load target's id now names its case, such as
+  `chart-default/h2-keep-alive/p99`. See
+  [HTTP/2 cases](bench/README.md#http2-cases).
 
 ### Changed
 
