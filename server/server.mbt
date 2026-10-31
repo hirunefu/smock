@@ -13,10 +13,15 @@
 /// the default TLS certificate or a Mock's own cannot be loaded, the
 /// self-signed certificate cannot be generated, or a port cannot be listened
 /// on. Every problem is logged first.
+///
+/// In the mockoon log format, `logger` writes through `stdout`, as the
+/// Mockoon-equivalent lines do, and every line is out when `serve` returns.
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
+  stdout~ : StdoutLines,
 ) -> Int32 {
+  defer stdout.flush()
   // When the process started, as process_start_time_seconds gives it.
   let started_at = @async.now()
   // Only SIGTERM cancels the program, which starts the drain below. SIGINT
@@ -134,6 +139,7 @@ pub async fn serve(
           run(
             settings,
             logger,
+            stdout,
             lifecycle,
             admin,
             admin_listener,
@@ -182,6 +188,7 @@ async fn sleep_forever() -> Unit {
 async fn run(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
+  stdout : StdoutLines,
   lifecycle : Lifecycle,
   admin : Admin,
   admin_listener : @socket.TcpServer,
@@ -197,6 +204,11 @@ async fn run(
 ) -> Int32 {
   let connections = Connections::new()
   @async.with_task_group(group => {
+    // In the mockoon log format, the lines the logger queues are written
+    // as they come, until the end. `serve` writes the last ones.
+    if settings.log_format is Mockoon {
+      group.spawn_bg(no_wait=true, () => stdout.run())
+    }
     // The admin port serves until the end, and neither it nor its
     // connections keep smock from stopping.
     group.spawn_bg(no_wait=true, () => {
@@ -245,7 +257,7 @@ async fn run(
     // The Mockoon-equivalent lines exist only in the mockoon log format.
     let mockoon = match settings.log_format {
       Json => None
-      Mockoon => Some(MockoonLines::new(engine))
+      Mockoon => Some(MockoonLines::new(engine, stdout))
     }
     let ports : MockPorts = {
       engine,
