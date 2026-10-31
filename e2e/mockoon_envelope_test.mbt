@@ -254,3 +254,96 @@ async test "every line of a run with a reload, a failed reload, an Admin API cha
     )
   })
 }
+
+///|
+async test "in the mockoon format, invalid definitions, a port taken, no Admin API token and a certificate that cannot be loaded reach stdout before exit status 1, with stderr empty" {
+  let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+  let fatal = [
+    "invalid definitions", "cannot listen", "no Admin API token", "cannot load the TLS certificate",
+  ]
+  let out = []
+  let report = (
+    name : String,
+    stopped : Stopped,
+    replace : Array[(String, String)],
+  ) => {
+    out.push(
+      "\{name}: status \{stopped.status}, \{stopped.stdout.length()} lines on stdout, \{stopped.logs.length()} on stderr",
+    )
+    for line in with_messages(stopped.stdout, fatal) {
+      out.push(masked_line(line, replace~))
+    }
+  }
+  let broken =
+    #|{ "stubs": [{ "id": "", "mock": "default",
+    #|  "request": { "method": "GET", "path": "/" },
+    #|  "response": { "status": 200 } }] }
+  with_definitions([("broken.json", broken)], dir => {
+    report(
+      "invalid definitions",
+      run_smock(["serve", "--dir", dir, "--port", "0"], env~),
+      [],
+    )
+  })
+  let _ = with_smock(["--port", "0"], first => {
+    let port = first.port.to_string()
+    report("a port taken", run_smock(["serve", "--port", port], env~), [
+      (":\{port}\"", ":<taken port>\""),
+    ])
+  })
+  report(
+    "no Admin API token",
+    run_smock(["serve", "--port", "0"], env={
+      "SMOCK_LOG_FORMAT": "mockoon",
+      "SMOCK_ADMIN_TOKEN": "",
+    }),
+    [],
+  )
+  with_certificates(certs => {
+    let missing = "\{certs.dir}/missing.pem"
+    report(
+      "a certificate that cannot be loaded",
+      run_smock(["serve", "--port", "0", ..certs.args(cert=missing)], env~),
+      [(certs.dir, "<certs>")],
+    )
+  })
+  inspect(
+    out.join("\n"),
+    content=(
+      #|invalid definitions: status 1, 7 lines on stdout, 0 on stderr
+      #|{"app":"smock","error":"must be a non-empty string","file":"broken.json","level":"error","message":"invalid definitions","pointer":"/stubs/0/id","timestamp":"<timestamp>"}
+      #|{"app":"smock","error":"no file declares the Mock \"default\"","file":"broken.json","level":"error","message":"invalid definitions","pointer":"/stubs/0/mock","timestamp":"<timestamp>"}
+      #|a port taken: status 1, 7 lines on stdout, 0 on stderr
+      #|{"address":"0.0.0.0:<taken port>","app":"smock","error":"OSError(\"@socket.TcpServer::new(): Address already in use\")","level":"error","listener":"plain","message":"cannot listen","timestamp":"<timestamp>"}
+      #|no Admin API token: status 1, 2 lines on stdout, 0 on stderr
+      #|{"app":"smock","error":"Admin API authentication is on, but no token is set: set --admin-token-file (SMOCK_ADMIN_TOKEN_FILE) or SMOCK_ADMIN_TOKEN, or turn authentication off with --admin-auth off","level":"error","message":"no Admin API token","timestamp":"<timestamp>"}
+      #|a certificate that cannot be loaded: status 1, 6 lines on stdout, 0 on stderr
+      #|{"app":"smock","certFile":"<certs>/missing.pem","error":"cannot read the certificate file: no such file","keyFile":"<certs>/rsa-key.pem","level":"error","message":"cannot load the TLS certificate","mock":"","timestamp":"<timestamp>"}
+    ),
+  )
+}
+
+///|
+async test "in the mockoon format, a usage error is still plain text on stderr, with status 2 and nothing on stdout" {
+  let out = []
+  for
+    run in [
+      (["serve", "--port", "x"], { "SMOCK_LOG_FORMAT": "mockoon" }),
+      (["serve", "--log-format", "mockoon", "--journal", "x"], Map([])),
+    ] {
+    let (args, env) = run
+    let stopped = run_smock(args, env~)
+    out.push(
+      "status \{stopped.status}, \{stopped.stdout.length()} lines on stdout\n\{stopped.logs.join("\n")}",
+    )
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|status 2, 0 lines on stdout
+      #|smock serve: invalid value "x" for --port (SMOCK_PORT): must be an integer from 0 to 65535
+      #|status 2, 0 lines on stdout
+      #|smock serve: invalid value "x" for --journal (SMOCK_JOURNAL): must be on or off
+    ),
+  )
+}
