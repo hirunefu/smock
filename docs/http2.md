@@ -233,8 +233,10 @@ and has no way to send the preface by prior knowledge:
 
 ```java
 HttpClient client = HttpClient.newHttpClient();
-HttpRequest request = HttpRequest.newBuilder(URI.create("https://localhost:8443/users/1")).build();
-HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+HttpRequest request =
+    HttpRequest.newBuilder(URI.create("https://localhost:8443/users/1")).build();
+HttpResponse<String> response =
+    client.send(request, HttpResponse.BodyHandlers.ofString());
 ```
 
 To trust smock's self-signed certificate, add it to a trust store with
@@ -242,8 +244,9 @@ To trust smock's self-signed certificate, add it to a trust store with
 `-Djavax.net.ssl.trustStore`, or build the client with an `SSLContext`
 that trusts it.
 
-OkHttp sends the preface by prior knowledge when `Protocol.H2_PRIOR_KNOWLEDGE`
-is its only protocol, so such a client speaks h2c to the plain port:
+OkHttp sends the preface by prior knowledge when
+`Protocol.H2_PRIOR_KNOWLEDGE` is its only protocol, so such a client speaks
+h2c to the plain port:
 
 ```java
 OkHttpClient client = new OkHttpClient.Builder()
