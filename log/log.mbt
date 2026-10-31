@@ -4,34 +4,55 @@
 /// `{"time":"2026-10-12T14:30:05.123Z","level":"info","msg":"listening","port":8080}`.
 ///
 /// Each entry has the time (RFC 3339, UTC, milliseconds), the level (`info`,
-/// `warn` or `error`), the message, and then its structured fields.
+/// `warn` or `error`), the message, and then its structured fields, in the
+/// shape its `Format` gives.
 ///
 /// The logger does no I/O itself: it hands each line to `write_line` and asks
 /// `now` for the time, so the caller decides where lines go and which clock
 /// they carry.
 pub struct Logger {
+  priv format : Format
   priv write_line : (String) -> Unit
   priv now : () -> Int64
 }
 
 ///|
+/// The shape of a logger's entries.
+pub(all) enum Format {
+  /// smock's own shape: `time`, `level` and `msg` first, then the fields in
+  /// the order given, such as
+  /// `{"time":"2026-10-12T14:30:05.123Z","level":"info","msg":"listening","port":8080}`.
+  Json
+  /// The Mockoon CLI's envelope: `app` (`"smock"`), `level`, `message` and
+  /// `timestamp`, with the fields beside them, and the keys sorted at every
+  /// depth in UTF-16 code-unit order, as Mockoon's logger sorts them, such as
+  /// `{"app":"smock","level":"info","message":"listening","port":8080,"timestamp":"2026-10-12T14:30:05.123Z"}`.
+  Mockoon
+}
+
+///|
 /// Creates a logger.
 ///
+/// - `format` is the shape of its entries, `Json` by default.
 /// - `write_line` receives each entry as one line of JSON, without the
 ///   trailing newline.
 /// - `now` returns the current time in milliseconds since the Unix epoch.
 pub fn Logger::Logger(
+  format~ : Format = Json,
   write_line~ : (String) -> Unit,
   now~ : () -> Int64,
 ) -> Logger {
-  { write_line, now, }
+  { format, write_line, now, }
 }
 
 ///|
 /// Writes an entry at level `info`. `fields` follow the message as
-/// top-level keys of the entry, in the order given. A field named `time`,
-/// `level` or `msg` is written as `fields.time`, `fields.level` or
-/// `fields.msg`, so it never replaces the entry's own.
+/// top-level keys of the entry, in the order given, or sorted with the
+/// envelope's keys in the `Mockoon` format. A field named like one of the
+/// entry's own keys, `time`, `level` or `msg` in the `Json` format, `app`,
+/// `level`, `message` or `timestamp` in the `Mockoon` format, is written as
+/// `fields.<name>`, such as `fields.level`, so it never replaces the
+/// entry's own.
 pub fn Logger::info(
   self : Logger,
   msg : String,
@@ -67,6 +88,10 @@ fn Logger::write(
   msg : String,
   fields : Map[String, Json],
 ) -> Unit {
+  if self.format is Mockoon {
+    (self.write_line)(mockoon_entry(level, msg, fields, (self.now)()))
+    return
+  }
   let entry : Map[String, Json] = {
     "time": Json::string(format_time((self.now)())),
     "level": Json::string(level),

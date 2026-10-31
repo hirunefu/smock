@@ -165,8 +165,12 @@ of each GitHub release include its section
   replaces the 500. Each line is written whole and at once, also to a
   pipe, and a line that cannot be written is dropped. Requests the
   HTTP/1.1 codec rejects, Admin API calls, probes and scrapes get no line.
-  `json` stays the default, on stderr, and costs nothing more per request.
-  See [Run](README.md#run).
+  Every other line smock writes goes to stdout too, in the same envelope:
+  `app`, `level`, `message` and `timestamp`, with the line's own fields
+  beside them, keys sorted at every depth. Those lines keep their messages
+  and fields, fatal startup errors included, and stderr carries only usage
+  errors. `json` stays the default, on stderr, and costs nothing more per
+  request. See [Run](README.md#run).
 
 ### Changed
 

@@ -3,44 +3,6 @@
 // handles, built by the log package from a prefix cached for each Mock.
 
 ///|
-/// Writes whole lines to stdout: each line and its newline by one write,
-/// which goes on until the whole line is out, before the call returns. No
-/// line waits in a buffer, as `println`'s would on a pipe.
-///
-/// The async library writes to stdout from its thread pool, one write at a
-/// time, so the lines of tasks that write at once take turns and never mix.
-/// A line that cannot be written, as when stdout is closed, is dropped: the
-/// library's event loop ignores SIGPIPE, so the write fails with EPIPE
-/// rather than ending smock.
-priv struct StdoutLines {
-  /// Held while a line is written.
-  turn : @async.Mutex
-}
-
-///|
-fn StdoutLines::new() -> StdoutLines {
-  { turn: @async.Mutex(), }
-}
-
-///|
-/// Writes `line` and a newline to stdout, or drops it when it cannot be
-/// written. A line, once begun, is written whole even when the task is
-/// cancelled meanwhile, as when the drain cuts its connection.
-async fn StdoutLines::write(self : StdoutLines, line : String) -> Unit {
-  let bytes = @buffer.Buffer(size_hint=line.length() + 1)
-  bytes.write_string_utf8(line)
-  bytes.write_byte(b'\n')
-  let data = bytes.to_bytes()
-  @async.protect_from_cancel(() => {
-    self.turn.acquire()
-    defer self.turn.release()
-    @stdio.stdout.write(data) catch {
-      _ => ()
-    }
-  })
-}
-
-///|
 /// The Mockoon-equivalent lines: where they go, and the start of each
 /// Mock's lines. smock holds one only in the mockoon log format.
 priv struct MockoonLines {
@@ -53,13 +15,12 @@ priv struct MockoonLines {
 }
 
 ///|
-/// The lines of the definition set `engine` serves.
-fn MockoonLines::new(engine : @engine.Engine) -> MockoonLines {
-  let lines = {
-    out: StdoutLines::new(),
-    prefixes: Map([]),
-    no_mock: @log.mockoon_prefix(None),
-  }
+/// The lines of the definition set `engine` serves, written through `out`.
+fn MockoonLines::new(
+  engine : @engine.Engine,
+  out : StdoutLines,
+) -> MockoonLines {
+  let lines = { out, prefixes: Map([]), no_mock: @log.mockoon_prefix(None), }
   lines.rebuild(engine)
   lines
 }

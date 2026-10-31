@@ -89,7 +89,7 @@ async test "with SMOCK_LOG_FORMAT=mockoon, each request a Mock handles writes on
           statuses.push(status_line(smock.exchange(over, raw)))
         }
         // Read while smock runs: a line held in a buffer would not come.
-        let lines = smock.stdout_lines(requests.length())
+        let lines = smock.transaction_lines(requests.length())
         let on_stderr = smock.logs
           .iter()
           .any(line => line.contains("Transaction recorded"))
@@ -134,7 +134,7 @@ async test "--log-format mockoon wins over SMOCK_LOG_FORMAT, and a request the D
             ),
           ),
         )
-        out.push(masked_lines(smock.stdout_lines(1)))
+        out.push(masked_lines(smock.transaction_lines(1)))
       },
     )
     let flag_off = with_smock(
@@ -151,7 +151,9 @@ async test "--log-format mockoon wins over SMOCK_LOG_FORMAT, and a request the D
         )
       },
     )
-    out.push("stdout with the flag: \{flag_on.stdout.length()} line")
+    out.push(
+      "Transaction recorded lines with the flag: \{transactions(flag_on.stdout).length()}",
+    )
     out.push("stdout with --log-format json: \{flag_off.stdout.length()} lines")
     inspect(
       out.join("\n"),
@@ -159,7 +161,7 @@ async test "--log-format mockoon wins over SMOCK_LOG_FORMAT, and a request the D
         #|HTTP/1.1 404 Not Found
         #|{"app":"smock","environmentName":"users","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/orders/1","requestProxied":false,"responseStatus":404,"timestamp":"<timestamp>"}
         #|HTTP/1.1 404 Not Found
-        #|stdout with the flag: 1 line
+        #|Transaction recorded lines with the flag: 1
         #|stdout with --log-format json: 0 lines
       ),
     )
@@ -188,7 +190,7 @@ async test "a Mock that a reload adds is named on the line of the next request i
         "POST /charges HTTP/1.1\r\nHost: payments.example.com\r\nContent-Length: 0\r\n\r\n",
       )
       inspect(
-        "\{last_reload(status)}\n\{status_line(response)}\n\{masked_lines(smock.stdout_lines(1))}",
+        "\{last_reload(status)}\n\{status_line(response)}\n\{masked_lines(smock.transaction_lines(1))}",
         content=(
           #|"swapped"
           #|HTTP/1.1 201 Created
@@ -266,7 +268,7 @@ async test "a request the codec rejects, an Admin API call, a probe and a scrape
             ),
           ),
         )
-        out.push(masked_lines(smock.stdout_lines(1)))
+        out.push(masked_lines(smock.transaction_lines(1)))
         inspect(
           out.join("\n"),
           content=(
@@ -284,7 +286,7 @@ async test "a request the codec rejects, an Admin API call, a probe and a scrape
           ),
         )
       })
-      inspect(stopped.stdout.length(), content="1")
+      inspect(transactions(stopped.stdout).length(), content="1")
     })
   })
 }
