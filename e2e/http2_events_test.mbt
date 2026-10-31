@@ -366,6 +366,8 @@ async test "h2c: an event larger than the client's frame size goes out in severa
       let raw = smock.raw_h2()
       defer raw.close()
       raw.send([raw.get(1, "/big")])
+      // Each DATA frame of the stream's task is as large as the output bound
+      // allows: 16,384 octets with its header of 9.
       let out = [raw.frames_until_end_of(1)]
       // A stream window of 10,000 octets holds half the first event.
       out.push("--- an initial window of 10000")
@@ -392,8 +394,8 @@ async test "h2c: an event larger than the client's frame size goes out in severa
           #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 200, content-type: text/event-stream, date: <now>]
-          #|DATA 1 16384 octets
-          #|DATA 1 3624 octets
+          #|DATA 1 16375 octets
+          #|DATA 1 3633 octets
           #|DATA 1 END_STREAM 13 octets
           #|--- an initial window of 10000
           #|SETTINGS ACK

@@ -219,6 +219,22 @@ async fn[S : @io.Writer + ReadOutput] H2Writer::hold(
 }
 
 ///|
+/// How many octets of DATA a stream's task may queue now, in one DATA
+/// frame: what the output bound leaves, once what the `Conn` has queued is
+/// taken, less the frame's header; 0 when it leaves none. A task queues no
+/// more than this, so that its output alone never passes the bound, and
+/// the reader goes on reading while it is written.
+fn H2Writer::frame_room(self : H2Writer) -> Int32 {
+  self.take()
+  let room = output_bound - 9 - self.unwritten()
+  if room > 0 {
+    room.to_int()
+  } else {
+    0
+  }
+}
+
+///|
 /// The writer has taken `queued` to write, whole frames as the `Conn`
 /// queues them: `responded` becomes true if they hold a HEADERS or DATA
 /// frame. It reads only the frames' headers, and none once `responded` is

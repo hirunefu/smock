@@ -516,10 +516,31 @@ async test "h2c: a stream reset while its body waits for window ends its slow wr
 }
 
 ///|
-async test "h2c: a stream reset while its task writes part of its body to a client that does not read leaves every frame whole: the write goes out in full, then the next stream's response, and the task ends with its entry committed" {
+/// `line`, a line of `RawH2::runs_until` that shows a run of DATA frames on
+/// stream 1 without its end, shown as part of the `granted` octets when it
+/// carries more than none and fewer than all of them, since how many it
+/// carries depends on the socket's buffers; any other line as it is.
+fn granted_part(line : String, granted : Int32) -> String {
+  guard line.strip_prefix("DATA 1: ") is Some(run) &&
+    run.split(", ").collect() is [_, octets] &&
+    octets.strip_suffix(" octets") is Some(octets) else {
+    return line
+  }
+  let octets = @string.parse_int(octets) catch { _ => return line }
+  if octets > 0 && octets < granted {
+    "DATA 1: whole frames, some of the \{granted} octets granted"
+  } else {
+    line
+  }
+}
+
+///|
+async test "h2c: a stream reset while its task writes part of its body to a client that does not read leaves every frame whole: what it was writing goes out in full, then the next stream's response, no more of its body, and the task ends with its entry committed" {
   // A body of 9,000,000 octets, of which the client grants about 8,000,000
   // at once: more than the socket takes while the client does not read, so
-  // the stream's task is still writing when the reset comes.
+  // the stream's task is still writing when the reset comes. It sends at
+  // most 16 KiB at a time, each once the last is written, so how much of
+  // the body goes out before the reset depends on the socket's buffers.
   let definitions = [
     (
       "m.json",
@@ -559,9 +580,15 @@ async test "h2c: a stream reset while its task writes part of its body to a clie
       out.push(
         "--- the connection window widened by 8000000, then stream 1 reset and stream 3 sent",
       )
-      out.push(raw.runs_until(frame => ends_stream(frame, 3)))
+      for line in raw.runs_until(frame => ends_stream(frame, 3)).split("\n") {
+        out.push(granted_part(line.to_owned(), 7_934_465))
+      }
       // Stream 1's task ended once its write was done, and committed its
-      // entry then.
+      // entry then; nothing more of its body was sent.
+      out.push("--- nothing more on stream 1")
+      raw.send([fence])
+      let more = raw.frames_until_ping_ack()
+      out.push(if more == "" { "(no frame)" } else { more })
       out.push("---")
       out.append(smock.journal_once(2, within=1000))
       inspect(
@@ -572,9 +599,11 @@ async test "h2c: a stream reset while its task writes part of its body to a clie
           #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 9000000]
           #|DATA 1: 4 frames, 65535 octets
           #|--- the connection window widened by 8000000, then stream 1 reset and stream 3 sent
-          #|DATA 1: 485 frames, 7934465 octets
+          #|DATA 1: whole frames, some of the 7934465 octets granted
           #|HEADERS 3 END_HEADERS [:status: 200, date: <now>, content-length: 5]
           #|DATA 3 END_STREAM: 1 frames, 5 octets
+          #|--- nothing more on stream 1
+          #|(no frame)
           #|---
           #|/item: stub "item", status 200
           #|/huge: stub "huge", status 200

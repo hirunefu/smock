@@ -198,3 +198,53 @@ async test "h2c: a client that opens wide windows, sends many HEAD and GET reque
     inspect(log_entries(stopped.logs), content=startup_only_h2c)
   })
 }
+
+///|
+async test "h2c: delayed responses to a client that opens wide windows and never reads go out at most 16 KiB of DATA at a time: smock's RSS stays within 32 MiB until the write timeout closes the connection" {
+  with_definitions(output_definitions(), dir => {
+    let stopped = with_smock(
+      ["--dir", dir, "--port", "0", "--write-timeout-ms", "1000"],
+      smock => {
+        let raw = smock.raw_h2(settings=false)
+        defer raw.close()
+        raw.send(wide_open)
+        // As many delayed streams as one connection may have at once, each
+        // for 512 KiB, whose delays end together; then a WINDOW_UPDATE of one
+        // octet on the connection every 50 ms, which asks smock for nothing.
+        let unread = smock.never_read(
+          raw,
+          i => {
+            if i > 0 {
+              return [WindowUpdate(stream_id=0, increment=1)]
+            }
+            let frames = []
+            for j in 0..<100 {
+              frames.push(raw.ask(2 * j + 1, "GET", "/late"))
+            }
+            frames
+          },
+          pause_ms=50,
+        )
+        let client = smock.h2c()
+        defer client.close()
+        let after = client.request("GET", "/small", authority="localhost")
+        inspect(
+          [
+            "requests that reached the Mocks: \{unread.reached} of \{unread.sent}",
+            "peak RSS within 32 MiB: \{unread.peak <= peak_target}",
+            "closed after at least 1000 ms: \{unread.closed_ms >= 1000}, within 5000 ms: \{unread.closed_ms < 5000}",
+            "a new connection: \{after.brief()}",
+          ].join("\n"),
+          content=(
+            #|requests that reached the Mocks: 100 of 100
+            #|peak RSS within 32 MiB: true
+            #|closed after at least 1000 ms: true, within 5000 ms: true
+            #|a new connection: 200 hello (end)
+          ),
+        )
+      },
+    )
+    // Timeouts are not logged.
+    inspect(log_entries(stopped.logs), content=startup_only_h2c)
+  })
+}

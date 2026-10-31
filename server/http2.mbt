@@ -211,8 +211,8 @@ priv struct H2Connection {
   /// in the order they began to wait, which a `Map` keeps.
   blocked : Map[Int32, WindowWait]
   /// The octets of the connection window that the slow writes woken from
-  /// `blocked`, whose tasks have not run yet, are to send, so that no other
-  /// stream takes them meanwhile.
+  /// `blocked` are still to send: set aside when each is woken, until its
+  /// task has sent them, so that no other stream takes them meanwhile.
   mut claimed : Int32
   /// While a slow write waits for the client to widen the connection
   /// window, when the write timeout closes the connection; `forever` while
@@ -537,6 +537,30 @@ fn H2Connection::stop_waiting(self : H2Connection, stream : Int32) -> Unit {
 }
 
 ///|
+/// For the task of `stream`, before it queues more of its response: has
+/// what was queued before written, and waits until it is, writing it itself
+/// unless another task is writing. So a stream's task queues no more DATA
+/// until what it queued is written, and never adds to output that has not
+/// gone out. Returns false once the stream no longer waits, reset while the
+/// task waited or wrote: the task then ends, and writes nothing more.
+async fn[S : @io.Writer + ReadOutput] H2Connection::drained(
+  self : H2Connection,
+  stream : Int32,
+  out : WatchedStream[S],
+) -> Bool {
+  self.writer.take()
+  while self.writer.unwritten() > 0 {
+    if self.writer.busy {
+      self.writer.done.wait()
+    } else {
+      let _ = self.writer.write_for(out, stream)
+    }
+    guard self.waiting.contains(stream) else { return false }
+  }
+  true
+}
+
+///|
 /// A stream is no longer in progress. Once none is, the idle timeout runs
 /// again, from when what was queued is written.
 fn H2Connection::end_stream(self : H2Connection) -> Unit {
@@ -857,37 +881,46 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
       ports.done(outcome, stopwatch)
     }
     @async.sleep(outcome.plan.delay_ms)
-    // From here on the response ends the stream, and commits the entry.
-    entry = None
-    let now = @async.now()
-    if outcome.plan.fault is None && outcome.plan.body is Events(events) {
-      let more = self.open_events(
-        stream,
-        outcome.plan,
-        outcome.journal,
-        events.length(),
-        head~,
-        connect~,
-        now~,
-      )
-      if more {
-        self.send_events(stream, events, outcome.journal, out)
-      }
-    } else {
-      let rest = self.queue(
-        stream,
-        outcome.plan,
-        outcome.journal,
-        head~,
-        connect~,
-        now~,
-      )
-      if rest.length() > 0 {
-        let _ = self.trickle(stream, rest, outcome.journal, out)
+    // What was queued before goes out first, so that the response keeps
+    // within the output bound.
+    let mut finished = self.drained(stream, out)
+    if finished {
+      // From here on the response ends the stream, and commits the entry.
+      entry = None
+      let now = @async.now()
+      if outcome.plan.fault is None && outcome.plan.body is Events(events) {
+        let more = self.open_events(
+          stream,
+          outcome.plan,
+          outcome.journal,
+          events.length(),
+          head~,
+          connect~,
+          now~,
+        )
+        if more {
+          finished = self.send_events(stream, events, outcome.journal, out)
+        }
+      } else {
+        let rest = self.queue(
+          stream,
+          outcome.plan,
+          outcome.journal,
+          head~,
+          connect~,
+          now~,
+          bounded=true,
+        )
+        if rest.length() > 0 {
+          finished = self.trickle(stream, rest, outcome.journal, out)
+        }
       }
     }
     self.waiting.remove(stream)
-    let _ = self.writer.write(out)
+    // A reset that came first leaves nothing of the task's to write.
+    if finished {
+      let _ = self.writer.write(out)
+    }
     self.answered()
   })
   self.waiting[stream] = task
@@ -935,7 +968,9 @@ async fn H2Connection::answered(self : H2Connection) -> Unit {
 ///
 /// It runs while the event is handled, when the stream has no task, or in
 /// the stream's own task, which goes on once it returns: so a reset here
-/// leaves the task be.
+/// leaves the task be. In the task, `bounded` is true: the body queued now
+/// is also no more than the output bound leaves for one DATA frame
+/// (`H2Writer::frame_room`), and the task sends the rest as it is written.
 fn H2Connection::queue(
   self : H2Connection,
   stream : Int32,
@@ -944,6 +979,7 @@ fn H2Connection::queue(
   head~ : Bool,
   connect~ : Bool,
   now~ : Int64,
+  bounded~ : Bool = false,
 ) -> BytesView {
   let ports = self.ports
   guard plan.fault is None && plan.body is Bytes(body) else {
@@ -981,7 +1017,13 @@ fn H2Connection::queue(
       return sent[0:0]
     }
   }
-  let room = self.room(stream)
+  let mut room = self.room(stream)
+  if bounded {
+    let bound = self.writer.frame_room()
+    if bound < room {
+      room = bound
+    }
+  }
   if sent.length() > room {
     if room > 0 {
       self.conn.data(stream, sent[0:room]) catch {
