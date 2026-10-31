@@ -1153,11 +1153,11 @@ data: line 2
   [write timeout](../README.md#run): when the write of an event makes no
   progress for `--write-timeout-ms`, smock closes the connection.
 - Over HTTP/2, each event stream is an HTTP/2 stream of its own, so one
-  connection can carry several at once, and its other streams are answered
-  meanwhile. The HEADERS carry `content-type: text/event-stream` and no
-  `content-length`. Each event goes out as DATA, split where the client's
-  frame size or flow-control windows require, and the DATA of the last
-  event ends the HTTP/2 stream. A response with no body is its HEADERS
+  connection can carry several at once, and its other HTTP/2 streams are
+  answered meanwhile. The HEADERS carry `content-type: text/event-stream`
+  and no `content-length`. Each event goes out as DATA, split where the
+  client's frame size or flow-control windows require, and the DATA of the
+  last event ends the HTTP/2 stream. A response with no body is its HEADERS
   alone. A client that resets the HTTP/2 stream ends the event stream at
   once, without waiting for the next event, and its request is in the
   Journal, as one whose client disconnects is
@@ -3350,7 +3350,7 @@ of getting its response:
   closes the connection. The client sees a response cut short. For a 206
   to a [Range request](#range-requests), the body is the range. For
   Server-Sent Events, the first half is the first half of the events,
-  rounded down, each after its delay, and the stream is not ended.
+  rounded down, each after its delay, and the event stream is not ended.
   - A response with no body bytes to halve, such as an empty body or a
     response to `HEAD`, would be whole that way. smock leaves out the empty
     line that ends its headers instead, so the client still sees it cut

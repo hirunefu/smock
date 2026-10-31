@@ -1,8 +1,8 @@
 # smock Helm chart
 
 Installs [smock](https://github.com/hirunefu/smock), a mock server for
-HTTP/1.1, HTTPS and Server-Sent Events, as a Deployment with a traffic
-Service and an admin Service. Its Definition files come from a ConfigMap by
+HTTP/1.1, HTTP/2, HTTPS and Server-Sent Events, as a Deployment with a
+traffic Service and an admin Service. Its Definition files come from a ConfigMap by
 default, or from a Git repository through a git-sync sidecar, or from an OCI
 image mounted as a volume. The Pods meet the Restricted Pod Security
 Standard in every delivery mode.
@@ -216,7 +216,9 @@ helm install smock oci://ghcr.io/hirunefu/charts/smock --version <version> \
 ```
 
 For the TLS port, use the value your gateway documents. The admin Service,
-the container ports and the probes stay as they are.
+the container ports and the probes stay as they are. smock's
+[HTTP/2 guide](https://github.com/hirunefu/smock/blob/main/docs/http2.md#kubernetes-and-load-balancers)
+says how a load balancer that ends TLS speaks h2c to the plain port.
 
 ## Security
 
