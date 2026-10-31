@@ -180,11 +180,11 @@ fn exact_block(size : Int32) -> Bytes {
 async test "h2c: a header block that passes moonhttp's bound as received, twice --header-size-limit, with large CONTINUATION frames gets GOAWAY ENHANCE_YOUR_CALM and one log line naming a CONTINUATION flood, while a block at the bound is taken, padding and priority aside; a fresh connection is served" {
   with_definitions([("faults.json", faults)], dir => {
     let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let block = exact_block(32768)
       inspect(
         smock.flood(
-          "a block of 32768 octets on stream 1, in a padded HEADERS frame with a priority and 7 CONTINUATION frames, then a GET on stream 3",
+          "a block of \{block.length()} octets on stream 1, in a padded HEADERS frame with a priority and 7 CONTINUATION frames, then a GET on stream 3",
           setup=raw => {
-            let block = exact_block(32768)
             [
               Headers(
                 stream_id=1,
