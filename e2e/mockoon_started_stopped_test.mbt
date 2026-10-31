@@ -103,3 +103,82 @@ async test "with no definitions directory, the lines name the empty Default Mock
     ),
   )
 }
+
+///|
+async test "a reload that adds a Mock, one that changes nothing and one that fails write no started or stopped line, and SIGTERM writes three Server stopped lines right after drain ended" {
+  with_definitions(mockoon_mocks(), dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let payments =
+      #|{ "mocks": [{ "name": "payments", "hosts": ["payments.example.com"] }],
+      #|  "stubs": [{ "id": "charge", "mock": "payments",
+      #|    "request": { "method": "POST", "path": "/charges" },
+      #|    "response": { "status": 201 } }] }
+    let out = []
+    let mut replace = []
+    let stopped = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      replace = port_placeholders(smock)
+      let _ = smock.started_lines(2)
+      let mut status = smock.status()
+      let steps = [
+        ("add a Mock", "payments.json", payments),
+        ("write a Definition file again", "users.json", mockoon_mocks()[0].1),
+        ("break a Definition file", "payments.json", "{"),
+      ]
+      for step in steps {
+        let (name, file, text) = step
+        write(dir, file, text)
+        status = smock.reloaded(status)
+        out.push("\{name}: \{last_reload(status)}")
+      }
+      let mocks = match status.get("mocks") {
+        Some(Array(mocks)) =>
+          mocks.map(mock => {
+            match mock {
+              Object({ "name": String(name), .. }) => name
+              _ => "?"
+            }
+          })
+        _ => []
+      }
+      out.push("the Admin API's status lists: \{mocks.join(", ")}")
+    })
+    // Every line from the first started line on: smock's own lines by
+    // their message, the started and stopped lines whole.
+    guard stopped.stdout.search_by(is_server_line) is Some(first) else {
+      fail("no Server started line:\n\{stopped.stdout.join("\n")}")
+    }
+    for line in stopped.stdout[first:] {
+      if is_server_line(line) {
+        out.push(masked_line(line, replace~))
+      } else {
+        match @json.parse(line) {
+          Object({ "message": String(message), .. }) => out.push(message)
+          _ => out.push(line)
+        }
+      }
+    }
+    out.push("exit status \{stopped.status}")
+    inspect(
+      out.join("\n"),
+      content=(
+        #|add a Mock: "swapped"
+        #|write a Definition file again: "unchanged"
+        #|break a Definition file: "failed"
+        #|  {"file":"payments.json","pointer":"","message":"not valid JSON: Unexpected end of file"}
+        #|the Admin API's status lists: payments, users, orders
+        #|{"app":"smock","environmentName":"users","level":"info","message":"Server started on port <plain port>","timestamp":"<timestamp>"}
+        #|{"app":"smock","environmentName":"orders","level":"info","message":"Server started on port <plain port>","timestamp":"<timestamp>"}
+        #|definitions reloaded
+        #|self-signed certificate in use
+        #|definitions reloaded
+        #|definitions reload failed
+        #|drain started
+        #|drain ended
+        #|{"app":"smock","environmentName":"payments","level":"info","message":"Server stopped","timestamp":"<timestamp>"}
+        #|{"app":"smock","environmentName":"users","level":"info","message":"Server stopped","timestamp":"<timestamp>"}
+        #|{"app":"smock","environmentName":"orders","level":"info","message":"Server stopped","timestamp":"<timestamp>"}
+        #|exit status 0
+      ),
+    )
+  })
+}
