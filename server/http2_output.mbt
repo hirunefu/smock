@@ -1,8 +1,10 @@
 // The writing of what an HTTP/2 connection's `Conn` queues: its SETTINGS,
 // the acknowledgements and window updates it owes, the resets and
-// GOAWAY it sends, and the responses smock queues on its streams. Every
-// octet goes through the connection's one writer, `H2Writer`, and then
-// through its `WatchedStream`, so each write has the write timeout.
+// GOAWAY it sends, and the responses smock queues on its streams; and of
+// the few frames smock builds itself, the first GOAWAY and the PING of a
+// drain. Every octet goes through the connection's one writer, `H2Writer`,
+// and then through its `WatchedStream`, so each write has the write
+// timeout.
 //
 // The output is bounded: whenever what is queued and not yet written passes
 // `output_bound`, the reader has it written before it hands the `Conn`
@@ -304,8 +306,34 @@ async fn[S : @io.Writer + ReadOutput] H2Writer::write_last(
   self : H2Writer,
   out : WatchedStream[S],
 ) -> Unit {
+  self.wait()
+  let _ = self.write(out)
+}
+
+///|
+/// Waits until no other task is writing.
+async fn H2Writer::wait(self : H2Writer) -> Unit {
   while self.busy {
     self.done.wait()
   }
+}
+
+///|
+/// Waits until no other task is writing, then writes to `out` `frames`,
+/// which smock built itself rather than the `Conn`, after what the `Conn`
+/// has queued so far, so that the `Conn`'s SETTINGS, which must come first
+/// (RFC 9113, section 3.4), always do. They count toward the output bound
+/// as the `Conn`'s output does. A caller that must decide, once the wait is
+/// over, whether to write at all waits first itself (`wait`): this one then
+/// starts to write at once.
+async fn[S : @io.Writer + ReadOutput] H2Writer::write_own(
+  self : H2Writer,
+  out : WatchedStream[S],
+  frames : Bytes,
+) -> Unit {
+  self.wait()
+  self.take()
+  self.taken.push(frames)
+  self.queued += frames.length().to_int64()
   let _ = self.write(out)
 }

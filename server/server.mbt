@@ -176,10 +176,12 @@ async fn sleep_forever() -> Unit {
 ///
 /// The drain closes the plain and TLS listeners and the idle connections at
 /// once. The responses in progress go on, and end with
-/// `Connection: close`; Server-Sent Event streams and delays go on too. When
-/// none is left, or when the drain timeout expires and cuts those still
-/// open, the drain ends. The admin port serves throughout, so the probes can
-/// be read during the drain.
+/// `Connection: close`; Server-Sent Event streams and delays go on too. Each
+/// HTTP/2 connection, idle or not, gets GOAWAY, and closes once its streams
+/// have ended (`H2Connection::start_drain`). When none is left, or when the
+/// drain timeout expires and cuts those still open, the drain ends. The
+/// admin port serves throughout, so the probes can be read during the
+/// drain.
 async fn run(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
@@ -358,7 +360,7 @@ async fn run(
     listening.wait() catch {
       _ => ()
     }
-    connections.close_idle()
+    connections.drain()
     let ended = @async.with_timeout_opt(settings.drain_timeout_ms, () => {
       connections.wait_all_ended()
     })
