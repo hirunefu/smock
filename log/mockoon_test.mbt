@@ -10,7 +10,7 @@ test "a Transaction recorded line names the Mock, the method, the path without t
       prefix,
       meth="GET",
       target="/users/1?verbose=true",
-      status=200,
+      ended=Status(200),
       at=example_time,
     ),
     content=(
@@ -39,7 +39,7 @@ test "requestPath is the target up to the query, an absolute-form target cut to 
       prefix,
       meth="GET",
       target~,
-      status=200,
+      ended=Status(200),
       at=example_time,
     )
     guard @json.parse(line) is Object(fields) &&
@@ -82,7 +82,7 @@ test "strings are escaped as JSON.stringify escapes them" {
       @log.mockoon_prefix(None),
       meth="GET",
       target="/a\"b\\c?d\"",
-      status=404,
+      ended=Status(404),
       at=example_time,
     ),
   )
@@ -146,7 +146,7 @@ test "the lines of the spec, each starting with the prefix it was built from" {
       prefix,
       meth="GET",
       target~,
-      status~,
+      ended=Status(status),
       at=example_time + 50L * i.to_int64(),
     )
     out.push(line)
@@ -183,7 +183,7 @@ test "the method is as sent, and the status and the time are the ones given" {
         @log.mockoon_prefix(Some("m")),
         meth~,
         target="/",
-        status~,
+        ended=Status(status),
         at~,
       ),
     )
@@ -195,6 +195,42 @@ test "the method is as sent, and the status and the time are the ones given" {
       #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"PATCH","requestPath":"/","requestProxied":false,"responseStatus":1,"timestamp":"1969-12-31T23:59:59.999Z"}
       #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"M-SEARCH","requestPath":"/","requestProxied":false,"responseStatus":42,"timestamp":"2024-02-29T23:59:59.999Z"}
       #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"DELETE","requestPath":"/","requestProxied":false,"responseStatus":999,"timestamp":"9999-12-31T23:59:59.999Z"}
+    ),
+  )
+}
+
+///|
+/// The spec's lines for a reset and a close Fault, which end the connection
+/// before any status, then a partial Fault, which wrote its status, and the
+/// same three for a request no Mock answered, 50 ms apart.
+test "a reset or a close Fault gives fault and no responseStatus, and a partial Fault the status it wrote" {
+  let endings : Array[@log.TransactionEnd] = [Reset, Close, Status(200)]
+  let out = []
+  for mock in [Some("payments"), None] {
+    for i, ended in endings {
+      let prefix = @log.mockoon_prefix(mock)
+      let line = @log.transaction_line(
+        prefix,
+        meth="POST",
+        target="/charges?amount=10",
+        ended~,
+        at=example_time + 150L + 50L * i.to_int64(),
+      )
+      out.push(line)
+      if !line.has_prefix(prefix) {
+        out.push("does not start with \{prefix}")
+      }
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|{"app":"smock","environmentName":"payments","fault":"reset","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/charges","requestProxied":false,"timestamp":"2026-10-31T09:00:01.400Z"}
+      #|{"app":"smock","environmentName":"payments","fault":"close","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/charges","requestProxied":false,"timestamp":"2026-10-31T09:00:01.450Z"}
+      #|{"app":"smock","environmentName":"payments","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/charges","requestProxied":false,"responseStatus":200,"timestamp":"2026-10-31T09:00:01.500Z"}
+      #|{"app":"smock","fault":"reset","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/charges","requestProxied":false,"timestamp":"2026-10-31T09:00:01.400Z"}
+      #|{"app":"smock","fault":"close","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/charges","requestProxied":false,"timestamp":"2026-10-31T09:00:01.450Z"}
+      #|{"app":"smock","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/charges","requestProxied":false,"responseStatus":200,"timestamp":"2026-10-31T09:00:01.500Z"}
     ),
   )
 }
