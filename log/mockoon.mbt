@@ -208,7 +208,7 @@ fn write_sorted(out : StringBuilder, value : Json) -> Unit {
 /// compares strings: by their first differing code unit, or, when one is
 /// the start of the other, the shorter first. Upper-case ASCII letters
 /// sort before lower-case ones.
-fn code_unit_order(a : String, b : String) -> Int {
+fn code_unit_order(a : String, b : String) -> Int32 {
   let length = if a.length() < b.length() { a.length() } else { b.length() }
   for i in 0..<length {
     let x = a.unsafe_get(i)
