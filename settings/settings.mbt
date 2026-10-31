@@ -3,8 +3,8 @@
 pub(all) enum LogFormat {
   /// One JSON object per line, on stderr, in smock's own shape.
   Json
-  /// The Mockoon CLI's shape, on stdout: a `Transaction recorded` line for
-  /// each request a Mock answers.
+  /// The Mockoon CLI's envelope, on stdout, for every line, with a
+  /// `Transaction recorded` line for each request a Mock handles.
   Mockoon
 } derive(Debug, Eq)
 
