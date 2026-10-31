@@ -8,7 +8,8 @@
 priv struct MockoonLines {
   out : StdoutLines
   /// The prefix of each Mock's lines (`@log.mockoon_prefix`), by Mock name,
-  /// for the definition set served.
+  /// for the definition set served, in the order the Admin API's status
+  /// lists the Mocks.
   mut prefixes : Map[String, String]
   /// The prefix of the lines about a request no Mock answered.
   no_mock : String
@@ -34,6 +35,38 @@ fn MockoonLines::rebuild(self : MockoonLines, engine : @engine.Engine) -> Unit {
     prefixes[mock.name] = @log.mockoon_prefix(Some(mock.name))
   }
   self.prefixes = prefixes
+}
+
+///|
+/// Writes the `Server started on port <port>` line of each Mock served, in
+/// the order the Admin API's status lists them, with the time now, once the
+/// plain and TLS listeners are open, `port` being the plain one's.
+async fn MockoonLines::started(self : MockoonLines, port : Int32) -> Unit {
+  let at = @async.now()
+  self.write_each(prefix => @log.started_line(prefix, port~, at~))
+}
+
+///|
+/// Writes the `Server stopped` line of each Mock served, in the order the
+/// Admin API's status lists them, with the time now, once the drain ends: a
+/// Mock that a reload added included.
+async fn MockoonLines::stopped(self : MockoonLines) -> Unit {
+  let at = @async.now()
+  self.write_each(prefix => @log.stopped_line(prefix, at~))
+}
+
+///|
+/// Writes the line that `line` builds from the prefix of each Mock served,
+/// in the order the Admin API's status lists them, all in one write, so
+/// that no other line comes between them.
+async fn MockoonLines::write_each(
+  self : MockoonLines,
+  line : (String) -> String,
+) -> Unit {
+  let lines = self.prefixes.values().map(line).collect()
+  if lines.length() > 0 {
+    self.out.write(lines.join("\n"))
+  }
 }
 
 ///|

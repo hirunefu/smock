@@ -303,6 +303,11 @@ async fn run(
       add_file_fields(tls_fields, files)
     }
     logger.info("listening", fields=tls_fields)
+    // Every listener is open, so a client that connects on reading these
+    // lines is served, once the accept loops below take its connection.
+    if mockoon is Some(lines) {
+      lines.started(plain.addr.port())
+    }
     if watch is Some(watch) && settings.dir is Some(dir) {
       let reloader : Reloader = {
         dir,
@@ -375,6 +380,9 @@ async fn run(
     logger.info("drain ended", fields={
       "connectionsCut": Json::number(cut.to_double()),
     })
+    if mockoon is Some(lines) {
+      lines.stopped()
+    }
     0
   })
 }
