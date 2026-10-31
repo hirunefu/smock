@@ -365,7 +365,9 @@ fn H2Connection::judge(
 /// Hands the `Conn` `octets`, the preface or one whole frame, and handles
 /// the events they produce, in order, until the `Conn` needs more. Returns
 /// false when they break the connection: the `Conn` has then queued its
-/// GOAWAY, and the connection ends. A stream's task writes to `out`.
+/// GOAWAY, and the connection ends. A header block past its bound as
+/// received is logged as a CONTINUATION flood (`flooded`). A stream's task
+/// writes to `out`.
 fn[S : @io.Writer + ReadOutput] H2Connection::hand(
   self : H2Connection,
   octets : BytesView,
@@ -375,7 +377,13 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
     _ => return false
   }
   for ;; {
-    let event = self.conn.next() catch { _ => return false }
+    let event = self.conn.next() catch {
+      Connection(code~, _) if code == @http2.error_enhance_your_calm => {
+        self.flooded(octets)
+        return false
+      }
+      _ => return false
+    }
     match event {
       NeedData | Closed => {
         // A frame that ends the stream brings its `End` after its `Request`

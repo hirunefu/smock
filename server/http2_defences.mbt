@@ -181,11 +181,7 @@ fn carries(head : @http2.FrameHeader, frame : BytesView) -> Int32 {
 /// Ends the connection for the defence against the pattern `pattern`,
 /// which a frame of the kind `frame` tripped, when there is one: queues
 /// GOAWAY ENHANCE_YOUR_CALM, with the name of the pattern as its debug
-/// data, and logs one line, at level `warn`, that names them. It adds no
-/// metric. The caller then writes what is queued and ends the connection,
-/// so the line is the connection's only one, and its streams in progress
-/// end with it: their tasks are cancelled, and commit their Journal
-/// entries as they end.
+/// data, and logs it (`defended`).
 fn H2Connection::calm(
   self : H2Connection,
   pattern : String,
@@ -197,6 +193,39 @@ fn H2Connection::calm(
   ) catch {
     _ => ()
   }
+  self.defended(pattern, frame?)
+}
+
+///|
+/// Logs the close of the connection by moonhttp's bound on a header block
+/// as received, twice `--header-size-limit` (`header_list_bound`), which
+/// `frame`, a HEADERS or CONTINUATION frame with its header, passed: the
+/// defence against CONTINUATION floods. The `Conn` has queued GOAWAY
+/// ENHANCE_YOUR_CALM already, with its own reason as debug data; it raises
+/// no other connection error with that code. The bound is moonhttp's alone,
+/// as the spec has it, and the e2e tests check it from outside.
+fn H2Connection::flooded(self : H2Connection, frame : BytesView) -> Unit {
+  let kind = if frame[3].to_int() == @http2.frame_continuation {
+    "CONTINUATION"
+  } else {
+    "HEADERS"
+  }
+  self.defended("CONTINUATION flood", frame=kind)
+}
+
+///|
+/// Logs the close of the connection by the defence against the pattern
+/// `pattern`, which a frame of the kind `frame` tripped, when there is one:
+/// one line, at level `warn`, that names them. It adds no metric. The
+/// caller then writes what is queued, the GOAWAY among it, and ends the
+/// connection, so the line is the connection's only one, and its streams in
+/// progress end with it: their tasks are cancelled, and commit their
+/// Journal entries as they end.
+fn H2Connection::defended(
+  self : H2Connection,
+  pattern : String,
+  frame? : String,
+) -> Unit {
   let fields : Map[String, Json] = { "pattern": Json::string(pattern) }
   if frame is Some(frame) {
     fields["frame"] = Json::string(frame)
