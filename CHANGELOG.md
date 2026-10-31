@@ -151,8 +151,13 @@ of each GitHub release include its section
   method as sent, the path without its query (`requestPath`, an
   absolute-form target cut to its path), `requestProxied` (always false)
   and the status, with `app` set to `smock`, keys sorted as Mockoon sorts
-  them and a `timestamp` taken after the response's last byte. Each line
-  is written whole and at once, also to a pipe, and a line that cannot be
+  them and a `timestamp` taken after the response's last byte. A request
+  that a reset or a close Fault ends logs `fault` (`"reset"` or `"close"`)
+  and no status, and a `partial` Fault logs the status it wrote. A delayed
+  response logs after its delay, and a Server-Sent Event stream once, when
+  it ends. A request whose client goes away, whose write times out or that
+  the drain cuts logs its planned status when it ends. Each line is
+  written whole and at once, also to a pipe, and a line that cannot be
   written is dropped. Requests the HTTP/1.1 codec rejects, Admin API
   calls, probes and scrapes get no line. `json` stays the default, on
   stderr, and costs nothing more per request. See [Run](README.md#run).
