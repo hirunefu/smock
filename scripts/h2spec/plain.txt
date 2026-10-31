@@ -9,7 +9,8 @@
 #   #<issue>  the case fails until that issue is done.
 #
 # A case that fails or is skipped without being listed so fails the run.
-# A listed case that passes is reported, so that it can come off. Once spec
-# E's issues are done (#169), no case waits for an issue here.
+# A listed case that passes is reported, so that it can come off. Before a
+# branch merges into main, no case waits for an issue here
+# (docs/merging-into-main.md).
 
-http2/3.5/2    left-out  On the plain port, octets that are not the HTTP/2 preface start HTTP/1.1 (#133, decision 3), so smock answers h2spec's invalid preface with an HTTP/1.1 400, not GOAWAY PROTOCOL_ERROR. The TLS port, where ALPN h2 starts HTTP/2, passes it (tls.txt).
+http2/3.5/2    left-out  On the plain port, octets that are not the HTTP/2 preface start HTTP/1.1 (#133, decision 3), so smock answers h2spec's invalid preface with an HTTP/1.1 400 and closes the connection. h2spec wants GOAWAY PROTOCOL_ERROR or a bare close, and reads the 400 as a broken frame (unexpected EOF). The TLS port, where ALPN h2 starts HTTP/2, passes it (tls.txt).
