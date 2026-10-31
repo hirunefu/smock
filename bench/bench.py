@@ -482,6 +482,23 @@ def control_group(unit):
     return Path("/sys/fs/cgroup" + path) if path else None
 
 
+def listening(line):
+    """The listener and the port of a `listening` line of smock's log, in
+    either log format: `msg` in the json format, `message` in the mockoon
+    one, with the listener's name and address in both. None for any other
+    line."""
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(entry, dict) or "listening" not in (entry.get("msg"), entry.get("message")):
+        return None
+    listener, address = entry.get("listener"), entry.get("address")
+    if not isinstance(listener, str) or not isinstance(address, str):
+        return None
+    return listener, int(address.rsplit(":", 1)[1])
+
+
 class Smock:
     """One smock process serving the benchmark's definitions, started in its
     own systemd scope under the CPU quota and the memory limit of a
@@ -578,12 +595,10 @@ class Smock:
         expected = {"plain", "tls", "admin"}
         for line in self.process.stderr:
             self.log_file.write(line)
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(entry, dict) and entry.get("msg") == "listening":
-                self.ports[entry["listener"]] = int(entry["address"].rsplit(":", 1)[1])
+            found = listening(line)
+            if found:
+                listener, port = found
+                self.ports[listener] = port
                 if expected <= set(self.ports):
                     self.listening.set()
 

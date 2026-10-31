@@ -1637,5 +1637,35 @@ class LogFormatOption(unittest.TestCase):
             self.assertIn("--log-format", stderr.getvalue())
 
 
+# Lines smock writes, as it wrote them: in the json format, on stderr; in
+# the mockoon format, on stdout, a request's Transaction recorded line among
+# them.
+JSON_LISTENING = ('{"time":"2026-10-31T15:16:00.822Z","level":"info","msg":"listening","listener":"plain",'
+                  '"address":"0.0.0.0:39519"}\n')
+MOCKOON_LISTENING = ('{"address":"0.0.0.0:42163","app":"smock","level":"info","listener":"tls","message":"listening",'
+                     '"timestamp":"2026-10-31T15:14:44.828Z"}\n')
+MOCKOON_DRAIN = '{"app":"smock","level":"info","message":"drain started","timeoutMs":20000,"timestamp":"2026-10-31T15:14:48.780Z"}\n'
+TRANSACTION = ('{"app":"smock","environmentName":"payments","level":"info","message":"Transaction recorded",'
+               '"requestMethod":"GET","requestPath":"/nope","requestProxied":false,"responseStatus":404,'
+               '"timestamp":"2026-10-31T15:14:46.310Z"}\n')
+
+
+class ListeningLines(unittest.TestCase):
+    """smock says where each listener listens in a `listening` line: with
+    `msg` in the json format, and with `message`, its keys sorted, in the
+    mockoon format. The run finds the ports in either."""
+
+    def test_a_listening_line_of_either_format_gives_its_listener_and_port(self):
+        self.assertEqual(harness.listening(JSON_LISTENING), ("plain", 39519))
+        self.assertEqual(harness.listening(MOCKOON_LISTENING), ("tls", 42163))
+
+    def test_any_other_line_gives_nothing(self):
+        for line in (TRANSACTION, MOCKOON_DRAIN, "smock: unknown option --nope\n", "[1]\n", '"listening"\n',
+                     '{"msg":"listening","listener":"plain"}\n', '{"message":"listening","address":"0.0.0.0:1"}\n',
+                     ""):
+            with self.subTest(line=line):
+                self.assertIsNone(harness.listening(line))
+
+
 if __name__ == "__main__":
     unittest.main()
