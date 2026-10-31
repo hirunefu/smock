@@ -519,9 +519,9 @@ buckets and Journal, so tests that use them need one replica.
 
 ### Logs and metrics
 
-smock logs JSON lines to stderr, such as its startup and each reload; it
-logs no requests. `/metrics` on the admin port serves Prometheus
-metrics, labelled by Mock and Stub:
+smock logs JSON lines to stderr, such as its startup and each reload. In
+this format, `json`, the default, it logs no requests. `/metrics` on the
+admin port serves Prometheus metrics, labelled by Mock and Stub:
 
 ```sh
 kubectl --namespace mocks logs deployment/smock
@@ -535,9 +535,35 @@ curl -s localhost:9090/metrics | grep '^smock_requests_total'
 `stub=""` counts the requests that no Stub answered, and `mock=""`
 those that no Mock answered.
 
-On GKE, Cloud Logging also collects these logs, through the node role
-granted in [Create an Autopilot cluster](#create-an-autopilot-cluster),
-with each line's fields under `jsonPayload`. The chart makes no
+The `mockoon` log format writes every line to stdout instead, in the
+Mockoon CLI's shape, with a `Transaction recorded` line for each request
+a Mock handles. It needs a release later than 0.3.0: smock 0.3.0 refuses
+the value with a usage error. The chart takes it in its `env` value. The
+change replaces the Pod, so wait for the old one to go, then forward the
+ports again:
+
+```sh
+helm upgrade smock oci://ghcr.io/hirunefu/charts/smock --version "$VERSION" --namespace mocks --reuse-values \
+  --set env.SMOCK_LOG_FORMAT=mockoon
+kubectl --namespace mocks rollout status deployment/smock
+kill %1 %2
+kubectl --namespace mocks port-forward service/smock 8080:80 >/dev/null &
+kubectl --namespace mocks port-forward service/smock-admin 9090 >/dev/null &
+curl -s localhost:8080/users/1
+kubectl --namespace mocks logs deployment/smock | grep -E '"message":"(Server started|Transaction recorded)'
+# {"app":"smock","environmentName":"users","level":"info","message":"Server started on port 8080","timestamp":"<time>"}
+# {"app":"smock","environmentName":"users","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/users/1","requestProxied":false,"responseStatus":200,"timestamp":"<time>"}
+```
+
+smock's own lines, such as `listening`, come in the same shape, with
+`message` in place of `msg`. The
+[migration guide](migrating-from-mockoon.md#logs) lists the lines, and
+`helm upgrade` with `--set env.SMOCK_LOG_FORMAT=json` goes back.
+
+On GKE, Cloud Logging also collects these logs, in either format,
+through the node role granted in
+[Create an Autopilot cluster](#create-an-autopilot-cluster), with each
+line's fields under `jsonPayload`. The chart makes no
 PodMonitoring for Google Cloud Managed Service for Prometheus, which
 Autopilot runs, so scraping `/metrics` there takes one of your own:
 
