@@ -16,7 +16,9 @@ smock's peak memory and any OOM kills. A plan (bench/plan.json by default,
 or bench/plan-autopilot.json for the smallest GKE Autopilot Pods and the
 Helm chart's default) says which profiles and cases run, at which rates and
 for how long. Each run checks the targets of bench/targets.json, each under
-one of those profiles.
+one of those profiles. With --log-format mockoon, smock writes a line to
+stdout for each request, which the run reads through a pipe and counts
+against the requests smock answered.
 
 usage:
   python3 bench/bench.py run [options]    run the benchmark (--help lists the options)
@@ -81,6 +83,15 @@ STOP_TIMEOUT_S = 30
 # for the estimate a run prints: a few tenths of a second under a 1-CPU
 # limit, about a second under 50m.
 SMOCK_START_STOP_S = 1.5
+
+# The log formats smock may run with, its default first: json, on stderr,
+# which logs no request, and mockoon, on stdout, which writes a Transaction
+# recorded line for each request (README.md#run).
+LOG_FORMATS = ("json", "mockoon")
+
+# How many bytes the run reads from smock's stdout at most at once: as much
+# as a pipe holds by default, so that one read can empty a full pipe.
+STDOUT_CHUNK = 65536
 
 # The CFS period systemd gives a CPU quota, as Kubernetes does.
 CFS_PERIOD_US = 100_000
@@ -477,13 +488,82 @@ def control_group(unit):
     return Path("/sys/fs/cgroup" + path) if path else None
 
 
+def listening(line):
+    """The listener and the port of a `listening` line of smock's log, in
+    either log format: `msg` in the json format, `message` in the mockoon
+    one, with the listener's name and address in both. None for any other
+    line."""
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(entry, dict) or "listening" not in (entry.get("msg"), entry.get("message")):
+        return None
+    listener, address = entry.get("listener"), entry.get("address")
+    if not isinstance(listener, str) or not isinstance(address, str):
+        return None
+    return listener, int(address.rsplit(":", 1)[1])
+
+
+# What marks a Transaction recorded line of the mockoon log format, whose
+# keys are sorted, so that the line is told apart without parsing it. A
+# quote inside a string is escaped, so no other line holds it.
+TRANSACTION_RECORDED = b'"message":"Transaction recorded"'
+
+
+class MockoonStdout:
+    """smock's stdout in the mockoon log format, fed in chunks as they are
+    read, which may cut a line anywhere. It counts the Transaction recorded
+    lines in `transactions`, without keeping them, so that a run at tens of
+    thousands of requests a second keeps no gigabytes of them, and hands
+    every other line to `keep`, as text, in order. Whole chunks are
+    searched at once, and only one that holds another line is split."""
+
+    def __init__(self, keep):
+        self.keep = keep
+        self.transactions = 0
+        self.rest = b""
+
+    def feed(self, chunk):
+        """Reads `chunk`, the next bytes of stdout."""
+        data = self.rest + chunk
+        end = data.rfind(b"\n") + 1
+        self.rest = data[end:]
+        self.lines(data[:end])
+
+    def end(self):
+        """Reads a last line that stdout ended without its newline."""
+        rest, self.rest = self.rest, b""
+        self.lines(rest)
+
+    def lines(self, data):
+        """Counts and keeps the lines of `data`, which ends where a line
+        does."""
+        found = data.count(TRANSACTION_RECORDED)
+        self.transactions += found
+        count = data.count(b"\n")
+        if data and not data.endswith(b"\n"):
+            count += 1
+        if count == found:
+            return
+        *whole, last = data.split(b"\n")
+        for line in [line + b"\n" for line in whole] + ([last] if last else []):
+            if TRANSACTION_RECORDED not in line:
+                self.keep(line.decode(errors="replace"))
+
+
 class Smock:
     """One smock process serving the benchmark's definitions, started in its
     own systemd scope under the CPU quota and the memory limit of a
     resource profile, and pinned to the smock CPUs. The scope sits in a
     slice of its own, whose memory.events counts the OOM kills in it
     hierarchically and outlives the scope, which systemd removes as soon as
-    smock has gone."""
+    smock has gone.
+
+    Its log goes to `log_path`: its stderr, and in the mockoon log format
+    its stdout, which a thread reads through a pipe as it comes, as a
+    container runtime does, counting the Transaction recorded lines in
+    `stdout_lines` instead of keeping them."""
 
     units = itertools.count(1)
 
@@ -494,6 +574,9 @@ class Smock:
         self.log_path = Path(log_path)
         self.ports = {}
         self.listening = threading.Event()
+        self.log_lock = threading.Lock()
+        self.stdout_lines = None
+        self.stdout_reader = None
         self.process = None
         self.pid = None
         self.cgroup = None
@@ -520,11 +603,17 @@ class Smock:
         ]
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.log_file = self.log_path.open("w")
-        self.process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                        stderr=subprocess.PIPE, text=True, env=self.run.smock_env)
+        mockoon = self.run.log_format == "mockoon"
+        self.process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE if mockoon else subprocess.DEVNULL,
+                                        stderr=subprocess.PIPE, env=self.run.smock_env)
         self.run.processes.append(self.process)
         self.reader = threading.Thread(target=self.read_log, daemon=True)
         self.reader.start()
+        if mockoon:
+            self.stdout_lines = MockoonStdout(self.keep)
+            self.stdout_reader = threading.Thread(target=self.read_stdout, daemon=True)
+            self.stdout_reader.start()
         try:
             self.start()
         except BaseException:
@@ -562,25 +651,44 @@ class Smock:
         """Raises what stops smock from starting: an OOM kill, which the run
         records, or else a BenchError with smock's log."""
         if self.process.poll() is not None:
-            self.reader.join(1)
+            self.join_readers(1)
             oom_kills = self.read_oom_kills()
             if oom_kills:
                 raise OomKilledAtStartup(oom_kills)
-        self.log_file.flush()
+        with self.log_lock:
+            self.log_file.flush()
         raise BenchError(f"smock {what}; its log:\n{self.log_path.read_text()}")
 
     def read_log(self):
-        expected = {"plain", "tls", "admin"}
+        """Keeps each line of smock's stderr, until smock exits."""
         for line in self.process.stderr:
+            self.keep(line.decode(errors="replace"))
+
+    def read_stdout(self):
+        """Reads smock's stdout in the mockoon log format, as soon as smock
+        writes to it, until smock exits."""
+        while chunk := os.read(self.process.stdout.fileno(), STDOUT_CHUNK):
+            self.stdout_lines.feed(chunk)
+        self.stdout_lines.end()
+
+    def keep(self, line):
+        """Writes a line of smock's log to the log file, and learns from a
+        listening line where smock listens."""
+        with self.log_lock:
             self.log_file.write(line)
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(entry, dict) and entry.get("msg") == "listening":
-                self.ports[entry["listener"]] = int(entry["address"].rsplit(":", 1)[1])
-                if expected <= set(self.ports):
+            found = listening(line)
+            if found:
+                listener, port = found
+                self.ports[listener] = port
+                if {"plain", "tls", "admin"} <= set(self.ports):
                     self.listening.set()
+
+    def join_readers(self, timeout=None):
+        """Waits until the threads that read smock's log have read all of
+        it, or `timeout` seconds for each."""
+        for reader in (self.reader, self.stdout_reader):
+            if reader is not None:
+                reader.join(timeout)
 
     def find_pid(self):
         for pid in (self.cgroup / "cgroup.procs").read_text().split():
@@ -606,7 +714,7 @@ class Smock:
                 subprocess.run(["systemctl", "--user", "kill", "--signal=SIGKILL", self.unit])
                 self.process.wait()
         self.exit_status = self.process.returncode
-        self.reader.join()
+        self.join_readers()
         self.log_file.close()
         self.run.processes.remove(self.process)
         self.oom_kills = self.read_oom_kills()
@@ -824,6 +932,7 @@ class Run:
         self.duration_s = override(args.duration, self.plan["duration_s"])
         self.tail_s = override(args.tail, self.plan["tail_s"])
         self.rate = args.rate
+        self.log_format = args.log_format
         plan_name = shown_path(self.plan_path)
         all_profiles = plan_profiles(self.plan)
         self.profiles = all_profiles
@@ -926,6 +1035,10 @@ class Run:
             "--dir", str(self.definitions), "--port", "0", "--tls-port", "0", "--admin-port", "0",
             "--admin-auth", "off", "--tls-cert-file", str(cert), "--tls-key-file", str(key),
         ]
+        # In json, smock's default, smock gets no --log-format, as in runs
+        # from before the option, which compare with it as the same.
+        if self.log_format != "json":
+            self.smock_args += ["--log-format", self.log_format]
         # smock runs with its defaults, the Journal's bounds included, whatever
         # SMOCK_* variables the shell has: its byte bound then follows the
         # profile's memory limit (a quarter of it, at most 64 MiB).
@@ -1229,6 +1342,17 @@ def grew(before, after, name, labelled=False):
     return after[name] - before[name]
 
 
+def transaction_lines(count, metrics):
+    """The Transaction recorded lines a step's smock wrote in the mockoon
+    format, `count`, against the requests it answered, as
+    smock_requests_total counts them in `metrics`, its /metrics scraped
+    once the load has ended (as metric_values reads them; None when smock
+    did not answer): whether they are equal, or None when that is unknown.
+    The counter has no series until it first counts."""
+    answered = None if metrics is None else round(metrics.get("smock_requests_total", 0.0))
+    return {"count": count, "requests_answered": answered, "equal": None if answered is None else count == answered}
+
+
 def restarted(before, after):
     """Whether smock restarted between two scrapes of its /metrics: its
     process started at another time."""
@@ -1523,12 +1647,17 @@ def run_case(run, spec):
         "smock_exit_status": smock.exit_status,
         "per_request": kinds,
     }
+    lines = ""
+    if smock.stdout_lines is not None:
+        counted = result["transaction_lines"] = transaction_lines(smock.stdout_lines.transactions, metrics_after)
+        lines = (f", {counted['count']} Transaction recorded lines for "
+                 f"{known(counted['requests_answered'], 'an unknown number of')} requests answered")
     lag = result["generator_lag_ms"]
     log(f"{spec['id']}: p99 {result['latency_ms']['p99']} ms, p99.9 {result['latency_ms']['p99_9']} ms, "
         f"{result['achieved_rate']} requests/s, {result['errors']} errors, "
         f"generator lag p99.9 {lag['p99_9']} ms, max {lag['max']} ms, "
         f"peak memory {smock.peak_bytes} bytes, {smock.oom_kills} OOM kills, "
-        f"other tasks on smock's CPUs {other_tasks_text(others)}")
+        f"other tasks on smock's CPUs {other_tasks_text(others)}{lines}")
     return result
 
 
@@ -1871,8 +2000,40 @@ def cpu_wait(cpu):
     return (cpu["window"] or {}).get("scheduling_delay_s") if "window" in cpu else cpu.get("scheduling_delay_s")
 
 
-def case_row(case):
-    """A case's row of its profile's table in summary.md."""
+def transaction_lines_cell(lines):
+    """A step's Transaction recorded lines, as summary.md shows them: the
+    count, with the requests smock answered where they are not equal."""
+    if lines is None:
+        return None
+    if lines["equal"]:
+        return lines["count"]
+    return f"{lines['count']} for {shown(lines['requests_answered'])} requests"
+
+
+def transaction_line_failures(summary):
+    """What went wrong with the Transaction recorded lines of a run in the
+    mockoon format: a sentence for each step whose count differs from the
+    requests smock answered."""
+    return [f"in {case['id']}, smock wrote {case['transaction_lines']['count']} Transaction recorded lines for the "
+            f"{case['transaction_lines']['requests_answered']} requests it answered"
+            for case in summary["cases"] if (case.get("transaction_lines") or {}).get("equal") is False]
+
+
+def log_format(conditions):
+    """The log format a run's smock ran with, as the arguments its
+    conditions record name it: json, smock's default, when they name none,
+    as for a run from before the option or a GKE run, which records no
+    arguments."""
+    args = conditions["smock"].get("args") or []
+    for name, value in zip(args, args[1:]):
+        if name == "--log-format":
+            return value
+    return "json"
+
+
+def case_row(case, log_lines=False):
+    """A case's row of its profile's table in summary.md, with its
+    Transaction recorded lines when `log_lines`."""
     latency, release, lag = case["latency_ms"], case["latency_from_release_ms"], case["generator_lag_ms"]
     memory, cpu, others = case["memory"], case["smock_cpu"] or {}, case.get("other_tasks")
     name = case["case"]
@@ -1893,6 +2054,8 @@ def case_row(case):
              None if utilization is None else f"{utilization * 100:.1f}", cpu.get("throttled_s"),
              cpu_wait(cpu), None if others is None else f"{others['share'] * 100:.2f}",
              mib(case["rss_kib"]["max"], 1024), peak, memory["oom_kills"]]
+    if log_lines:
+        cells.append(transaction_lines_cell(case.get("transaction_lines")))
     return "| " + " | ".join(shown(cell) for cell in cells) + " |"
 
 
@@ -1956,6 +2119,16 @@ def summary_markdown(summary, conditions, stopped=None):
         lines += ["", f"**Not a full run:** the command line changed the plan ({shown_overrides})."]
     if not summary["complete"] and not stopped:
         lines += ["", "**Incomplete:** the run stopped before its last case."]
+    mockoon = log_format(conditions) == "mockoon"
+    if mockoon:
+        lines += ["", "**Log format mockoon:** smock ran with `--log-format mockoon`, and wrote a line to stdout for "
+                      "each request, which the run read through a pipe, as a container runtime does. *Transaction "
+                      "lines* is how many Transaction recorded lines smock wrote in each step, with the requests it "
+                      "answered (smock_requests_total) where they differ. The targets are for reference only: the "
+                      "mode is measured against a run in the json format (bench/README.md)."]
+        failures = transaction_line_failures(summary)
+        if failures:
+            lines += ["", f"**Transaction lines differ** from the requests smock answered: {'; '.join(failures)}."]
     lines += ["", *targets_section(summary["targets"], kubernetes_architecture(machine["architecture"]),
                                    conditions["targets"]["file"])]
     lines += ["", "## Reading the cases", "",
@@ -1986,8 +2159,9 @@ def summary_markdown(summary, conditions, stopped=None):
                 lines += ["", idle_line(idle)]
         cases = [case for case in summary["cases"] if case["profile"] == profile["name"]]
         if cases:
-            lines += ["", "| " + " | ".join(CASE_COLUMNS) + " |", "|" + "---|" * len(CASE_COLUMNS)]
-            lines += [case_row(case) for case in cases]
+            columns = (*CASE_COLUMNS, "Transaction lines") if mockoon else CASE_COLUMNS
+            lines += ["", "| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+            lines += [case_row(case, mockoon) for case in cases]
     return "\n".join(lines) + "\n"
 
 
@@ -2070,11 +2244,16 @@ def command_run(args):
         measured = "" if target["measured"] is None else f" ({target['measured']} {target['unit']})"
         reason = f": {target['reason']}" if target["reason"] else ""
         log(f"target {target['id']}, at most {target['max']} {target['unit']}: {target['verdict']}{measured}{reason}")
+    failures = transaction_line_failures(summary)
+    for failure in failures:
+        log(f"Transaction lines differ from the requests smock answered: {failure}")
     log(f"done: {run.out}")
-    return 0
+    return 1 if failures else 0
 
 
-def main(argv):
+def arguments(argv):
+    """The command and the options of the command line `argv`, as argparse
+    reads them; a command line it cannot read exits with 2."""
     parser = argparse.ArgumentParser(prog="bench.py", description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="run the benchmark")
@@ -2106,13 +2285,21 @@ def main(argv):
     run.add_argument("--smock-cpus", help="the CPUs smock runs on, such as 4,5 (default: the fastest, as many as "
                      "the largest CPU limit of the plan needs)")
     run.add_argument("--generator-cpus", help="the CPUs oha runs on (default: every other CPU)")
+    run.add_argument("--log-format", choices=LOG_FORMATS, default="json",
+                     help="the log format smock runs with (default: json, smock's own default); with mockoon, smock "
+                          "gets --log-format mockoon, and the run reads its stdout through a pipe and counts its "
+                          "Transaction recorded lines")
     check = commands.add_parser("check-targets", help="check a run's summary against the targets as they are now, "
                                 "and print its Targets table (exits with 1 when a target is missed)")
     check.add_argument("results", help="the run's results directory, or its summary.json, with conditions.json "
                                        "beside it; nothing in it is changed")
     check.add_argument("--targets", default=str(BENCH / "targets.json"),
                        help="the targets to check (default: bench/targets.json)")
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def main(argv):
+    args = arguments(argv)
     if args.command == "check-targets":
         try:
             return command_check_targets(args)

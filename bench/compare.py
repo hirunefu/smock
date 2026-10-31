@@ -272,6 +272,7 @@ CONDITIONS = (
     ("definition set", lambda conditions: conditions["definitions"]["digest"]),
     ("load generator", lambda conditions: conditions["load_generator"]["version"]),
     ("options that changed the plan", lambda conditions: conditions.get("overrides") or "none"),
+    ("log format", harness.log_format),
 )
 
 
