@@ -111,9 +111,9 @@ connection closes; a timeout, read, idle or write, closes the connection
 without a response. None is logged.
 
 Over HTTP/2, smock also bounds what a client can make one connection cost,
-such as a flood of PING or SETTINGS frames. A connection that passes such a
-bound gets GOAWAY `ENHANCE_YOUR_CALM` and closes, and smock logs one line
-for it, at level `warn`, that names the pattern, such as
+such as a flood of PING, SETTINGS or CONTINUATION frames. A connection that
+passes such a bound gets GOAWAY `ENHANCE_YOUR_CALM` and closes, and smock
+logs one line for it, at level `warn`, that names the pattern, such as
 `{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}`.
 No metric counts it. See [Defences](docs/http2.md#defences).
 

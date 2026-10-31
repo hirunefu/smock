@@ -368,10 +368,10 @@ async test "h2c: a decoded header list over twice --header-size-limit, moonhttp'
 }
 
 ///|
-async test "h2c: a header block over twice --header-size-limit as received gets GOAWAY ENHANCE_YOUR_CALM, which ends every stream of the connection, and a fresh connection is served" {
+async test "h2c: a header block over twice --header-size-limit as received gets GOAWAY ENHANCE_YOUR_CALM, which ends every stream of the connection, smock logs it as a CONTINUATION flood, even when its HEADERS frame alone passes the bound, and a fresh connection is served" {
   with_definitions([("files.json", hello_and_uploads)], dir => {
     let args = ["--dir", dir, "--port", "0", "--header-size-limit", "1000"]
-    let _ = with_smock(args, smock => {
+    let stopped = with_smock(args, smock => {
       let raw = smock.raw_h2()
       defer raw.close()
       let upload = raw.block(request_fields("POST", "/upload", "localhost"))
@@ -407,5 +407,11 @@ async test "h2c: a header block over twice --header-size-limit as received gets 
         ),
       )
     })
+    inspect(
+      defence_entries(stopped.logs),
+      content=(
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"CONTINUATION flood","frame":"HEADERS"}
+      ),
+    )
   })
 }

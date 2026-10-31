@@ -2,7 +2,9 @@
 // for nothing. `H2Connection::judge` (http2.mbt) counts each frame that
 // does no work before the `Conn` sees it, and past the bound the connection
 // ends with GOAWAY ENHANCE_YOUR_CALM (`H2Connection::calm`), as every
-// defence that closes a connection ends it.
+// defence that closes a connection ends it. A header block past moonhttp's
+// bound as received, a CONTINUATION flood, is the `Conn`'s own connection
+// error, which smock logs the same way (`H2Connection::flooded`).
 
 ///|
 /// How many frames that do no work a client may send in any one second.
@@ -68,6 +70,7 @@ fn NoWorkFrames::count(self : NoWorkFrames, at : Int64) -> Bool {
 /// - a PING acknowledgement that answers no PING smock sent;
 /// - a PRIORITY frame, since smock ignores priority signals;
 /// - a DATA frame that carries no data, padded or not, and ends no stream;
+/// - a CONTINUATION frame with no octets that ends no header block;
 /// - a DATA, WINDOW_UPDATE or RST_STREAM frame on a stream already closed,
 ///   and HEADERS on a stream this side reset, which the `Conn` ignores, as
 ///   the record of the client's streams (`StreamRecord`) tells them;
@@ -140,6 +143,14 @@ fn H2Connection::no_work(
     }
   } else if ftype == @http2.frame_priority {
     Some("PRIORITY")
+  } else if ftype == @http2.frame_continuation {
+    // Outside a header block, or on a stream other than its own, it is a
+    // connection error that the `Conn` raises.
+    if head.length == 0 && (head.flags & @http2.flag_end_headers) == 0 {
+      Some("empty CONTINUATION")
+    } else {
+      None
+    }
   } else if ftype > @http2.frame_continuation {
     Some("unknown type")
   } else {
@@ -172,11 +183,7 @@ fn carries(head : @http2.FrameHeader, frame : BytesView) -> Int32 {
 /// Ends the connection for the defence against the pattern `pattern`,
 /// which a frame of the kind `frame` tripped, when there is one: queues
 /// GOAWAY ENHANCE_YOUR_CALM, with the name of the pattern as its debug
-/// data, and logs one line, at level `warn`, that names them. It adds no
-/// metric. The caller then writes what is queued and ends the connection,
-/// so the line is the connection's only one, and its streams in progress
-/// end with it: their tasks are cancelled, and commit their Journal
-/// entries as they end.
+/// data, and logs it (`defended`).
 fn H2Connection::calm(
   self : H2Connection,
   pattern : String,
@@ -188,6 +195,40 @@ fn H2Connection::calm(
   ) catch {
     _ => ()
   }
+  self.defended(pattern, frame?)
+}
+
+///|
+/// Logs the close of the connection by moonhttp's bound on a header block
+/// as received, twice `--header-size-limit` (`header_list_bound`), which
+/// `frame`, a HEADERS or CONTINUATION frame with its header, passed: the
+/// defence against CONTINUATION floods. The `Conn` has queued GOAWAY
+/// ENHANCE_YOUR_CALM already, with its own reason as debug data; it raises
+/// no other connection error with that code. smock keeps no count of its
+/// own for the bound: the e2e tests check moonhttp's from outside, so that
+/// an upgrade that drops it fails them.
+fn H2Connection::flooded(self : H2Connection, frame : BytesView) -> Unit {
+  let kind = if frame[3].to_int() == @http2.frame_continuation {
+    "CONTINUATION"
+  } else {
+    "HEADERS"
+  }
+  self.defended("CONTINUATION flood", frame=kind)
+}
+
+///|
+/// Logs the close of the connection by the defence against the pattern
+/// `pattern`, which a frame of the kind `frame` tripped, when there is one:
+/// one line, at level `warn`, that names them. It adds no metric. The
+/// caller then writes what is queued, the GOAWAY among it, and ends the
+/// connection, so the line is the connection's only one, and its streams in
+/// progress end with it: their tasks are cancelled, and commit their
+/// Journal entries as they end.
+fn H2Connection::defended(
+  self : H2Connection,
+  pattern : String,
+  frame? : String,
+) -> Unit {
   let fields : Map[String, Json] = { "pattern": Json::string(pattern) }
   if frame is Some(frame) {
     fields["frame"] = Json::string(frame)
