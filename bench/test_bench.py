@@ -954,13 +954,23 @@ class Protocols(unittest.TestCase):
             self.assertEqual((option_value(command, "-c"), option_value(command, "-p"), command.count("-p")),
                              ("7", "4", 1), protocol)
 
-    def test_an_unknown_protocol_or_a_new_connection_per_request_over_http2_is_refused_before_anything_starts(self):
-        # oha's --disable-keepalive does not work with HTTP/2.
+    def test_an_unknown_protocol_a_new_connection_per_request_over_http2_or_streams_it_cannot_have_are_refused(self):
+        # oha's --disable-keepalive does not work with HTTP/2, and only
+        # HTTP/2 carries several requests on a connection at once. Nothing
+        # starts.
         for change, problem in (({"protocol": "h3"}, "case http-keep-alive has the protocol h3, which the harness "
                                                      "does not know: http, https, h2c or h2"),
                                 ({"protocol": "h2c", "connection": "new-per-request"},
                                  "case http-keep-alive opens a new connection per request over HTTP/2 (h2c), which "
-                                 "oha cannot do: give it keep-alive connections")):
+                                 "oha cannot do: give it keep-alive connections"),
+                                ({"streams_per_connection": 4},
+                                 "case http-keep-alive has 4 streams per connection over HTTP/1.1 (http), where a "
+                                 "connection carries one request at a time: give it the protocol h2c or h2"),
+                                ({"protocol": "h2c", "streams_per_connection": 0},
+                                 "case http-keep-alive has 0 streams per connection: give it a whole number from 1"),
+                                ({"protocol": "h2c", "streams_per_connection": 2.5},
+                                 "case http-keep-alive has 2.5 streams per connection: give it a whole number "
+                                 "from 1")):
             plan = read(BENCH, "plan.json")
             plan["cases"] = [{**plan["cases"][0], **change}]
             out = Path(tempfile.mkdtemp(prefix="smock-bench-test-"))

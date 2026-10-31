@@ -1094,8 +1094,10 @@ PROTOCOLS = {"http": (False, False), "https": (True, False), "h2c": (False, True
 
 def case_problem(case):
     """Why the harness cannot run a case of a plan, or None: a protocol it
-    does not know, or a new connection per request over HTTP/2, since oha's
-    --disable-keepalive does not work with HTTP/2."""
+    does not know; a new connection per request over HTTP/2, since oha's
+    --disable-keepalive does not work with HTTP/2; or streams per
+    connection that are not a whole number from 1, or more than one over
+    HTTP/1.1, which carries one request at a time on a connection."""
     protocol = case["protocol"]
     if protocol not in PROTOCOLS:
         return (f"case {case['name']} has the protocol {protocol}, which the harness does not know: "
@@ -1103,6 +1105,12 @@ def case_problem(case):
     if over_http2(protocol) and case["connection"] == "new-per-request":
         return (f"case {case['name']} opens a new connection per request over HTTP/2 ({protocol}), which oha cannot "
                 "do: give it keep-alive connections")
+    streams = case.get("streams_per_connection", 1)
+    if type(streams) is not int or streams < 1:
+        return f"case {case['name']} has {streams} streams per connection: give it a whole number from 1"
+    if streams > 1 and not over_http2(protocol):
+        return (f"case {case['name']} has {streams} streams per connection over HTTP/1.1 ({protocol}), where a "
+                "connection carries one request at a time: give it the protocol h2c or h2")
     return None
 
 
