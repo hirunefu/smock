@@ -11,10 +11,13 @@
 ///|
 /// Mock `m` with Stubs that answer `GET /slow` after a fixed delay of
 /// 2000 ms, `/fast` at once, `/events` with two events, the first after
-/// 2000 ms, and `/reset` with a reset Fault at probability 1.
+/// 2000 ms, `/reset` with a reset Fault at probability 1, and a CONNECT
+/// with 200 and no body.
 let rapid : String =
   #|{ "mocks": [{ "name": "m" }],
   #|  "stubs": [
+  #|    { "id": "tunnel", "mock": "m", "request": { "method": "CONNECT" },
+  #|      "response": { "status": 200 } },
   #|    { "id": "slow", "mock": "m", "request": { "path": "/slow" },
   #|      "response": { "status": 200, "body": "slow" },
   #|      "fault": { "delay": { "fixed": 2000 } } },
@@ -705,5 +708,35 @@ async test "h2c: MadeYouReset past the bound: 100 delayed and event streams that
         #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"Rapid Reset","frame":"WINDOW_UPDATE"}
       ),
     )
+  })
+}
+
+///|
+async test "h2c: a stream whose response smock has finished does not count when the client resets it: 101 CONNECTs, each answered with a 2xx that ends the stream on smock's side, then reset by the client while its side is still open, leave the connection open" {
+  with_definitions([("m.json", rapid)], dir => {
+    let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let frames = []
+      for i in 0..<101 {
+        let stream = 2 * i + 1
+        frames.push(
+          headers_frame(
+            stream,
+            raw.block(connect_fields("proxy.example.com:443")),
+            end_stream=false,
+          ),
+        )
+        frames.push(RstStream(stream_id=stream, error_code=@http2.error_cancel))
+      }
+      raw.send(frames)
+      inspect(raw.fenced(), content=(
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+        #|SETTINGS ACK
+        #|HEADERS n END_STREAM END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>] x101
+        #|PING ACK
+      ))
+    })
+    inspect(defence_entries(stopped.logs), content="")
   })
 }
