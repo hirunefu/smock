@@ -369,3 +369,341 @@ async test "h2c: streams above the final GOAWAY's last stream ID during a drain,
     inspect(defence_entries(stopped.logs), content="")
   })
 }
+
+///|
+async test "h2c: streams that smock resets on its own never count toward the bound: on a connection each, 201 streams end with a reset Fault at probability 1, the read timeout's CANCEL, the CANCEL of a stream window held at zero, NO_ERROR after 413, NO_ERROR after 431, or PROTOCOL_ERROR after 400, and the connection stays open" {
+  with_definitions([("m.json", rapid)], dir => {
+    let stopped = with_smock(
+      [
+        "--dir",
+        "\{dir}",
+        "--port",
+        "0",
+        "--http2-max-concurrent-streams",
+        "1000",
+        "--read-timeout-ms",
+        "500",
+        "--write-timeout-ms",
+        "500",
+        "--body-limit",
+        "16",
+        "--header-count-limit",
+        "1",
+      ],
+      smock => {
+        // Each kind: its label, the client's SETTINGS, and the request on a
+        // stream that smock then resets.
+        let kinds : Array[
+          (String, Array[(Int32, Int32)], (RawH2, Int32) -> @http2.Frame),
+        ] = [
+          (
+            "a reset Fault at probability 1",
+            [],
+            (raw, stream) => raw.get(stream, "/reset"),
+          ),
+          (
+            "a request that does not arrive within the read timeout",
+            [],
+            (raw, stream) => {
+              headers_frame(
+                stream,
+                raw.block(request_fields("POST", "/fast", "localhost")),
+                end_stream=false,
+              )
+            },
+          ),
+          (
+            "a stream window held at zero for the write timeout",
+            [(@http2.settings_initial_window_size, 0)],
+            (raw, stream) => raw.get(stream, "/fast"),
+          ),
+          (
+            "a body over --body-limit",
+            [],
+            (raw, stream) => {
+              headers_frame(
+                stream,
+                raw.block(
+                  [
+                    ..request_fields("POST", "/fast", "localhost"),
+                    ("content-length", "17"),
+                  ],
+                ),
+                end_stream=false,
+              )
+            },
+          ),
+          (
+            "more fields than --header-count-limit",
+            [],
+            (raw, stream) => {
+              headers_frame(
+                stream,
+                raw.block(
+                  [
+                    ..request_fields("POST", "/fast", "localhost"),
+                    ("x-a", "1"),
+                    ("x-b", "2"),
+                  ],
+                ),
+                end_stream=false,
+              )
+            },
+          ),
+          (
+            "a host that differs from :authority",
+            [],
+            (raw, stream) => {
+              headers_frame(
+                stream,
+                raw.block(
+                  [
+                    ..request_fields("POST", "/fast", "localhost"),
+                    ("host", "other.example"),
+                  ],
+                ),
+                end_stream=false,
+              )
+            },
+          ),
+        ]
+        let out = []
+        for kind in kinds {
+          let (label, params, request) = kind
+          let raw = smock.raw_h2(settings=false)
+          defer raw.close()
+          let frames = [@http2.Frame::Settings(params~, ack=false)]
+          for i in 0..<201 {
+            frames.push(request(raw, 2 * i + 1))
+          }
+          raw.send(frames)
+          let mut resets = 0
+          let reset = raw.frames_until(@async.now(), frame => {
+            if frame is RstStream(..) {
+              resets += 1
+            }
+            resets == 201 || is_goaway(frame)
+          })
+          out.push("\{label}:")
+          out.push(tally(reset.shown))
+          out.push(raw.fenced())
+        }
+        inspect(
+          out.join("\n"),
+          content=(
+            #|a reset Fault at probability 1:
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=1000, MAX_HEADER_LIST_SIZE=32768]
+            #|SETTINGS ACK
+            #|RST_STREAM n INTERNAL_ERROR x201
+            #|PING ACK
+            #|a request that does not arrive within the read timeout:
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=1000, MAX_HEADER_LIST_SIZE=32768]
+            #|SETTINGS ACK
+            #|RST_STREAM n CANCEL x201
+            #|PING ACK
+            #|a stream window held at zero for the write timeout:
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=1000, MAX_HEADER_LIST_SIZE=32768]
+            #|SETTINGS ACK
+            #|HEADERS n END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4] x201
+            #|RST_STREAM n CANCEL x201
+            #|PING ACK
+            #|a body over --body-limit:
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=1000, MAX_HEADER_LIST_SIZE=32768]
+            #|SETTINGS ACK
+            #|HEADERS n END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0] x201
+            #|RST_STREAM n NO_ERROR x201
+            #|PING ACK
+            #|more fields than --header-count-limit:
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=1000, MAX_HEADER_LIST_SIZE=32768]
+            #|SETTINGS ACK
+            #|HEADERS n END_STREAM END_HEADERS [:status: 431, date: <now>, content-length: 0] x201
+            #|RST_STREAM n NO_ERROR x201
+            #|PING ACK
+            #|a host that differs from :authority:
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=1000, MAX_HEADER_LIST_SIZE=32768]
+            #|SETTINGS ACK
+            #|HEADERS n END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0] x201
+            #|RST_STREAM n PROTOCOL_ERROR x201
+            #|PING ACK
+          ),
+        )
+      },
+    )
+    inspect(defence_entries(stopped.logs), content="")
+  })
+}
+
+///|
+/// What a client sends on `stream`, whose request has ended, for which
+/// moonhttp resets the stream (MadeYouReset), of the five `kinds` in turn:
+/// a WINDOW_UPDATE of 0, a window overflow, DATA or HEADERS after
+/// END_STREAM, or a PRIORITY frame that makes the stream depend on itself.
+fn RawH2::made_reset(
+  self : RawH2,
+  kind : Int32,
+  stream : Int32,
+) -> @http2.Frame {
+  match kind % 5 {
+    0 => WindowUpdate(stream_id=stream, increment=0)
+    1 => WindowUpdate(stream_id=stream, increment=0x7FFF_FFFF)
+    2 => Data(stream_id=stream, data=b"x", end_stream=false, padding=0)
+    3 => headers_frame(stream, self.block([("x-late", "1")]))
+    _ =>
+      Priority(stream_id=stream, priority={
+        exclusive: false,
+        stream_dependency: stream,
+        weight: 16,
+      })
+  }
+}
+
+///|
+/// The labels of `RawH2::made_reset`'s kinds.
+let made_reset_kinds : Array[String] = [
+  "a WINDOW_UPDATE of 0", "a window overflow", "DATA after END_STREAM", "HEADERS after END_STREAM",
+  "PRIORITY on the stream itself",
+]
+
+///|
+async test "h2c: MadeYouReset: delayed and event streams whose requests have ended, reset by moonhttp for a WINDOW_UPDATE of 0, a window overflow, DATA or HEADERS after END_STREAM, or PRIORITY on the stream itself, end their tasks at once; the connection goes on, and a fresh connection is served at once" {
+  with_definitions([("m.json", rapid)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let start = @async.now()
+      let frames = []
+      for kind in 0..<5 {
+        for path in ["/slow", "/events"] {
+          let stream = frames.length() + 1
+          frames.push(raw.get(stream, path))
+          frames.push(raw.made_reset(kind, stream))
+        }
+      }
+      raw.send(frames)
+      let mut resets = 0
+      let reset = raw.frames_until(start, frame => {
+        if frame is RstStream(..) {
+          resets += 1
+        }
+        resets == 10 || is_goaway(frame)
+      })
+      let entries = smock.journal_once(10, within=1000)
+      let committed_ms = @async.now() - start
+      raw.send([raw.get(21, "/fast")])
+      let next = raw.frames_until_stream_ends(21)
+      let out = []
+      for i, label in made_reset_kinds {
+        out.push("\{label}: streams \{4 * i + 1} and \{4 * i + 3}")
+      }
+      inspect(
+        [
+          ..out,
+          "---",
+          ..reset.shown,
+          "every entry committed before the delays were over: \{entries.length() == 10 && committed_ms < 2000}",
+          tally(entries),
+          "---",
+          next,
+          smock.fresh(),
+        ].join("\n"),
+        content=(
+          #|a WINDOW_UPDATE of 0: streams 1 and 3
+          #|a window overflow: streams 5 and 7
+          #|DATA after END_STREAM: streams 9 and 11
+          #|HEADERS after END_STREAM: streams 13 and 15
+          #|PRIORITY on the stream itself: streams 17 and 19
+          #|---
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|RST_STREAM 1 PROTOCOL_ERROR
+          #|HEADERS 3 END_HEADERS [:status: 200, content-type: text/event-stream, smock-mock: m; via=default, date: <now>]
+          #|RST_STREAM 3 PROTOCOL_ERROR
+          #|RST_STREAM 5 FLOW_CONTROL_ERROR
+          #|HEADERS 7 END_HEADERS [:status: 200, content-type: text/event-stream, smock-mock: m; via=default, date: <now>]
+          #|RST_STREAM 7 FLOW_CONTROL_ERROR
+          #|RST_STREAM 9 STREAM_CLOSED
+          #|HEADERS 11 END_HEADERS [:status: 200, content-type: text/event-stream, smock-mock: m; via=default, date: <now>]
+          #|RST_STREAM 11 STREAM_CLOSED
+          #|RST_STREAM 13 STREAM_CLOSED
+          #|HEADERS 15 END_HEADERS [:status: 200, content-type: text/event-stream, smock-mock: m; via=default, date: <now>]
+          #|RST_STREAM 15 STREAM_CLOSED
+          #|RST_STREAM 17 PROTOCOL_ERROR
+          #|HEADERS 19 END_HEADERS [:status: 200, content-type: text/event-stream, smock-mock: m; via=default, date: <now>]
+          #|RST_STREAM 19 PROTOCOL_ERROR
+          #|every entry committed before the delays were over: true
+          #|/slow: stub "slow", status 200 x5
+          #|/events: stub "events", status 200 x5
+          #|---
+          #|HEADERS 21 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+          #|DATA 21 END_STREAM 4 octets
+          #|then a fresh connection: 200 fast
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: MadeYouReset past the bound: 100 delayed and event streams that moonhttp resets for the client's frames, of the five kinds in turn, leave the connection open, and the 101st gets GOAWAY ENHANCE_YOUR_CALM; smock logs one line, and a fresh connection is served" {
+  with_definitions([("m.json", rapid)], dir => {
+    let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let start = @async.now()
+      // Each stream on its own, to mix the kinds with both Stubs.
+      let made = (first : Int32, n : Int32) => {
+        let frames = []
+        for i in 0..<n {
+          let stream = first + 2 * i
+          let path = if i % 2 == 0 { "/slow" } else { "/events" }
+          frames.push(raw.get(stream, path))
+          frames.push(raw.made_reset(i, stream))
+        }
+        frames
+      }
+      raw.send(made(1, 100))
+      let open = raw.fenced()
+      raw.send(made(201, 1))
+      let closed = raw.tally_until_closed()
+      let fresh = smock.fresh()
+      let entries = smock.journal_once(102, within=1000, limit=1000)
+      let committed_ms = @async.now() - start
+      inspect(
+        [
+          "100 streams reset:",
+          open,
+          "one more:",
+          closed,
+          fresh,
+          "every entry committed before the delays were over: \{entries.length() == 102 && committed_ms < 2000}",
+          tally(entries),
+        ].join("\n"),
+        content=(
+          #|100 streams reset:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|RST_STREAM n PROTOCOL_ERROR x40
+          #|HEADERS n END_HEADERS [:status: 200, content-type: text/event-stream, smock-mock: m; via=default, date: <now>] x50
+          #|RST_STREAM n FLOW_CONTROL_ERROR x20
+          #|RST_STREAM n STREAM_CLOSED x40
+          #|PING ACK
+          #|one more:
+          #|RST_STREAM n PROTOCOL_ERROR
+          #|GOAWAY last=201 ENHANCE_YOUR_CALM
+          #|then a FIN
+          #|then a fresh connection: 200 fast
+          #|every entry committed before the delays were over: true
+          #|/slow: stub "slow", status 200 x51
+          #|/events: stub "events", status 200 x50
+          #|/fast: stub "fast", status 200
+        ),
+      )
+    })
+    inspect(
+      defence_entries(stopped.logs),
+      content=(
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"Rapid Reset","frame":"WINDOW_UPDATE"}
+      ),
+    )
+  })
+}
