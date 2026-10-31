@@ -242,6 +242,11 @@ async fn run(
       state_max_bytes~,
     )
     lifecycle.started(engine)
+    // The Mockoon-equivalent lines exist only in the mockoon log format.
+    let mockoon = match settings.log_format {
+      Json => None
+      Mockoon => Some(MockoonLines::new(engine))
+    }
     let ports : MockPorts = {
       engine,
       rand,
@@ -251,6 +256,7 @@ async fn run(
       traffic,
       lifecycle,
       logger,
+      mockoon,
     }
     // Without default certificate files, the TLS port presents a
     // self-signed certificate generated for the Hosts served, unless SNI
@@ -293,7 +299,12 @@ async fn run(
         logger,
         reloads,
         last_read: (snapshot.digest, []),
-        after_swap: () => certificates.after_swap(),
+        after_swap: () => {
+          certificates.after_swap()
+          if mockoon is Some(lines) {
+            lines.rebuild(engine)
+          }
+        },
       }
       group.spawn_bg(no_wait=true, () => reloader.run(watch))
     }
@@ -410,6 +421,8 @@ priv struct MockPorts {
   /// Whether smock drains.
   lifecycle : Lifecycle
   logger : @log.Logger
+  /// The Mockoon-equivalent lines, in the mockoon log format only.
+  mockoon : MockoonLines?
 }
 
 ///|
@@ -447,6 +460,11 @@ priv struct MockPorts {
 /// from the read that brought them, but they are neither unmatched requests
 /// nor recorded in the Journal: the engine never sees them.
 ///
+/// In the mockoon log format, each request the engine handled gets its
+/// Transaction recorded line where it is counted, after the count. Bytes
+/// the codec rejects get none. The json format logs nothing per request,
+/// and costs nothing per request for this beyond a test.
+///
 /// While smock drains, a response says `Connection: close`, and the
 /// connection closes after it.
 async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
@@ -470,7 +488,12 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
         now~,
         rand=self.rand,
       )
-      defer self.traffic.record(outcome, stopwatch.seconds())
+      defer {
+        self.traffic.record(outcome, stopwatch.seconds())
+        if self.mockoon is Some(lines) {
+          lines.transaction(engine_request, outcome)
+        }
+      }
       let plan = outcome.plan
       // Most responses are a body sent at once, without a delay or a Fault:
       // written here as `write_response` writes them, without the layers of
@@ -597,9 +620,9 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 ///   a delay before a response, do not count.
 ///
 /// It reads and writes only through `stream`, so the same loop serves any
-/// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
-/// logged per request. Returns whether `stream` can still be written to:
-/// not after a write timed out.
+/// byte stream: a TCP connection, or a TLS session on top of one. It logs
+/// nothing per request: in the mockoon log format, `respond` does. Returns
+/// whether `stream` can still be written to: not after a write timed out.
 ///
 /// - `respond` writes the response to each request, or part of it, and
 ///   returns whether the connection stays open after it. It writes to
