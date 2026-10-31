@@ -499,6 +499,52 @@ def listening(line):
     return listener, int(address.rsplit(":", 1)[1])
 
 
+# What marks a Transaction recorded line of the mockoon log format, whose
+# keys are sorted, so that the line is told apart without parsing it. A
+# quote inside a string is escaped, so no other line holds it.
+TRANSACTION_RECORDED = b'"message":"Transaction recorded"'
+
+
+class MockoonStdout:
+    """smock's stdout in the mockoon log format, fed in chunks as they are
+    read, which may cut a line anywhere. It counts the Transaction recorded
+    lines in `transactions`, without keeping them, so that a run at tens of
+    thousands of requests a second keeps no gigabytes of them, and hands
+    every other line to `keep`, as text, in order. Whole chunks are
+    searched at once, and only one that holds another line is split."""
+
+    def __init__(self, keep):
+        self.keep = keep
+        self.transactions = 0
+        self.rest = b""
+
+    def feed(self, chunk):
+        """Reads `chunk`, the next bytes of stdout."""
+        data = self.rest + chunk
+        end = data.rfind(b"\n") + 1
+        self.rest = data[end:]
+        self.lines(data[:end])
+
+    def end(self):
+        """Reads a last line that stdout ended without its newline."""
+        rest, self.rest = self.rest, b""
+        self.lines(rest)
+
+    def lines(self, data):
+        """Counts and keeps the lines of `data`, which ends where a line
+        does."""
+        found = data.count(TRANSACTION_RECORDED)
+        self.transactions += found
+        count = data.count(b"\n")
+        if data and not data.endswith(b"\n"):
+            count += 1
+        if count == found:
+            return
+        for line in data.splitlines(keepends=True):
+            if TRANSACTION_RECORDED not in line:
+                self.keep(line.decode(errors="replace"))
+
+
 class Smock:
     """One smock process serving the benchmark's definitions, started in its
     own systemd scope under the CPU quota and the memory limit of a

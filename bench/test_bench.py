@@ -1667,5 +1667,41 @@ class ListeningLines(unittest.TestCase):
                 self.assertIsNone(harness.listening(line))
 
 
+# An error line whose message quotes a Transaction recorded line's key and
+# value, escaped as JSON escapes them.
+MOCKOON_ERROR = ('{"app":"smock","environmentName":"payments","level":"error","message":"Error while serving the '
+                 'content: \\"message\\":\\"Transaction recorded\\"","routePath":"/t","routeUUID":"t",'
+                 '"timestamp":"2026-10-31T15:14:46.310Z"}\n')
+
+
+class MockoonStdout(unittest.TestCase):
+    """In the mockoon format, the run reads smock's stdout as it comes, in
+    chunks that may cut a line anywhere. It counts the Transaction recorded
+    lines without keeping them, and keeps every other line, in order."""
+
+    def read(self, text, size):
+        """What reading `text` in chunks of `size` bytes, to its end, counts
+        and keeps."""
+        kept = []
+        lines = harness.MockoonStdout(kept.append)
+        data = text.encode()
+        for start in range(0, len(data), size):
+            lines.feed(data[start:start + size])
+        lines.end()
+        return lines.transactions, kept
+
+    def test_transaction_recorded_lines_are_counted_and_the_others_kept_in_order(self):
+        text = MOCKOON_LISTENING + TRANSACTION + TRANSACTION + MOCKOON_ERROR + TRANSACTION + MOCKOON_DRAIN
+        for size in (1, 7, len(TRANSACTION), len(text)):
+            with self.subTest(size=size):
+                self.assertEqual(self.read(text, size), (3, [MOCKOON_LISTENING, MOCKOON_ERROR, MOCKOON_DRAIN]))
+        self.assertEqual(self.read(TRANSACTION * 1000, 65536), (1000, []))
+        self.assertEqual(self.read("", 1), (0, []))
+
+    def test_a_last_line_without_its_newline_still_counts_when_stdout_ends(self):
+        self.assertEqual(self.read(TRANSACTION + TRANSACTION.rstrip("\n"), 5), (2, []))
+        self.assertEqual(self.read(TRANSACTION + MOCKOON_DRAIN.rstrip("\n"), 5), (1, [MOCKOON_DRAIN.rstrip("\n")]))
+
+
 if __name__ == "__main__":
     unittest.main()
