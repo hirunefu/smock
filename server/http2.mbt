@@ -233,7 +233,9 @@ priv struct H2Connection {
   /// The time, as `@async.now()` gives it, read again after each wait of
   /// the reader: for reading or for writing.
   mut now : Int64
-  /// When the last read returned.
+  /// When the last read returned, or the reader last waited for the output
+  /// to be written (`H2Writer::hold`): when the frames it hands from then
+  /// on arrived.
   mut read_at : Int64
   /// While the connection is idle, when it times out: from when it opens,
   /// and from when what was queued is written after the last stream in
@@ -263,13 +265,20 @@ priv struct H2Connection {
 /// Splits what the connection reads into the preface and whole frames,
 /// hands each to the `Conn` and handles its events, until the connection
 /// ends. A frame larger than smock advertises, or a connection error the
-/// `Conn` raises, ends it with GOAWAY.
+/// `Conn` raises, ends it with GOAWAY. Before each frame, the output queued
+/// and not yet written is held to the output bound (`H2Writer::hold`).
 async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
   self : H2Connection,
   stream : S,
   out : WatchedStream[S],
 ) -> Unit {
   for ;; {
+    // What the frames before queued is written first, past the output
+    // bound. The frames handed after such a wait arrive when it ends.
+    if self.writer.hold(out) {
+      self.now = @async.now()
+      self.read_at = self.now
+    }
     let octets = match self.reader.next() {
       Preface(preface) => preface
       Frame(head, frame) => {
