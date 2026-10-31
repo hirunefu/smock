@@ -67,10 +67,12 @@ format, the default, log entries go to stderr in smock's own shape: `time`,
 (`--log-format mockoon`), every line goes to stdout instead, in the Mockoon
 CLI's envelope: `app` (always `"smock"`), `level`, `message` and
 `timestamp`, with the entry's fields beside them and the keys sorted at
-every depth. smock then also writes a `Transaction recorded` line for each
-request a Mock handles, and writes nothing to stderr but usage errors. Each
-line is written whole and at once, also to a pipe, and never waits in a
-buffer, so a reader of stdout that stops reading stalls smock. Log
+every depth. smock then also writes `Server started on port <port>`, with
+the plain port, for each Mock once every listener is open, and a
+`Transaction recorded` line for each request a Mock handles. It writes
+nothing to stderr but usage errors. Each line is written whole and at
+once, also to a pipe, and never waits in a buffer, so a reader of stdout
+that stops reading stalls smock. Log
 entries are a diagnostic aid: their messages and fields may change in any
 release, unlike the Definition file format and the Admin API, which are
 versioned (`v1`). A usage error, such as an
@@ -154,7 +156,9 @@ flight, so that Ctrl-C stops a local smock promptly.
 - The admin port serves until exit, so the probes can be read during the
   drain. Log entries mark the start of the drain (`drain started`, with
   `timeoutMs`) and its end (`drain ended`, with `connectionsCut`, the number
-  of connections still open when the timeout expired).
+  of connections still open when the timeout expired). The `mockoon` format
+  also writes `Server stopped` for each Mock served, right after
+  `drain ended`.
 
 With a certificate and its key, smock also serves HTTPS on the TLS port, with
 the same Mocks as the plain port. Both are PEM files, for example the
