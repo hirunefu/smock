@@ -83,10 +83,31 @@ struct Smock {
   tls_port : Int32
   /// Its process ID.
   pid : Int32
-  /// The log lines it has written so far: they keep coming while it runs.
+  /// The log lines it has written to stderr so far: they keep coming while
+  /// it runs.
   logs : Array[String]
+  /// The lines it has written to stdout so far, as the mockoon log format's
+  /// Transaction recorded lines: they keep coming while it runs.
+  stdout : Array[String]
   /// The process, to wait for its exit.
   process : @process.Process
+}
+
+///|
+/// Waits until smock has written `count` lines to stdout, while it runs, and
+/// returns them all.
+async fn Smock::stdout_lines(self : Smock, count : Int32) -> Array[String] {
+  let written = @async.with_timeout_opt(patience_ms, () => {
+    while self.stdout.length() < count {
+      @async.sleep(10)
+    }
+  })
+  guard written is Some(_) else {
+    fail(
+      "smock wrote \{self.stdout.length()} of \{count} lines to stdout in time:\n\{self.stdout.join("\n")}",
+    )
+  }
+  self.stdout.copy()
 }
 
 ///|
@@ -295,10 +316,12 @@ fn Conn::close(self : Conn) -> Unit {
 
 ///|
 /// How a smock process ended: its exit status (minus the signal number when
-/// a signal ended it) and every log line it wrote.
+/// a signal ended it), every log line it wrote to stderr and every line it
+/// wrote to stdout.
 struct Stopped {
   status : Int32
   logs : Array[String]
+  stdout : Array[String]
 }
 
 ///|
@@ -308,22 +331,25 @@ struct Stopped {
 /// `f`, then stops it with SIGTERM, unless `f` has, and waits for it to
 /// exit. `under`, when given, is a command that runs smock as its last
 /// arguments and becomes smock by exec, such as `systemd-run --scope ...
-/// --`, so that the signal still reaches smock.
+/// --`, so that the signal still reaches smock. With `close_stdout`, the
+/// reading end of smock's stdout is closed at once, so that every write
+/// smock makes there fails.
 async fn with_smock(
   args : Array[String],
   env~ : Map[String, String] = Map([]),
   cwd~ : String = ".",
   under~ : Array[String] = [],
+  close_stdout~ : Bool = false,
   f : async (Smock) -> Unit,
 ) -> Stopped {
   @async.with_task_group(group => {
-    let serving = Serving::start(group, args, env~, cwd~, under~)
+    let serving = Serving::start(group, args, env~, cwd~, under~, close_stdout~)
     guard serving.listening_on(["plain", "tls", "admin"]) is Some(ports) else {
       fail("smock exited before listening:\n\{serving.logs.join("\n")}")
     }
     f(serving.smock(ports))
     let status = serving.stop()
-    { status, logs: serving.logs, }
+    { status, logs: serving.logs, stdout: serving.stdout, }
   })
 }
 
@@ -338,22 +364,30 @@ struct Serving {
   lines : @async.Queue[String?]
   /// Reads the log lines, until smock closes stderr.
   reader : @async.Task[Unit]
+  /// The lines it has written to stdout so far.
+  stdout : Array[String]
+  /// Reads the lines of stdout, until smock closes it, unless its reading
+  /// end was closed at once.
+  stdout_reader : @async.Task[Unit]?
 }
 
 ///|
 /// Starts `smock serve <args>` in `group`, with only `smock_env(env)` as
 /// its environment, in the working directory `cwd`, under the command
-/// `under` when given (see `with_smock`), and reads its log lines as they
-/// come.
+/// `under` when given (see `with_smock`), and reads its log lines and the
+/// lines of its stdout as they come, unless `close_stdout` closes the
+/// reading end of stdout at once.
 async fn[X] Serving::start(
   group : @async.TaskGroup[X],
   args : Array[String],
   env~ : Map[String, String] = Map([]),
   cwd~ : String = ".",
   under~ : Array[String] = [],
+  close_stdout~ : Bool = false,
 ) -> Serving {
   build.wait()
   let (stderr, stderr_end) = @process.read_from_process()
+  let (stdout, stdout_end) = @process.read_from_process()
   let smock = [@fs.realpath(binary), "serve", ..args]
   let command = [..under, ..smock]
   let process = @process.spawn(
@@ -362,10 +396,25 @@ async fn[X] Serving::start(
     command[1:],
     extra_env=smock_env(env),
     inherit_env=false,
+    stdout=stdout_end,
     stderr=stderr_end,
     cwd~,
     no_wait=true,
   )
+  let stdout_lines = []
+  let stdout_reader = if close_stdout {
+    stdout.close()
+    None
+  } else {
+    Some(
+      group.spawn(() => {
+        defer stdout.close()
+        while past_spurious_eagain(() => stdout.read_until("\n")) is Some(line) {
+          stdout_lines.push(line)
+        }
+      }),
+    )
+  }
   let logs = []
   let lines : @async.Queue[String?] = @async.Queue(kind=Unbounded)
   let reader = group.spawn(() => {
@@ -381,7 +430,7 @@ async fn[X] Serving::start(
       }
     }
   })
-  { process, logs, lines, reader, }
+  { process, logs, lines, reader, stdout: stdout_lines, stdout_reader, }
 }
 
 ///|
@@ -423,17 +472,22 @@ fn Serving::smock(self : Serving, ports : Map[String, Int32]) -> Smock {
     admin_port: ports.get("admin").unwrap_or(0),
     pid: self.process.pid,
     logs: self.logs,
+    stdout: self.stdout,
     process: self.process,
   }
 }
 
 ///|
-/// Waits for smock to exit and for its last log line, and returns its exit
-/// status (minus the signal number when a signal ended it).
+/// Waits for smock to exit and for its last log line and its last line on
+/// stdout, and returns its exit status (minus the signal number when a
+/// signal ended it).
 async fn Serving::wait(self : Serving) -> Int32 {
   let status = @async.with_timeout_opt(patience_ms, () => self.process.wait())
   guard status is Some(status) else { fail("smock did not stop in time") }
   self.reader.wait()
+  if self.stdout_reader is Some(reader) {
+    reader.wait()
+  }
   status
 }
 
@@ -485,18 +539,20 @@ fn listening(line : String) -> (String, Int32)? {
 ///|
 /// Runs `smock <args>` with only `smock_env(env)` as its environment until
 /// it exits by itself, and returns its exit status and the lines it wrote to
-/// stderr.
+/// stderr and to stdout.
 async fn run_smock(
   args : Array[String],
   env~ : Map[String, String] = Map([]),
 ) -> Stopped {
-  let (status, _, stderr) = smock_output(args, env=smock_env(env))
-  let logs = stderr
+  let (status, stdout, stderr) = smock_output(args, env=smock_env(env))
+  let lines = (text : String) => {
+    text
     .split("\n")
     .filter(line => line != "")
     .map(line => line.to_owned())
     .collect()
-  { status, logs, }
+  }
+  { status, logs: lines(stderr), stdout: lines(stdout), }
 }
 
 ///|

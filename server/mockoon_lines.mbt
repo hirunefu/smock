@@ -1,0 +1,147 @@
+// The Mockoon-equivalent lines of the mockoon log format, which smock
+// writes to stdout: a Transaction recorded line for each request a Mock
+// handles, built by the log package from a prefix cached for each Mock.
+
+///|
+/// Writes whole lines to stdout: each line and its newline by one write,
+/// which goes on until the whole line is out, before the call returns. No
+/// line waits in a buffer, as `println`'s would on a pipe.
+///
+/// The async library writes to stdout from its thread pool, one write at a
+/// time, so the lines of tasks that write at once take turns and never mix.
+/// A line that cannot be written, as when stdout is closed, is dropped: the
+/// library's event loop ignores SIGPIPE, so the write fails with EPIPE
+/// rather than ending smock.
+priv struct StdoutLines {
+  /// Held while a line is written.
+  turn : @async.Mutex
+}
+
+///|
+fn StdoutLines::new() -> StdoutLines {
+  { turn: @async.Mutex(), }
+}
+
+///|
+/// Writes `line` and a newline to stdout, or drops it when it cannot be
+/// written. A line, once begun, is written whole even when the task is
+/// cancelled meanwhile, as when the drain cuts its connection.
+async fn StdoutLines::write(self : StdoutLines, line : String) -> Unit {
+  let bytes = @buffer.Buffer(size_hint=line.length() + 1)
+  bytes.write_string_utf8(line)
+  bytes.write_byte(b'\n')
+  let data = bytes.to_bytes()
+  @async.protect_from_cancel(() => {
+    self.turn.acquire()
+    defer self.turn.release()
+    @stdio.stdout.write(data) catch {
+      _ => ()
+    }
+  })
+}
+
+///|
+/// The Mockoon-equivalent lines: where they go, and the start of each
+/// Mock's lines. smock holds one only in the mockoon log format.
+priv struct MockoonLines {
+  out : StdoutLines
+  /// The prefix of each Mock's lines (`@log.mockoon_prefix`), by Mock name,
+  /// for the definition set served.
+  mut prefixes : Map[String, String]
+  /// The prefix of the lines about a request no Mock answered.
+  no_mock : String
+}
+
+///|
+/// The lines of the definition set `engine` serves.
+fn MockoonLines::new(engine : @engine.Engine) -> MockoonLines {
+  let lines = {
+    out: StdoutLines::new(),
+    prefixes: Map([]),
+    no_mock: @log.mockoon_prefix(None),
+  }
+  lines.rebuild(engine)
+  lines
+}
+
+///|
+/// Builds the prefix of each Mock that `engine` serves, anew: when the first
+/// definition set loads, and after each reload that swaps the set.
+fn MockoonLines::rebuild(self : MockoonLines, engine : @engine.Engine) -> Unit {
+  let prefixes = Map([])
+  for mock in engine.status().mocks {
+    prefixes[mock.name] = @log.mockoon_prefix(Some(mock.name))
+  }
+  self.prefixes = prefixes
+}
+
+///|
+/// The prefix of the lines about a request that `resolution` says who
+/// answered. A request answered by a definition set just swapped out may
+/// name a Mock with no cached prefix: its prefix is built for the line.
+fn MockoonLines::prefix(
+  self : MockoonLines,
+  resolution : @engine.Resolution,
+) -> String {
+  match resolution {
+    ByHost(name) | ViaDefault(name) =>
+      match self.prefixes.get(name) {
+        Some(prefix) => prefix
+        None => @log.mockoon_prefix(Some(name))
+      }
+    NoMock => self.no_mock
+  }
+}
+
+///|
+/// Writes the Transaction recorded line of `request`, which the engine
+/// decided `outcome` for, with its planned status and the time now. A
+/// request that a reset or a close Fault ended sent no status, and gets no
+/// line.
+async fn MockoonLines::transaction(
+  self : MockoonLines,
+  request : @http1.Request,
+  outcome : @engine.Outcome,
+) -> Unit {
+  if outcome.plan.fault is Some(Reset | Close) {
+    return
+  }
+  let line = @log.transaction_line(
+    self.prefix(outcome.resolution),
+    meth=request.meth,
+    target=request.target,
+    status=outcome.plan.status,
+    at=@async.now(),
+  )
+  self.out.write(line)
+}
+
+///|
+/// Writes the line of `request` once the request path is done with it, if
+/// the engine decided an outcome for it, which `pending` then holds, and
+/// empties `pending`.
+async fn MockoonLines::write_pending(
+  self : MockoonLines,
+  request : @http1.Request,
+  pending : PendingLine,
+) -> Unit {
+  guard pending.outcome is Some(outcome) else { return }
+  pending.outcome = None
+  self.transaction(request, outcome)
+}
+
+///|
+/// The engine's outcome for the request of one connection whose Transaction
+/// recorded line is still to be written. The request path sets it where it
+/// counts the request, after the response's last byte, without waiting, and
+/// the line is written once the request path is done with the request. So
+/// the request path waits for nothing more there, and the json format,
+/// which writes no line, adds only a test to it.
+priv struct PendingLine {
+  mut outcome : @engine.Outcome?
+}
+
+///|
+fn PendingLine::new() -> PendingLine {
+  { outcome: None, }
+}

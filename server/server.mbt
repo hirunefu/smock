@@ -242,6 +242,11 @@ async fn run(
       state_max_bytes~,
     )
     lifecycle.started(engine)
+    // The Mockoon-equivalent lines exist only in the mockoon log format.
+    let mockoon = match settings.log_format {
+      Json => None
+      Mockoon => Some(MockoonLines::new(engine))
+    }
     let ports : MockPorts = {
       engine,
       rand,
@@ -251,6 +256,7 @@ async fn run(
       traffic,
       lifecycle,
       logger,
+      mockoon,
     }
     // Without default certificate files, the TLS port presents a
     // self-signed certificate generated for the Hosts served, unless SNI
@@ -293,7 +299,12 @@ async fn run(
         logger,
         reloads,
         last_read: (snapshot.digest, []),
-        after_swap: () => certificates.after_swap(),
+        after_swap: () => {
+          certificates.after_swap()
+          if mockoon is Some(lines) {
+            lines.rebuild(engine)
+          }
+        },
       }
       group.spawn_bg(no_wait=true, () => reloader.run(watch))
     }
@@ -410,6 +421,8 @@ priv struct MockPorts {
   /// Whether smock drains.
   lifecycle : Lifecycle
   logger : @log.Logger
+  /// The Mockoon-equivalent lines, in the mockoon log format only.
+  mockoon : MockoonLines?
 }
 
 ///|
@@ -447,6 +460,12 @@ priv struct MockPorts {
 /// from the read that brought them, but they are neither unmatched requests
 /// nor recorded in the Journal: the engine never sees them.
 ///
+/// In the mockoon log format, each request the engine handled gets its
+/// Transaction recorded line once it is counted and `respond` is done with
+/// it, however it ended. Bytes the codec rejects get none. The json format
+/// logs nothing per request, and costs nothing per request for this beyond
+/// a test where the request is counted.
+///
 /// While smock drains, a response says `Connection: close`, and the
 /// connection closes after it.
 async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
@@ -457,126 +476,157 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 ) -> Bool {
   let was_reset = Ref(false)
   let headers = DecodedHeaders::new()
-  let writable = serve_connection(
-    stream,
-    self.settings,
-    connection~,
-    respond=(stream, request, stopwatch, now) => {
-      let engine_request = to_engine_request(request, headers.of(request))
-      let session = self.sessions.session_of(engine_request.headers)
-      let outcome = self.engine.handle(
-        engine_request,
-        session~,
-        now~,
-        rand=self.rand,
-      )
-      defer self.traffic.record(outcome, stopwatch.seconds())
-      let plan = outcome.plan
-      // Most responses are a body sent at once, without a delay or a Fault:
-      // written here as `write_response` writes them, without the layers of
-      // async calls it and `@io.Writer::write` add.
-      if plan.delay_ms == 0 && plan.fault is None && plan.body is Bytes(body) {
-        let close = self.lifecycle.is_draining()
-        let response = @http1.encode_response(
-          plan.status,
-          plan.headers,
-          body,
-          request~,
-          close~,
-          date=self.dates.at(now),
-        )
-        if outcome.journal is Some(entry) {
-          self.engine.commit(entry)
-        }
-        // Deferred after the count, so it runs before it.
-        defer (if outcome.journal is Some(entry) {
-          entry.finish(at=@async.now())
-        })
-        // Each write that returns has made progress, and gives the next
-        // the whole write timeout from then.
-        let watchdog = stream.watchdog
-        let mut since = now
-        let mut written = 0
-        for ;; {
-          watchdog.writing(since)
-          written += @io.Writer::write_once(
-            stream.stream,
-            response,
-            offset=written,
-            len=response.length() - written,
-          )
-          watchdog.stop()
-          if written == response.length() {
-            break
-          }
-          since = @async.now()
-        }
-        return @http1.keeps_open(request~, close~) &&
-          !self.lifecycle.is_draining()
+  // In the mockoon log format, the outcome of the request whose Transaction
+  // recorded line is still to be written.
+  let pending = match self.mockoon {
+    Some(_) => Some(PendingLine::new())
+    None => None
+  }
+  let respond = async fn(
+    stream : WatchedStream[S],
+    request : @http1.Request,
+    stopwatch : Stopwatch,
+    now : Int64,
+  ) -> Bool {
+    let engine_request = to_engine_request(request, headers.of(request))
+    let session = self.sessions.session_of(engine_request.headers)
+    let outcome = self.engine.handle(
+      engine_request,
+      session~,
+      now~,
+      rand=self.rand,
+    )
+    defer {
+      self.traffic.record(outcome, stopwatch.seconds())
+      if pending is Some(pending) {
+        pending.outcome = Some(outcome)
       }
-      let pending = Ref(outcome.journal)
-      let commit = () => {
-        if pending.val is Some(entry) {
-          pending.val = None
-          self.engine.commit(entry)
-        }
+    }
+    let plan = outcome.plan
+    // Most responses are a body sent at once, without a delay or a Fault:
+    // written here as `write_response` writes them, without the layers of
+    // async calls it and `@io.Writer::write` add.
+    if plan.delay_ms == 0 && plan.fault is None && plan.body is Bytes(body) {
+      let close = self.lifecycle.is_draining()
+      let response = @http1.encode_response(
+        plan.status,
+        plan.headers,
+        body,
+        request~,
+        close~,
+        date=self.dates.at(now),
+      )
+      if outcome.journal is Some(entry) {
+        self.engine.commit(entry)
       }
       // Deferred after the count, so it runs before it.
-      defer {
-        commit()
-        if outcome.journal is Some(entry) {
-          entry.finish(at=@async.now())
+      defer (if outcome.journal is Some(entry) {
+        entry.finish(at=@async.now())
+      })
+      // Each write that returns has made progress, and gives the next
+      // the whole write timeout from then.
+      let watchdog = stream.watchdog
+      let mut since = now
+      let mut written = 0
+      for ;; {
+        watchdog.writing(since)
+        written += @io.Writer::write_once(
+          stream.stream,
+          response,
+          offset=written,
+          len=response.length() - written,
+        )
+        watchdog.stop()
+        if written == response.length() {
+          break
         }
+        since = @async.now()
       }
-      if plan.delay_ms > 0 {
-        @async.sleep(plan.delay_ms)
+      return @http1.keeps_open(request~, close~) &&
+        !self.lifecycle.is_draining()
+    }
+    let pending = Ref(outcome.journal)
+    let commit = () => {
+      if pending.val is Some(entry) {
+        pending.val = None
+        self.engine.commit(entry)
       }
-      // The Date is the time the head is written, after the delay.
-      let keep_open = match plan.fault {
-        None =>
-          write_response(
-            stream,
-            plan,
-            request,
-            date=self.dates.at(@async.now()),
-            close=self.lifecycle.is_draining(),
-            before_last=commit,
-          )
-        // Closing the connection sends an RST, once the Journal entry is
-        // committed, so that a client that sees the reset finds it there.
-        Some(Reset) => {
-          was_reset.val = reset_on_close(tcp, self.logger)
-          false
-        }
-        // Closing the connection sends a FIN.
-        Some(Close) => false
-        Some(Partial) =>
-          write_response(
-            stream,
-            plan,
-            request,
-            date=self.dates.at(@async.now()),
-            partial=true,
-          )
+    }
+    // Deferred after the count, so it runs before it.
+    defer {
+      commit()
+      if outcome.journal is Some(entry) {
+        entry.finish(at=@async.now())
       }
-      // A response that began before the drain, such as a stream, and ends
-      // during it closes its connection too.
-      keep_open && !self.lifecycle.is_draining()
-    },
-    reject=(stream, status, stopwatch) => {
-      defer self.traffic.record_rejected(stopwatch.seconds())
-      @io.Writer::write(
-        stream,
-        @http1.encode_response(
-          status,
-          [],
-          b"",
-          close=true,
+    }
+    if plan.delay_ms > 0 {
+      @async.sleep(plan.delay_ms)
+    }
+    // The Date is the time the head is written, after the delay.
+    let keep_open = match plan.fault {
+      None =>
+        write_response(
+          stream,
+          plan,
+          request,
           date=self.dates.at(@async.now()),
-        ),
-      )
-    },
-  )
+          close=self.lifecycle.is_draining(),
+          before_last=commit,
+        )
+      // Closing the connection sends an RST, once the Journal entry is
+      // committed, so that a client that sees the reset finds it there.
+      Some(Reset) => {
+        was_reset.val = reset_on_close(tcp, self.logger)
+        false
+      }
+      // Closing the connection sends a FIN.
+      Some(Close) => false
+      Some(Partial) =>
+        write_response(
+          stream,
+          plan,
+          request,
+          date=self.dates.at(@async.now()),
+          partial=true,
+        )
+    }
+    // A response that began before the drain, such as a stream, and ends
+    // during it closes its connection too.
+    keep_open && !self.lifecycle.is_draining()
+  }
+  let reject = async fn(
+    stream : WatchedStream[S],
+    status : Int32,
+    stopwatch : Stopwatch,
+  ) -> Unit {
+    defer self.traffic.record_rejected(stopwatch.seconds())
+    @io.Writer::write(
+      stream,
+      @http1.encode_response(
+        status,
+        [],
+        b"",
+        close=true,
+        date=self.dates.at(@async.now()),
+      ),
+    )
+  }
+  let writable = if self.mockoon is Some(lines) && pending is Some(pending) {
+    // Each request's line comes once `respond` is done with it, however it
+    // ended, so that the json format's request path stays as it was.
+    serve_connection(
+      stream,
+      self.settings,
+      connection~,
+      respond=(stream, request, stopwatch, now) => {
+        defer lines.write_pending(request, pending)
+        respond(stream, request, stopwatch, now)
+      },
+      reject~,
+    )
+  } else {
+    serve_connection(stream, self.settings, connection~, respond~, reject~)
+  }
   writable && !was_reset.val
 }
 
@@ -597,9 +647,9 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 ///   a delay before a response, do not count.
 ///
 /// It reads and writes only through `stream`, so the same loop serves any
-/// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
-/// logged per request. Returns whether `stream` can still be written to:
-/// not after a write timed out.
+/// byte stream: a TCP connection, or a TLS session on top of one. It logs
+/// nothing per request: in the mockoon log format, `respond` does. Returns
+/// whether `stream` can still be written to: not after a write timed out.
 ///
 /// - `respond` writes the response to each request, or part of it, and
 ///   returns whether the connection stays open after it. It writes to

@@ -37,8 +37,10 @@ async fn main {
           return
         }
       }
+      // smock's own entries go to stderr in either format; the mockoon
+      // format adds its Transaction recorded lines on stdout.
       let logger = match settings.log_format {
-        Json =>
+        Json | Mockoon =>
           @log.Logger(write_line=line => eprintln(line), now=() => @async.now())
       }
       let admin_auth = if settings.admin_auth { "on" } else { "off" }

@@ -89,15 +89,42 @@ fn Logger::write(
 /// with milliseconds, such as `2026-10-12T14:30:05.123Z`: the time format
 /// of log entries, also used for times the Admin API shows.
 pub fn format_time(ms : Int64) -> String {
+  let out = StringBuilder(size_hint=24)
+  write_time(out, ms)
+  out.to_string()
+}
+
+///|
+/// Writes the time `ms`, in milliseconds since the Unix epoch, to `out` as
+/// `format_time` formats it, with no string for each number.
+fn write_time(out : StringBuilder, ms : Int64) -> Unit {
   let ms_per_day = 86_400_000L
   let days = floor_div(ms, ms_per_day)
   let ms_of_day = ms - days * ms_per_day
-  let (year, month, day) = civil_from_days(days)
-  let hour = ms_of_day / 3_600_000L
-  let minute = ms_of_day / 60_000L % 60L
-  let second = ms_of_day / 1000L % 60L
-  let milli = ms_of_day % 1000L
-  "\{pad(year, 4)}-\{pad(month, 2)}-\{pad(day, 2)}T\{pad(hour, 2)}:\{pad(minute, 2)}:\{pad(second, 2)}.\{pad(milli, 3)}Z"
+  // As `civil_from_days`, inline, so that no tuple is built.
+  let z = days + 719_468L
+  let era = floor_div(z, 146_097L)
+  let doe = z - era * 146_097L
+  let yoe = (doe - doe / 1460L + doe / 36_524L - doe / 146_096L) / 365L
+  let doy = doe - (365L * yoe + yoe / 4L - yoe / 100L)
+  let mp = (5L * doy + 2L) / 153L
+  let day = doy - (153L * mp + 2L) / 5L + 1L
+  let month = if mp < 10L { mp + 3L } else { mp - 9L }
+  let year = yoe + era * 400L + (if month <= 2L { 1L } else { 0L })
+  write_padded(out, year, 4)
+  out.write_char('-')
+  write_padded(out, month, 2)
+  out.write_char('-')
+  write_padded(out, day, 2)
+  out.write_char('T')
+  write_padded(out, ms_of_day / 3_600_000L, 2)
+  out.write_char(':')
+  write_padded(out, ms_of_day / 60_000L % 60L, 2)
+  out.write_char(':')
+  write_padded(out, ms_of_day / 1000L % 60L, 2)
+  out.write_char('.')
+  write_padded(out, ms_of_day % 1000L, 3)
+  out.write_char('Z')
 }
 
 ///|
@@ -112,14 +139,31 @@ pub fn floor_div(a : Int64, b : Int64) -> Int64 {
 }
 
 ///|
-fn pad(n : Int64, width : Int32) -> String {
-  let digits = n.to_string()
-  let out = StringBuilder()
-  for _ in digits.length()..<width {
+/// Writes `n` in decimal to `out`, with zeros before it up to `width`
+/// characters, and no string for its digits unless it is negative.
+fn write_padded(out : StringBuilder, n : Int64, width : Int32) -> Unit {
+  if n < 0L {
+    let digits = n.to_string()
+    for _ in digits.length()..<width {
+      out.write_char('0')
+    }
+    out.write_string(digits)
+    return
+  }
+  // The number of digits, and the place value of the first.
+  let mut count = 1
+  let mut unit = 1L
+  while n / unit >= 10L {
+    count += 1
+    unit *= 10L
+  }
+  for _ in count..<width {
     out.write_char('0')
   }
-  out.write_string(digits)
-  out.to_string()
+  while unit > 0L {
+    out.write_char((0x30 + (n / unit % 10L).to_int()).unsafe_to_char())
+    unit /= 10L
+  }
 }
 
 ///|
