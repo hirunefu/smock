@@ -144,6 +144,18 @@ of each GitHub release include its section
   sample's body asks for, the JSON body or a stream's events, each event
   with its wait, with the ids and the waits the seed fixes. See
   [LLM responses](docs/definition-files.md#llm-responses).
+- `--log-format mockoon` (`SMOCK_LOG_FORMAT=mockoon`) writes the Mockoon
+  CLI's `Transaction recorded` line to stdout for each request a Mock
+  handles: a Stub matched, no Stub matched, or no Mock answered. The line
+  names the Mock (`environmentName`, left out when no Mock answered), the
+  method as sent, the path without its query (`requestPath`, an
+  absolute-form target cut to its path), `requestProxied` (always false)
+  and the status, with `app` set to `smock`, keys sorted as Mockoon sorts
+  them and a `timestamp` taken after the response's last byte. Each line
+  is written whole and at once, also to a pipe, and a line that cannot be
+  written is dropped. Requests the HTTP/1.1 codec rejects, Admin API
+  calls, probes and scrapes get no line. `json` stays the default, on
+  stderr, and costs nothing more per request. See [Run](README.md#run).
 
 ### Changed
 
@@ -161,6 +173,8 @@ of each GitHub release include its section
   from v0.10.14+7d59c7ec9, which `smock --version`, the startup log entry,
   `smock_build_info` and the Admin API status operation name. NOTICE
   follows its core library. mimalloc is still 2.1.7.
+- An unknown `--log-format` value is a usage error that ends "must be json
+  or mockoon", and the help text reads "The log format: json or mockoon."
 
 ### Fixed
 

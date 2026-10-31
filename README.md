@@ -61,7 +61,9 @@ It watches the directory and swaps in the new definition set when the files
 change, ConfigMap updates included; an invalid set is reported and the
 current one keeps serving
 ([docs/definition-files.md](docs/definition-files.md#reloading)). Logs go
-to stderr, one JSON object per line; JSON is the only log format. Log
+to stderr, one JSON object per line. With `--log-format mockoon`, smock
+also writes a `Transaction recorded` line to stdout for each request a
+Mock handles, in the Mockoon CLI's shape. Log
 entries are a diagnostic aid: their messages and fields may change in any
 release, unlike the Definition file format and the Admin API, which are
 versioned (`v1`). A usage error, such as an
@@ -83,7 +85,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--replicas` | `SMOCK_REPLICAS` | 1: above 1, every Admin API response warns that state is per replica |
 | `--session-header` | `SMOCK_SESSION_HEADER` | `baggage`: the W3C Baggage header that carries the [Session](#sessions-and-ephemeral-stubs) |
 | `--session-member` | `SMOCK_SESSION_MEMBER` | `smock-session`: the member of that header whose value is the Session key |
-| `--log-format` | `SMOCK_LOG_FORMAT` | `json`, the only format |
+| `--log-format` | `SMOCK_LOG_FORMAT` | `json` (stderr, smock's own shape) or `mockoon` (stdout, the Mockoon CLI's shape) |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--template-env` | `SMOCK_TEMPLATE_ENV` | none: templates read no environment variable; a comma-separated list of names lets them read those as `env.NAME`, with values read once at startup ([Environment variables](docs/definition-files.md#environment-variables)) |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
@@ -345,7 +347,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   the Journal does not record it. Labels never carry a path, Host, method,
   status or Session, so the number of series stays bounded by the
   Definition files. A request is counted once its response is written; the
-  Admin API, probes and `/metrics` are not counted. No request is logged.
+  Admin API, probes and `/metrics` are not counted. The `json` log format
+  logs no request; the `mockoon` format writes a `Transaction recorded`
+  line for each request counted here, except those the codec rejects.
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query
