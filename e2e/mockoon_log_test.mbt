@@ -567,3 +567,82 @@ async test "a stream and a delayed response that the drain timeout cuts each log
     inspect(transactions(stopped.stdout).length(), content="2")
   })
 }
+
+///|
+async test "three pipelined requests log three lines, in the order they are answered" {
+  with_definitions([("slow.json", slow)], dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let _ = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let conn = smock.connect()
+      defer conn.close()
+      // The first is delayed, so the two behind it wait for it.
+      conn.write(
+        "GET /delayed HTTP/1.1\r\nHost: localhost\r\n\r\nGET /quick HTTP/1.1\r\nHost: localhost\r\n\r\nGET /nope HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      )
+      let statuses = []
+      for _ in 0..<3 {
+        statuses.push(status_line(read_response(conn)))
+      }
+      inspect(
+        "\{statuses.join("\n")}\n\{masked_lines(smock.transaction_lines(3))}",
+        content=(
+          #|HTTP/1.1 200 OK
+          #|HTTP/1.1 200 OK
+          #|HTTP/1.1 404 Not Found
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/delayed","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/quick","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/nope","requestProxied":false,"responseStatus":404,"timestamp":"<timestamp>"}
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "with no codec rejection, the Transaction recorded lines number the requests that smock_requests_total counts, on the plain and the TLS port" {
+  with_definitions([("m.json", faults)], dir => {
+    with_certificates(certs => {
+      let args = ["--dir", dir, "--port", "0", ..certs.args()]
+      let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+      // Requests that end every way, each on a connection of its own, which
+      // smock closes after them: a whole response, a 404, two pipelined
+      // requests, each connection Fault, and a client that goes away during
+      // a delay.
+      let requests = [
+        "GET /fast HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", "GET /nope HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        "GET /fast HTTP/1.1\r\nHost: localhost\r\n\r\nGET /fast HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        "GET /reset HTTP/1.1\r\nHost: localhost\r\n\r\n", "GET /close HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        "GET /partial HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      ]
+      let per_port = requests.length() + 2
+      let stopped = with_smock(args, env~, smock => {
+        for over in [Plain, Tls(certs)] {
+          for request in requests {
+            let conn = smock.connect(over~)
+            defer conn.close()
+            conn.write(request)
+            let _ = sent_until_end(conn, within=patience_ms)
+          }
+          let gone = smock.connect(over~)
+          gone.write("GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\n")
+          gone.close()
+        }
+        let lines = smock.transaction_lines(2 * per_port).length()
+        let mut counted = 0.0
+        for sample in smock.metrics().1 {
+          if sample.name == "smock_requests_total" {
+            counted += sample.value
+          }
+        }
+        inspect(
+          "requests counted: \{counted}\nlines: \{lines}",
+          content=(
+            #|requests counted: 16
+            #|lines: 16
+          ),
+        )
+      })
+      inspect(transactions(stopped.stdout).length(), content="16")
+    })
+  })
+}
