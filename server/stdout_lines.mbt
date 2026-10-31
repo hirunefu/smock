@@ -55,7 +55,7 @@ async fn StdoutLines::write(self : StdoutLines, line : String) -> Unit {
 /// Writes every line given and not written yet, and returns once they are
 /// out, even when the task is cancelled meanwhile. `serve` calls it last,
 /// so that no line is left when the process exits.
-pub async fn StdoutLines::flush(self : StdoutLines) -> Unit {
+async fn StdoutLines::flush(self : StdoutLines) -> Unit {
   @async.protect_from_cancel(() => {
     self.turn.acquire()
     defer self.turn.release()
