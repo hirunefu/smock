@@ -50,12 +50,21 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_events(
   let task = self.group.spawn(no_wait=true, () => {
     defer ports.done(outcome, stopwatch)
     let partial = outcome.plan.fault is Some(Partial)
-    if self.send_events(stream, events, outcome.journal, out, partial~) &&
-      partial {
+    let finished = self.send_events(
+      stream,
+      events,
+      outcome.journal,
+      out,
+      partial~,
+    )
+    if finished && partial {
       self.reset_after(stream, None)
     }
     self.waiting.remove(stream)
-    let _ = self.writer.write(out)
+    // A reset that came first leaves nothing of the task's to write.
+    if finished {
+      let _ = self.writer.write(out)
+    }
     self.answered(out)
   })
   self.waiting[stream] = task
@@ -137,13 +146,13 @@ fn H2Connection::open_events(
 /// Sends `events`, the events of the stream of Server-Sent Events on
 /// `stream`, whose HEADERS are queued, from the stream's task: each after
 /// its delay, counted from the event before it or, for the first, from the
-/// HEADERS, encoded as over HTTP/1.1, as DATA within the windows and the
-/// client's frame size (`trickle`). Each event is written to `out` before
-/// the next one's delay; the DATA of the last one ends the stream, and the
-/// caller writes it. The Journal entry `entry` is committed just before
-/// the last event, or when the task is cancelled before it. Returns
-/// whether every event was queued: not when a reset of the stream came
-/// first.
+/// HEADERS, encoded as over HTTP/1.1, as DATA within the windows, the
+/// client's frame size and the output bound (`trickle`). Each event is
+/// written to `out` before the next one's delay; the DATA of the last one
+/// ends the stream, and the caller writes it. The Journal entry `entry` is
+/// committed just before the last event, or when the task is cancelled
+/// before it. Returns whether every event was queued: not when a reset of
+/// the stream came first.
 ///
 /// With `partial`, as for a partial Fault, only the first half of `events`
 /// go out, rounded down, and the last of them does not end the stream: the
@@ -166,8 +175,7 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::send_events(
   defer ports.commit(entry)
   // The HEADERS, queued before the task began, go out before the first
   // event's delay.
-  let _ = self.writer.write_for(out, stream)
-  guard self.waiting.contains(stream) else { return false }
+  guard self.drained(stream, out) else { return false }
   let count = if partial { events.length() / 2 } else { events.length() }
   let last = count - 1
   for i in 0..<count {
@@ -189,9 +197,7 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::send_events(
     if i == last {
       return true
     }
-    let _ = self.writer.write_for(out, stream)
-    // A reset while the task wrote did not cancel it: it ends now.
-    guard self.waiting.contains(stream) else { return false }
+    guard self.drained(stream, out) else { return false }
   }
   true
 }

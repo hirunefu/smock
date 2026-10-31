@@ -220,8 +220,8 @@ priv struct H2Connection {
   /// in the order they began to wait, which a `Map` keeps.
   blocked : Map[Int32, WindowWait]
   /// The octets of the connection window that the slow writes woken from
-  /// `blocked`, whose tasks have not run yet, are to send, so that no other
-  /// stream takes them meanwhile.
+  /// `blocked` are still to send: set aside when each is woken, until its
+  /// task has sent them, so that no other stream takes them meanwhile.
   mut claimed : Int32
   /// While a slow write waits for the client to widen the connection
   /// window, when the write timeout closes the connection; `forever` while
@@ -241,7 +241,9 @@ priv struct H2Connection {
   /// The time, as `@async.now()` gives it, read again after each wait of
   /// the reader: for reading or for writing.
   mut now : Int64
-  /// When the last read returned.
+  /// When the last read returned, or the reader last had the output written
+  /// past the output bound (`H2Writer::hold`): when the frames it hands
+  /// from then on arrived.
   mut read_at : Int64
   /// While the connection is idle, when it times out: from when it opens,
   /// and from when what was queued is written after the last stream in
@@ -277,15 +279,25 @@ priv struct H2Connection {
 /// Splits what the connection reads into the preface and whole frames,
 /// hands each to the `Conn` and handles its events, until the connection
 /// ends. A frame larger than smock advertises, or a connection error the
-/// `Conn` raises, ends it with GOAWAY.
+/// `Conn` raises, ends it with GOAWAY. Before each frame, the output queued
+/// and not yet written is held to the output bound
+/// (`H2Writer::passes_bound`, `hold`).
 async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
   self : H2Connection,
   stream : S,
   out : WatchedStream[S],
 ) -> Unit {
   for ;; {
-    // After the GOAWAY of a close Fault, queued while a frame was handled,
-    // the frames already read go no further.
+    // What the frames before queued is written first, past the output
+    // bound. The frames handed after such a wait arrive when it ends.
+    if self.writer.passes_bound() {
+      self.writer.hold(out)
+      self.now = @async.now()
+      self.read_at = self.now
+    }
+    // After the GOAWAY of a close Fault, queued while a frame was handled
+    // or by a stream's task while the reader waited, the frames already
+    // read go no further.
     if self.closing {
       let _ = self.read_more(stream, out)
       return
@@ -551,6 +563,30 @@ fn H2Connection::stop_waiting(self : H2Connection, stream : Int32) -> Unit {
     self.unblock(stream)
     self.end_stream()
   }
+}
+
+///|
+/// For the task of `stream`, before it queues more of its response: has
+/// what was queued before written, and waits until it is, writing it itself
+/// unless another task is writing. So a stream's task queues no more DATA
+/// until what it queued is written, and never adds to output that has not
+/// gone out. Returns false once the stream no longer waits, reset while the
+/// task waited or wrote: the task then ends, and writes nothing more.
+async fn[S : @io.Writer + ReadOutput] H2Connection::drained(
+  self : H2Connection,
+  stream : Int32,
+  out : WatchedStream[S],
+) -> Bool {
+  self.writer.take()
+  while self.writer.unwritten() > 0 {
+    if self.writer.busy {
+      self.writer.done.wait()
+    } else {
+      let _ = self.writer.write_for(out, stream)
+    }
+    guard self.waiting.contains(stream) else { return false }
+  }
+  true
 }
 
 ///|
@@ -884,7 +920,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_drain(
     // Its acknowledgement is one smock is owed, not a frame that does no
     // work.
     self.no_work_frames.pings_owed += 1
-    self.writer.write_first(out, drain_frames)
+    self.writer.write_own(out, drain_frames)
     // The client may have acknowledged the PING while the writer went on
     // with what the `Conn` queued.
     if self.drain is Warned {
@@ -1009,51 +1045,74 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
       ports.done(outcome, stopwatch)
     }
     @async.sleep(outcome.plan.delay_ms)
-    // From here on the response ends the stream, and commits the entry.
-    entry = None
-    let now = @async.now()
-    let partial = outcome.plan.fault is Some(Partial)
-    match outcome.plan.fault {
-      Some(Reset) => self.reset_after(stream, outcome.journal)
-      Some(Close) => self.close_by_fault(stream, outcome.journal, out)
-      _ =>
-        match outcome.plan.body {
-          Events(events) => {
-            let more = self.open_events(
-              stream,
-              outcome.plan,
-              outcome.journal,
-              events.length(),
-              head~,
-              connect~,
-              now~,
-            )
-            if more &&
-              self.send_events(stream, events, outcome.journal, out, partial~) &&
-              partial {
-              self.reset_after(stream, None)
+    // What was queued before goes out first, so that the response keeps
+    // within the output bound.
+    let mut finished = self.drained(stream, out)
+    if finished {
+      // From here on the response ends the stream, and commits the entry.
+      entry = None
+      let now = @async.now()
+      let partial = outcome.plan.fault is Some(Partial)
+      match outcome.plan.fault {
+        Some(Reset) => self.reset_after(stream, outcome.journal)
+        Some(Close) => self.close_by_fault(stream, outcome.journal, out)
+        _ =>
+          match outcome.plan.body {
+            Events(events) => {
+              let more = self.open_events(
+                stream,
+                outcome.plan,
+                outcome.journal,
+                events.length(),
+                head~,
+                connect~,
+                now~,
+              )
+              if more {
+                finished = self.send_events(
+                  stream,
+                  events,
+                  outcome.journal,
+                  out,
+                  partial~,
+                )
+                if finished && partial {
+                  self.reset_after(stream, None)
+                }
+              }
+            }
+            Bytes(body) => {
+              let rest = self.queue(
+                stream,
+                outcome.plan,
+                body,
+                outcome.journal,
+                head~,
+                connect~,
+                now~,
+                bounded=true,
+              )
+              if rest.length() > 0 {
+                finished = self.trickle(
+                  stream,
+                  rest,
+                  outcome.journal,
+                  out,
+                  end=!partial,
+                )
+                if finished && partial {
+                  self.reset_after(stream, None)
+                }
+              }
             }
           }
-          Bytes(body) => {
-            let rest = self.queue(
-              stream,
-              outcome.plan,
-              body,
-              outcome.journal,
-              head~,
-              connect~,
-              now~,
-            )
-            if rest.length() > 0 &&
-              self.trickle(stream, rest, outcome.journal, out, end=!partial) &&
-              partial {
-              self.reset_after(stream, None)
-            }
-          }
-        }
+      }
     }
     self.waiting.remove(stream)
-    let _ = self.writer.write(out)
+    // A reset that came first leaves nothing of the task's to write.
+    if finished {
+      let _ = self.writer.write(out)
+    }
     self.answered(out)
   })
   self.waiting[stream] = task
@@ -1111,7 +1170,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answered(
 ///
 /// It runs while the event is handled, when the stream has no task, or in
 /// the stream's own task, which goes on once it returns: so a reset here
-/// leaves the task be.
+/// leaves the task be. In the task, `bounded` is true: the body queued now
+/// is also no more than the output bound leaves for one DATA frame
+/// (`H2Writer::frame_room`), and the task sends the rest as it is written.
 fn H2Connection::queue(
   self : H2Connection,
   stream : Int32,
@@ -1121,6 +1182,7 @@ fn H2Connection::queue(
   head~ : Bool,
   connect~ : Bool,
   now~ : Int64,
+  bounded~ : Bool = false,
 ) -> BytesView {
   let ports = self.ports
   let partial = plan.fault is Some(Partial)
@@ -1167,7 +1229,13 @@ fn H2Connection::queue(
       return sent[0:0]
     }
   }
-  let room = self.room(stream)
+  let mut room = self.room(stream)
+  if bounded {
+    let bound = self.writer.frame_room()
+    if bound < room {
+      room = bound
+    }
+  }
   if sent.length() > room {
     if room > 0 {
       self.conn.data(stream, sent[0:room]) catch {
