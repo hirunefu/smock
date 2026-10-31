@@ -126,3 +126,75 @@ test "strings are escaped as JSON.stringify escapes them" {
     ),
   )
 }
+
+///|
+/// The spec's lines for a matched `GET /users/1?verbose=true`, an
+/// unmatched `GET /users/a%20b` that the Mock `users` answered with its
+/// no-match 404, and a `GET http://unknown.example.com/orders/1` that no
+/// Mock answered, 50 ms apart.
+test "the lines of the spec, each starting with the prefix it was built from" {
+  let requests = [
+    (Some("users"), "/users/1?verbose=true", 200),
+    (Some("users"), "/users/a%20b", 404),
+    (None, "http://unknown.example.com/orders/1", 404),
+  ]
+  let out = []
+  for i, request in requests {
+    let (mock, target, status) = request
+    let prefix = @log.mockoon_prefix(mock)
+    let line = @log.transaction_line(
+      prefix,
+      meth="GET",
+      target~,
+      status~,
+      at=example_time + 50L * i.to_int64(),
+    )
+    out.push(line)
+    if !line.has_prefix(prefix) {
+      out.push("does not start with \{prefix}")
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|{"app":"smock","environmentName":"users","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/users/1","requestProxied":false,"responseStatus":200,"timestamp":"2026-10-31T09:00:01.250Z"}
+      #|{"app":"smock","environmentName":"users","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/users/a%20b","requestProxied":false,"responseStatus":404,"timestamp":"2026-10-31T09:00:01.300Z"}
+      #|{"app":"smock","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/orders/1","requestProxied":false,"responseStatus":404,"timestamp":"2026-10-31T09:00:01.350Z"}
+    ),
+  )
+}
+
+///|
+/// The method as sent, in lower case too, and statuses with one to three
+/// digits, at the Unix epoch, one millisecond before it, the last
+/// millisecond of a leap day and the last of the year 9999.
+test "the method is as sent, and the status and the time are the ones given" {
+  let cases = [
+    ("get", 200, 0L),
+    ("PATCH", 1, -1L),
+    ("M-SEARCH", 42, 1_709_251_199_999L),
+    ("DELETE", 999, 253_402_300_799_999L),
+  ]
+  let out = []
+  for case in cases {
+    let (meth, status, at) = case
+    out.push(
+      @log.transaction_line(
+        @log.mockoon_prefix(Some("m")),
+        meth~,
+        target="/",
+        status~,
+        at~,
+      ),
+    )
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"get","requestPath":"/","requestProxied":false,"responseStatus":200,"timestamp":"1970-01-01T00:00:00.000Z"}
+      #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"PATCH","requestPath":"/","requestProxied":false,"responseStatus":1,"timestamp":"1969-12-31T23:59:59.999Z"}
+      #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"M-SEARCH","requestPath":"/","requestProxied":false,"responseStatus":42,"timestamp":"2024-02-29T23:59:59.999Z"}
+      #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"DELETE","requestPath":"/","requestProxied":false,"responseStatus":999,"timestamp":"9999-12-31T23:59:59.999Z"}
+    ),
+  )
+}

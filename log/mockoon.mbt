@@ -51,9 +51,9 @@ pub fn transaction_line(
     write_json_string(out, target, start, end)
   }
   out.write_string(",\"requestProxied\":false,\"responseStatus\":")
-  out.write_string(status.to_string())
+  write_padded(out, status.to_int64(), 1)
   out.write_string(",\"timestamp\":\"")
-  out.write_string(format_time(at))
+  write_time(out, at)
   out.write_string("\"}")
   out.to_string()
 }
