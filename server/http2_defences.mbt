@@ -2,7 +2,9 @@
 // for nothing. `H2Connection::judge` (http2.mbt) counts each frame that
 // does no work before the `Conn` sees it, and past the bound the connection
 // ends with GOAWAY ENHANCE_YOUR_CALM (`H2Connection::calm`), as every
-// defence that closes a connection ends it.
+// defence that closes a connection ends it. A header block past moonhttp's
+// bound as received, a CONTINUATION flood, is the `Conn`'s own connection
+// error, which smock logs the same way (`H2Connection::flooded`).
 
 ///|
 /// How many frames that do no work a client may send in any one second.
@@ -202,8 +204,9 @@ fn H2Connection::calm(
 /// `frame`, a HEADERS or CONTINUATION frame with its header, passed: the
 /// defence against CONTINUATION floods. The `Conn` has queued GOAWAY
 /// ENHANCE_YOUR_CALM already, with its own reason as debug data; it raises
-/// no other connection error with that code. The bound is moonhttp's alone,
-/// as the spec has it, and the e2e tests check it from outside.
+/// no other connection error with that code. smock keeps no count of its
+/// own for the bound: the e2e tests check moonhttp's from outside, so that
+/// an upgrade that drops it fails them.
 fn H2Connection::flooded(self : H2Connection, frame : BytesView) -> Unit {
   let kind = if frame[3].to_int() == @http2.frame_continuation {
     "CONTINUATION"

@@ -75,7 +75,10 @@ of each GitHub release include its section
   with the same draws and seeds as over HTTP/1.1. A client that sends more
   than 100 frames that do no work in one second, such as a flood of PING or
   SETTINGS frames, gets GOAWAY `ENHANCE_YOUR_CALM`, and smock logs one line
-  that names the pattern. The HPACK table smock encodes responses with
+  that names the pattern. So does a header block over twice
+  `--header-size-limit` as received, such as a flood of CONTINUATION
+  frames makes, and empty CONTINUATION frames count among the frames that
+  do no work. The HPACK table smock encodes responses with
   stays at 4,096 octets, however large a table the client allows, and a
   header block that does not decode ends the connection with GOAWAY
   `COMPRESSION_ERROR`. On SIGTERM, each HTTP/2 connection gets GOAWAY and a
