@@ -12,7 +12,13 @@
 /// set loads, and every line about the Mock starts with it.
 pub fn mockoon_prefix(mock : String?) -> String {
   match mock {
-    Some(name) => "{\"app\":\"smock\",\"environmentName\":\"\{name}\","
+    Some(name) => {
+      let out = StringBuilder(size_hint=name.length() + 40)
+      out.write_string("{\"app\":\"smock\",\"environmentName\":")
+      write_json_string(out, name, 0, name.length())
+      out.write_char(',')
+      out.to_string()
+    }
     None => "{\"app\":\"smock\","
   }
 }
@@ -33,18 +39,18 @@ pub fn transaction_line(
   let out = StringBuilder(size_hint=prefix.length() + target.length() + 192)
   out.write_string(prefix)
   out.write_string(
-    "\"level\":\"info\",\"message\":\"Transaction recorded\",\"requestMethod\":\"",
+    "\"level\":\"info\",\"message\":\"Transaction recorded\",\"requestMethod\":",
   )
-  out.write_string(meth)
-  out.write_string("\",\"requestPath\":\"")
+  write_json_string(out, meth, 0, meth.length())
+  out.write_string(",\"requestPath\":")
   let start = path_start(target)
   let end = query_start(target, start)
   if start == end {
-    out.write_char('/')
+    out.write_string("\"/\"")
   } else {
-    out.write_view(target.view(start_offset=start, end_offset=end))
+    write_json_string(out, target, start, end)
   }
-  out.write_string("\",\"requestProxied\":false,\"responseStatus\":")
+  out.write_string(",\"requestProxied\":false,\"responseStatus\":")
   out.write_string(status.to_string())
   out.write_string(",\"timestamp\":\"")
   out.write_string(format_time(at))
@@ -101,3 +107,54 @@ fn query_start(target : String, from : Int32) -> Int32 {
   }
   target.length()
 }
+
+///|
+/// Writes the code units of `s` from `start` to `end` as a JSON string, in
+/// quotes, escaped as JavaScript's `JSON.stringify` escapes them: `"` and
+/// `\` with a backslash; `\b`, `\f`, `\n`, `\r` and `\t` by name; the other
+/// control characters below U+0020 as `\u00xx`, in lower-case hex. Every
+/// other code unit is written as it is, `/` and non-ASCII ones included.
+/// Runs that need no escape are copied whole.
+fn write_json_string(
+  out : StringBuilder,
+  s : String,
+  start : Int32,
+  end : Int32,
+) -> Unit {
+  out.write_char('"')
+  let mut run = start
+  for i in start..<end {
+    let c = s.unsafe_get(i)
+    if c >= 0x20 && c != '"' && c != '\\' {
+      continue
+    }
+    if run < i {
+      out.write_view(s.view(start_offset=run, end_offset=i))
+    }
+    run = i + 1
+    match c {
+      '"' => out.write_string("\\\"")
+      '\\' => out.write_string("\\\\")
+      '\b' => out.write_string("\\b")
+      '\u{0c}' => out.write_string("\\f")
+      '\n' => out.write_string("\\n")
+      '\r' => out.write_string("\\r")
+      '\t' => out.write_string("\\t")
+      _ => {
+        out.write_string("\\u00")
+        out.write_char(hex_digits[(c >> 4).to_int()])
+        out.write_char(hex_digits[(c & 0xf).to_int()])
+      }
+    }
+  }
+  if run < end {
+    out.write_view(s.view(start_offset=run, end_offset=end))
+  }
+  out.write_char('"')
+}
+
+///|
+/// The lower-case hex digits, by value.
+let hex_digits : FixedArray[Char] = [
+  '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+]

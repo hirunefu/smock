@@ -65,3 +65,64 @@ test "requestPath is the target up to the query, an absolute-form target cut to 
     ),
   )
 }
+
+///|
+/// A Mock name in Japanese with spaces, quotes, a backslash, a slash and an
+/// emoji; one with each control character; and a target with a quote and a
+/// backslash, which a request target may hold.
+test "strings are escaped as JSON.stringify escapes them" {
+  let out = [
+    @log.mockoon_prefix(Some("ユーザー 一覧 \"v2\" C:\\mocks 😀 a/b")),
+  ]
+  for code in 0..<0x20 {
+    out.push(@log.mockoon_prefix(Some("<\{code.unsafe_to_char()}>")))
+  }
+  out.push(
+    @log.transaction_line(
+      @log.mockoon_prefix(None),
+      meth="GET",
+      target="/a\"b\\c?d\"",
+      status=404,
+      at=example_time,
+    ),
+  )
+  inspect(
+    out.join("\n"),
+    content=(
+      #|{"app":"smock","environmentName":"ユーザー 一覧 \"v2\" C:\\mocks 😀 a/b",
+      #|{"app":"smock","environmentName":"<\u0000>",
+      #|{"app":"smock","environmentName":"<\u0001>",
+      #|{"app":"smock","environmentName":"<\u0002>",
+      #|{"app":"smock","environmentName":"<\u0003>",
+      #|{"app":"smock","environmentName":"<\u0004>",
+      #|{"app":"smock","environmentName":"<\u0005>",
+      #|{"app":"smock","environmentName":"<\u0006>",
+      #|{"app":"smock","environmentName":"<\u0007>",
+      #|{"app":"smock","environmentName":"<\b>",
+      #|{"app":"smock","environmentName":"<\t>",
+      #|{"app":"smock","environmentName":"<\n>",
+      #|{"app":"smock","environmentName":"<\u000b>",
+      #|{"app":"smock","environmentName":"<\f>",
+      #|{"app":"smock","environmentName":"<\r>",
+      #|{"app":"smock","environmentName":"<\u000e>",
+      #|{"app":"smock","environmentName":"<\u000f>",
+      #|{"app":"smock","environmentName":"<\u0010>",
+      #|{"app":"smock","environmentName":"<\u0011>",
+      #|{"app":"smock","environmentName":"<\u0012>",
+      #|{"app":"smock","environmentName":"<\u0013>",
+      #|{"app":"smock","environmentName":"<\u0014>",
+      #|{"app":"smock","environmentName":"<\u0015>",
+      #|{"app":"smock","environmentName":"<\u0016>",
+      #|{"app":"smock","environmentName":"<\u0017>",
+      #|{"app":"smock","environmentName":"<\u0018>",
+      #|{"app":"smock","environmentName":"<\u0019>",
+      #|{"app":"smock","environmentName":"<\u001a>",
+      #|{"app":"smock","environmentName":"<\u001b>",
+      #|{"app":"smock","environmentName":"<\u001c>",
+      #|{"app":"smock","environmentName":"<\u001d>",
+      #|{"app":"smock","environmentName":"<\u001e>",
+      #|{"app":"smock","environmentName":"<\u001f>",
+      #|{"app":"smock","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/a\"b\\c","requestProxied":false,"responseStatus":404,"timestamp":"2026-10-31T09:00:01.250Z"}
+    ),
+  )
+}
