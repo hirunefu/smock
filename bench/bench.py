@@ -984,7 +984,8 @@ class Run:
             "page_size": os.sysconf("SC_PAGE_SIZE"),
             "cases": [{key: spec[key] for key in (
                 "id", "profile", "protocol", "connection", "cpu_limit", "memory_limit", "rate", "ramp_s",
-                "duration_s", "tail_s", "connections", "idle_connections")} for spec in self.specs],
+                "duration_s", "tail_s", "connections", "streams_per_connection", "idle_connections")}
+                for spec in self.specs],
             "overrides": {name: value for name, value in (
                 ("rate", self.args.rate), ("ramp_s", self.args.ramp), ("duration_s", self.args.duration),
                 ("tail_s", self.args.tail), ("cooldown_s", self.args.cooldown),
@@ -1022,6 +1023,7 @@ def case_spec(run, case, profile, rate, ladder):
         "protocol": case["protocol"],
         "connection": case["connection"],
         "connections": case["connections"],
+        "streams_per_connection": case.get("streams_per_connection", 1),
         "idle_connections": case.get("idle_connections", 0),
         "rate": rate,
         "ramp_s": run.ramp_s,
@@ -1093,8 +1095,10 @@ PROTOCOLS = {"http": (False, False), "https": (True, False), "h2c": (False, True
 
 def case_problem(case):
     """Why the harness cannot run a case of a plan, or None: a protocol it
-    does not know, or a new connection per request over HTTP/2, since oha's
-    --disable-keepalive does not work with HTTP/2."""
+    does not know; a new connection per request over HTTP/2, since oha's
+    --disable-keepalive does not work with HTTP/2; or streams per
+    connection that are not a whole number from 1, or more than one over
+    HTTP/1.1, which carries one request at a time on a connection."""
     protocol = case["protocol"]
     if protocol not in PROTOCOLS:
         return (f"case {case['name']} has the protocol {protocol}, which the harness does not know: "
@@ -1102,6 +1106,12 @@ def case_problem(case):
     if over_http2(protocol) and case["connection"] == "new-per-request":
         return (f"case {case['name']} opens a new connection per request over HTTP/2 ({protocol}), which oha cannot "
                 "do: give it keep-alive connections")
+    streams = case.get("streams_per_connection", 1)
+    if type(streams) is not int or streams < 1:
+        return f"case {case['name']} has {streams} streams per connection: give it a whole number from 1"
+    if streams > 1 and not over_http2(protocol):
+        return (f"case {case['name']} has {streams} streams per connection over HTTP/1.1 ({protocol}), where a "
+                "connection carries one request at a time: give it the protocol h2c or h2")
     return None
 
 
@@ -1116,16 +1126,16 @@ def over_http2(protocol):
     return PROTOCOLS[protocol][1]
 
 
-def oha_request(protocol, request, address, port):
+def oha_request(protocol, request, address, port, streams=1):
     """oha's arguments that send one request of the mix over `protocol` to
     smock at `address` and `port`: the port its URL implies, 443 over TLS
-    and 80 otherwise, redirected there; over HTTP/2, one request at a time
-    on each connection; its method, headers and body; over TLS, any
-    certificate accepted; and its URL, last."""
+    and 80 otherwise, redirected there; over HTTP/2, `streams` requests at
+    once on each connection (oha's -p), one by default; its method, headers
+    and body; over TLS, any certificate accepted; and its URL, last."""
     tls, http2 = PROTOCOLS[protocol]
     arguments = ["--connect-to", f"{request['host']}:{443 if tls else 80}:{address}:{port}"]
     if http2:
-        arguments += ["--http2", "-p", "1"]
+        arguments += ["--http2", "-p", str(streams)]
     arguments += ["-m", request["method"]]
     for name, value in request["headers"]:
         arguments += ["-H", f"{name}: {value}"]
@@ -1140,8 +1150,9 @@ def oha_request(protocol, request, address, port):
 def oha_command(oha, spec, request, rate, connections, report, database, address, port):
     """The command line of the oha process that sends one request of the
     mix in a step, at `rate` (as request_rates gives it) over `connections`,
-    to smock at `address` and `port`, for the step's whole load. It writes
-    its report to `report` and each request's times to `database`."""
+    each with the step's streams at once over HTTP/2, to smock at `address`
+    and `port`, for the step's whole load. It writes its report to `report`
+    and each request's times to `database`."""
     total_ms = round((spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]) * 1000)
     command = [
         oha, "--no-tui", "--output-format", "json", "-o", str(report), "--db-url", str(database),
@@ -1150,7 +1161,7 @@ def oha_command(oha, spec, request, rate, connections, report, database, address
     ]
     if spec["connection"] == "new-per-request":
         command.append("--disable-keepalive")
-    return command + oha_request(spec["protocol"], request, address, port)
+    return command + oha_request(spec["protocol"], request, address, port, spec["streams_per_connection"])
 
 
 def start_load(run, smock, spec, raw):

@@ -285,9 +285,10 @@ def plan_profiles(plan, names=None):
 
 
 def plan_cases(plan, names=None):
-    """The cases of the plan to run, all of them by default. The plan's
-    cases must be ones the harness can run, and only the harness on one
-    machine can hold idle connections."""
+    """The cases of the plan to run: by default all of them but those that
+    run only on one machine (local_only), such as h2c-multiplexed. The
+    plan's cases must be ones the harness can run, and only the harness on
+    one machine can hold idle connections."""
     for name in names or []:
         if name not in [case["name"] for case in plan["cases"]]:
             raise GkeError(f"the plan has no case {name}")
@@ -295,8 +296,14 @@ def plan_cases(plan, names=None):
         problem = harness.case_problem(case)
         if problem:
             raise GkeError(problem)
-    cases = [case for case in plan["cases"] if names is None or case["name"] in names]
+    if names is None:
+        cases = [case for case in plan["cases"] if not case.get("local_only")]
+    else:
+        cases = [case for case in plan["cases"] if case["name"] in names]
     for case in cases:
+        if case.get("local_only"):
+            raise GkeError(f"case {case['name']} runs only on one machine (local_only), which keeps the GKE run's "
+                           "time down: leave it out of --cases")
         if case.get("idle_connections"):
             raise GkeError(f"case {case['name']} holds idle connections, which the GKE run cannot: "
                            "leave it out with --cases")
@@ -1344,7 +1351,7 @@ def command_summarize(args):
         "profiles": profiles,
         "cases": [{key: spec[key] for key in (
             "id", "profile", "protocol", "connection", "cpu_limit", "memory_limit", "rate", "ramp_s",
-            "duration_s", "tail_s", "connections", "idle_connections")} for spec in planned],
+            "duration_s", "tail_s", "connections", "streams_per_connection", "idle_connections")} for spec in planned],
         "overrides": {},
     }
     harness.write_json(out / "summary.json", summary)
@@ -2397,7 +2404,7 @@ def main(argv):
     planning = commands.add_parser("plan", help="list the profiles a run runs: name, steps, the Job's deadline (s)")
     planning.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
     planning.add_argument("--profiles", help="only these profiles, comma-separated (default: every profile)")
-    planning.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
+    planning.add_argument("--cases", help="only these cases, comma-separated (default: every case but local_only ones)")
     add_counts(planning)
     planning.add_argument("--labels", help="the variants' labels, comma-separated, whose Pods and Services each "
                                            "profile must be able to name")
@@ -2405,7 +2412,8 @@ def main(argv):
     estimating = commands.add_parser("estimate", help="say how long a run takes and what it costs")
     estimating.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
     estimating.add_argument("--profiles", help="only these profiles, comma-separated (default: every profile)")
-    estimating.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
+    estimating.add_argument("--cases",
+                            help="only these cases, comma-separated (default: every case but local_only ones)")
     estimating.add_argument("--region", required=True, help="the region, such as us-central1")
     estimating.add_argument("--arch", required=True, choices=("arm64", "amd64"), help="the nodes' architecture")
     estimating.add_argument("--time-limit-s", type=int, required=True,
@@ -2415,7 +2423,8 @@ def main(argv):
     rendering = commands.add_parser("manifests", help="write the Kubernetes objects of one profile")
     rendering.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
     rendering.add_argument("--profile", required=True, help="the profile")
-    rendering.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
+    rendering.add_argument("--cases",
+                           help="only these cases, comma-separated (default: every case but local_only ones)")
     rendering.add_argument("--arch", required=True, choices=("arm64", "amd64"), help="the nodes' architecture")
     rendering.add_argument("--zone", help="the zone smock and the load generator run in (default: Autopilot "
                                           "chooses smock's, and the load generator follows it)")
@@ -2458,7 +2467,8 @@ def main(argv):
                              help="the targets to check, those of --arch (default: bench/targets.json)")
     summarizing.add_argument("--profiles",
                              help="the profiles the run ran, comma-separated (default: every profile)")
-    summarizing.add_argument("--cases", help="the cases the run ran, comma-separated (default: every case)")
+    summarizing.add_argument("--cases",
+                             help="the cases the run ran, comma-separated (default: every case but local_only ones)")
     summarizing.add_argument("--region", required=True)
     summarizing.add_argument("--zone", help="the zone the run pinned its Pods to, if it did")
     summarizing.add_argument("--arch", required=True, choices=("arm64", "amd64"),
@@ -2483,7 +2493,8 @@ def main(argv):
                                                     "for summarize; print each one's round, label and directory")
     splitting.add_argument("--plan", required=True, help="the plan the run ran")
     splitting.add_argument("--profiles", help="the profiles the run ran, comma-separated (default: every profile)")
-    splitting.add_argument("--cases", help="the cases the run ran, comma-separated (default: every case)")
+    splitting.add_argument("--cases",
+                           help="the cases the run ran, comma-separated (default: every case but local_only ones)")
     splitting.add_argument("--rounds", type=int,
                            help="the rounds the run planned, when the load generator may not have said so "
                                 "(default: as many as it says)")

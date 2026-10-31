@@ -141,8 +141,12 @@ of each GitHub release include its section
   minutes. Both are held to `http-keep-alive`'s targets, h2 over TLS
   included: an entry of `bench/targets.json` may name several cases
   (`cases`), and a load target's id now names its case, such as
-  `chart-default/h2-keep-alive/p99`. See
-  [HTTP/2 cases](bench/README.md#http2-cases).
+  `chart-default/h2-keep-alive/p99`. A third case, `h2c-multiplexed`,
+  measures one connection serving many streams: 16 connections that each
+  carry 4 requests at once (oha's `-p 4`, a case's new
+  `streams_per_connection`). It has no target, runs only on your machine
+  (`local_only`), where it adds about 11 minutes, and the GKE run leaves it
+  out. See [HTTP/2 cases](bench/README.md#http2-cases).
 
 ### Changed
 
