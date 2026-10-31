@@ -1775,5 +1775,41 @@ class LogFormatOfARun(unittest.TestCase):
         self.assertEqual(harness.log_format(conditions(None)), "json")
 
 
+class MockoonLogFormat(unittest.TestCase):
+    """With `--log-format mockoon`, smock runs in the mockoon format. The
+    run reads its stdout through a pipe as it comes, finds the listening
+    lines there, keeps every line but the Transaction recorded ones in the
+    step's log, and counts those."""
+
+    def test_a_run_counts_a_line_for_each_request_smock_answered_and_keeps_the_others(self):
+        out = bench(self, "--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "200", "--log-format",
+                    "mockoon", *SHORT)
+        self.assertEqual(read(out, "conditions.json")["smock"]["args"][-2:], ["--log-format", "mockoon"])
+        result = case(out, "http-keep-alive@1")
+        lines = result["transaction_lines"]
+        # No request came before the load: each request of the load got its
+        # line, the ramp's and the tail's too.
+        self.assertEqual(lines, {"count": result["smock_cpu"]["requests"],
+                                 "requests_answered": result["smock_cpu"]["requests"], "equal": True})
+        self.assertGreater(lines["count"], result["requests"]["ok"])
+        for log in (out / "raw/1/http-keep-alive/smock.log", out / "raw/1/idle-smock.log"):
+            with self.subTest(log=log.name):
+                kept = log.read_text().splitlines()
+                self.assertEqual({harness.listening(line) and harness.listening(line)[0] for line in kept},
+                                 {None, "admin", "plain", "tls"})
+                messages = [json.loads(line)["message"] for line in kept]
+                self.assertNotIn("Transaction recorded", messages)
+                # Lines smock writes as it stops are kept too.
+                self.assertIn("drain ended", messages)
+        rows = markdown_table(markdown_sections((out / "summary.md").read_text())["1: CPU limit 1, no memory limit"])
+        self.assertEqual([row["Transaction lines"] for row in rows], [str(lines["count"])])
+
+    def test_a_run_in_the_json_format_leaves_smocks_arguments_and_stdout_as_they_were(self):
+        out = bench(self, "--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "200", *SHORT)
+        self.assertNotIn("--log-format", read(out, "conditions.json")["smock"]["args"])
+        self.assertNotIn("transaction_lines", case(out, "http-keep-alive@1"))
+        self.assertNotIn("Transaction", (out / "summary.md").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()
