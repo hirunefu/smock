@@ -62,6 +62,9 @@ priv struct H2Writer {
   /// Whether a task asked the writer to write while another was writing,
   /// so that the one writing takes what the `Conn` queued once more.
   mut more : Bool
+  /// Whether it has written a HEADERS or DATA frame since the reader last
+  /// set it to false, at the client's last PING (`H2Connection::no_work`).
+  mut responded : Bool
   /// Signalled when a task stops writing.
   done : @async.CondVar
 }
@@ -74,6 +77,7 @@ fn H2Writer::new(conn : @http2.Conn) -> H2Writer {
     busy: false,
     writing_for: 0,
     more: false,
+    responded: false,
     done: @async.CondVar::Cond(),
   }
 }
@@ -96,14 +100,37 @@ async fn[S : @io.Writer + ReadOutput] H2Writer::write(
     return false
   }
   self.busy = true
+  self.sends(queued)
   write_queued(out, queued)
   while self.more {
     self.more = false
-    write_queued(out, self.conn.take())
+    let queued = self.conn.take()
+    self.sends(queued)
+    write_queued(out, queued)
   }
   self.busy = false
   self.done.broadcast()
   true
+}
+
+///|
+/// The writer is about to write `queued`, whole frames as the `Conn` queues
+/// them: `responded` becomes true if they hold a HEADERS or DATA frame. It
+/// reads only the frames' headers, and none once `responded` is true.
+fn H2Writer::sends(self : H2Writer, queued : Bytes) -> Unit {
+  let mut at = 0
+  while !self.responded && at + 9 <= queued.length() {
+    let ftype = queued[at + 3].to_int()
+    if ftype == @http2.frame_headers || ftype == @http2.frame_data {
+      self.responded = true
+    }
+    at += 9 +
+      (
+        (queued[at].to_int() << 16) |
+        (queued[at + 1].to_int() << 8) |
+        queued[at + 2].to_int()
+      )
+  }
 }
 
 ///|

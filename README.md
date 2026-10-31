@@ -110,6 +110,13 @@ A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout, read, idle or write, closes the connection
 without a response. None is logged.
 
+Over HTTP/2, smock also bounds what a client can make one connection cost,
+such as a flood of PING or SETTINGS frames. A connection that passes such a
+bound gets GOAWAY `ENHANCE_YOUR_CALM` and closes, and smock logs one line
+for it, at level `warn`, that names the pattern, such as
+`{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}`.
+No metric counts it. See [Defences](docs/http2.md#defences).
+
 Over HTTP/2, a body over `--body-limit` gets 413 on its stream alone, and
 the connection's other streams go on. When the client is still sending the
 body, RST_STREAM `NO_ERROR` follows the 413, to stop the upload. See

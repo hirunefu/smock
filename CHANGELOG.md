@@ -72,7 +72,10 @@ of each GitHub release include its section
   at once. A connection Fault takes its nearest HTTP/2 form: `reset` resets
   its stream alone, `partial` sends half the body, or half the events, then
   resets the stream, and `close` sends GOAWAY and closes the connection,
-  with the same draws and seeds as over HTTP/1.1. See
+  with the same draws and seeds as over HTTP/1.1. A client that sends more
+  than 100 frames that do no work in one second, such as a flood of PING or
+  SETTINGS frames, gets GOAWAY `ENHANCE_YOUR_CALM`, and smock logs one line
+  that names the pattern. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
