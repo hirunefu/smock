@@ -95,13 +95,12 @@ fn MockoonLines::prefix(
 
 ///|
 /// Writes the Transaction recorded line of `request`, which the engine
-/// decided `outcome` for, with its planned status and the time now. The
-/// caller calls it once the response's last byte is written, or once the
-/// request has ended otherwise. A request that a reset or a close Fault
-/// ended sent no status, and gets no line.
+/// decided `outcome` for, with its planned status and the time now. A
+/// request that a reset or a close Fault ended sent no status, and gets no
+/// line.
 async fn MockoonLines::transaction(
   self : MockoonLines,
-  request : @engine.Request,
+  request : @http1.Request,
   outcome : @engine.Outcome,
 ) -> Unit {
   if outcome.plan.fault is Some(Reset | Close) {
@@ -115,4 +114,34 @@ async fn MockoonLines::transaction(
     at=@async.now(),
   )
   self.out.write(line)
+}
+
+///|
+/// Writes the line of `request` once the request path is done with it, if
+/// the engine decided an outcome for it, which `pending` then holds, and
+/// empties `pending`.
+async fn MockoonLines::write_pending(
+  self : MockoonLines,
+  request : @http1.Request,
+  pending : PendingLine,
+) -> Unit {
+  guard pending.outcome is Some(outcome) else { return }
+  pending.outcome = None
+  self.transaction(request, outcome)
+}
+
+///|
+/// The engine's outcome for the request of one connection whose Transaction
+/// recorded line is still to be written. The request path sets it where it
+/// counts the request, after the response's last byte, without waiting, and
+/// the line is written once the request path is done with the request. So
+/// the request path waits for nothing more there, and the json format,
+/// which writes no line, adds only a test to it.
+priv struct PendingLine {
+  mut outcome : @engine.Outcome?
+}
+
+///|
+fn PendingLine::new() -> PendingLine {
+  { outcome: None, }
 }
