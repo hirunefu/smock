@@ -1,0 +1,12 @@
+{
+  "mocks": [{ "name": "openai" }],
+  "stubs": [
+    {
+      "id": "chat",
+      "mock": "openai",
+      "responses": [
+        { "status": 200, "events": [{ "data": "Hello." }], "llm": { "api": "openai-chat" } }
+      ]
+    }
+  ]
+}

@@ -94,6 +94,8 @@ priv enum Helper {
   Arithmetic(ArithmeticHelper)
   /// `find`: an element of an array, picked by a member (find.mbt).
   Find
+  /// `last`: the last element of an array (last.mbt).
+  Last
 }
 
 ///|
@@ -636,7 +638,7 @@ priv struct CallSite {
 /// added without changing the others.
 let families : Array[(CallSite) -> Helper? raise Syntax] = [
   fake_helper, time_helper, conversion_helper, string_helper, encoding_helper, jwt_helper,
-  arithmetic_helper, find_helper,
+  arithmetic_helper, find_helper, last_helper,
 ]
 
 ///|

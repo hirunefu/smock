@@ -1,0 +1,23 @@
+{
+  "mocks": [{ "name": "openai" }],
+  "stubs": [
+    {
+      "id": "chat",
+      "mock": "openai",
+      "request": { "method": "POST", "path": "/v1/chat/completions" },
+      "response": {
+        "status": 200,
+        "llm": { "api": "openai-chat", "text": "Hello!", "usage": { "input": 19, "output": 10 } }
+      }
+    },
+    {
+      "id": "largest",
+      "mock": "openai",
+      "request": { "method": "POST", "path": "/v1/largest" },
+      "response": {
+        "status": 200,
+        "llm": { "api": "openai-chat", "usage": { "input": 9007199254740991 } }
+      }
+    }
+  ]
+}

@@ -11,7 +11,7 @@ stubs:
       events:
         - { event: price, id: "1", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
         - { delay: 500, event: price, id: "2", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
-        - { delay: 500, event: done, data: "[DONE]" }
+        - { delay: 500, data: "[DONE]" }
     fault: { seed: 7 }
   - id: static-json-events
     mock: market

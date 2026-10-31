@@ -1,0 +1,12 @@
+mocks:
+  - name: openai
+stubs:
+  - id: chat
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    responses:
+      - { status: 200, llm: { api: openai-chat, text: Hello., stopReason: stop } }
+      - { status: 200, llm: { api: openai-chat, text: Hel, stopReason: length } }
+      - { status: 200, llm: { api: openai-chat, stopReason: tool_calls } }
+      - { status: 200, llm: { api: openai-chat, stopReason: content_filter } }
+      - { status: 200, llm: { api: openai-chat, stopReason: function_call } }

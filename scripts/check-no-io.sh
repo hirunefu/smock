@@ -28,7 +28,7 @@ modules="http1 re2 xml yaml"
 
 # The packages of smock/smock that decide a response, the packages of
 # smock/smock they import, and the OpenAPI import's converter.
-packages="definitions engine template prng cookies log unicode importopenapi"
+packages="definitions engine template llm prng cookies log unicode importopenapi"
 
 # Prints every quoted string inside the import blocks of a moon.mod or moon.pkg.
 imports() {

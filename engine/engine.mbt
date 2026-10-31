@@ -746,34 +746,6 @@ fn Incoming::matches_ungated(self : Incoming, stub : @definitions.Stub) -> Bool 
 }
 
 ///|
-/// The plan of one of a Stub's responses, as written. Server-Sent Events
-/// are always sent with `Content-Type: text/event-stream`, which replaces a
-/// Content-Type the Stub gives.
-fn stub_response(response : @definitions.Response) -> ResponsePlan {
-  // Room for the Smock-Mock field the Default Mock adds.
-  let headers = Array(capacity=response.headers.length() + 2)
-  let body : Body = match response.body {
-    Bytes(bytes) => {
-      for i in 0..<response.headers.length() {
-        headers.push(response.headers[i])
-      }
-      Bytes(bytes)
-    }
-    Events(events) => {
-      headers.push(("Content-Type", "text/event-stream"))
-      for i in 0..<response.headers.length() {
-        let header = response.headers[i]
-        if header.0.to_lower() != "content-type" {
-          headers.push(header)
-        }
-      }
-      Events(events)
-    }
-  }
-  { status: response.status, headers, body, delay_ms: 0, fault: None, }
-}
-
-///|
 /// The response of `mock` when no Stub matches: its `noMatch.headers` after
 /// smock's Content-Type, and the Near miss, if any, in the
 /// `Smock-Near-Miss` header.

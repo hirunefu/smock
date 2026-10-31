@@ -406,7 +406,7 @@
       "type": "object",
       "properties": {
         "json": {
-          "description": "The JSON value the body must contain. An object whose only member is `pattern`, with a string, is a pattern on the value in its place. It matches a string, or the JSON text of a number, `true` or `false`, as a whole; a number's text is its shortest form, so `1.50` is matched as `1.5`. It never matches `null`, an object or an array. Any other object needs each listed key, matched recursively, and may have others. An array needs the same length and is matched element by element. Any other value must be equal. To match an object such as `{\"pattern\": \"a.b\"}` itself, nest a pattern in it: `{\"pattern\": {\"pattern\": \"a\\\\.b\"}}`. An object whose only key starts with `$` is an operator on the value in its place: `$not` holds when the value does not meet the condition it holds, and a missing key holds it when a missing key does not meet that condition, so a missing key meets `{\"$not\": \"x\"}` but not `{\"$not\": {\"$exists\": false}}`; `$exists` (`true` or `false`) when the value is present, even `null`, or missing; `$includes` when the value is an array with an element that meets the condition it holds. Any other `$` key is reserved, and a key that starts with `$` is written `$$`: `$$ref` is the key `$ref`. smock checks the operators, not this Schema, because literal JSON is valid here."
+          "description": "The JSON value the body must contain. An object whose only member is `pattern`, with a string, is a pattern on the value in its place. It matches a string, or the JSON text of a number, `true` or `false`, as a whole; a number's text is its shortest form, so `1.50` is matched as `1.5`. It never matches `null`, an object or an array. Any other object needs each listed key, matched recursively, and may have others. An array needs the same length and is matched element by element. Any other value must be equal. To match an object such as `{\"pattern\": \"a.b\"}` itself, nest a pattern in it: `{\"pattern\": {\"pattern\": \"a\\\\.b\"}}`. An object whose only key starts with `$` is an operator on the value in its place: `$not` holds when the value does not meet the condition it holds, and a missing key holds it when a missing key does not meet that condition, so a missing key meets `{\"$not\": \"x\"}` but not `{\"$not\": {\"$exists\": false}}`; `$exists` (`true` or `false`) when the value is present, even `null`, or missing; `$includes` when the value is an array with an element that meets the condition it holds; `$last` when the value is an array with at least one element and its last element meets the condition it holds, as in `{\"messages\": {\"$last\": {\"role\": \"tool\"}}}`. Any other `$` key is reserved, and a key that starts with `$` is written `$$`: `$$ref` is the key `$ref`. smock checks the operators, not this Schema, because literal JSON is valid here."
         }
       },
       "required": ["json"],
@@ -440,7 +440,7 @@
       "additionalProperties": false
     },
     "response": {
-      "description": "The response to return when the Stub matches. Its body is given inline (body), read from a body file (bodyFile), given as JSON (json), or streamed as Server-Sent Events (events). Give at most one of them; without any, the body is empty. With template true, the header values, the body and the events are templates, parsed when the definitions are loaded and rendered for each request: see docs/definition-files.md, Templates.",
+      "description": "The response to return when the Stub matches. Its body is given inline (body), read from a body file (bodyFile), given as JSON (json), streamed as Server-Sent Events (events), or declared as an LLM reply (llm). Give at most one of them; without any, the body is empty. With template true, the header values, the body and the events are templates, parsed when the definitions are loaded and rendered for each request: see docs/definition-files.md, Templates.",
       "$ref": "#/$defs/responseFields",
       "unevaluatedProperties": false
     },
@@ -459,7 +459,7 @@
       "unevaluatedProperties": false
     },
     "responseFields": {
-      "description": "The fields of a response: its status, its headers, its body and whether it is a template. This definition does not close itself to other properties so that weightedResponse can add weight; response and weightedResponse each close it with unevaluatedProperties: false.",
+      "description": "The fields of a response: its status, its headers, its body or LLM reply, and whether it is a template. This definition does not close itself to other properties so that weightedResponse can add weight; response and weightedResponse each close it with unevaluatedProperties: false.",
       "type": "object",
       "properties": {
         "status": {
@@ -491,7 +491,7 @@
           "description": "The body as JSON: any JSON value, sent as compact JSON in UTF-8, with Content-Type: application/json unless headers gives a Content-Type. smock writes every number in its shortest form (9.90 is sent as 9.9); use body when the exact bytes matter. With template true, it is a structured template: a string that is exactly one ${expr} gives the value with its own type, an object with $each gives an array, and an object with $if gives its then or else."
         },
         "template": {
-          "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json) and the events are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
+          "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json), the events and, in llm, the text, each chunk, id, model, each tool call's name, id and arguments, and the error's message are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
           "type": "boolean",
           "default": false
         },
@@ -499,20 +499,260 @@
           "description": "Server-Sent Events to stream instead of a body. smock sends the status and the headers at once, always with Content-Type: text/event-stream (a Content-Type in headers is replaced), then writes each event after its delay, and closes the stream after the last one.",
           "type": "array",
           "items": { "$ref": "#/$defs/event" }
-        }
+        },
+        "llm": { "$ref": "#/$defs/llm" }
       },
       "required": ["status"],
       "dependentSchemas": {
         "body": {
-          "properties": { "bodyFile": false, "json": false, "events": false }
+          "properties": { "bodyFile": false, "json": false, "events": false, "llm": false }
         },
         "bodyFile": {
-          "properties": { "json": false, "events": false }
+          "properties": { "json": false, "events": false, "llm": false }
         },
         "json": {
-          "properties": { "events": false }
+          "properties": { "events": false, "llm": false }
+        },
+        "events": {
+          "properties": { "llm": false }
         }
       }
+    },
+    "llm": {
+      "description": "An LLM reply, declared by its content instead of a body: smock writes it in the wire form of the API that api names, as a stream of Server-Sent Events with Content-Type: text/event-stream when the request's JSON body has stream: true, and otherwise as one JSON body with Content-Type: application/json (a Content-Type in headers is replaced). smock adds an x-request-id header, or request-id for anthropic-messages, unless headers give one of that name in any case; other headers are sent as written. The reply's id and the request id are generated from the Stub's random source, so fault.seed and --seed repeat them; the reply's model is model, or else the request's model when that is a string; its time is when smock received the request. See docs/definition-files.md, LLM responses.",
+      "type": "object",
+      "properties": {
+        "api": {
+          "description": "The LLM API whose wire form the reply takes: openai-chat, OpenAI Chat Completions; openai-responses, OpenAI Responses; or anthropic-messages, Anthropic Messages. It is required and never inferred from the request's path.",
+          "enum": ["openai-chat", "openai-responses", "anthropic-messages"]
+        },
+        "text": {
+          "description": "The text of the reply: the content of the assistant's message; for openai-responses, the text of the Response's message item; for anthropic-messages, its text block, which empty text leaves out. A stream sends it in pieces of chunkSize code points. Default empty.",
+          "type": "string",
+          "default": ""
+        },
+        "chunks": {
+          "description": "The text of the reply given as its pieces, in place of text: a stream sends each element as one piece, an empty one included, and the text is their join, which the JSON reply carries.",
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "chunkSize": {
+          "description": "How many code points each piece of text, and of each tool call's arguments, holds in a stream, the last piece shorter. A piece never splits a code point, but may split a character made of several, such as a flag. It does not apply to chunks. Default 4.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 4
+        },
+        "toolCalls": {
+          "description": "Function tool calls the reply makes, after its text, in the order written: openai-responses sends each as a function_call item, and anthropic-messages as a tool_use block. With tool calls and an empty text, the reply has no content: openai-chat sends content: null, openai-responses has no message item, and anthropic-messages has no text block. In a stream, each call's arguments are sent in pieces of chunkSize code points. Two calls with the same id are refused; with template true, ids that insert a value are compared once rendered, and two that render the same give the 500 template failed.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "description": "The function's name, sent as written. It is not checked against a vendor's naming rule.",
+                "type": "string",
+                "minLength": 1
+              },
+              "arguments": {
+                "description": "The function's arguments, which openai-chat and openai-responses send as a JSON string. anthropic-messages sends them as the tool_use block's input: an object as it is, a string that holds a JSON object as that object, and any other string as a JSON string; its stream sends their text as written, in partial_json pieces.",
+                "anyOf": [
+                  {
+                    "description": "An object, written as compact JSON with its members in the order written.",
+                    "type": "object"
+                  },
+                  {
+                    "description": "The arguments' text, sent exactly as written, so arguments that are not valid JSON can be tested.",
+                    "type": "string"
+                  }
+                ]
+              },
+              "id": {
+                "description": "The call id, sent exactly as written (smock adds no prefix): openai-responses sends it as the function_call item's call_id, and the item's own fc_ id is always generated. Without it, the call id is call_, or toolu_ for anthropic-messages, and 24 characters drawn from the Stub's random source, in the call's own slots, so fixing it changes no other generated id.",
+                "type": "string"
+              }
+            },
+            "required": ["name", "arguments"],
+            "additionalProperties": false
+          }
+        },
+        "id": {
+          "description": "The reply's id, sent exactly as written (smock adds no prefix), in the JSON reply and in every event of the stream. Without it, the id is the API's prefix, chatcmpl-, resp_ or msg_, and 24 characters drawn from the Stub's random source. Fixing it changes no other generated id.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The reply's model, sent as written. Without it, the model is the request's model when that is a string, and otherwise empty. It adds no condition on the request's model: a Stub for one model adds a body condition on it.",
+          "type": "string"
+        },
+        "usage": {
+          "description": "The token counts the reply reports, as declared: smock counts and estimates nothing. openai-chat gives them as prompt_tokens and completion_tokens, with total_tokens their sum, in the JSON reply, and in a stream only when the request sets stream_options.include_usage to true: then every chunk has usage: null, and a last chunk with no choice gives the usage before [DONE]. openai-responses gives them as input_tokens and output_tokens, with total_tokens their sum. anthropic-messages gives them as input_tokens and output_tokens, with no total and no cache counts, and its stream gives input_tokens in message_start, with output_tokens 0, and output_tokens in message_delta.",
+          "type": "object",
+          "properties": {
+            "input": {
+              "description": "The tokens of the prompt. Default 0.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "default": 0
+            },
+            "output": {
+              "description": "The tokens of the reply. Default 0.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "default": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "stopReason": {
+          "description": "The stop reason, in the word of the API that api names, whatever the reply's content. For openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated); left out, it is derived: tool_calls when toolCalls gives a call, and stop otherwise. For openai-responses, an incomplete reason, max_output_tokens, max_messages, content_filter or steered, which makes the reply incomplete and ends a stream with response.incomplete; left out, the reply is completed. For anthropic-messages, the stop_reason end_turn, max_tokens, stop_sequence, tool_use, pause_turn, refusal or model_context_window_exceeded; with stop_sequence, the reply's stop_sequence is the first of the request's stop_sequences when that is a string, and otherwise null, and a refusal carries stop_details; left out, it is derived: tool_use when toolCalls gives a call, and end_turn otherwise.",
+          "enum": [
+            "stop", "length", "tool_calls", "content_filter", "function_call",
+            "max_output_tokens", "max_messages", "steered",
+            "end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal", "model_context_window_exceeded"
+          ]
+        },
+        "timing": {
+          "description": "The pacing of the stream. smock writes the head and the events before the first piece at once, waits first before the first event that carries a piece, counted from the head, and interval before each later one; other events follow the one before them at once. A reply with no piece waits first before its closing events. Each wait is drawn on its own from the Stub's random source, so fault.seed and --seed repeat them. In an openai-responses stream, the completed_at of response.completed is the time received plus these waits. A JSON reply is written at once. A delay Fault still holds back the status line, before these waits. Default: no waits.",
+          "type": "object",
+          "properties": {
+            "first": {
+              "description": "The wait before the first piece, counted from the head. Default: none.",
+              "$ref": "#/$defs/wait"
+            },
+            "interval": {
+              "description": "The wait before each later piece. Default: none.",
+              "$ref": "#/$defs/wait"
+            }
+          },
+          "additionalProperties": false
+        },
+        "error": {
+          "description": "A mid-stream error: a streamed request gets the reply's opening events, the text up to after code points, then the API's own error in place of the rest, with no tool call, closing event or end marker. For openai-chat it is a data frame {\"error\":{\"message\",\"type\",\"param\":null,\"code\":null}}, which openai-python raises as APIError. For openai-responses it is an error event {\"type\":\"error\",\"code\",\"message\",\"param\":null,\"sequence_number\"}, numbered one more than the event before it, which openai-python yields rather than raises. For anthropic-messages it is an event: error with {\"type\":\"error\",\"error\":{\"type\",\"message\"}}, which anthropic-sdk-python raises as APIStatusError with status 200 and the type in the body's error.type. Give type for openai-chat and anthropic-messages, and code for openai-responses. A request that does not stream gets the ordinary reply. Default: none.",
+          "type": "object",
+          "properties": {
+            "after": {
+              "description": "How many code points of the text the stream sends before the error, counted in code points so that the cut stays put when the pieces change: the piece that holds the cut ends there, and an empty element of chunks counts 0. It may not pass the end of a text as written; past the end of a templated text, the error follows the whole text. Default 0.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647,
+              "default": 0
+            },
+            "type": {
+              "description": "The error's type, sent as written: for openai-chat any non-empty string, such as server_error; for anthropic-messages one of Anthropic's documented error types. Not for openai-responses, which gives code.",
+              "type": "string",
+              "minLength": 1
+            },
+            "code": {
+              "description": "The error's code, for openai-responses only, sent as written: any non-empty string, such as server_error.",
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "description": "The error's message, sent as written, or with template true a text template rendered for each request.",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["message"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["api"],
+      "allOf": [
+        {
+          "description": "openai-chat takes the stop reasons of Chat Completions only, and an error with type.",
+          "if": {
+            "properties": { "api": { "description": "OpenAI Chat Completions.", "const": "openai-chat" } },
+            "required": ["api"]
+          },
+          "then": {
+            "properties": {
+              "stopReason": {
+                "description": "A finish_reason of Chat Completions.",
+                "enum": ["stop", "length", "tool_calls", "content_filter", "function_call"]
+              },
+              "error": {
+                "description": "A Chat Completions error gives type, not code.",
+                "properties": { "code": false },
+                "required": ["type"]
+              }
+            }
+          }
+        },
+        {
+          "description": "openai-responses takes the incomplete reasons of OpenAI Responses only, and an error with code.",
+          "if": {
+            "properties": { "api": { "description": "OpenAI Responses.", "const": "openai-responses" } },
+            "required": ["api"]
+          },
+          "then": {
+            "properties": {
+              "stopReason": {
+                "description": "An incomplete reason of OpenAI Responses.",
+                "enum": ["max_output_tokens", "max_messages", "content_filter", "steered"]
+              },
+              "error": {
+                "description": "A Responses error gives code, not type.",
+                "properties": { "type": false },
+                "required": ["code"]
+              }
+            }
+          }
+        },
+        {
+          "description": "anthropic-messages takes the stop reasons of Anthropic Messages only, and an error with one of its documented error types.",
+          "if": {
+            "properties": { "api": { "description": "Anthropic Messages.", "const": "anthropic-messages" } },
+            "required": ["api"]
+          },
+          "then": {
+            "properties": {
+              "stopReason": {
+                "description": "A stop_reason of Anthropic Messages.",
+                "enum": ["end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal", "model_context_window_exceeded"]
+              },
+              "error": {
+                "description": "An Anthropic Messages error gives type, not code.",
+                "properties": {
+                  "type": {
+                    "description": "One of Anthropic's documented error types.",
+                    "enum": ["invalid_request_error", "authentication_error", "billing_error", "permission_error", "not_found_error", "conflict_error", "request_too_large", "rate_limit_error", "api_error", "timeout_error", "overloaded_error"]
+                  },
+                  "code": false
+                },
+                "required": ["type"]
+              }
+            }
+          }
+        }
+      ],
+      "dependentSchemas": {
+        "chunks": {
+          "properties": { "text": false }
+        }
+      },
+      "additionalProperties": false
+    },
+    "wait": {
+      "description": "A wait of an LLM stream, drawn from one distribution of the delay Fault: give exactly one of fixed, uniform and lognormal. It takes no probability, since every stream waits.",
+      "type": "object",
+      "properties": {
+        "fixed": {
+          "description": "Always this many milliseconds.",
+          "$ref": "#/$defs/milliseconds"
+        },
+        "uniform": { "$ref": "#/$defs/uniform" },
+        "lognormal": { "$ref": "#/$defs/lognormal" }
+      },
+      "oneOf": [
+        { "required": ["fixed"] },
+        { "required": ["uniform"] },
+        { "required": ["lognormal"] }
+      ],
+      "additionalProperties": false
     },
     "event": {
       "description": "One Server-Sent Event. Give exactly one of data and json.",
@@ -570,39 +810,8 @@
           "description": "Always this many milliseconds.",
           "$ref": "#/$defs/milliseconds"
         },
-        "uniform": {
-          "description": "A number of milliseconds drawn uniformly from min to max. min must not exceed max.",
-          "type": "object",
-          "properties": {
-            "min": {
-              "description": "The shortest delay, in milliseconds.",
-              "$ref": "#/$defs/milliseconds"
-            },
-            "max": {
-              "description": "The longest delay, in milliseconds.",
-              "$ref": "#/$defs/milliseconds"
-            }
-          },
-          "required": ["min", "max"],
-          "additionalProperties": false
-        },
-        "lognormal": {
-          "description": "A number of milliseconds drawn from a log-normal distribution, for a long tail of slow responses.",
-          "type": "object",
-          "properties": {
-            "median": {
-              "description": "The median delay, in milliseconds.",
-              "$ref": "#/$defs/milliseconds"
-            },
-            "sigma": {
-              "description": "The standard deviation of the delay's natural logarithm. The larger it is, the longer the tail.",
-              "type": "number",
-              "minimum": 0
-            }
-          },
-          "required": ["median", "sigma"],
-          "additionalProperties": false
-        },
+        "uniform": { "$ref": "#/$defs/uniform" },
+        "lognormal": { "$ref": "#/$defs/lognormal" },
         "probability": { "$ref": "#/$defs/probability" }
       },
       "oneOf": [
@@ -610,6 +819,39 @@
         { "required": ["uniform"] },
         { "required": ["lognormal"] }
       ],
+      "additionalProperties": false
+    },
+    "uniform": {
+      "description": "A number of milliseconds drawn uniformly from min to max. min must not exceed max.",
+      "type": "object",
+      "properties": {
+        "min": {
+          "description": "The shortest delay or wait, in milliseconds.",
+          "$ref": "#/$defs/milliseconds"
+        },
+        "max": {
+          "description": "The longest delay or wait, in milliseconds.",
+          "$ref": "#/$defs/milliseconds"
+        }
+      },
+      "required": ["min", "max"],
+      "additionalProperties": false
+    },
+    "lognormal": {
+      "description": "A number of milliseconds drawn from a log-normal distribution, for a long tail of slow responses.",
+      "type": "object",
+      "properties": {
+        "median": {
+          "description": "The median delay or wait, in milliseconds.",
+          "$ref": "#/$defs/milliseconds"
+        },
+        "sigma": {
+          "description": "The standard deviation of the natural logarithm of the delay or wait. The larger it is, the longer the tail.",
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": ["median", "sigma"],
       "additionalProperties": false
     },
     "connectionFault": {

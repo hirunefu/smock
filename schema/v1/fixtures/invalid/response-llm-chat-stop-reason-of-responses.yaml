@@ -1,0 +1,8 @@
+mocks:
+  - name: openai
+stubs:
+  - id: chat
+    mock: openai
+    responses:
+      - status: 200
+        llm: { api: openai-chat, text: The weather in, stopReason: max_output_tokens }

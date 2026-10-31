@@ -544,8 +544,9 @@ pub enum BodyCondition {
 ///|
 /// A `json` condition on the request body: a JSON value the body must
 /// contain, in which an object whose only member is `pattern`, with a
-/// string, is a pattern, an object whose only key is `$not`, `$exists` or
-/// `$includes` is an operator, and a key `$$name` is the key `$name`.
+/// string, is a pattern, an object whose only key is `$not`, `$exists`,
+/// `$includes` or `$last` is an operator, and a key `$$name` is the key
+/// `$name`.
 /// `File::read_json_condition` reads one. The value is the condition's own
 /// copy, as written, which nothing outside can change, so the snapshot
 /// stays as it was loaded.
@@ -576,6 +577,9 @@ priv enum Expected {
   /// `$includes`: the value is an array with an element that meets the
   /// condition.
   Includes(Expected)
+  /// `$last`: the value is an array with at least one element, and its
+  /// last element meets the condition.
+  Last(Expected)
 }
 
 ///|
@@ -588,8 +592,9 @@ priv enum Expected {
 ///
 /// An operator is about the value in its place: `$not` holds when the
 /// value does not contain its condition, `$exists` when the value is
-/// present or missing, as it says, and `$includes` when the value is an
-/// array with an element that contains its condition. A missing key meets
+/// present or missing, as it says, `$includes` when the value is an array
+/// with an element that contains its condition, and `$last` when the value
+/// is an array whose last element contains it. A missing key meets
 /// only `$exists: false` and `$not` of a condition that it does not meet,
 /// and `actual` itself is always present.
 pub fn JsonCondition::matches(self : JsonCondition, actual : Json) -> Bool {
@@ -621,6 +626,8 @@ fn contains(actual : Json, expected : Expected) -> Bool {
       }
       false
     }
+    (Last(inner), Array(actual)) =>
+      actual.length() > 0 && contains(actual[actual.length() - 1], inner)
     (Array(expected), Array(actual)) => {
       if expected.length() != actual.length() {
         return false
@@ -741,17 +748,14 @@ fn deep_copy(json : Json) -> Json {
 /// A Stub's response.
 pub struct Response {
   status : Int32
-  /// The header fields, in the order written. A header given an array has
-  /// one field per value, in array order. A `json` body adds
-  /// `Content-Type: application/json` at the end unless one is given.
-  headers : ReadOnlyArray[(String, String)]
-  /// The body, when the response is not a template.
+  /// The header fields, in the order written, their values as written or
+  /// text templates. A header given an array has one field per value, in
+  /// array order. A `json` body adds `Content-Type: application/json` at
+  /// the end unless one is given.
+  headers : ResponseHeaders
+  /// What the response sends, as one kind that says how it is made: as
+  /// written, or rendered for each request.
   body : ResponseBody
-  /// With `template` on: the response's templates, parsed when the
-  /// definition set was loaded or the Stub was added. They give the header
-  /// values and the body or events of each response, rendered for its
-  /// request, instead of `headers` and `body`.
-  template : ResponseTemplate?
   /// Whether the response serves single byte ranges of its body to Range
   /// requests: it is not a template, its status is 200, its body comes from
   /// a body file, and its headers give neither `Content-Range` nor
@@ -767,58 +771,30 @@ pub struct Response {
 } derive(Debug, Eq)
 
 ///|
-/// The templates of a response with `template` on.
-pub struct ResponseTemplate {
-  /// The header fields, their values text templates, in the order written.
-  /// A header given an array has one field per value, in array order.
-  /// `Content-Type` is never templated.
-  headers : ReadOnlyArray[(String, @template.Text)]
-  body : BodyTemplate
+/// The header fields of a response, in the order written. A header given an
+/// array has one field per value, in array order. Whether their values are
+/// templates is held apart from the body's kind, so that any kind can have
+/// either.
+pub enum ResponseHeaders {
+  /// Values sent as written.
+  Written(ReadOnlyArray[(String, String)])
+  /// With `template` on: values that are text templates, parsed when the
+  /// definition set was loaded or the Stub was added, and rendered for each
+  /// request before the body. `Content-Type` is never templated.
+  Templated(ReadOnlyArray[(String, @template.Text)])
 } derive(Debug, Eq)
 
 ///|
-/// Whether one of the templates reads Variables: a header value, the body,
-/// or a field of an event.
-fn ResponseTemplate::reads_variables(self : ResponseTemplate) -> Bool {
-  self.reads(@template.Text::reads_vars, @template.Structured::reads_vars)
-}
-
-///|
-/// Whether one of the templates reads Data buckets: a header value, the
-/// body, or a field of an event.
-fn ResponseTemplate::reads_data(self : ResponseTemplate) -> Bool {
-  self.reads(@template.Text::reads_data, @template.Structured::reads_data)
-}
-
-///|
-/// Whether one of the templates reads something: a header value, the body,
-/// or a field of an event, for which `text` or `json` holds, by its kind.
-fn ResponseTemplate::reads(
-  self : ResponseTemplate,
+/// Whether one of the header values is a template for which `text` holds.
+fn ResponseHeaders::reads(
+  self : ResponseHeaders,
   text : (@template.Text) -> Bool,
-  json : (@template.Structured) -> Bool,
 ) -> Bool {
-  for header in self.headers {
-    if text(header.1) {
-      return true
-    }
-  }
-  match self.body {
-    Text(body) => text(body)
-    Json(body) => json(body)
-    Events(events) => {
-      for event in events {
-        if event.event is Some(field) && text(field) {
-          return true
-        }
-        if event.id is Some(field) && text(field) {
-          return true
-        }
-        let data = match event.data {
-          Text(data) => text(data)
-          Json(data) => json(data)
-        }
-        if data {
+  match self {
+    Written(_) => false
+    Templated(fields) => {
+      for field in fields {
+        if text(field.1) {
           return true
         }
       }
@@ -861,14 +837,192 @@ pub enum EventData {
 } derive(Debug, Eq)
 
 ///|
-/// The body of a Stub's response.
+/// What a Stub's response sends, as one kind that says how it is made.
+/// Every place that plans, renders or inspects a response matches the kind
+/// without a wildcard, so that a new kind is handled everywhere.
 pub enum ResponseBody {
-  /// Bytes sent at once: the inline body in UTF-8, or the bytes of the body
-  /// file, read when the snapshot was built.
+  /// Bytes as written, sent at once: the inline body in UTF-8, or the bytes
+  /// of the body file, read when the snapshot was built.
   Bytes(Bytes)
-  /// Server-Sent Events, streamed one after another.
+  /// Server-Sent Events as written, streamed one after another.
   Events(ReadOnlyArray[SseEvent])
+  /// With `template` on: a body or events rendered from templates for each
+  /// request, parsed when the definition set was loaded or the Stub was
+  /// added.
+  Template(BodyTemplate)
+  /// `llm`: an LLM reply, written in its API's wire form for each request.
+  Llm(LlmReply)
 } derive(Debug, Eq)
+
+///|
+/// What a response's `llm` declares: an LLM reply by its content, which the
+/// engine writes in the wire form of its API for each request.
+pub struct LlmReply {
+  /// The declaration, checked when the definition set was loaded or the
+  /// Stub was added.
+  declaration : @llm.Declaration
+  /// Its strings, as written or rendered for each request.
+  strings : LlmStrings
+  /// The pacing of its stream, which the engine draws.
+  timing : LlmTiming
+  /// The JSON Pointer of `llm` within the Stub, where a reply over the size
+  /// bound for a request is reported.
+  pointer : String
+} derive(Debug, Eq)
+
+///|
+/// The strings of an LLM reply: its text or chunks, its `id` and `model`,
+/// and its tool calls' ids, names and arguments.
+pub enum LlmStrings {
+  /// As written.
+  Written(@llm.Strings)
+  /// With `template` on: templates, parsed when the definition set was
+  /// loaded or the Stub was added, and rendered for each request after the
+  /// header values, before the reply is cut into pieces.
+  Templated(LlmTemplates)
+} derive(Debug, Eq)
+
+///|
+/// The templates of an LLM reply with `template` on, in the order they
+/// render, so that helpers draw in that order: `id`, `model`, the text or
+/// each chunk, each tool call's `id`, `name` and `arguments`, then the
+/// mid-stream error's `message`. They escape nothing: the reply's JSON
+/// escapes what they give.
+pub struct LlmTemplates {
+  /// `id`, a text template, or `None` for a generated id.
+  id : @template.Text?
+  /// `model`, a text template, or `None` for the request's model.
+  model : @template.Text?
+  /// The text, or each element of `chunks`.
+  text : LlmText
+  /// The tool calls, in the order written.
+  tool_calls : ReadOnlyArray[ToolCallTemplate]
+  /// The message of a mid-stream `error`, a text template, or `None` when
+  /// there is none.
+  error_message : @template.Text?
+} derive(Debug, Eq)
+
+///|
+/// The text of an LLM reply with `template` on.
+pub enum LlmText {
+  /// `text`, rendered whole, then cut into pieces. Left out, it is empty.
+  Whole(@template.Text)
+  /// The elements of `chunks`, each rendered on its own, each one piece.
+  Chunks(ReadOnlyArray[@template.Text])
+} derive(Debug, Eq)
+
+///|
+/// A tool call of an LLM reply with `template` on.
+pub struct ToolCallTemplate {
+  /// The call id, a text template, or `None` for a generated one.
+  id : @template.Text?
+  /// The function's name, a text template.
+  name : @template.Text
+  /// The arguments.
+  arguments : ArgumentsTemplate
+} derive(Debug, Eq)
+
+///|
+/// The arguments of a tool call with `template` on.
+pub enum ArgumentsTemplate {
+  /// A string: a text template, whose output is the arguments' text.
+  Text(@template.Text)
+  /// An object: a structured template, written as compact JSON.
+  Json(@template.Structured)
+} derive(Debug, Eq)
+
+///|
+/// Whether one of the templates of the strings is one for which `text` or
+/// `json` holds, by its kind. Strings as written have none.
+fn LlmStrings::reads(
+  self : LlmStrings,
+  text : (@template.Text) -> Bool,
+  json : (@template.Structured) -> Bool,
+) -> Bool {
+  guard self is Templated(templates) else { return false }
+  if templates.id is Some(id) && text(id) {
+    return true
+  }
+  if templates.model is Some(model) && text(model) {
+    return true
+  }
+  match templates.text {
+    Whole(whole) => if text(whole) { return true }
+    Chunks(chunks) =>
+      for chunk in chunks {
+        if text(chunk) {
+          return true
+        }
+      }
+  }
+  for call in templates.tool_calls {
+    if call.id is Some(id) && text(id) {
+      return true
+    }
+    if text(call.name) {
+      return true
+    }
+    let arguments = match call.arguments {
+      Text(arguments) => text(arguments)
+      Json(arguments) => json(arguments)
+    }
+    if arguments {
+      return true
+    }
+  }
+  if templates.error_message is Some(message) && text(message) {
+    return true
+  }
+  false
+}
+
+///|
+/// The pacing of an LLM reply's stream, `timing`: the distributions of the
+/// delay Fault that its waits are drawn from, in whole milliseconds. A wait
+/// left out is none. A JSON reply has no wait.
+pub struct LlmTiming {
+  /// The wait before the first event that carries a piece, counted from
+  /// the head, or before the closing events of a reply with no piece.
+  first : Distribution?
+  /// The wait before each later event that carries a piece.
+  interval : Distribution?
+} derive(Debug, Eq)
+
+///|
+/// Whether one of the body's templates reads something: the body, or a
+/// field of an event, or of an LLM reply's strings, for which `text` or
+/// `json` holds, by its kind. A body as written has none.
+fn ResponseBody::reads(
+  self : ResponseBody,
+  text : (@template.Text) -> Bool,
+  json : (@template.Structured) -> Bool,
+) -> Bool {
+  match self {
+    Bytes(_) => false
+    Events(_) => false
+    Llm(reply) => reply.strings.reads(text, json)
+    Template(Text(body)) => text(body)
+    Template(Json(body)) => json(body)
+    Template(Events(events)) => {
+      for event in events {
+        if event.event is Some(field) && text(field) {
+          return true
+        }
+        if event.id is Some(field) && text(field) {
+          return true
+        }
+        let data = match event.data {
+          Text(data) => text(data)
+          Json(data) => json(data)
+        }
+        if data {
+          return true
+        }
+      }
+      false
+    }
+  }
+}
 
 ///|
 /// One Server-Sent Event of a response.

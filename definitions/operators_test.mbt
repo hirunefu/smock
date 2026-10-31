@@ -147,7 +147,7 @@ test "unknown $ keys, operators allowed only in json and keys beside an operator
       #|a.json: /stubs/0/request/query/q/$includes: is allowed only in a json condition
       #|a.json: /stubs/0/request/query/q/pattern: is not allowed beside "$includes": an operator is the only key of its object
       #|a.json: /stubs/0/request/body/json/q/b: is not allowed beside "$not": an operator is the only key of its object
-      #|a.json: /stubs/0/request/body/json/q/$foo: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$foo" for the literal key "$foo"
+      #|a.json: /stubs/0/request/body/json/q/$foo: is not an operator: the operators here are "$not", "$exists", "$includes" and "$last"; write "$$foo" for the literal key "$foo"
       #|a.json: /stubs/0/request/body/json/q/$includes: is not allowed beside "$exists": an operator is the only key of its object
     ),
   )

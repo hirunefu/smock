@@ -3,6 +3,7 @@ import {
   "smock/re2",
   "smock/xml",
   "smock/yaml",
+  "smock/smock/llm",
   "smock/smock/template",
   "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/utf8",
