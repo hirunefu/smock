@@ -439,3 +439,131 @@ async test "a delayed response logs after its delay, and a Server-Sent Event str
     })
   })
 }
+
+///|
+/// How the Journal says each request it holds ended, oldest first, one per
+/// line: `<method> <target>: <status>`, or `<method> <target>: fault
+/// <name>` for a reset or a close Fault.
+async fn Smock::journal_endings(self : Smock) -> String {
+  guard self.journal() is (200, Object({ "entries": Array(entries), .. })) else {
+    fail("no Journal")
+  }
+  let out = []
+  for entry in entries {
+    guard entry
+      is Object(
+        {
+          "request": Object(
+            { "method": String(meth), "target": String(target), .. }
+          ),
+          "status": status,
+          "fault": fault,
+          ..
+        }
+      ) else {
+      fail("unexpected entry: \{entry.stringify()}")
+    }
+    let ended = match (status, fault) {
+      (Number(status, ..), _) => status.to_int().to_string()
+      (_, String(fault)) => "fault \{fault}"
+      _ => "neither a status nor a Fault"
+    }
+    out.push("\{meth} \{target}: \{ended}")
+  }
+  out.join("\n")
+}
+
+///|
+async test "a request whose client goes away during its delay logs the planned status, as the Journal records it, once the delay is over" {
+  with_definitions([("slow.json", slow)], dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let _ = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let conn = smock.connect()
+      let start = @async.now()
+      conn.write("GET /delayed HTTP/1.1\r\nHost: localhost\r\n\r\n")
+      @async.sleep(200)
+      conn.close()
+      let line = smock.transaction_lines(1)[0]
+      inspect(
+        (
+          $|\{mask_timestamp(line)}
+          $|written once the delay was over: \{written_at(line) - start >= 1000}
+          $|\{smock.journal_endings()}
+        ),
+        content=(
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/delayed","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written once the delay was over: true
+          #|GET /delayed: 200
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "a request whose write times out against a client that stops reading logs the planned status when the write timeout cuts it, on the plain and the TLS port" {
+  let env = { "SMOCK_LOG_FORMAT": "mockoon", "SMOCK_WRITE_TIMEOUT_MS": "500" }
+  let _ = on_both_ports(files=big_files(), env~, (smock, over) => {
+    let before = transactions(smock.stdout).length()
+    let conn = smock.connect(over~)
+    defer conn.close()
+    let start = @async.now()
+    // The client reads nothing, so the 16 MiB body fills the socket buffers
+    // and smock's write waits on it until the write timeout.
+    conn.write("GET /big?client=stalled HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    let line = smock.transaction_lines(before + 1)[before]
+    inspect(
+      (
+        $|\{mask_timestamp(line)}
+        $|written once the write timed out: \{written_at(line) - start >= 500}
+      ),
+      content=(
+        #|{"app":"smock","environmentName":"big","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/big","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+        #|written once the write timed out: true
+      ),
+    )
+  })
+}
+
+///|
+async test "a stream and a delayed response that the drain timeout cuts each log the planned status when they are cut" {
+  with_definitions([("m.json", drain_defs)], dir => {
+    let env = {
+      "SMOCK_LOG_FORMAT": "mockoon",
+      "SMOCK_DRAIN_TIMEOUT_MS": "1500",
+    }
+    let stopped = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let stream = smock.connect()
+      defer stream.close()
+      stream.write("GET /ticks HTTP/1.1\r\nHost: localhost\r\n\r\n")
+      let _ = read_head(stream)
+      let stalled = smock.connect()
+      defer stalled.close()
+      stalled.write("GET /stalled HTTP/1.1\r\nHost: localhost\r\n\r\n")
+      @async.sleep(settle_ms)
+      let start = @async.now()
+      smock.terminate()
+      let status = smock.exited()
+      let lines = smock.transaction_lines(2)
+      // Both are cut at once, so their lines may come in either order.
+      lines.sort_by((a, b) => a.lexical_compare(b))
+      let cut = lines
+        .iter()
+        .all(line => (written_at(line) - start >= 1500) catch { _ => false })
+      inspect(
+        (
+          $|\{masked_lines(lines)}
+          $|written once the drain timeout cut them: \{cut}
+          $|exit status \{status}
+        ),
+        content=(
+          #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/stalled","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/ticks","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written once the drain timeout cut them: true
+          #|exit status 0
+        ),
+      )
+    })
+    inspect(transactions(stopped.stdout).length(), content="2")
+  })
+}
