@@ -377,6 +377,13 @@ async fn run(
       connections.wait_all_ended()
     })
     let cut = if ended is Some(_) { 0 } else { connections.cut() }
+    // The connections just cut end once their cancellation has run, and a
+    // request among them writes its Transaction recorded line then: so the
+    // drain ends once they have, and that line comes before `drain ended`.
+    // The task group would wait for them anyway.
+    if cut > 0 {
+      connections.wait_all_ended()
+    }
     logger.info("drain ended", fields={
       "connectionsCut": Json::number(cut.to_double()),
     })
