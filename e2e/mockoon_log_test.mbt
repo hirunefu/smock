@@ -116,3 +116,194 @@ async test "with SMOCK_LOG_FORMAT=mockoon, each request a Mock handles writes on
     })
   })
 }
+
+///|
+async test "--log-format mockoon wins over SMOCK_LOG_FORMAT, and a request the Default Mock answers through an unknown Host names it" {
+  with_definitions(mockoon_mocks(default=true), dir => {
+    let out = []
+    let flag_on = with_smock(
+      ["--dir", dir, "--port", "0", "--log-format", "mockoon"],
+      env={ "SMOCK_LOG_FORMAT": "json" },
+      smock => {
+        out.push(
+          status_line(
+            smock.exchange(
+              Plain,
+              "GET /orders/1 HTTP/1.1\r\nHost: unknown.example.com\r\n\r\n",
+            ),
+          ),
+        )
+        out.push(masked_lines(smock.stdout_lines(1)))
+      },
+    )
+    let flag_off = with_smock(
+      ["--dir", dir, "--port", "0", "--log-format", "json"],
+      env={ "SMOCK_LOG_FORMAT": "mockoon" },
+      smock => {
+        out.push(
+          status_line(
+            smock.exchange(
+              Plain,
+              "GET /orders/1 HTTP/1.1\r\nHost: unknown.example.com\r\n\r\n",
+            ),
+          ),
+        )
+      },
+    )
+    out.push("stdout with the flag: \{flag_on.stdout.length()} line")
+    out.push("stdout with --log-format json: \{flag_off.stdout.length()} lines")
+    inspect(
+      out.join("\n"),
+      content=(
+        #|HTTP/1.1 404 Not Found
+        #|{"app":"smock","environmentName":"users","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/orders/1","requestProxied":false,"responseStatus":404,"timestamp":"<timestamp>"}
+        #|HTTP/1.1 404 Not Found
+        #|stdout with the flag: 1 line
+        #|stdout with --log-format json: 0 lines
+      ),
+    )
+  })
+}
+
+///|
+async test "a Mock that a reload adds is named on the line of the next request it answers" {
+  with_definitions(mockoon_mocks(), dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let _ = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let before = smock.status()
+      write(
+        dir,
+        "payments.json",
+        (
+          #|{ "mocks": [{ "name": "payments", "hosts": ["payments.example.com"] }],
+          #|  "stubs": [{ "id": "charge", "mock": "payments",
+          #|    "request": { "method": "POST", "path": "/charges" },
+          #|    "response": { "status": 201 } }] }
+        ),
+      )
+      let status = smock.reloaded(before)
+      let response = smock.exchange(
+        Plain,
+        "POST /charges HTTP/1.1\r\nHost: payments.example.com\r\nContent-Length: 0\r\n\r\n",
+      )
+      inspect(
+        "\{last_reload(status)}\n\{status_line(response)}\n\{masked_lines(smock.stdout_lines(1))}",
+        content=(
+          #|"swapped"
+          #|HTTP/1.1 201 Created
+          #|{"app":"smock","environmentName":"payments","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/charges","requestProxied":false,"responseStatus":201,"timestamp":"<timestamp>"}
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "with the reading end of stdout closed, smock drops its lines, answers every request and exits 0 on SIGTERM" {
+  with_definitions(mockoon_mocks(), dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let stopped = with_smock(
+      ["--dir", dir, "--port", "0"],
+      env~,
+      close_stdout=true,
+      smock => {
+        // More lines than a pipe holds (64 KiB on Linux), so that a write
+        // that waited for a reader instead of failing would stall smock.
+        let conn = smock.connect()
+        defer conn.close()
+        let mut ok = 0
+        for _ in 0..<400 {
+          conn.write("GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+          if status_line(read_response(conn)) == "HTTP/1.1 200 OK" {
+            ok += 1
+          }
+        }
+        inspect(
+          "\{ok} of 400 answered 200 OK",
+          content="400 of 400 answered 200 OK",
+        )
+      },
+    )
+    inspect(stopped.status, content="0")
+  })
+}
+
+///|
+async test "a request the codec rejects, an Admin API call, a probe and a scrape write no Transaction recorded line" {
+  with_definitions(mockoon_mocks(), dir => {
+    with_certificates(certs => {
+      let args = ["--dir", dir, "--port", "0", ..certs.args()]
+      let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+      let stopped = with_smock(args, env~, smock => {
+        let out = []
+        for over in [Plain, Tls(certs)] {
+          out.push(
+            status_line(
+              smock.exchange(
+                over, "GET /users/1 HTTP/1.1\r\nHost : bad\r\n\r\n",
+              ),
+            ),
+          )
+          out.push(
+            status_line(
+              smock.exchange(
+                over, "GET /users/1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: x\r\n\r\n",
+              ),
+            ),
+          )
+        }
+        for path in ["/v1/status", "/startupz", "/readyz", "/livez", "/metrics"] {
+          out.push("\{path}: \{smock.admin("GET", path).status}")
+        }
+        // Lines come in the order requests end, so once this request's line
+        // is there, any line of the requests before it would be too.
+        out.push(
+          status_line(
+            smock.exchange(
+              Plain,
+              "GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            ),
+          ),
+        )
+        out.push(masked_lines(smock.stdout_lines(1)))
+        inspect(
+          out.join("\n"),
+          content=(
+            #|HTTP/1.1 400 Bad Request
+            #|HTTP/1.1 400 Bad Request
+            #|HTTP/1.1 400 Bad Request
+            #|HTTP/1.1 400 Bad Request
+            #|/v1/status: 200
+            #|/startupz: 200
+            #|/readyz: 200
+            #|/livez: 200
+            #|/metrics: 200
+            #|HTTP/1.1 200 OK
+            #|{"app":"smock","environmentName":"users","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/users/1","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          ),
+        )
+      })
+      inspect(stopped.stdout.length(), content="1")
+    })
+  })
+}
+
+///|
+async test "with the json log format, the default, smock writes nothing to stdout" {
+  with_definitions(mockoon_mocks(), dir => {
+    with_certificates(certs => {
+      let args = ["--dir", dir, "--port", "0", ..certs.args()]
+      let stopped = with_smock(args, smock => {
+        for over in [Plain, Tls(certs)] {
+          let _ = smock.exchange(
+            over, "GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+          )
+          let _ = smock.exchange(
+            over, "GET /users/2 HTTP/1.1\r\nHost: unknown.example.com\r\n\r\n",
+          )
+        }
+      })
+      inspect(stopped.stdout.length(), content="0")
+    })
+  })
+}
