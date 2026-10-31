@@ -4197,7 +4197,19 @@ such as `"at":"/response/json/customer","message":"body.customer.name is missing
 A delay Fault still applies first, and a connection Fault still replaces
 the response. A stream is rendered whole before its head is sent, so a
 failed event also gives this 500 and no stream. The Journal entry records
-the 500 and `templateError`, and no log line is written.
+the 500 and `templateError`. The default `json`
+[log format](../README.md#run) writes no line for it. The `mockoon` format
+writes an error line to stdout, after the response's last byte and just
+before the request's `Transaction recorded` line, also with the Journal
+off. It has the message, the Stub's path as written (`routePath`, left out
+for a Stub with no path condition) and the Stub ID (`routeUUID`):
+
+```json
+{"app":"smock","environmentName":"shop","level":"error","message":"Error while serving the content: body.customer.name is missing","routePath":"/orders","routeUUID":"create-order","timestamp":"2026-10-31T09:00:04.000Z"}
+```
+
+A value of `variables` or `dataWrites` that fails to render writes the
+same line.
 
 ### Environment variables
 
@@ -5037,6 +5049,18 @@ written, Variables included:
 After any of these, no response is picked. The Scenario move stands, the
 Stub's delay still applies, and a connection Fault still replaces the
 answer, as for a template failure.
+
+A write that cannot be applied writes no log line in the default `json`
+[log format](../README.md#run). The `mockoon` format writes the error line
+of a [template failure](#missing-values-and-render-errors), with the
+message of the 500's body, just before the request's
+`Transaction recorded` line, also with the Journal off:
+
+```json
+{"app":"smock","environmentName":"shop","level":"error","message":"Error while serving the content: the Data bucket \"visits\" holds a number, and \"merge\" needs an object","routePath":"/visits","routeUUID":"visit","timestamp":"2026-10-31T09:00:05.000Z"}
+```
+
+A 507 from the state bound writes none.
 
 An Ephemeral Stub is not read again at a reload. Its write fails to apply
 in the same way, and nothing is written, when a reload removes its
