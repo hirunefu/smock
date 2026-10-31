@@ -67,7 +67,8 @@ Environment:
               that runs several smocks on one machine does
   ROUNDS      with VARIANTS, how many rounds to run (default: 1)
   PROFILE     the profile of the plan to run
-  CASES       the cases to run, comma-separated (default: every case of the plan)
+  CASES       the cases to run, comma-separated (default: every case of the plan
+              but those that run only on one machine, local_only)
   PLAN        the plan (default: plan.json in the directory of bench.py)
   PLAIN_PORT, TLS_PORT, ADMIN_PORT
               smock's ports (default: 80, 443 and 9090, its Service's)
