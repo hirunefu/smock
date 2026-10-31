@@ -407,6 +407,13 @@ So a list just over the limit gets a 431, which tells the client why,
 while what moonhttp holds of one header block, and of the list it decodes
 to, stays within twice the limit.
 
+moonhttp 0.14.0 counts a decoded list in 32 bits, so its count wraps past
+2^31 octets, and moonhttp then passes the list on instead of resetting the
+stream. A block reaches that only when it may be over 524,288 octets, with
+a `--header-size-limit` over 262,144: each octet names at most one table
+entry, of at most 4,096 octets. smock's own count still refuses such a list
+with 431.
+
 ### Timeouts
 
 Over HTTP/2, the read, idle and write timeouts work per stream and per
@@ -472,6 +479,7 @@ connection.
 | Pattern | Bound | Past it |
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
+| HPACK bomb: a small header block that decodes to a large list, such as one that names a large table entry over and over | moonhttp keeps no more of a decoded list than twice `--header-size-limit`, counted as RFC 7541 counts it. smock then holds the list to `--header-size-limit` and `--header-count-limit` ([Header lists](#header-lists)). The table smock decodes header blocks with is 4,096 octets. So is the one it encodes responses with, however large a table the client allows: smock lowers a larger SETTINGS_HEADER_TABLE_SIZE to 4,096 before moonhttp sees it, since an encoder may use any table up to the size the client allows (RFC 7541, section 4.2). | 431 for a list over `--header-size-limit` or with too many fields. RST_STREAM `ENHANCE_YOUR_CALM`, with no status, for a list over twice it. A block that does not decode is a connection error, not a defence: GOAWAY `COMPRESSION_ERROR`, with no log line ([Connection errors](#connection-errors)). |
 | Frames that do no work: SETTINGS, PING, PRIORITY, reset and empty-frame floods (CVE-2019-9512, -9513, -9514, -9515, -9518) | At most 100 in any one second ([Frames that do no work](#frames-that-do-no-work)). | GOAWAY `ENHANCE_YOUR_CALM`, and the connection closes. |
 | A client that stops reading or keeps its windows at zero (CVE-2019-9517) | `--write-timeout-ms`: a write that makes no progress, or a body that waits for a window, for that long ([Timeouts](#timeouts)). | The connection closes, without GOAWAY. A stream whose own window alone stays at zero gets RST_STREAM `CANCEL`, and the connection goes on. |
 | Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. Each window update lets smock send, which starts the write timeout again, so a client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
@@ -561,6 +569,10 @@ opens a new connection for the rest.
   `ENHANCE_YOUR_CALM` ([Header lists](#header-lists)).
 - A connection that a defence closes with GOAWAY gets `ENHANCE_YOUR_CALM`,
   and is logged ([Defences](#defences)).
+- A header block that does not decode gets `COMPRESSION_ERROR`: one with a
+  Huffman code that holds EOS or is badly padded, an index that names no
+  entry, or a table size update past 4,096 octets, the size of the table
+  smock decodes with.
 - HEADERS on a stream ID that the client has already used get
   `PROTOCOL_ERROR` (RFC 9113, section 5.1.1). That covers a stream that
   has ended, one the client reset, and an ID the client skipped when it
