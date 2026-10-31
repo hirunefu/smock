@@ -13,8 +13,10 @@ write; they need nothing else.
 usage: python3 -m unittest discover -s bench -v
 """
 
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import platform
@@ -1617,6 +1619,22 @@ class CheckTargets(unittest.TestCase):
             status, stdout, stderr = check_targets_command(results, "--targets", path)
             self.assertEqual((status, stdout), (2, ""), stderr)
             self.assertIn(expected, stderr)
+
+
+class LogFormatOption(unittest.TestCase):
+    """`bench.py run --log-format` names the log format smock runs with:
+    `json`, smock's default, unless it says `mockoon`."""
+
+    def test_the_log_format_is_json_unless_the_option_says_mockoon(self):
+        self.assertEqual(harness.arguments(["run"]).log_format, "json")
+        self.assertEqual(harness.arguments(["run", "--log-format", "json"]).log_format, "json")
+        self.assertEqual(harness.arguments(["run", "--log-format", "mockoon"]).log_format, "mockoon")
+        for wrong in (["--log-format", "text"], ["--log-format"]):
+            with self.subTest(wrong=wrong), self.assertRaises(SystemExit) as stopped, \
+                    contextlib.redirect_stderr(io.StringIO()) as stderr:
+                harness.arguments(["run", *wrong])
+            self.assertEqual(stopped.exception.code, 2)
+            self.assertIn("--log-format", stderr.getvalue())
 
 
 if __name__ == "__main__":

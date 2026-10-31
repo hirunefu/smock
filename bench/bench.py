@@ -82,6 +82,11 @@ STOP_TIMEOUT_S = 30
 # limit, about a second under 50m.
 SMOCK_START_STOP_S = 1.5
 
+# The log formats smock may run with, its default first: json, on stderr,
+# which logs no request, and mockoon, on stdout, which writes a Transaction
+# recorded line for each request (README.md#run).
+LOG_FORMATS = ("json", "mockoon")
+
 # The CFS period systemd gives a CPU quota, as Kubernetes does.
 CFS_PERIOD_US = 100_000
 
@@ -2074,7 +2079,9 @@ def command_run(args):
     return 0
 
 
-def main(argv):
+def arguments(argv):
+    """The command and the options of the command line `argv`, as argparse
+    reads them; a command line it cannot read exits with 2."""
     parser = argparse.ArgumentParser(prog="bench.py", description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="run the benchmark")
@@ -2106,13 +2113,21 @@ def main(argv):
     run.add_argument("--smock-cpus", help="the CPUs smock runs on, such as 4,5 (default: the fastest, as many as "
                      "the largest CPU limit of the plan needs)")
     run.add_argument("--generator-cpus", help="the CPUs oha runs on (default: every other CPU)")
+    run.add_argument("--log-format", choices=LOG_FORMATS, default="json",
+                     help="the log format smock runs with (default: json, smock's own default); with mockoon, smock "
+                          "gets --log-format mockoon, and the run reads its stdout through a pipe and counts its "
+                          "Transaction recorded lines")
     check = commands.add_parser("check-targets", help="check a run's summary against the targets as they are now, "
                                 "and print its Targets table (exits with 1 when a target is missed)")
     check.add_argument("results", help="the run's results directory, or its summary.json, with conditions.json "
                                        "beside it; nothing in it is changed")
     check.add_argument("--targets", default=str(BENCH / "targets.json"),
                        help="the targets to check (default: bench/targets.json)")
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def main(argv):
+    args = arguments(argv)
     if args.command == "check-targets":
         try:
             return command_check_targets(args)
