@@ -24,20 +24,41 @@ pub fn mockoon_prefix(mock : String?) -> String {
 }
 
 ///|
+/// How the request of a `Transaction recorded` line ended, as the line
+/// says it: with the status of the response smock planned, which a
+/// `partial` Fault writes too, or with a reset or a close Fault, which ends
+/// the connection before any status is written.
+pub(all) enum TransactionEnd {
+  /// The response's status: `"responseStatus":<status>`.
+  Status(Int32)
+  /// A reset Fault: `"fault":"reset"`, and no `responseStatus`.
+  Reset
+  /// A close Fault: `"fault":"close"`, and no `responseStatus`.
+  Close
+}
+
+///|
 /// The `Transaction recorded` line of a request that `prefix`
 /// (`mockoon_prefix`) says who answered, with the method `meth` and the
-/// request target `target` as sent, answered with `status`, written at
+/// request target `target` as sent, that `ended` as it says, written at
 /// `at`, in milliseconds since the Unix epoch, such as
 /// `{"app":"smock","environmentName":"users","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/users/1","requestProxied":false,"responseStatus":200,"timestamp":"2026-10-31T09:00:01.250Z"}`.
+/// A reset or a close Fault puts `fault`, with the Journal's name for it,
+/// between the prefix and `level`, and leaves out `responseStatus`.
 pub fn transaction_line(
   prefix : String,
   meth~ : String,
   target~ : String,
-  status~ : Int32,
+  ended~ : TransactionEnd,
   at~ : Int64,
 ) -> String {
   let out = StringBuilder(size_hint=prefix.length() + target.length() + 192)
   out.write_string(prefix)
+  match ended {
+    Status(_) => ()
+    Reset => out.write_string("\"fault\":\"reset\",")
+    Close => out.write_string("\"fault\":\"close\",")
+  }
   out.write_string(
     "\"level\":\"info\",\"message\":\"Transaction recorded\",\"requestMethod\":",
   )
@@ -50,9 +71,13 @@ pub fn transaction_line(
   } else {
     write_json_string(out, target, start, end)
   }
-  out.write_string(",\"requestProxied\":false,\"responseStatus\":")
-  write_padded(out, status.to_int64(), 1)
-  out.write_string(",\"timestamp\":\"")
+  out.write_string(",\"requestProxied\":false,")
+  if ended is Status(status) {
+    out.write_string("\"responseStatus\":")
+    write_padded(out, status.to_int64(), 1)
+    out.write_char(',')
+  }
+  out.write_string("\"timestamp\":\"")
   write_time(out, at)
   out.write_string("\"}")
   out.to_string()

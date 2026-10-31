@@ -95,22 +95,25 @@ fn MockoonLines::prefix(
 
 ///|
 /// Writes the Transaction recorded line of `request`, which the engine
-/// decided `outcome` for, with its planned status and the time now. A
-/// request that a reset or a close Fault ended sent no status, and gets no
-/// line.
+/// decided `outcome` for, with the time now: with its planned status, as
+/// the Journal records it, also when the request ended before the status
+/// was sent, or with the reset or close Fault that ended it before any
+/// status.
 async fn MockoonLines::transaction(
   self : MockoonLines,
   request : @http1.Request,
   outcome : @engine.Outcome,
 ) -> Unit {
-  if outcome.plan.fault is Some(Reset | Close) {
-    return
+  let ended : @log.TransactionEnd = match outcome.plan.fault {
+    Some(Reset) => Reset
+    Some(Close) => Close
+    Some(Partial) | None => Status(outcome.plan.status)
   }
   let line = @log.transaction_line(
     self.prefix(outcome.resolution),
     meth=request.meth,
     target=request.target,
-    status=outcome.plan.status,
+    ended~,
     at=@async.now(),
   )
   self.out.write(line)

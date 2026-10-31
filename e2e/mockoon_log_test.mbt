@@ -307,3 +307,65 @@ async test "with the json log format, the default, smock writes nothing to stdou
     })
   })
 }
+
+///|
+/// The Transaction recorded lines among `lines`.
+fn transactions(lines : Array[String]) -> Array[String] {
+  lines.filter(line => line.contains("\"message\":\"Transaction recorded\""))
+}
+
+///|
+/// Waits until smock has written `count` Transaction recorded lines to
+/// stdout, while it runs, and returns them all.
+async fn Smock::transaction_lines(self : Smock, count : Int32) -> Array[String] {
+  let written = @async.with_timeout_opt(patience_ms, () => {
+    while transactions(self.stdout).length() < count {
+      @async.sleep(10)
+    }
+  })
+  guard written is Some(_) else {
+    fail(
+      "smock wrote \{transactions(self.stdout).length()} of \{count} Transaction recorded lines in time:\n\{self.stdout.join("\n")}",
+    )
+  }
+  transactions(self.stdout)
+}
+
+///|
+async test "a reset or a close Fault logs fault and no responseStatus, and a partial Fault the status it wrote, on the plain and the TLS port" {
+  let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+  let _ = on_both_ports(files=[("m.json", faults)], env~, (smock, over) => {
+    let before = transactions(smock.stdout).length()
+    let out = []
+    let requests = [
+      "POST /reset?attempt=1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\nbody",
+      "GET /close HTTP/1.1\r\nHost: localhost\r\n\r\n", "GET /partial HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    ]
+    for request in requests {
+      let conn = smock.connect(over~)
+      defer conn.close()
+      conn.write(request)
+      let (received, ending) = sent_until_end(conn, within=patience_ms)
+      let sent = if received.length() == 0 {
+        "nothing"
+      } else {
+        status_line(
+          @utf8.decode_lossy(received).replace_all(old="\r\n", new="\n"),
+        )
+      }
+      out.push("\{sent}, then \{ending}")
+    }
+    let lines = smock.transaction_lines(before + requests.length())[before:]
+    inspect(
+      "\{out.join("\n")}\n\{masked_lines(lines.to_owned())}",
+      content=(
+        #|nothing, then an RST
+        #|nothing, then a FIN
+        #|HTTP/1.1 200 OK, then a FIN
+        #|{"app":"smock","environmentName":"m","fault":"reset","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/reset","requestProxied":false,"timestamp":"<timestamp>"}
+        #|{"app":"smock","environmentName":"m","fault":"close","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/close","requestProxied":false,"timestamp":"<timestamp>"}
+        #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/partial","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+      ),
+    )
+  })
+}
