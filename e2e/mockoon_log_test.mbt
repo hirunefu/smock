@@ -369,3 +369,73 @@ async test "a reset or a close Fault logs fault and no responseStatus, and a par
     )
   })
 }
+
+///|
+/// When smock wrote `line`, by its `timestamp`, in milliseconds since the
+/// Unix epoch, as `@async.now()` gives times.
+fn written_at(line : String) -> Int64 raise {
+  guard @json.parse(line) is Object(fields) &&
+    fields.get("timestamp") is Some(String(timestamp)) &&
+    @log.parse_time(timestamp) is Some(at) else {
+    fail("no timestamp in \{line}")
+  }
+  at
+}
+
+///|
+async test "a delayed response logs after its delay, and a Server-Sent Event stream logs once, after its last event, with the time each line is written" {
+  with_definitions([("slow.json", slow)], dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let _ = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let out = []
+      let conn = smock.connect()
+      defer conn.close()
+      let start = @async.now()
+      conn.write("GET /delayed HTTP/1.1\r\nHost: localhost\r\n\r\n")
+      @async.sleep(500)
+      out.push("during the delay: \{transactions(smock.stdout).length()} lines")
+      out.push("/delayed answers: \{status_line(read_response(conn))}")
+      let line = smock.transaction_lines(1)[0]
+      out.push(mask_timestamp(line))
+      out.push("written after the delay: \{written_at(line) - start >= 1000}")
+      let stream = smock.connect()
+      defer stream.close()
+      let start = @async.now()
+      stream.write("GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n")
+      out.push("/stream answers: \{status_line(read_head(stream))}")
+      guard stream.read_until("data: first\n\n") is Some(_) else {
+        fail("no first event")
+      }
+      @async.sleep(300)
+      out.push(
+        "after the first event: \{transactions(smock.stdout).length() - 1} lines",
+      )
+      guard stream.read_until("data: last\n\n") is Some(_) &&
+        stream.read_until("0\r\n\r\n") is Some(_) else {
+        fail("the stream did not end")
+      }
+      let line = smock.transaction_lines(2)[1]
+      out.push(mask_timestamp(line))
+      out.push(
+        "written after the last event: \{written_at(line) - start >= 1000}",
+      )
+      // The stream is one request: no more lines come.
+      @async.sleep(300)
+      out.push("lines in all: \{transactions(smock.stdout).length()}")
+      inspect(
+        out.join("\n"),
+        content=(
+          #|during the delay: 0 lines
+          #|/delayed answers: HTTP/1.1 200 OK
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/delayed","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written after the delay: true
+          #|/stream answers: HTTP/1.1 200 OK
+          #|after the first event: 0 lines
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/stream","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written after the last event: true
+          #|lines in all: 2
+        ),
+      )
+    })
+  })
+}
