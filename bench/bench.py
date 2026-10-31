@@ -546,7 +546,8 @@ class MockoonStdout:
             count += 1
         if count == found:
             return
-        for line in data.splitlines(keepends=True):
+        *whole, last = data.split(b"\n")
+        for line in [line + b"\n" for line in whole] + ([last] if last else []):
             if TRANSACTION_RECORDED not in line:
                 self.keep(line.decode(errors="replace"))
 
@@ -1034,8 +1035,8 @@ class Run:
             "--dir", str(self.definitions), "--port", "0", "--tls-port", "0", "--admin-port", "0",
             "--admin-auth", "off", "--tls-cert-file", str(cert), "--tls-key-file", str(key),
         ]
-        # smock's own default runs it as main's runs did, with the same
-        # arguments.
+        # In json, smock's default, smock gets no --log-format, as in runs
+        # from before the option, which compare with it as the same.
         if self.log_format != "json":
             self.smock_args += ["--log-format", self.log_format]
         # smock runs with its defaults, the Journal's bounds included, whatever
@@ -1648,9 +1649,9 @@ def run_case(run, spec):
     }
     lines = ""
     if smock.stdout_lines is not None:
-        result["transaction_lines"] = transaction_lines(smock.stdout_lines.transactions, metrics_after)
-        lines = (f", {result['transaction_lines']['count']} Transaction recorded lines for "
-                 f"{result['transaction_lines']['requests_answered']} requests answered")
+        counted = result["transaction_lines"] = transaction_lines(smock.stdout_lines.transactions, metrics_after)
+        lines = (f", {counted['count']} Transaction recorded lines for "
+                 f"{known(counted['requests_answered'], 'an unknown number of')} requests answered")
     lag = result["generator_lag_ms"]
     log(f"{spec['id']}: p99 {result['latency_ms']['p99']} ms, p99.9 {result['latency_ms']['p99_9']} ms, "
         f"{result['achieved_rate']} requests/s, {result['errors']} errors, "
