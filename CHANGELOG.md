@@ -59,12 +59,20 @@ of each GitHub release include its section
   resets only a stream whose request is late, with `CANCEL`; an idle
   connection gets GOAWAY before it closes. A body larger than the client's
   flow-control windows goes out as the client widens them, so a client with
-  small windows still gets all of it. `--body-limit` applies to each stream
+  small windows still gets all of it, while the write timeout closes a
+  connection whose connection window stays at zero, and resets with
+  `CANCEL` a stream whose own window does. `--body-limit` applies to each stream
   too: a body over it gets 413 on that stream alone, and
   `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. A CONNECT
   reaches the Mocks as soon as its HEADERS arrive, with `:authority` as its
   target, and smock opens no tunnel: a 2xx to it ends the stream with no
-  body. See [docs/http2.md](docs/http2.md).
+  body. An events Stub streams one event stream per HTTP/2 stream, several
+  at once on one connection: the DATA of its last event ends the HTTP/2
+  stream, and a client that resets the HTTP/2 stream ends the event stream
+  at once. A client that sends more than 100 frames that do no work in one
+  second, such as a flood of PING or SETTINGS frames, gets GOAWAY
+  `ENHANCE_YOUR_CALM`, and smock logs one line that names the pattern. See
+  [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
   `Upgrade`, `Proxy-Connection` and `TE` left out. HEAD, 204 and 304 are
@@ -97,11 +105,25 @@ of each GitHub release include its section
   with any certificate: the certificate files, the self-signed certificate
   or a Mock's own. SNI still only chooses the certificate, and each
   stream's Mock comes from its own `:authority`, so one connection can
-  carry streams for several Mock Hosts. See
+  carry streams for several Mock Hosts. Over TLS 1.2, ALPN leaves `h2` out
+  when the suite is one RFC 9113 prohibits, such as a CBC suite: a client
+  that also offers `http/1.1` gets HTTP/1.1, so a strict client does not
+  fail the connection. See
   [h2 on the TLS port](docs/http2.md#h2-on-the-tls-port).
 - Each `listening` log entry names the protocols its port serves, as
   `protocols`: `["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]`
-  on the TLS port and `["http/1.1"]` on the admin port.
+  on the TLS port (`["http/1.1"]` with `--tls-http2 off`) and
+  `["http/1.1"]` on the admin port.
+- `--tls-http2` (`SMOCK_TLS_HTTP2`), `on` by default: `off` takes `h2` out
+  of the TLS port's ALPN, for every certificate, so that it offers
+  `http/1.1` alone, as before HTTP/2. The plain port still serves h2c. See
+  [Turning h2 off](docs/http2.md#turning-h2-off).
+- The release benchmark measures HTTP/2: `bench/plan-autopilot.json` has
+  `h2c-keep-alive`, to the plain port, and `h2-keep-alive`, to the TLS
+  port, which are `http-keep-alive` over HTTP/2, sent by oha with
+  `--http2`, locally and on GKE. They make each run of the plan about 22
+  minutes longer, so `scripts/gke-bench.sh`'s default time limit is now 100
+  minutes. See [HTTP/2 cases](bench/README.md#http2-cases).
 
 ### Changed
 
@@ -110,7 +132,8 @@ of each GitHub release include its section
   offers `h2`, then `http/1.1`, where it offered `http/1.1` alone. A client
   that offers only `h2`, such as oha with `--http2`, now completes the
   handshake instead of failing it. A client that offers only `http/1.1`, or
-  no ALPN, still gets HTTP/1.1.
+  no ALPN, still gets HTTP/1.1. `--tls-http2 off` restores the old
+  behaviour.
 - `scripts/verify-image.sh` requires the runtime, mimalloc and simdutf in
   each SBOM, so it refuses the images of 0.3.0 and earlier. Check one of
   those with the script from its own tag, such as

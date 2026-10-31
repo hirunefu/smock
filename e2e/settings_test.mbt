@@ -17,6 +17,7 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  --tls-cert-file <tls-cert-file>                                The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. Without it and --tls-key-file, smock generates a self-signed certificate in memory for localhost, 127.0.0.1, ::1 and every Mock Host. [env: SMOCK_TLS_CERT_FILE]
       #|  --tls-key-file <tls-key-file>                                  The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
       #|  --tls-mock-certs <tls-mock-certs>                              Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {"users":{"certFile":"/certs/users/tls.crt","keyFile":"/certs/users/tls.key"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets the default certificate: --tls-cert-file, or without it the self-signed one. Empty by default. [env: SMOCK_TLS_MOCK_CERTS]
+      #|  --tls-http2 <tls-http2>                                        Whether the HTTPS port offers HTTP/2 by ALPN: on or off. On, it offers h2, then http/1.1, with every certificate; off, http/1.1 alone. The plain port serves h2c either way. [env: SMOCK_TLS_HTTP2] [default: on]
       #|  --admin-port <admin-port>                                      The Admin API port, separate from the plain and TLS ports. 0 picks a free port. [env: SMOCK_ADMIN_PORT] [default: 9090]
       #|  --admin-auth <admin-auth>                                      Whether the Admin API needs a bearer token: on or off. Turn it off only for local use. [env: SMOCK_ADMIN_AUTH] [default: on]
       #|  --admin-token-file <admin-token-file>                          A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN. [env: SMOCK_ADMIN_TOKEN_FILE]
@@ -136,6 +137,9 @@ async test "an invalid value stops startup with a message that names the setting
     ([], { "SMOCK_TLS_PORT": "https" }),
     (["--port", "8443", "--tls-port", "8443"], Map([])),
     ([], { "SMOCK_PORT": "9000", "SMOCK_TLS_PORT": "9000" }),
+    (["--tls-http2", "false"], Map([])),
+    (["--tls-http2", ""], Map([])),
+    ([], { "SMOCK_TLS_HTTP2": "OFF" }),
     (["--log-format", "text"], Map([])),
     ([], { "SMOCK_LOG_FORMAT": "" }),
     (["--dir", ""], Map([])),
@@ -210,6 +214,9 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "https" for --tls-port (SMOCK_TLS_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "8443" for --tls-port (SMOCK_TLS_PORT): must differ from --port (SMOCK_PORT)
       #|status 2: smock serve: invalid value "9000" for --tls-port (SMOCK_TLS_PORT): must differ from --port (SMOCK_PORT)
+      #|status 2: smock serve: invalid value "false" for --tls-http2 (SMOCK_TLS_HTTP2): must be on or off
+      #|status 2: smock serve: invalid value "" for --tls-http2 (SMOCK_TLS_HTTP2): must be on or off
+      #|status 2: smock serve: invalid value "OFF" for --tls-http2 (SMOCK_TLS_HTTP2): must be on or off
       #|status 2: smock serve: invalid value "text" for --log-format (SMOCK_LOG_FORMAT): must be json
       #|status 2: smock serve: invalid value "" for --log-format (SMOCK_LOG_FORMAT): must be json
       #|status 2: smock serve: invalid value "" for --dir (SMOCK_DIR): must not be empty

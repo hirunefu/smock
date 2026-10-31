@@ -3,9 +3,10 @@
 // (bench/definitions-scenarios/), and of its CRUD variant
 // (bench/definitions-crud/) with the CRUD variant's own mix
 // (bench/requests-crud.json). bench/bench.py sends these requests to smock
-// under load; here each one is sent once, over the plain and the TLS port,
-// so that a request that no longer reaches the Stub the mix names for it
-// fails a test instead of quietly measuring something else.
+// under load; here each one is sent once, over the plain and the TLS port
+// (and the benchmark's mix over h2c and h2 too), so that a request that no
+// longer reaches the Stub the mix names for it fails a test instead of
+// quietly measuring something else.
 
 ///|
 /// The benchmark's definitions directory, relative to the module root.
@@ -120,7 +121,82 @@ fn MixRequest::raw(self : MixRequest) -> String {
 }
 
 ///|
-async test "bench/each request of the mix gets its status from the Stub and the Mock the mix names, over both ports, and is in the Journal under the Session in its baggage" {
+/// Sends the request over HTTP/2 on `client`'s connection, as oha sends it
+/// there: the Host as `:authority`, the mix's headers with their names in
+/// lower case, as HTTP/2 needs them, and, with a body, its
+/// `content-length` and the body. Returns the response.
+async fn MixRequest::send_http2(
+  self : MixRequest,
+  client : H2Client,
+) -> H2Response {
+  let headers = self.headers.map(header => (header.0.to_lower(), header.1))
+  match self.body {
+    Some(body) => {
+      let octets = @utf8.encode(body)
+      headers.push(("content-length", octets.length().to_string()))
+      client.request(
+        self.meth,
+        self.target,
+        authority=self.host,
+        headers~,
+        body=octets,
+      )
+    }
+    None =>
+      client.request(self.meth, self.target, authority=self.host, headers~)
+  }
+}
+
+///|
+/// A Journal entry as the HTTP/1.1 and the HTTP/2 form of one request
+/// share it: without what differs between any two entries (`seq`,
+/// `receivedAt`, `durationMs`), and without what the version itself
+/// changes: the request's `version`, the case of its header names, which
+/// HTTP/2 sends in lower case, and its `Host` field, which HTTP/2 carries
+/// as `:authority`, the entry's `host`.
+fn without_version(entry : Json) -> Json {
+  guard entry is Object(fields) else { return entry }
+  let shown : Map[String, Json] = Map([])
+  for name, value in fields {
+    match (name, value) {
+      ("seq" | "receivedAt" | "durationMs", _) => ()
+      ("request", Object(request)) => {
+        let kept : Map[String, Json] = Map([])
+        for field, recorded in request {
+          match (field, recorded) {
+            ("version", _) => ()
+            ("headers", Array(headers)) => {
+              let lowered = []
+              for header in headers {
+                guard header
+                  is Object(
+                    { "name": String(header_name), "value": header_value, .. }
+                  ) else {
+                  lowered.push(header)
+                  continue
+                }
+                if header_name.to_lower() != "host" {
+                  lowered.push({
+                    "name": Json::string(header_name.to_lower()),
+                    "value": header_value,
+                  })
+                }
+              }
+              kept[field] = Json::array(lowered)
+            }
+            _ => kept[field] = recorded
+          }
+        }
+        shown[name] = Json::object(kept)
+      }
+      _ => shown[name] = value
+    }
+  }
+  Json::object(shown)
+}
+
+///|
+async test "bench/each request of the mix gets its status from the Stub and the Mock the mix names, over both ports, over HTTP/1.1 and over HTTP/2, and is in the Journal under the Session in its baggage" {
   let mix = read_mix()
   with_certificates(certs => {
     let _ = with_smock(
@@ -137,6 +213,21 @@ async test "bench/each request of the mix gets its status from the Stub and the 
             if !response.has_prefix(expected) {
               problems.push(
                 "\{request.name}: expected \{expected}, got \{response}",
+              )
+            }
+          }
+        }
+        // As the HTTP/2 cases send the mix: h2c to the plain port by prior
+        // knowledge, then h2 to the TLS port, each request in turn on one
+        // connection.
+        for tls in [false, true] {
+          let client = if tls { smock.h2() } else { smock.h2c() }
+          defer client.close()
+          for request in mix {
+            let response = request.send_http2(client)
+            if response.status != request.status || response.ended != "end" {
+              problems.push(
+                "\{request.name}: expected \{request.status} over \{if tls { "h2" } else { "h2c" }}, got \{response.render()}",
               )
             }
           }
@@ -176,10 +267,38 @@ async test "bench/each request of the mix gets its status from the Stub and the 
               "viaDefault": via_default,
             })
           })
-          if found != [expected, expected] {
+          if found != [expected, expected, expected, expected] {
             problems.push(
-              "\{request.name}: expected two entries like \{expected.stringify()}, got \{Json::array(found).stringify()}",
+              "\{request.name}: expected four entries like \{expected.stringify()}, got \{Json::array(found).stringify()}",
             )
+            continue
+          }
+          // In the order sent: HTTP/1.1 on the plain port, then on the TLS
+          // port, then h2c, then h2. Each HTTP/2 entry is the HTTP/1.1 entry
+          // of its port, but for what the version changes.
+          let versions = entries.map(entry => {
+            guard entry
+              is Object({ "request": Object({ "version": version, .. }), .. }) else {
+              return Json::null()
+            }
+            version
+          })
+          if versions != ["HTTP/1.1", "HTTP/1.1", "HTTP/2", "HTTP/2"] {
+            problems.push(
+              "\{request.name}: entries of versions \{Json::array(versions).stringify()}",
+            )
+          }
+          for pair in [(0, 2, "h2c"), (1, 3, "h2")] {
+            let (http1, http2, protocol) = pair
+            let (before, after) = (
+              without_version(entries[http1]),
+              without_version(entries[http2]),
+            )
+            if before != after {
+              problems.push(
+                "\{request.name}: over \{protocol}, the entry \{after.stringify()} is not \{before.stringify()}",
+              )
+            }
           }
         }
         debug_inspect(problems, content="[]")

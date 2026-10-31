@@ -473,6 +473,23 @@ class NotCompared(Comparison):
         self.assertIn("Only in the older run: http-keep-alive@small@8000.", report)
         self.assertIn("Only in the newer run: http-keep-alive@small@4000, http-keep-alive@other@2000.", report)
 
+    def test_the_http2_cases_a_run_from_before_them_lacks_are_listed_and_the_http1_cases_compared_as_usual(self):
+        # A run of bench/plan-autopilot.json from before h2c-keep-alive and
+        # h2-keep-alive joined it, against one with them: whatever the new
+        # cases measured, only the cases both runs have can fail it.
+        older = self.summary([step(case="http-keep-alive", p99=10.0), step(case="https-keep-alive", p99=12.0)])
+        newer = self.summary([step(case="http-keep-alive", p99=10.5), step(case="https-keep-alive", p99=20.0),
+                              step(case="h2c-keep-alive", p99=900.0, errors=40),
+                              step(case="h2-keep-alive", p99=900.0, late=True)])
+        status, report = self.compare(older, newer, profiles=[capacity(rate=1000)])
+        self.assertEqual(status, 1, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"], "ok")
+        self.assertEqual(self.row(report, "small", "https-keep-alive", 1000)["Verdict"], "regression")
+        self.assertIn("Only in the newer run: h2c-keep-alive@small@1000, h2-keep-alive@small@1000.", report)
+        self.assertNotIn("| h2c-keep-alive |", report)
+        self.assertNotIn("| h2-keep-alive |", report)
+        self.assertIn("**Result:** 1 regression, no target missed.", report)
+
     def test_a_step_where_the_older_run_failed_requests_or_a_load_generator_fell_behind_is_not_compared(self):
         # Past its capacity, a run's latencies are its queue: they say how
         # far over capacity the step was, not how fast smock is.

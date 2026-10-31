@@ -59,7 +59,8 @@ SMOCK_ADMIN_TOKEN=change-me _build/native/debug/build/smock/smock/cmd/smock/smoc
 definitions directory, then listens on the plain port and on the TLS port.
 Each port's `listening` log entry names the protocols it serves:
 `["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]` on the TLS
-port and `["http/1.1"]` on the admin port.
+port (`["http/1.1"]` with `--tls-http2 off`) and `["http/1.1"]` on the
+admin port.
 It watches the directory and swaps in the new definition set when the files
 change, ConfigMap updates included; an invalid set is reported and the
 current one keeps serving
@@ -80,6 +81,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--tls-cert-file` | `SMOCK_TLS_CERT_FILE` | none: a generated self-signed certificate |
 | `--tls-key-file` | `SMOCK_TLS_KEY_FILE` | none: a generated self-signed certificate |
 | `--tls-mock-certs` | `SMOCK_TLS_MOCK_CERTS` | none: no Mock has a certificate of its own (see below) |
+| `--tls-http2` | `SMOCK_TLS_HTTP2` | `on`: ALPN on the TLS port offers `h2`, then `http/1.1`; `off` offers `http/1.1` alone ([h2 on the TLS port](docs/http2.md#h2-on-the-tls-port)) |
 | `--admin-port` | `SMOCK_ADMIN_PORT` | 9090 (0 picks a free port) |
 | `--admin-auth` | `SMOCK_ADMIN_AUTH` | `on`: the Admin API needs a bearer token; `off` for local use |
 | `--admin-token-file` | `SMOCK_ADMIN_TOKEN_FILE` | none: the token comes from `SMOCK_ADMIN_TOKEN` |
@@ -95,7 +97,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--http2-max-concurrent-streams` | `SMOCK_HTTP2_MAX_CONCURRENT_STREAMS` | 100, from 1 to 1000: the most streams an HTTP/2 connection may have in progress at once; a stream past it gets RST_STREAM `REFUSED_STREAM` ([Limits and timeouts](docs/http2.md#limits-and-timeouts)) |
 | `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte, or, when it was pipelined behind a response, of that response; over HTTP/2, a stream whose request is late gets RST_STREAM `CANCEL` alone ([Limits and timeouts](docs/http2.md#limits-and-timeouts)) |
 | `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
-| `--write-timeout-ms` | `SMOCK_WRITE_TIMEOUT_MS` | 30000: a connection closes when a write to it makes no progress for 30 s, as when the client stops reading |
+| `--write-timeout-ms` | `SMOCK_WRITE_TIMEOUT_MS` | 30000: a connection closes when a write to it makes no progress for 30 s, as when the client stops reading; over HTTP/2, also when a response waits that long for the client to widen the connection window, and a stream whose own window stays at zero that long gets RST_STREAM `CANCEL` alone ([Timeouts](docs/http2.md#timeouts)) |
 | `--drain-timeout-ms` | `SMOCK_DRAIN_TIMEOUT_MS` | 20000: how long smock drains after SIGTERM before it cuts what is still running |
 | `--seed` | `SMOCK_SEED` | none: smock picks the seed of its random generator, from 0 to 9007199254740991, and logs it ([Faults](docs/definition-files.md#seeds)) |
 | `--journal` | `SMOCK_JOURNAL` | `on`: requests are recorded in the [Journal](#the-journal); `off` records none |
@@ -107,6 +109,13 @@ exits with status 2. `smock serve --help` lists the settings:
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout, read, idle or write, closes the connection
 without a response. None is logged.
+
+Over HTTP/2, smock also bounds what a client can make one connection cost,
+such as a flood of PING or SETTINGS frames. A connection that passes such a
+bound gets GOAWAY `ENHANCE_YOUR_CALM` and closes, and smock logs one line
+for it, at level `warn`, that names the pattern, such as
+`{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}`.
+No metric counts it. See [Defences](docs/http2.md#defences).
 
 Over HTTP/2, a body over `--body-limit` gets 413 on its stream alone, and
 the connection's other streams go on. When the client is still sending the
@@ -121,7 +130,7 @@ The idle timeout applies to a connection with no stream in progress, and
 sends GOAWAY before the connection closes. See
 [Limits and timeouts](docs/http2.md#limits-and-timeouts).
 
-The write timeout runs only while a write waits on the client to take its
+The write timeout runs while a write waits on the client to take its
 bytes, on every port and for every write: a response, whole or in part,
 each event of a stream, a `100 Continue`, a rejection and an Admin API
 reply. It starts again each time the write goes on, so a client that reads
@@ -131,6 +140,16 @@ socket's send buffer: about a third of it, on Linux. On the TLS port, it
 goes on a whole TLS record, up to 16 KiB, at a time. smock's own waits,
 such as a delay or the time between the events of a stream, do not count.
 smock sends no `close_notify` on a TLS connection the write timeout closes.
+
+Over HTTP/2, the write timeout also runs while a response body waits for
+the client to widen its flow-control windows. When the connection window
+stays at zero that long, the connection closes, without GOAWAY. When only
+a stream's own window does, that stream gets RST_STREAM `CANCEL`, and the
+connection's other streams go on. Each WINDOW_UPDATE for the window waited
+for, and each SETTINGS frame that raises the initial window of the
+streams, starts it again, so a client that widens its windows slowly but
+steadily gets the whole response. See
+[Timeouts](docs/http2.md#timeouts).
 
 Known limitation: after answering a request with 400, 413, 431, 501 or 505,
 smock closes the connection without reading the rest of the request. A
@@ -183,7 +202,10 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
 - ALPN offers `h2`, then `http/1.1`, for every certificate. A client that
   offers `h2` gets HTTP/2, and one that offers only `http/1.1`, or no ALPN,
   gets HTTP/1.1 ([h2 on the TLS port](docs/http2.md#h2-on-the-tls-port)).
-  TLS 1.2 and 1.3 are accepted.
+  `--tls-http2 off` offers `http/1.1` alone.
+  TLS 1.2 and 1.3 are accepted. Over TLS 1.2, `h2` is left out when the
+  suite is one HTTP/2 prohibits, such as a CBC suite
+  ([TLS 1.2](docs/http2.md#tls-12)).
 - The Host header, or `:authority` over HTTP/2, chooses the Mock, as on the
   plain port; SNI does not.
 - The `listening` log entry of the TLS port names the certificate and key
@@ -1076,11 +1098,14 @@ Packages of `smock/smock`:
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
   carries them over the socket. It also generates self-signed certificates
-  in memory. Its C is `openssl/openssl.c`. The client side
+  in memory. Its C is `openssl/openssl.c`. Its ALPN callback picks the
+  server's first protocol that the client offers, and leaves `h2` out over
+  a TLS 1.2 suite that HTTP/2 prohibits. The client side
   (`openssl/client.mbt`) offers ALPN: the e2e tests speak HTTP/2 over the
   TLS port with it, and the bindings' own tests run a client and a server
-  in memory under the sanitizers. That file also tells which protocol ALPN
-  selected, which `server` asks of each TLS connection.
+  in memory under the sanitizers, some with the client held to TLS 1.2 and
+  chosen suites. That file also tells which protocol ALPN selected, which
+  `server` asks of each TLS connection.
 - `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
   leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
   `users.example.com` and `orders.example.com`, each leaf with its own fixed
@@ -1267,8 +1292,9 @@ native build, such as `scripts/build-release.sh`, records in the binary.
 
 `bench/` is the release benchmark. It measures smock's real request path,
 realistic requests matched against a definition set with many Stubs with
-the Journal on, at fixed arrival rates under the CPU and memory limits of
-small GKE Autopilot Pods, and checks the provisional performance targets.
+the Journal on, over HTTP/1.1 and HTTP/2, at fixed arrival rates under the
+CPU and memory limits of small GKE Autopilot Pods, and checks the
+provisional performance targets.
 [bench/README.md](bench/README.md) says how to run it on a machine, on GKE
 Autopilot and in CI, what a run writes and how to compare runs. The
 [chart's sizing table](charts/smock/README.md#sizing) has what it measured.

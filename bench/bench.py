@@ -845,6 +845,10 @@ class Run:
         for name in self.cases:
             if name not in names:
                 raise BenchError(f"no case {name} in {plan_name}")
+        for case in self.plan["cases"]:
+            problem = case_problem(case)
+            if problem:
+                raise BenchError(f"{plan_name}: {problem}")
         self.cooldown_s = override(args.cooldown, self.plan["cooldown_s"])
         self.settle_s = override(args.settle, self.plan["idle_rss"]["settle_s"])
         # Idle RSS is measured under the profiles the plan names for it,
@@ -1081,36 +1085,78 @@ def window(spec, rate):
     return math.ceil(spec["ramp_s"] * rate), math.ceil((spec["ramp_s"] + spec["duration_s"]) * rate)
 
 
+# The protocols a case may name, each with whether it goes over TLS and
+# whether over HTTP/2. oha speaks h2c by prior knowledge, and over TLS
+# offers only h2 by ALPN.
+PROTOCOLS = {"http": (False, False), "https": (True, False), "h2c": (False, True), "h2": (True, True)}
+
+
+def case_problem(case):
+    """Why the harness cannot run a case of a plan, or None: a protocol it
+    does not know, or a new connection per request over HTTP/2, since oha's
+    --disable-keepalive does not work with HTTP/2."""
+    protocol = case["protocol"]
+    if protocol not in PROTOCOLS:
+        return (f"case {case['name']} has the protocol {protocol}, which the harness does not know: "
+                f"{', '.join(list(PROTOCOLS)[:-1])} or {list(PROTOCOLS)[-1]}")
+    if over_http2(protocol) and case["connection"] == "new-per-request":
+        return (f"case {case['name']} opens a new connection per request over HTTP/2 ({protocol}), which oha cannot "
+                "do: give it keep-alive connections")
+    return None
+
+
+def traffic_port(protocol):
+    """smock's traffic port that a case over `protocol` sends to: `tls` over
+    TLS, else `plain`."""
+    return "tls" if PROTOCOLS[protocol][0] else "plain"
+
+
+def over_http2(protocol):
+    """Whether a case over `protocol` sends HTTP/2."""
+    return PROTOCOLS[protocol][1]
+
+
+def oha_request(protocol, request, address, port):
+    """oha's arguments that send one request of the mix over `protocol` to
+    smock at `address` and `port`: the port its URL implies, 443 over TLS
+    and 80 otherwise, redirected there; over HTTP/2, one request at a time
+    on each connection; its method, headers and body; over TLS, any
+    certificate accepted; and its URL, last."""
+    tls, http2 = PROTOCOLS[protocol]
+    arguments = ["--connect-to", f"{request['host']}:{443 if tls else 80}:{address}:{port}"]
+    if http2:
+        arguments += ["--http2", "-p", "1"]
+    arguments += ["-m", request["method"]]
+    for name, value in request["headers"]:
+        arguments += ["-H", f"{name}: {value}"]
+    if request["body"] is not None:
+        arguments += ["-d", request["body"]]
+    if tls:
+        arguments.append("--insecure")
+    arguments.append(f"{'https' if tls else 'http'}://{request['host']}{request['target']}")
+    return arguments
+
+
 def oha_command(oha, spec, request, rate, connections, report, database, address, port):
     """The command line of the oha process that sends one request of the
     mix in a step, at `rate` (as request_rates gives it) over `connections`,
     to smock at `address` and `port`, for the step's whole load. It writes
     its report to `report` and each request's times to `database`."""
-    https = spec["protocol"] == "https"
     total_ms = round((spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]) * 1000)
     command = [
         oha, "--no-tui", "--output-format", "json", "-o", str(report), "--db-url", str(database),
         "-z", f"{total_ms}ms", "-q", rate, "--latency-correction", "-w",
         "-c", str(connections), "--worker-threads", "1", "-t", "30s", "--disable-compression",
-        "--connect-to", f"{request['host']}:{443 if https else 80}:{address}:{port}",
-        "-m", request["method"],
     ]
-    for name, value in request["headers"]:
-        command += ["-H", f"{name}: {value}"]
-    if request["body"] is not None:
-        command += ["-d", request["body"]]
-    if https:
-        command.append("--insecure")
     if spec["connection"] == "new-per-request":
         command.append("--disable-keepalive")
-    command.append(f"{'https' if https else 'http'}://{request['host']}{request['target']}")
-    return command
+    return command + oha_request(spec["protocol"], request, address, port)
 
 
 def start_load(run, smock, spec, raw):
     """Starts one oha process per request of the mix, and returns them with
     the rate each was given."""
-    port = smock.ports["tls" if spec["protocol"] == "https" else "plain"]
+    port = smock.ports[traffic_port(spec["protocol"])]
     weights = [request["weight"] for request in run.mix]
     load = []
     for (request, rate), connections in zip(request_rates(run, spec), split(spec["connections"], weights),
