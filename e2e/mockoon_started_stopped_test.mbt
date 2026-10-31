@@ -182,3 +182,35 @@ async test "a reload that adds a Mock, one that changes nothing and one that fai
     )
   })
 }
+
+///|
+async test "SIGINT and SIGHUP, which end smock at once, write no Server stopped line" {
+  with_definitions(mockoon_mocks(), dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let out = []
+    for signal in ["INT", "HUP"] {
+      let mut replace = []
+      let stopped = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+        replace = port_placeholders(smock)
+        let _ = smock.started_lines(2)
+        let _ = @process.run("kill", ["-\{signal}", smock.pid.to_string()])
+        let _ = smock.exited()
+      })
+      out.push("SIG\{signal}: exit status \{stopped.status}")
+      for line in stopped.stdout.filter(is_server_line) {
+        out.push(masked_line(line, replace~))
+      }
+    }
+    inspect(
+      out.join("\n"),
+      content=(
+        #|SIGINT: exit status -2
+        #|{"app":"smock","environmentName":"users","level":"info","message":"Server started on port <plain port>","timestamp":"<timestamp>"}
+        #|{"app":"smock","environmentName":"orders","level":"info","message":"Server started on port <plain port>","timestamp":"<timestamp>"}
+        #|SIGHUP: exit status -1
+        #|{"app":"smock","environmentName":"users","level":"info","message":"Server started on port <plain port>","timestamp":"<timestamp>"}
+        #|{"app":"smock","environmentName":"orders","level":"info","message":"Server started on port <plain port>","timestamp":"<timestamp>"}
+      ),
+    )
+  })
+}
