@@ -165,6 +165,44 @@ test "the lines of the spec, each starting with the prefix it was built from" {
 }
 
 ///|
+/// The spec's started and stopped lines for the Mock `users`, ten minutes
+/// apart; then the started line with a one-digit and a five-digit port, for
+/// the Default Mock of a run with no definitions directory and for a Mock
+/// whose name needs escaping, then that Mock's stopped line.
+test "the started and stopped lines name the Mock, the started line with its port" {
+  let users = @log.mockoon_prefix(Some("users"))
+  let default = @log.mockoon_prefix(Some("default"))
+  let escaped = @log.mockoon_prefix(Some("ユーザー \"v2\" 😀"))
+  let started_at = example_time - 1145L
+  let stopped_at = started_at + 599_899L
+  let lines = [
+    (users, @log.started_line(users, port=8080, at=started_at)),
+    (users, @log.stopped_line(users, at=stopped_at)),
+    (default, @log.started_line(default, port=1, at=started_at)),
+    (escaped, @log.started_line(escaped, port=65535, at=started_at)),
+    (escaped, @log.stopped_line(escaped, at=stopped_at)),
+  ]
+  let out = []
+  for pair in lines {
+    let (prefix, line) = pair
+    out.push(line)
+    if !line.has_prefix(prefix) {
+      out.push("does not start with \{prefix}")
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|{"app":"smock","environmentName":"users","level":"info","message":"Server started on port 8080","timestamp":"2026-10-31T09:00:00.105Z"}
+      #|{"app":"smock","environmentName":"users","level":"info","message":"Server stopped","timestamp":"2026-10-31T09:10:00.004Z"}
+      #|{"app":"smock","environmentName":"default","level":"info","message":"Server started on port 1","timestamp":"2026-10-31T09:00:00.105Z"}
+      #|{"app":"smock","environmentName":"ユーザー \"v2\" 😀","level":"info","message":"Server started on port 65535","timestamp":"2026-10-31T09:00:00.105Z"}
+      #|{"app":"smock","environmentName":"ユーザー \"v2\" 😀","level":"info","message":"Server stopped","timestamp":"2026-10-31T09:10:00.004Z"}
+    ),
+  )
+}
+
+///|
 /// The method as sent, in lower case too, and statuses with one to three
 /// digits, at the Unix epoch, one millisecond before it, the last
 /// millisecond of a leap day and the last of the year 9999.

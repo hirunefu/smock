@@ -145,7 +145,10 @@ of each GitHub release include its section
   with its wait, with the ids and the waits the seed fixes. See
   [LLM responses](docs/definition-files.md#llm-responses).
 - `--log-format mockoon` (`SMOCK_LOG_FORMAT=mockoon`) writes the Mockoon
-  CLI's `Transaction recorded` line to stdout for each request a Mock
+  CLI's lines to stdout. `Server started on port <port>`, with the plain
+  port, comes once per Mock when every listener is open, and
+  `Server stopped` once per Mock when the drain after SIGTERM ends, never
+  on a reload. A `Transaction recorded` line comes for each request a Mock
   handles: a Stub matched, no Stub matched, or no Mock answered. The line
   names the Mock (`environmentName`, left out when no Mock answered), the
   method as sent, the path without its query (`requestPath`, an

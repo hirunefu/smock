@@ -529,7 +529,7 @@ async test "a request whose write times out against a client that stops reading 
 }
 
 ///|
-async test "a stream and a delayed response that the drain timeout cuts each log the planned status when they are cut" {
+async test "a stream and a delayed response that the drain timeout cuts each log the planned status when they are cut, before drain ended and Server stopped" {
   with_definitions([("m.json", drain_defs)], dir => {
     let env = {
       "SMOCK_LOG_FORMAT": "mockoon",
@@ -567,7 +567,22 @@ async test "a stream and a delayed response that the drain timeout cuts each log
         ),
       )
     })
-    inspect(transactions(stopped.stdout).length(), content="2")
+    // The lines of the drain, in order: the cut requests' lines come
+    // before the drain ends.
+    guard stopped.stdout.search_by(line => message_of(line) == "drain started")
+      is Some(started) else {
+      fail("no drain started line:\n\{stopped.stdout.join("\n")}")
+    }
+    inspect(
+      stopped.stdout[started:].map(message_of).join("\n"),
+      content=(
+        #|drain started
+        #|Transaction recorded
+        #|Transaction recorded
+        #|drain ended
+        #|Server stopped
+      ),
+    )
   })
 }
 

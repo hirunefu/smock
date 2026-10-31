@@ -24,6 +24,38 @@ pub fn mockoon_prefix(mock : String?) -> String {
 }
 
 ///|
+/// The `Server started on port <port>` line of the Mock whose prefix is
+/// `prefix` (`mockoon_prefix`), with `port` the plain port smock listens
+/// on, written at `at`, in milliseconds since the Unix epoch, such as
+/// `{"app":"smock","environmentName":"users","level":"info","message":"Server started on port 8080","timestamp":"2026-10-31T09:00:00.105Z"}`.
+pub fn started_line(prefix : String, port~ : Int32, at~ : Int64) -> String {
+  let out = StringBuilder(size_hint=prefix.length() + 96)
+  out.write_string(prefix)
+  out.write_string("\"level\":\"info\",\"message\":\"Server started on port ")
+  write_padded(out, port.to_int64(), 1)
+  out.write_string("\",\"timestamp\":\"")
+  write_time(out, at)
+  out.write_string("\"}")
+  out.to_string()
+}
+
+///|
+/// The `Server stopped` line of the Mock whose prefix is `prefix`
+/// (`mockoon_prefix`), written at `at`, in milliseconds since the Unix
+/// epoch, such as
+/// `{"app":"smock","environmentName":"users","level":"info","message":"Server stopped","timestamp":"2026-10-31T09:10:00.004Z"}`.
+pub fn stopped_line(prefix : String, at~ : Int64) -> String {
+  let out = StringBuilder(size_hint=prefix.length() + 80)
+  out.write_string(prefix)
+  out.write_string(
+    "\"level\":\"info\",\"message\":\"Server stopped\",\"timestamp\":\"",
+  )
+  write_time(out, at)
+  out.write_string("\"}")
+  out.to_string()
+}
+
+///|
 /// How the request of a `Transaction recorded` line ended, as the line
 /// says it: with the status of the response smock planned, which a
 /// `partial` Fault writes too, or with a reset or a close Fault, which ends

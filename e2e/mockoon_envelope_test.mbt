@@ -175,7 +175,9 @@ async test "every line of a run with a reload, a failed reload, an Admin API cha
   with_definitions(mockoon_mocks(), dir => {
     let env = { "SMOCK_LOG_FORMAT": "mockoon" }
     let mut digests = []
+    let mut port = 0
     let stopped = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      port = smock.port
       let before = smock.status()
       let _ = smock.exchange(
         Plain,
@@ -211,7 +213,8 @@ async test "every line of a run with a reload, a failed reload, an Admin API cha
     for line in stopped.stdout {
       let entry = @json.parse(line) catch { _ => Json::null() }
       let message = match entry {
-        Object({ "message": String(message), .. }) => message
+        Object({ "message": String(message), .. }) =>
+          message.replace(old="on port \{port}", new="on port <plain port>")
         _ => "?"
       }
       let problem = match envelope_problem(line) {
@@ -239,12 +242,16 @@ async test "every line of a run with a reload, a failed reload, an Admin API cha
         #|self-signed certificate in use
         #|listening
         #|listening
+        #|Server started on port <plain port>
+        #|Server started on port <plain port>
         #|Transaction recorded
         #|Variable set
         #|definitions reload failed
         #|definitions reloaded
         #|drain started
         #|drain ended
+        #|Server stopped
+        #|Server stopped
         #|
         #|{"app":"smock","level":"info","message":"Variable set","mock":"users","session":"run-42","timestamp":"<timestamp>","variable":"count"}
         #|{"app":"smock","digest":"<served at startup>","errors":[{"file":"users.json","message":"is not a known field","pointer":"/stubs/0/respons"}],"level":"error","message":"definitions reload failed","result":"failed","timestamp":"<timestamp>"}

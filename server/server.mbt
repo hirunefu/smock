@@ -183,8 +183,13 @@ async fn sleep_forever() -> Unit {
 /// once. The responses in progress go on, and end with
 /// `Connection: close`; Server-Sent Event streams and delays go on too. When
 /// none is left, or when the drain timeout expires and cuts those still
-/// open, the drain ends. The admin port serves throughout, so the probes can
-/// be read during the drain.
+/// open and they have ended, the drain ends. The admin port serves
+/// throughout, so the probes can be read during the drain.
+///
+/// In the mockoon log format, the `Server started on port …` line of each
+/// Mock comes right after the TLS port's `listening` line, and the
+/// `Server stopped` line of each Mock served then right after `drain ended`.
+/// A reload writes neither.
 async fn run(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
@@ -303,6 +308,11 @@ async fn run(
       add_file_fields(tls_fields, files)
     }
     logger.info("listening", fields=tls_fields)
+    // Every listener is open, so a client that connects on reading these
+    // lines is served, once the accept loops below take its connection.
+    if mockoon is Some(lines) {
+      lines.started(plain.addr.port())
+    }
     if watch is Some(watch) && settings.dir is Some(dir) {
       let reloader : Reloader = {
         dir,
@@ -372,9 +382,19 @@ async fn run(
       connections.wait_all_ended()
     })
     let cut = if ended is Some(_) { 0 } else { connections.cut() }
+    // The connections just cut end once their cancellation has run, and a
+    // request among them writes its Transaction recorded line then: so the
+    // drain ends once they have, and that line comes before `drain ended`.
+    // The task group would wait for them anyway.
+    if cut > 0 {
+      connections.wait_all_ended()
+    }
     logger.info("drain ended", fields={
       "connectionsCut": Json::number(cut.to_double()),
     })
+    if mockoon is Some(lines) {
+      lines.stopped()
+    }
     0
   })
 }
