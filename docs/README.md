@@ -15,9 +15,10 @@ such as Mock, Stub and Session.
 - [definition-files.md](definition-files.md) describes the format of
   Definition files: how Stubs match requests, what they answer,
   templates, Variables, Data buckets, CRUD Stubs, Faults and reloading.
-- [http2.md](http2.md) says how a client reaches smock over HTTP/2, h2c on
-  the plain port and h2 on the TLS port, and what a Stub and the Journal
-  see of an HTTP/2 request.
+- [http2.md](http2.md) says how clients reach smock over HTTP/2, h2c on
+  the plain port and h2 on the TLS port, from curl, Go, the JVM, browsers
+  and behind a load balancer. It says what a Stub and the Journal see of
+  an HTTP/2 request, and how smock bounds what one connection can cost.
 - [importing-openapi.md](importing-openapi.md) turns an OpenAPI document
   into a Definition file with `smock import-openapi`, and says what is
   generated and how to regenerate it.

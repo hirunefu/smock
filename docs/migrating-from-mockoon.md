@@ -86,7 +86,7 @@ covers part of the need, the item says what.
 - **Callbacks.** smock never sends a request of its own. A test that
   relied on a callback sends that request to the callback's URL itself,
   and can check in the Journal that the request that fired it arrived.
-- **WebSockets.** smock serves HTTP/1.1 and HTTPS. It can stream
+- **WebSockets.** smock serves HTTP/1.1, HTTP/2 and HTTPS. It can stream
   Server-Sent Events, which only a client written for them reads.
 - **Schema validation, multipart bodies and rules on state.** The
   `valid_json_schema` operator has no counterpart, and a multipart body

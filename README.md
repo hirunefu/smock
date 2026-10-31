@@ -1,8 +1,8 @@
 # smock
 
-smock is a mock server for HTTP/1.1, HTTPS and Server-Sent Events. It stands in
-for the services a system depends on, on Kubernetes and on developers'
-machines. It is written in MoonBit ([ADR 0001](docs/adr/0001-moonbit-with-c-only-for-tls.md)).
+smock is a mock server for HTTP/1.1, HTTP/2, HTTPS and Server-Sent Events. It
+stands in for the services a system depends on, on Kubernetes and on
+developers' machines. It is written in MoonBit ([ADR 0001](docs/adr/0001-moonbit-with-c-only-for-tls.md)).
 The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
 
 ## Documentation
@@ -13,9 +13,11 @@ reads it. The guides for people who use smock:
 - [docs/definition-files.md](docs/definition-files.md) describes the
   format of Definition files: how Stubs match requests, what they
   answer, templates, Variables, Data buckets, CRUD Stubs and Faults.
-- [docs/http2.md](docs/http2.md) says how a client reaches smock over
-  HTTP/2, h2c on the plain port and h2 on the TLS port, and what a Stub and
-  the Journal see of an HTTP/2 request.
+- [docs/http2.md](docs/http2.md) says how clients reach smock over
+  HTTP/2, h2c on the plain port and h2 on the TLS port, from curl, Go, the
+  JVM, browsers and behind a load balancer. It says what a Stub and the
+  Journal see of an HTTP/2 request, and how smock bounds what one
+  connection can cost.
 - [docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
   document into a Definition file.
 - [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
@@ -133,13 +135,14 @@ sends GOAWAY before the connection closes. See
 
 The write timeout runs while a write waits on the client to take its
 bytes, on every port and for every write: a response, whole or in part,
-each event of a stream, a `100 Continue`, a rejection and an Admin API
+each event of an event stream, a `100 Continue`, a rejection and an Admin API
 reply. It starts again each time the write goes on, so a client that reads
 slowly but steadily gets the whole response, however long it takes in all.
 A write goes on once the client has read enough to free room in the
 socket's send buffer: about a third of it, on Linux. On the TLS port, it
 goes on a whole TLS record, up to 16 KiB, at a time. smock's own waits,
-such as a delay or the time between the events of a stream, do not count.
+such as a delay or the time between the events of an event stream, do not
+count.
 smock sends no `close_notify` on a TLS connection the write timeout closes.
 
 Over HTTP/2, the write timeout also runs while a response body waits for
@@ -173,14 +176,14 @@ flight, so that Ctrl-C stops a local smock promptly.
   keep-alive connections close at once.
 - Responses in progress finish with `Connection: close`, and their
   connections close after them. Server-Sent Event streams and pending
-  delays go on. A stream whose client has gone away counts too, until smock
-  next writes an event to it and notices, which an event's long delay can
-  put off until the drain timeout.
+  delays go on. Over HTTP/1.1, an event stream whose client has gone away
+  counts too, until smock next writes an event to it and notices, which an
+  event's long delay can put off until the drain timeout.
 - Each HTTP/2 connection, idle or not, gets GOAWAY, then a PING. Once the
   client answers the PING, or a second later at most, a second GOAWAY names
-  the last stream smock received. The streams up to it finish, as above,
-  and the client sends the others again on a new connection. Once no
-  stream is in progress, the connection closes
+  the last stream smock received. The HTTP/2 streams up to it finish, as
+  above, and the client sends the others again on a new connection. Once
+  no HTTP/2 stream is in progress, the connection closes
   ([The drain](docs/http2.md#the-drain)).
 - smock exits with status 0 as soon as nothing is in flight, and at the
   latest when the drain timeout (`--drain-timeout-ms`) expires: what is still
@@ -253,7 +256,8 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
   Mock, gets the default certificate: `--tls-cert-file`, or without it the
   generated self-signed certificate (below).
 - SNI follows the Hosts of the definition set served, reloads included. It
-  only chooses the certificate: the Host header still chooses the Mock.
+  only chooses the certificate: the Host header, or `:authority` over
+  HTTP/2, still chooses the Mock.
   Definition files never refer to certificates.
 - A listed Mock that the Definition files do not declare is not an error,
   since Mocks come and go on reload: its certificate is chosen for nothing

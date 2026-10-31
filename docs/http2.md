@@ -1,8 +1,41 @@
 # HTTP/2
 
 smock serves HTTP/2 beside HTTP/1.1, with the same Mocks and Stubs. This
-guide says how a client reaches smock over HTTP/2, and what a Stub and the
-Journal see of an HTTP/2 request.
+guide says how clients reach smock over HTTP/2, on a machine and behind a
+load balancer, and what a Stub and the Journal see of an HTTP/2 request.
+It then says how smock bounds what one HTTP/2 connection can cost: its
+limits, timeouts and defences.
+
+## Contents
+
+- [h2c on the plain port](#h2c-on-the-plain-port)
+- [h2 on the TLS port](#h2-on-the-tls-port)
+  - [Turning h2 off](#turning-h2-off)
+  - [TLS 1.2](#tls-12)
+- [Clients](#clients)
+  - [curl](#curl)
+  - [Go](#go)
+  - [The JVM](#the-jvm)
+  - [Browsers](#browsers)
+- [Kubernetes and load balancers](#kubernetes-and-load-balancers)
+- [What a Stub sees](#what-a-stub-sees)
+  - [CONNECT](#connect)
+- [Requests smock refuses](#requests-smock-refuses)
+- [Responses](#responses)
+- [Streams that wait](#streams-that-wait)
+- [Server-Sent Events](#server-sent-events)
+- [Faults](#faults)
+- [The Journal](#the-journal)
+- [Limits and timeouts](#limits-and-timeouts)
+  - [The output bound](#the-output-bound)
+  - [Request bodies](#request-bodies)
+  - [Header lists](#header-lists)
+  - [Timeouts](#timeouts)
+  - [Defences](#defences)
+  - [Frames that do no work](#frames-that-do-no-work)
+- [The drain](#the-drain)
+- [Connection errors](#connection-errors)
+- [Where HTTP/2 comes from](#where-http2-comes-from)
 
 ## h2c on the plain port
 
@@ -107,6 +140,185 @@ offers only the mandatory suite over TLS 1.2 needs certificate files with an
 RSA key (`--tls-cert-file` and `--tls-key-file`). TLS 1.3 suites do not
 depend on the key's type.
 
+## Clients
+
+A client reaches smock over HTTP/2 in one of two ways: h2c on the plain
+port, when it knows in advance that the port speaks HTTP/2, or h2 on the
+TLS port, when it offers `h2` by ALPN. A client that asks for h2c with
+`Upgrade: h2c` gets HTTP/1.1 instead, since smock ignores the upgrade.
+
+| Client | Plain port | TLS port |
+|---|---|---|
+| [curl](#curl) | HTTP/2 with `--http2-prior-knowledge`, else HTTP/1.1 | HTTP/2 |
+| [Go](#go) | HTTP/2 when unencrypted HTTP/2 is the transport's only protocol, else HTTP/1.1 | HTTP/2 |
+| [Java's built-in client](#the-jvm) | HTTP/1.1: it asks for h2c only by `Upgrade` | HTTP/2 |
+| [OkHttp](#the-jvm) | HTTP/2 when `H2_PRIOR_KNOWLEDGE` is its only protocol, else HTTP/1.1 | HTTP/2 |
+| [Browsers](#browsers) | HTTP/1.1: no browser speaks h2c | HTTP/2, with a certificate the browser trusts |
+
+On the TLS port, each of them must trust smock's certificate, as the
+sections below say, and gets HTTP/1.1 with `--tls-http2 off`. A request's
+Journal entry tells which protocol it used, in its `version`
+([The Journal](#the-journal)).
+
+### curl
+
+```sh
+curl --http2-prior-knowledge http://localhost:8080/users/1   # h2c
+curl --cacert smock.pem https://localhost:8443/users/1       # h2, by ALPN
+```
+
+- `--http2-prior-knowledge` sends the HTTP/2 preface at once, so the plain
+  port serves the request over h2c.
+- On the plain port, `--http2` alone asks for h2c with `Upgrade: h2c`, so
+  it gets HTTP/1.1.
+- On the TLS port, curl offers `h2` and `http/1.1` by default, when it is
+  built with HTTP/2 support, as `--http2` asks it to. `--http1.1` offers
+  `http/1.1` alone, and gets HTTP/1.1.
+- `smock.pem` is smock's self-signed certificate, read from the handshake
+  as [Run](../README.md#run) shows. `--insecure` skips the check instead.
+  With a certificate that curl trusts, leave both out.
+- `-w '%{http_version}\n'` prints `2` for a response over HTTP/2, and `-v`
+  shows what ALPN chose, such as `ALPN: server accepted h2`.
+
+### Go
+
+From Go 1.24, `net/http` speaks h2c by prior knowledge when unencrypted
+HTTP/2 is the transport's only protocol. Every request to an `http://` URL
+then goes over h2c:
+
+```go
+protocols := new(http.Protocols)
+protocols.SetUnencryptedHTTP2(true)
+client := &http.Client{Transport: &http.Transport{Protocols: protocols}}
+resp, err := client.Get("http://localhost:8080/users/1")
+```
+
+Before Go 1.24, the `Transport` of `golang.org/x/net/http2` does the same,
+with `AllowHTTP` set and a `DialTLSContext` that dials plain TCP. A
+transport with the default protocols speaks HTTP/1.1 to the plain port.
+
+Over TLS, Go's default transport, which `http.Get` uses, offers `h2` and
+`http/1.1`, and gets HTTP/2 when the system trusts smock's certificate. A
+transport with a `TLSClientConfig` of its own, such as one that trusts
+smock's self-signed certificate, turns HTTP/2 off, and gets HTTP/1.1,
+unless `ForceAttemptHTTP2` is set:
+
+```go
+pem, err := os.ReadFile("smock.pem")
+if err != nil {
+	log.Fatal(err)
+}
+roots := x509.NewCertPool()
+roots.AppendCertsFromPEM(pem)
+client := &http.Client{Transport: &http.Transport{
+	TLSClientConfig:   &tls.Config{RootCAs: roots},
+	ForceAttemptHTTP2: true,
+}}
+resp, err := client.Get("https://localhost:8443/users/1")
+```
+
+`resp.Proto` is `HTTP/2.0` for a response over HTTP/2.
+
+### The JVM
+
+Java's built-in client, `java.net.http.HttpClient` (Java 11 and later),
+prefers HTTP/2 by default. But it asks for h2c only with `Upgrade: h2c`,
+and has no way to send the preface by prior knowledge:
+
+- On the TLS port, it offers `h2` and `http/1.1` by ALPN, and gets HTTP/2:
+  `response.version()` is `HTTP_2`.
+- On the plain port, smock ignores the upgrade and answers over HTTP/1.1:
+  `response.version()` is `HTTP_1_1`, and the Journal entry's `version` is
+  `HTTP/1.1`.
+
+```java
+HttpClient client = HttpClient.newHttpClient();
+HttpRequest request =
+    HttpRequest.newBuilder(URI.create("https://localhost:8443/users/1")).build();
+HttpResponse<String> response =
+    client.send(request, HttpResponse.BodyHandlers.ofString());
+```
+
+To trust smock's self-signed certificate, add it to a trust store with
+`keytool -importcert`, and give the JVM that trust store with
+`-Djavax.net.ssl.trustStore`, or build the client with an `SSLContext`
+that trusts it.
+
+OkHttp sends the preface by prior knowledge when
+`Protocol.H2_PRIOR_KNOWLEDGE` is its only protocol, so such a client speaks
+h2c to the plain port:
+
+```java
+OkHttpClient client = new OkHttpClient.Builder()
+    .protocols(List.of(Protocol.H2_PRIOR_KNOWLEDGE))
+    .build();
+```
+
+With its default protocols, OkHttp offers `h2` and `http/1.1` on the TLS
+port, and gets HTTP/2, but speaks HTTP/1.1 to the plain port.
+
+### Browsers
+
+Browsers speak HTTP/2 over TLS only. On the plain port, they get HTTP/1.1,
+as any client that sends no preface does. On the TLS port, they offer `h2`
+and `http/1.1`, and get HTTP/2, with a certificate they trust:
+
+- A browser does not trust smock's self-signed certificate, which is new
+  each time smock starts. Give smock certificate files from a certificate
+  authority that the browser trusts, with a name for each Host the page
+  calls (`--tls-cert-file` and `--tls-key-file`, or a Mock's own with
+  `--tls-mock-certs`; see [Run](../README.md#run)). For local use, a
+  certificate authority of your own, added to the trust store of the
+  system or of the browser, will do.
+- The developer tools' network panel shows each request's protocol: `h2`
+  for HTTP/2.
+
+A browser sends the requests of a page over as few connections as it can.
+It may send those for several Hosts over one connection, when the
+certificate covers them all. Each request still reaches the Mock that its
+own `:authority` names ([h2 on the TLS port](#h2-on-the-tls-port)). The
+EventSources of a page can share one connection too, each on an HTTP/2
+stream of its own ([Server-Sent Events](#server-sent-events)).
+
+## Kubernetes and load balancers
+
+A load balancer or a gateway in front of smock often ends TLS itself, and
+sends the requests on to smock's plain port. It can speak h2c to that
+port, so that HTTP/2 reaches smock end to end: the client speaks h2 to the
+load balancer, and the load balancer speaks HTTP/2 by prior knowledge to
+the Pod. smock serves such a connection as any other h2c connection. Each
+request's Host comes from the `:authority` that the load balancer sends,
+and its Journal entry has the version `HTTP/2`.
+
+A load balancer that speaks HTTP/1.1 to the plain port still works, since
+the port serves both. smock then sees HTTP/1.1, whatever the client spoke
+to the load balancer, and the Journal records `HTTP/1.1`. A load balancer
+that passes TLS through to the TLS port, without ending it, leaves the
+choice to ALPN, between the client and smock
+([h2 on the TLS port](#h2-on-the-tls-port)).
+
+Some gateways and load balancers choose the protocol they speak to the
+Pods from the `appProtocol` of the Service's port. The Helm chart sets
+none by default: the plain port serves both HTTP/1.1 and h2c, so no single
+value describes it. The chart's values `service.appProtocol.plain` and
+`service.appProtocol.tls` set it on the traffic Service's plain and TLS
+ports. For a gateway that speaks h2c to smock, set `kubernetes.io/h2c`,
+which Kubernetes defines for HTTP/2 over cleartext, on the plain port:
+
+```sh
+helm install smock oci://ghcr.io/hirunefu/charts/smock --version <version> \
+  --namespace mocks \
+  --set adminAuth.tokenSecret.name=smock-admin-token \
+  --set service.appProtocol.plain=kubernetes.io/h2c
+```
+
+For the TLS port, use the value your gateway documents. See
+[Ports, Services and probes](../charts/smock/README.md#ports-services-and-probes)
+in the chart's README.
+
+The admin port stays HTTP/1.1 only, so the probes, `/metrics` and the
+Admin API work as before.
+
 ## What a Stub sees
 
 Each HTTP/2 stream carries one request, which reaches the Mocks once the
@@ -173,9 +385,9 @@ codec's own checks. Such a stream gets `400 Bad Request`, with no body:
   an absolute URI gets 400, and so does a fragment (`#`);
 - a `:path` with a space, a control octet, DEL or an octet above 0x7E;
 - an `:authority` that is not a valid Host;
-- a CONNECT whose `:authority` is not a host and a port, such as
-  `proxy.example.com:443`, which an HTTP/1.1 CONNECT's target must be (RFC
-  9113, section 8.5);
+- a CONNECT whose `:authority` is not in the form a CONNECT needs (RFC
+  9113, section 8.5): a host and a port, such as `proxy.example.com:443`,
+  as the target of an HTTP/1.1 CONNECT is;
 - more than one `host` field, or a `host` that is not a valid Host;
 - a `host` that names another host than `:authority` (RFC 9113, section
   8.3.1). Hosts are compared as Mock Hosts are: in any case, without the
@@ -273,7 +485,7 @@ is in the Journal, as a request whose client goes away is.
 An [events Stub](definition-files.md#server-sent-events) streams one event
 stream per HTTP/2 stream. So one connection can carry several event
 streams at once, as a browser with several EventSources on one connection
-opens them, and its other streams are answered meanwhile.
+opens them, and its other HTTP/2 streams are answered meanwhile.
 
 - The HEADERS go out at once, or after the Stub's delay, with the Stub's
   status and headers. They carry `content-type: text/event-stream` and no
@@ -309,21 +521,22 @@ same draws, so a probability and [`fault.seed` or
 | Fault | What the client receives | Journal entry |
 |---|---|---|
 | `reset` | Once the request has arrived in full, body included, RST_STREAM with `INTERNAL_ERROR` on its stream. The other streams of the connection go on. | No status. |
-| `partial` | HEADERS, with the `content-length` of the whole body, and the first half of the body, or the first half of the events, rounded down, each after its delay. Then RST_STREAM with `INTERNAL_ERROR`. A response with no body to halve, such as one to HEAD, a 204, or a stream of a single event, sends its HEADERS without ending the stream, then the reset. | Its status. |
+| `partial` | HEADERS, with the `content-length` of the whole body, and the first half of the body, or the first half of the events, rounded down, each after its delay. Then RST_STREAM with `INTERNAL_ERROR`. A response with no body to halve, such as one to HEAD, a 204, or an event stream of a single event, sends its HEADERS without ending the HTTP/2 stream, then the reset. | Its status. |
 | `close` | GOAWAY with `NO_ERROR`, naming the highest stream the client has opened, then nothing more. smock reads and discards what the client sends, and closes the connection when the client closes it, or after a second. | No status. |
 
 - A Fault with a delay comes once the delay is over, and holds up only its
   own stream, as any delay does ([Streams that wait](#streams-that-wait)).
   Half a body larger than the client's windows goes out as the client
   widens them, then the reset.
-- `close` ends the other streams of the connection with it. A stream whose
-  response waits, for a delay, for window or for its next event, gets
-  nothing more, and is in the Journal, as a request whose client goes away
-  is. A stream whose request is still arriving never reaches the Mocks:
-  smock reads no more frames once it has sent the GOAWAY. The stream ID the
-  GOAWAY names is at least that of every stream smock has begun to answer,
-  so a client knows that any of them may have reached the Mocks (RFC 9113,
-  section 8.7), and that the streams above it did not.
+- `close` ends the other streams of the connection with it. An HTTP/2
+  stream whose response waits, for a delay, for window or for its next
+  event, gets nothing more, and is in the Journal, as a request whose
+  client goes away is. A stream whose request is still arriving never
+  reaches the Mocks: smock reads no more frames once it has sent the
+  GOAWAY. The stream ID the GOAWAY names is at least that of every stream
+  smock has begun to answer, so a client knows that any of them may have
+  reached the Mocks (RFC 9113, section 8.7), and that the streams above it
+  did not.
 - The request is in the Journal before its RST_STREAM or GOAWAY goes out.
 - Over HTTP/2, no Fault resets the TCP connection: `reset` and `partial`
   reset a stream with RST_STREAM, a frame, and the connection that `close`
@@ -375,9 +588,9 @@ What smock queues for one connection to write is bounded too, by 16 KiB
   written, passes 16 KiB, smock writes it before it reads the client's
   next frame. That output is everything smock sends: responses, resets,
   and the replies it owes, such as PING acknowledgements.
-- A stream that waits, for its delay, for window or between its events,
-  sends at most 16 KiB at a time, its DATA frame's header included, and
-  only once what was queued before has gone out.
+- An HTTP/2 stream that waits, for its delay, for window or between its
+  events, sends at most 16 KiB at a time, its DATA frame's header
+  included, and only once what was queued before has gone out.
 
 So a client that stops reading makes smock stop reading too, even with
 its windows open wide. One connection then holds no more than 16 KiB of
