@@ -154,6 +154,11 @@ and the port that `--connect-to` redirects; `h2c` and `h2` also add
 `--http2 -p 1`. A plan that names another protocol is refused before
 anything starts.
 
+Both are held to `http-keep-alive`'s [targets](#targets), at the same
+profile, rate and limits, h2 over TLS included. A miss on either is
+reported like any other
+([Targets for several cases](#targets-for-several-cases)).
+
 oha's `--disable-keepalive` does not work with HTTP/2. So only the
 keep-alive cases have HTTP/2 twins, and a plan whose HTTP/2 case opens a
 new connection for each request is refused too.
@@ -247,8 +252,10 @@ checks the set of the architecture it ran on: a run on a machine, the
 machine's (an M1 is arm64); a GKE run, its nodes' (`--arch`). A run on an
 architecture with no set reports every target as not measured, and says
 why; `check-targets` (below) refuses to pass it. Each target holds under a
-profile of `bench/plan-autopilot.json`, with plain HTTP over keep-alive
-connections at one rate:
+profile of `bench/plan-autopilot.json`, at one rate, for plain HTTP over
+keep-alive connections (`http-keep-alive`) and for its two
+[HTTP/2 twins](#http2-cases), `h2c-keep-alive` and `h2-keep-alive`
+([Targets for several cases](#targets-for-several-cases)):
 
 | Architecture | Profile | CPU and memory limits | Rate | p99 at most | p99.9 at most |
 |---|---|---|---|---|---|
@@ -289,7 +296,33 @@ peak memory at the target's rate (`memory.peak`) at most 32 MiB. Under
   twice it.
 
 The [chart's sizing table](../charts/smock/README.md#sizing) has the numbers
-of each.
+of each. Both sets come from plain HTTP alone: the first runs with the
+HTTP/2 cases are the first to check them over HTTP/2.
+
+### Targets for several cases
+
+An entry of `bench/targets.json` names the cases it holds for: `case` for
+one, or `cases`, a list, for several. Every entry names `http-keep-alive`,
+`h2c-keep-alive` and `h2-keep-alive`. Each of its latency, peak memory and
+OOM-kill limits is then a target of its own for each case, checked against
+that case's step at the entry's rate. Idle RSS holds before any load, so it
+is one target for the profile. A target's id says which it is:
+`<profile>/<case>/<metric>`, such as `chart-default/h2-keep-alive/p99`, or
+`<profile>/idle_rss`. The id is in `summary.json`, in the run's log and in
+`bench/compare.py`'s report.
+
+This holds h2 over TLS to targets set for plain HTTP/1.1, which HTTPS over
+HTTP/1.1 (`https-keep-alive`) is not held to. h2 may miss them. A miss on an
+HTTP/2 case is reported like any other, not hidden: `summary.md` shows it,
+`check-targets` and `bench/compare.py` exit with 1, and the
+[merge checklist](../docs/merging-into-main.md) asks for it to be resolved or
+recorded.
+
+A limit may be given once for each case under a profile. Two entries under
+one profile may each limit p99 for cases of their own, but a second p99 for
+a case is refused, and so is a second idle RSS. So is an entry that gives
+both `case` and `cases`. Changing a target, or the cases it holds for,
+remains a change to `bench/targets.json` alone.
 
 Latency counts from each request's scheduled send time, as the harness
 measures it, so it includes the load generator's floor: oha's timer has a
@@ -407,13 +440,14 @@ architecture the targets file has no set for.
   under one profile, by its name and its CPU and memory limits: a run that
   did not run that profile with those limits does not measure it. The
   latency, peak memory and OOM-kill targets hold at one load, one case at
-  one rate under the profile, and a run that did not run that step does
-  not measure them. An OOM kill misses every
-  target of its step. A latency target, counted from the scheduled send
-  times, is not measured when the load generator fell behind, and missed by
-  any error. Peak memory over its bound misses its target; within it, it is
-  not measured if requests failed, since smock did not carry the load. The
-  idle RSS target holds for the idle RSS under the profile.
+  one rate under the profile (an entry that names several cases has such
+  targets for each), and a run that did not run that step does not measure
+  them. An OOM kill misses every target of its step. A latency target,
+  counted from the scheduled send times, is not measured when the load
+  generator fell behind, and missed by any error. Peak memory over its
+  bound misses its target; within it, it is not measured if requests
+  failed, since smock did not carry the load. The idle RSS target holds for
+  the idle RSS under the profile.
 
 ## What a run writes
 
@@ -474,8 +508,9 @@ architecture the targets file has no set for.
   smock's RSS (first, last, max), the TCP connections the machine accepted
   during the load, and the idle connections still open at its end. Then
   the idle RSS under each profile, with peak memory and OOM kills, and
-  each target with its architecture and profile, its verdict, what was
-  measured and why when that is not plain. `format` numbers the layout.
+  each target with its id, its architecture, profile and case, its
+  verdict, what was measured and why when that is not plain. `format`
+  numbers the layout.
 - `summary.md`: the same for people, a section for each profile. Its
   *Targets* section says which architecture's targets it checked. Each
   step shows how long smock waited for a CPU in its measured window
@@ -510,7 +545,8 @@ runs of the same smock can differ by more than 20%:
 - **Only steps at or below the target rate count.** The rate of a
   profile's entry in `bench/targets.json` for the newer run's architecture
   (for `autopilot-min`, 1,250 requests/s on amd64 and 5,000 on arm64; the
-  highest, if a profile has several) holds for every case of that profile.
+  highest, if a profile has several) holds for every case of that profile,
+  whichever cases the entry names.
   Above it smock may be past its capacity, and the latencies of a queue
   swing from run to run: those steps are listed under *For reference*, with
   the same columns, and never fail the comparison. A profile with no
@@ -556,8 +592,11 @@ The line above the table says which steps count.
   behind, fails the comparison: nothing says how smock did there. Above
   the target rate it is listed and does not fail it.
 - It lists each target the newer run missed, with what it measured and
-  what the older run did for the same target (the same id at the same
-  load, for the same architecture), and the targets it did not measure.
+  what the older run did for the same target (the same limit under the
+  same profile, at the same case and rate, for the same architecture), and
+  the targets it did not measure. The ids are not compared: a run from
+  before an entry could name several cases has ids without the case, such
+  as `chart-default/p99`.
 - From each run's `conditions.json`, it names the runs (smock's version and
   commit, the machine, the plan) and lists the conditions besides smock
   that differ, such as the architecture, the CPU model, the plan or oha.

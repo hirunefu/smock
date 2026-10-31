@@ -64,11 +64,18 @@ def capacity(profile="small", rate=1000, case="http-keep-alive"):
             "at_most": {"p99_ms": 3}}
 
 
-def target(target_id="small/p99", verdict="met", measured=2.0, maximum=3, reason=None, about=None):
-    """A checked target of a summary."""
-    profile, metric = target_id.split("/")
-    return {"id": target_id, "about": about or f"{metric} latency, http-keep-alive at 1,000 requests/s",
-            "profile": profile, "cpu_limit": "250m", "memory_limit": "512Mi", "case": "http-keep-alive",
+# The id of small's p99 target for http-keep-alive.
+P99 = "small/http-keep-alive/p99"
+
+
+def target(target_id=P99, verdict="met", measured=2.0, maximum=3, reason=None, about=None):
+    """A checked target of a summary, at 1,000 requests/s: its id is
+    <profile>/<case>/<metric>, or <profile>/<metric> for http-keep-alive,
+    as runs from before an entry could name several cases wrote it."""
+    profile, *named, metric = target_id.split("/")
+    case = named[0] if named else "http-keep-alive"
+    return {"id": target_id, "about": about or f"{metric} latency, {case} at 1,000 requests/s",
+            "profile": profile, "cpu_limit": "250m", "memory_limit": "512Mi", "case": case,
             "rate": 1000, "metric": metric, "max": maximum, "unit": "ms", "verdict": verdict, "measured": measured,
             "reason": reason}
 
@@ -313,6 +320,23 @@ class CountedSteps(Comparison):
                              "worse")
             self.assertIn("**Result:** 1 regression, no target missed.", report)
 
+    def test_an_entry_that_names_several_cases_gives_its_profile_its_rate_for_every_case(self):
+        # small's entry names http-keep-alive and its HTTP/2 twins at 1,000
+        # a second: up to it steps count for each of them, and for
+        # https-keep-alive, which it does not name.
+        several = {key: value for key, value in capacity("small", 1000).items() if key != "case"}
+        several["cases"] = ["http-keep-alive", "h2c-keep-alive", "h2-keep-alive"]
+        names = (*several["cases"], "https-keep-alive")
+        older = self.arm64_summary([step(case=name, rate=rate, p99=10.0) for name in names for rate in (1000, 2000)])
+        newer = self.arm64_summary([step(case=name, rate=rate, p99=40.0) for name in names for rate in (1000, 2000)])
+        status, report = self.compare(older, newer, profiles=[several])
+        self.assertEqual(status, 1, report)
+        for name in names:
+            self.assertEqual(self.row(report, "small", name, 1000)["Verdict"], "regression", name)
+            self.assertEqual(self.row(report, "small", name, 2000, heading=REFERENCE)["Verdict"], "worse", name)
+        self.assertIn("target rate for arm64, the newer run's architecture (small 1,000 requests/s)", report)
+        self.assertIn("**Result:** 4 regressions, no target missed.", report)
+
     def test_the_report_says_which_steps_count(self):
         # unused has a target but neither run ran it.
         runs = [step(rate=1000), step(rate=2000), step(profile="other", rate=4000)]
@@ -404,56 +428,75 @@ class MissedTargets(Comparison):
     comparison, whatever the older run did."""
 
     def test_each_target_the_newer_run_missed_is_listed_with_what_it_measured(self):
-        older = self.summary([step()], targets=[target("small/p99", "met", 2.0), target("small/p99_9", "missed", 12)])
+        older = self.summary([step()], targets=[target(P99, "met", 2.0),
+                                                target("small/http-keep-alive/p99_9", "missed", 12)])
         newer = self.summary([step()], targets=[
-            target("small/p99", "missed", 3.4),
-            target("small/p99_9", "missed", 11, maximum=10, about="p99.9 latency, http-keep-alive at 1,000 requests/s"),
-            target("small/peak_memory", "not measured", None, reason="the kernel kept no peak memory"),
+            target(P99, "missed", 3.4),
+            target("small/http-keep-alive/p99_9", "missed", 11, maximum=10,
+                   about="p99.9 latency, http-keep-alive at 1,000 requests/s"),
+            target("small/http-keep-alive/peak_memory", "not measured", None, reason="the kernel kept no peak memory"),
             target("small/idle_rss", "met", 16.0)])
         status, report = self.compare(older, newer)
         self.assertEqual(status, 1, report)
-        self.assertIn("- small/p99 (p99 latency, http-keep-alive at 1,000 requests/s): 3.4 ms, at most 3 ms; "
+        self.assertIn(f"- {P99} (p99 latency, http-keep-alive at 1,000 requests/s): 3.4 ms, at most 3 ms; "
                       "met in the older run (2.0 ms)", report)
-        self.assertIn("- small/p99_9 (p99.9 latency, http-keep-alive at 1,000 requests/s): 11 ms, at most 10 ms; "
-                      "missed in the older run too (12 ms)", report)
+        self.assertIn("- small/http-keep-alive/p99_9 (p99.9 latency, http-keep-alive at 1,000 requests/s): 11 ms, "
+                      "at most 10 ms; missed in the older run too (12 ms)", report)
         self.assertNotIn("small/idle_rss", report)
-        self.assertIn("Not measured in the newer run: small/peak_memory.", report)
+        self.assertIn("Not measured in the newer run: small/http-keep-alive/peak_memory.", report)
         self.assertIn("2 targets missed", report)
 
     def test_the_older_runs_verdict_is_shown_only_for_the_same_target_at_the_same_load_and_architecture(self):
-        # The older run checked small/p99 at 2,000 requests/s, or for arm64
-        # (as a run checked before the targets were by architecture, or on
-        # another one): that verdict is on another target.
-        newer = self.summary([step()], targets=[{**target("small/p99", "missed", 3.4), "architecture": "amd64"}])
-        missed = "- small/p99 (p99 latency, http-keep-alive at 1,000 requests/s): 3.4 ms, at most 3 ms; "
-        for before in ({**target("small/p99", "met", 2.0), "rate": 2000},
-                       {**target("small/p99", "met", 2.0), "architecture": "arm64"}):
+        # The older run checked small's p99 at 2,000 requests/s, or for
+        # arm64 (as a run checked before the targets were by architecture,
+        # or on another one): that verdict is on another target.
+        newer = self.summary([step()], targets=[{**target(P99, "missed", 3.4), "architecture": "amd64"}])
+        missed = f"- {P99} (p99 latency, http-keep-alive at 1,000 requests/s): 3.4 ms, at most 3 ms; "
+        for before in ({**target(P99, "met", 2.0), "rate": 2000},
+                       {**target(P99, "met", 2.0), "architecture": "arm64"}):
             status, report = self.compare(self.summary([step()], targets=[before]), newer)
             self.assertEqual(status, 1, report)
             self.assertIn(missed + "not in the older run", report)
-        for before in (target("small/p99", "met", 2.0), {**target("small/p99", "met", 2.0), "architecture": "amd64"}):
+        for before in (target(P99, "met", 2.0), {**target(P99, "met", 2.0), "architecture": "amd64"}):
             status, report = self.compare(self.summary([step()], targets=[before]), newer)
             self.assertEqual(status, 1, report)
             self.assertIn(missed + "met in the older run (2.0 ms)", report)
+
+    def test_the_older_runs_verdict_is_that_of_the_same_case_whatever_its_id(self):
+        # The older run is from before an entry could name several cases:
+        # its id for http-keep-alive's p99 under small has no case, and it
+        # checked no HTTP/2 case.
+        older = self.summary([step()], targets=[target("small/p99", "met", 2.0)])
+        newer = self.summary([step()], targets=[target(P99, "missed", 3.4),
+                                                target("small/h2-keep-alive/p99", "missed", 3.6)])
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 1, report)
+        self.assertIn(f"- {P99} (p99 latency, http-keep-alive at 1,000 requests/s): 3.4 ms, at most 3 ms; "
+                      "met in the older run (2.0 ms)", report)
+        # A miss on an HTTP/2 case is listed like any other, and http-keep-
+        # alive's verdict is not its own.
+        self.assertIn("- small/h2-keep-alive/p99 (p99 latency, h2-keep-alive at 1,000 requests/s): 3.6 ms, at most "
+                      "3 ms; not in the older run", report)
+        self.assertIn("2 targets missed", report)
 
     def test_a_target_not_measured_for_several_architectures_is_listed_once(self):
         # A run on an architecture with no targets has each target of each
         # architecture, not measured.
         newer = self.summary([step()], targets=[
-            {**target("small/p99", "not measured", None), "architecture": architecture}
+            {**target(P99, "not measured", None), "architecture": architecture}
             for architecture in ("arm64", "amd64")])
         _, report = self.compare(self.summary([step()]), newer)
-        self.assertIn("Not measured in the newer run: small/p99.\n", report)
+        self.assertIn(f"Not measured in the newer run: {P99}.\n", report)
 
     def test_a_target_missed_for_failed_requests_says_why(self):
-        newer = self.summary([step()], targets=[target("small/p99", "missed", 2.0, reason="300 errors")])
+        newer = self.summary([step()], targets=[target(P99, "missed", 2.0, reason="300 errors")])
         status, report = self.compare(self.summary([step()]), newer)
         self.assertEqual(status, 1, report)
-        self.assertIn("- small/p99 (p99 latency, http-keep-alive at 1,000 requests/s): 2.0 ms, at most 3 ms: "
+        self.assertIn(f"- {P99} (p99 latency, http-keep-alive at 1,000 requests/s): 2.0 ms, at most 3 ms: "
                       "300 errors; not in the older run", report)
 
     def test_no_missed_target_and_no_regression_passes(self):
-        newer = self.summary([step()], targets=[target("small/p99", "met", 2.0)])
+        newer = self.summary([step()], targets=[target(P99, "met", 2.0)])
         status, report = self.compare(self.summary([step()]), newer)
         self.assertEqual(status, 0, report)
         self.assertIn("Targets missed in the newer run: none.", report)
