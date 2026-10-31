@@ -20,13 +20,23 @@ fn with_messages(
 }
 
 ///|
-/// `line` with its timestamp masked (`mask_timestamp`), and each text of
-/// `replace` written as the placeholder it comes with.
+/// `line` with the value of its `timestamp`, wherever the key stands, shown
+/// as `<timestamp>` when it has the form `YYYY-MM-DDTHH:mm:ss.sssZ`, and each
+/// text of `replace` written as the placeholder it comes with. A value of
+/// any other form stays, so that it shows.
 fn masked_line(
   line : String,
   replace~ : Array[(String, String)] = [],
 ) -> String {
-  let mut line = mask_timestamp(line)
+  let key = ",\"timestamp\":\""
+  let mut line = line
+  if line.find(key) is Some(i) {
+    let start = i + key.length()
+    let end = start + "0000-00-00T00:00:00.000Z".length()
+    if end <= line.length() && time_has_form(line[start:end].to_owned()) {
+      line = "\{line[:start]}<timestamp>\{line[end:]}"
+    }
+  }
   for pair in replace {
     let (text, placeholder) = pair
     line = line.replace_all(old=text, new=placeholder)
@@ -65,5 +75,182 @@ async test "with SMOCK_LOG_FORMAT=mockoon, smock's own lines go to stdout in Moc
         ),
       )
     })
+  })
+}
+
+///|
+/// What is wrong with the envelope of `line`, or `None`: it must be one JSON
+/// object with `app` (`"smock"`), `level` (`info`, `warn` or `error`),
+/// `message` and `timestamp` (`YYYY-MM-DDTHH:mm:ss.sssZ`), and its keys
+/// sorted at every depth in UTF-16 code-unit order.
+fn envelope_problem(line : String) -> String? {
+  let entry = @json.parse(line) catch { _ => return Some("not JSON") }
+  guard entry
+    is Object(
+      {
+        "app": String("smock"),
+        "level": String("info" | "warn" | "error"),
+        "message": String(_),
+        "timestamp": String(timestamp),
+        ..
+      }
+    ) else {
+    return Some("no envelope")
+  }
+  if !time_has_form(timestamp) {
+    return Some("timestamp not of the form YYYY-MM-DDTHH:mm:ss.sssZ")
+  }
+  if unsorted(entry) is Some(keys) {
+    return Some("keys not sorted: \{keys}")
+  }
+  None
+}
+
+///|
+/// Whether `time` has the form `YYYY-MM-DDTHH:mm:ss.sssZ`.
+fn time_has_form(time : String) -> Bool {
+  let form = "0000-00-00T00:00:00.000Z"
+  guard time.length() == form.length() else { return false }
+  for j, c in form {
+    let ok = if c == '0' {
+      time[j] >= '0' && time[j] <= '9'
+    } else {
+      time[j] == c.to_int().to_uint16()
+    }
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// The keys of the first object in `value`, at any depth, whose keys are
+/// not in UTF-16 code-unit order, as parsing keeps them in the order the
+/// line wrote them, or `None` when every object's keys are.
+fn unsorted(value : Json) -> String? {
+  match value {
+    Object(fields) => {
+      let keys = fields.keys().collect()
+      for i in 1..<keys.length() {
+        if !code_units_before(keys[i - 1], keys[i]) {
+          return Some(keys.join(","))
+        }
+      }
+      for _, field in fields {
+        if unsorted(field) is Some(keys) {
+          return Some(keys)
+        }
+      }
+      None
+    }
+    Array(items) => {
+      for item in items {
+        if unsorted(item) is Some(keys) {
+          return Some(keys)
+        }
+      }
+      None
+    }
+    _ => None
+  }
+}
+
+///|
+/// Whether `a` comes before `b` in UTF-16 code-unit order.
+fn code_units_before(a : String, b : String) -> Bool {
+  for i in 0..<a.length() {
+    if i >= b.length() {
+      return false
+    }
+    if a[i] != b[i] {
+      return a[i] < b[i]
+    }
+  }
+  a.length() < b.length()
+}
+
+///|
+async test "every line of a run with a reload, a failed reload, an Admin API change, a request and a drain is in Mockoon's envelope, on stdout, with stderr empty" {
+  with_definitions(mockoon_mocks(), dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let mut digests = []
+    let stopped = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let before = smock.status()
+      let _ = smock.exchange(
+        Plain,
+        "GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      )
+      let _ = smock.call(
+        "PUT",
+        "/v1/mocks/users/variables/count",
+        session="run-42",
+        body="1",
+      )
+      let users = mockoon_mocks()[0].1
+      write(
+        dir,
+        "users.json",
+        users.replace(old="\"response\":", new="\"respons\": {}, \"response\":"),
+      )
+      let failed = smock.reloaded(before)
+      write(dir, "users.json", users.replace(old="Alice", new="Bob"))
+      let fixed = smock.reloaded(failed)
+      digests = [
+        ("<served at startup>", before.get("digest")),
+        ("<served after the fix>", fixed.get("digest")),
+      ]
+    })
+    let replace = []
+    for digest in digests {
+      if digest.1 is Some(String(value)) {
+        replace.push((value, digest.0))
+      }
+    }
+    let out = []
+    for line in stopped.stdout {
+      let entry = @json.parse(line) catch { _ => Json::null() }
+      let message = match entry {
+        Object({ "message": String(message), .. }) => message
+        _ => "?"
+      }
+      let problem = match envelope_problem(line) {
+        Some(problem) => ": \{problem}: \{line}"
+        None => ""
+      }
+      out.push("\{message}\{problem}")
+    }
+    out.push("")
+    for
+      line in with_messages(stopped.stdout, [
+        "Variable set", "definitions reload failed", "definitions reloaded",
+      ]) {
+      out.push(masked_line(line, replace~))
+    }
+    out.push("stderr: \{stopped.logs.length()} lines")
+    inspect(
+      out.join("\n"),
+      content=(
+        #|smock starting
+        #|random seed
+        #|journal byte bound
+        #|state byte bound
+        #|listening
+        #|self-signed certificate in use
+        #|listening
+        #|listening
+        #|Transaction recorded
+        #|Variable set
+        #|definitions reload failed
+        #|definitions reloaded
+        #|drain started
+        #|drain ended
+        #|
+        #|{"app":"smock","level":"info","message":"Variable set","mock":"users","session":"run-42","timestamp":"<timestamp>","variable":"count"}
+        #|{"app":"smock","digest":"<served at startup>","errors":[{"file":"users.json","message":"is not a known field","pointer":"/stubs/0/respons"}],"level":"error","message":"definitions reload failed","result":"failed","timestamp":"<timestamp>"}
+        #|{"app":"smock","dataBucketsReset":0,"level":"info","message":"definitions reloaded","newDigest":"<served after the fix>","oldDigest":"<served at startup>","result":"swapped","scenarioStatesReset":0,"timestamp":"<timestamp>"}
+        #|stderr: 0 lines
+      ),
+    )
   })
 }
