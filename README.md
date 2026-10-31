@@ -60,16 +60,24 @@ definitions directory, then listens on the plain port and on the TLS port.
 It watches the directory and swaps in the new definition set when the files
 change, ConfigMap updates included; an invalid set is reported and the
 current one keeps serving
-([docs/definition-files.md](docs/definition-files.md#reloading)). Logs go
-to stderr, one JSON object per line. With `--log-format mockoon`, smock
-also writes a `Transaction recorded` line to stdout for each request a
-Mock handles, in the Mockoon CLI's shape. Log
+([docs/definition-files.md](docs/definition-files.md#reloading)). smock
+logs one JSON object per line, in one of two formats. In the `json`
+format, the default, log entries go to stderr in smock's own shape: `time`,
+`level` and `msg`, then the entry's fields. In the `mockoon` format
+(`--log-format mockoon`), every line goes to stdout instead, in the Mockoon
+CLI's envelope: `app` (always `"smock"`), `level`, `message` and
+`timestamp`, with the entry's fields beside them and the keys sorted at
+every depth. smock then also writes a `Transaction recorded` line for each
+request a Mock handles, and writes nothing to stderr but usage errors. Each
+line is written whole and at once, also to a pipe, and never waits in a
+buffer, so a reader of stdout that stops reading stalls smock. Log
 entries are a diagnostic aid: their messages and fields may change in any
 release, unlike the Definition file format and the Admin API, which are
 versioned (`v1`). A usage error, such as an
 unknown flag, a missing argument or an invalid setting value, is not a log
-entry: smock writes it to stderr as plain text, before any log entry, and
-exits with status 2. `smock serve --help` lists the settings:
+entry: in either format, smock writes it to stderr as plain text, before
+any log entry, and exits with status 2. `smock serve --help` lists the
+settings:
 
 | Flag | Variable | Default |
 |---|---|---|
@@ -1064,8 +1072,9 @@ Packages of `smock/smock`:
   `users.example.com` and `orders.example.com`, each leaf with its own fixed
   expiry), used only by tests. `scripts/gen-test-certificates.sh`
   regenerates it.
-- `log`: the JSON logger, one object per line, and the RFC 3339 times it
-  writes, which the Admin API and the CLI also read.
+- `log`: the JSON logger, one object per line, in smock's own shape or in
+  the Mockoon CLI's envelope, the Mockoon-equivalent lines, and the RFC 3339
+  times it writes, which the Admin API and the CLI also read.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
 - `e2e`: tests that run the `smock` binary as a black box (native).
 

@@ -37,17 +37,23 @@ async fn main {
           return
         }
       }
-      // smock's own entries go to stderr in either format; the mockoon
-      // format adds its Transaction recorded lines on stdout.
+      // Log entries go to stderr in the json format. In the mockoon format,
+      // every line goes to stdout, through the one writer that the
+      // Mockoon-equivalent lines go through too.
+      let stdout = @server.StdoutLines::new()
       let logger = match settings.log_format {
-        Json | Mockoon =>
+        Json =>
           @log.Logger(write_line=line => eprintln(line), now=() => @async.now())
+        Mockoon =>
+          @log.Logger(format=Mockoon, write_line=line => stdout.push(line), now=() => {
+            @async.now()
+          })
       }
       let admin_auth = if settings.admin_auth { "on" } else { "off" }
       @buildinfo.current().log_startup(logger, fields={
         "adminAuth": Json::string(admin_auth),
       })
-      exit(@server.serve(settings, logger))
+      exit(@server.serve(settings, logger, stdout~))
     }
     Some(("check", matches)) => {
       let settings = @settings.CheckSettings::from_matches(matches) catch {
