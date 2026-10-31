@@ -984,7 +984,8 @@ class Run:
             "page_size": os.sysconf("SC_PAGE_SIZE"),
             "cases": [{key: spec[key] for key in (
                 "id", "profile", "protocol", "connection", "cpu_limit", "memory_limit", "rate", "ramp_s",
-                "duration_s", "tail_s", "connections", "idle_connections")} for spec in self.specs],
+                "duration_s", "tail_s", "connections", "streams_per_connection", "idle_connections")}
+                for spec in self.specs],
             "overrides": {name: value for name, value in (
                 ("rate", self.args.rate), ("ramp_s", self.args.ramp), ("duration_s", self.args.duration),
                 ("tail_s", self.args.tail), ("cooldown_s", self.args.cooldown),

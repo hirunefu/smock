@@ -1344,7 +1344,7 @@ def command_summarize(args):
         "profiles": profiles,
         "cases": [{key: spec[key] for key in (
             "id", "profile", "protocol", "connection", "cpu_limit", "memory_limit", "rate", "ramp_s",
-            "duration_s", "tail_s", "connections", "idle_connections")} for spec in planned],
+            "duration_s", "tail_s", "connections", "streams_per_connection", "idle_connections")} for spec in planned],
         "overrides": {},
     }
     harness.write_json(out / "summary.json", summary)
