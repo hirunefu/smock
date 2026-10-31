@@ -295,6 +295,37 @@ opens them, and its other streams are answered meanwhile.
 - On SIGTERM, event streams go on until they end or the drain timeout cuts
   them, as over HTTP/1.1.
 
+## Faults
+
+A Stub's [connection Fault](definition-files.md#connection-faults) takes
+its nearest HTTP/2 form: it fails the request on its own stream, or, for
+`close`, the connection. smock decides Faults as over HTTP/1.1, with the
+same draws, so a probability and [`fault.seed` or
+`--seed`](definition-files.md#seeds) give the same Faults over both.
+
+| Fault | What the client receives | Journal entry |
+|---|---|---|
+| `reset` | Once the request has arrived in full, body included, RST_STREAM with `INTERNAL_ERROR` on its stream. The other streams of the connection go on. | No status. |
+| `partial` | HEADERS, with the `content-length` of the whole body, and the first half of the body, or the first half of the events, rounded down, each after its delay. Then RST_STREAM with `INTERNAL_ERROR`. A response with no body to halve, such as one to HEAD, a 204, or a stream of a single event, sends its HEADERS without ending the stream, then the reset. | Its status. |
+| `close` | GOAWAY with `NO_ERROR`, naming the highest stream the client has opened, then nothing more. smock reads and discards what the client sends, and closes the connection when the client closes it, or after a second. | No status. |
+
+- A Fault with a delay comes once the delay is over, and holds up only its
+  own stream, as any delay does ([Streams that wait](#streams-that-wait)).
+  Half a body larger than the client's windows goes out as the client
+  widens them, then the reset.
+- `close` ends the other streams of the connection with it. A stream whose
+  response waits, for a delay, for window or for its next event, gets
+  nothing more, and is in the Journal, as a request whose client goes away
+  is. A stream whose request is still arriving never reaches the Mocks:
+  smock reads no more frames once it has sent the GOAWAY. The stream ID the
+  GOAWAY names is at least that of every stream smock has begun to answer,
+  so a client knows that any of them may have reached the Mocks (RFC 9113,
+  section 8.7), and that the streams above it did not.
+- The request is in the Journal before its RST_STREAM or GOAWAY goes out.
+- Over HTTP/2, no Fault resets the TCP connection: `reset` and `partial`
+  reset a stream with RST_STREAM, a frame, and the connection that `close`
+  ends closes with a FIN.
+
 ## The Journal
 
 An HTTP/2 request is in the Journal like any other, with `version`

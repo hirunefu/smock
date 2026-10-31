@@ -3359,6 +3359,22 @@ of getting its response:
     connection closes, so a client cannot tell a partial one from a whole
     stream with fewer events.
 
+Over HTTP/2, each kind takes its nearest form, so that it fails the request
+on its stream, or the connection for `close`
+([HTTP/2](http2.md#faults)):
+
+- `reset`: smock reads the whole request, body included, then resets its
+  stream alone, with RST_STREAM and the error code `INTERNAL_ERROR`. The
+  other streams of the connection go on.
+- `close`: smock sends GOAWAY with `NO_ERROR`, naming the highest stream
+  the client has opened, then closes the connection. Its other streams end
+  with it: smock sends nothing more on them.
+- `partial`: smock sends the HEADERS, with the `content-length` of the
+  whole body, and the first half of the body, or of the events, then
+  resets the stream with RST_STREAM `INTERNAL_ERROR`. A response with no
+  body to halve sends its HEADERS without ending the stream, then the
+  reset.
+
 `probability`, from 0 to 1, is the share of matched requests that fail;
 without it, every matched request fails. A Stub with both a delay and a
 connection Fault waits first, then fails.

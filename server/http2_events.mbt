@@ -2,9 +2,11 @@
 // stream. Its HEADERS go out as soon as the response is due, and its events
 // from a task of its own, each after its delay, so that the connection's
 // other streams, other event streams among them, go on meanwhile. The DATA
-// of the last event ends the HTTP/2 stream. A reset of the stream, from the
-// client or by moonhttp for the client's frames, cancels the task at once
-// (`H2Connection::stop_waiting`, http2.mbt), as it does a delay.
+// of the last event ends the HTTP/2 stream; with a partial Fault, half the
+// events go out, rounded down, and RST_STREAM ends it instead. A reset of
+// the stream, from the client or by moonhttp for the client's frames,
+// cancels the task at once (`H2Connection::stop_waiting`, http2.mbt), as it
+// does a delay.
 
 ///|
 /// Answers `stream`, whose request the engine decided `outcome` for, a
@@ -13,7 +15,8 @@
 /// HEADERS are queued at once, while the event is handled, and its events
 /// go out from a task of its own, which writes to `out` (`send_events`). A
 /// response with no body is its HEADERS alone, and needs no task
-/// (`open_events`).
+/// (`open_events`). With a partial Fault, the task sends half the events,
+/// then resets the stream with RST_STREAM INTERNAL_ERROR (`reset_after`).
 ///
 /// The task ends with its stream, as the task of a delay does
 /// (`H2Connection::wait`): when its last event is queued and written, when
@@ -46,7 +49,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_events(
   }
   let task = self.group.spawn(no_wait=true, () => {
     defer ports.done(outcome, stopwatch)
-    self.send_events(stream, events, outcome.journal, out)
+    let partial = outcome.plan.fault is Some(Partial)
+    if self.send_events(stream, events, outcome.journal, out, partial~) &&
+      partial {
+      self.reset_after(stream, None)
+    }
     self.waiting.remove(stream)
     let _ = self.writer.write(out)
     self.answered()
@@ -68,6 +75,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_events(
 /// committed just before: no event is waited for, as over HTTP/1.1. So is
 /// a 2xx to a CONNECT, which has no content over HTTP/2 (`has_content`).
 ///
+/// With a partial Fault, the events to follow are half of the `count`,
+/// rounded down. When there are none, or the response has no body, its
+/// HEADERS do not end the stream: RST_STREAM INTERNAL_ERROR does, at once,
+/// with `entry` committed just before (`reset_after`).
+///
 /// It runs while the event is handled, or in the stream's own task after a
 /// delay, which goes on once it returns: so a reset here leaves the task
 /// be.
@@ -82,6 +94,7 @@ fn H2Connection::open_events(
   now~ : Int64,
 ) -> Bool {
   let ports = self.ports
+  let partial = plan.fault is Some(Partial)
   let fields = response_fields(
     plan.status,
     plan.headers,
@@ -89,7 +102,18 @@ fn H2Connection::open_events(
     date=ports.dates.at(now),
     streamed=true,
   )
-  if head || count == 0 || !has_content(plan.status, connect~) {
+  let sent = if partial { count / 2 } else { count }
+  if head || sent == 0 || !has_content(plan.status, connect~) {
+    if partial {
+      self.conn.headers(stream, fields) catch {
+        _ => {
+          self.reset_after(stream, entry)
+          return false
+        }
+      }
+      self.reset_after(stream, entry)
+      return false
+    }
     ports.commit(entry)
     self.conn.headers(stream, fields, end=true) catch {
       _ => {
@@ -117,7 +141,14 @@ fn H2Connection::open_events(
 /// client's frame size (`trickle`). Each event is written to `out` before
 /// the next one's delay; the DATA of the last one ends the stream, and the
 /// caller writes it. The Journal entry `entry` is committed just before
-/// the last event, or when the task is cancelled before it.
+/// the last event, or when the task is cancelled before it. Returns
+/// whether every event was queued: not when a reset of the stream came
+/// first.
+///
+/// With `partial`, as for a partial Fault, only the first half of `events`
+/// go out, rounded down, and the last of them does not end the stream: the
+/// caller resets it, and the entry is committed as this returns, just
+/// before.
 ///
 /// A reset of the stream cancels the task at once, during a delay or while
 /// an event waits for window; one while the task writes ends it as soon as
@@ -128,16 +159,19 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::send_events(
   events : ReadOnlyArray[@definitions.SseEvent],
   entry : @engine.JournalEntry?,
   out : WatchedStream[S],
-) -> Unit {
+  partial~ : Bool,
+) -> Bool {
   let ports = self.ports
   let mut entry = entry
   defer ports.commit(entry)
   // The HEADERS, queued before the task began, go out before the first
   // event's delay.
   let _ = self.writer.write_for(out, stream)
-  guard self.waiting.contains(stream) else { return }
-  let last = events.length() - 1
-  for i, event in events {
+  guard self.waiting.contains(stream) else { return false }
+  let count = if partial { events.length() / 2 } else { events.length() }
+  let last = count - 1
+  for i in 0..<count {
+    let event = events[i]
     if event.delay_ms > 0 {
       @async.sleep(event.delay_ms)
     }
@@ -146,16 +180,18 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::send_events(
       event?=event.event,
       id?=event.id,
     )
-    if i == last {
+    let ends = i == last && !partial
+    if ends {
       ports.commit(entry)
       entry = None
     }
-    guard self.trickle(stream, data, None, out, end=i == last) else { return }
+    guard self.trickle(stream, data, None, out, end=ends) else { return false }
     if i == last {
-      return
+      return true
     }
     let _ = self.writer.write_for(out, stream)
     // A reset while the task wrote did not cancel it: it ends now.
-    guard self.waiting.contains(stream) else { return }
+    guard self.waiting.contains(stream) else { return false }
   }
+  true
 }
