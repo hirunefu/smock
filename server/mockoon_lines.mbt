@@ -95,6 +95,10 @@ fn MockoonLines::prefix(
 /// the Journal records it, also when the request ended before the status
 /// was sent, or with the reset or close Fault that ended it before any
 /// status.
+///
+/// When the Stub that matched failed its own content, the request's error
+/// line (`serving_error`) comes first, in the same write, so that no other
+/// line comes between them.
 async fn MockoonLines::transaction(
   self : MockoonLines,
   request : @http1.Request,
@@ -105,6 +109,7 @@ async fn MockoonLines::transaction(
     Some(Close) => Close
     Some(Partial) | None => Status(outcome.plan.status)
   }
+  let error = self.serving_error(outcome)
   let line = @log.transaction_line(
     self.prefix(outcome.resolution),
     meth=request.meth,
@@ -112,11 +117,48 @@ async fn MockoonLines::transaction(
     ended~,
     at=@async.now(),
   )
-  self.out.write(line)
+  match error {
+    Some(error) => self.out.write("\{error}\n\{line}")
+    None => self.out.write(line)
+  }
 }
 
 ///|
-/// Writes the line of `request` once the request path is done with it, if
+/// The `Error while serving the content: …` line of `outcome`, with the
+/// time now, when the Stub that matched failed its own content: a template
+/// that could not be rendered, a value of its `variables` or `dataWrites`
+/// included, or a data write that could not be applied. It names the
+/// error's message, as the 500's body gives it, the Stub's path as written
+/// and the Stub ID. Any other outcome, a 507 from the state bound included,
+/// has none, also when a connection Fault replaces the 500.
+fn MockoonLines::serving_error(
+  self : MockoonLines,
+  outcome : @engine.Outcome,
+) -> String? {
+  let message = match outcome.template_error {
+    Some(error) => error.message
+    None =>
+      match outcome.data_error {
+        Some(error) => error.message
+        None => return None
+      }
+  }
+  guard outcome.matched is Some(FromFile(stub) | Ephemeral(stub)) else {
+    abort("a template or data error comes from the Stub that matched")
+  }
+  Some(
+    @log.serving_error_line(
+      self.prefix(outcome.resolution),
+      message~,
+      path=outcome.failed_stub_path,
+      stub~,
+      at=@async.now(),
+    ),
+  )
+}
+
+///|
+/// Writes the lines of `request` once the request path is done with it, if
 /// the engine decided an outcome for it, which `pending` then holds, and
 /// empties `pending`.
 async fn MockoonLines::write_pending(

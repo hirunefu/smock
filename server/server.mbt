@@ -494,7 +494,8 @@ priv struct MockPorts {
 ///
 /// In the mockoon log format, each request the engine handled gets its
 /// Transaction recorded line once it is counted and `respond` is done with
-/// it, however it ended. Bytes the codec rejects get none. The json format
+/// it, however it ended, after its error line when its Stub's template or
+/// data write failed. Bytes the codec rejects get none. The json format
 /// logs nothing per request, and costs nothing per request for this beyond
 /// a test where the request is counted.
 ///

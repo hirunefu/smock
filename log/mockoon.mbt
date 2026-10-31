@@ -116,6 +116,45 @@ pub fn transaction_line(
 }
 
 ///|
+/// The `Error while serving the content: …` line of a request whose Stub's
+/// template could not be rendered or whose data write could not be
+/// applied, which `prefix` (`mockoon_prefix`) says the Mock of, with the
+/// error's message `message`, as the 500's body gives it, the Stub's path
+/// as written `path`, and the Stub ID `stub`, written at `at`, in
+/// milliseconds since the Unix epoch, such as
+/// `{"app":"smock","environmentName":"shop","level":"error","message":"Error while serving the content: body.customer.name is missing","routePath":"/orders","routeUUID":"create-order","timestamp":"2026-10-31T09:00:04.000Z"}`.
+/// A Stub with no path condition, `None`, gets no `routePath`. The Stub ID
+/// is not a UUID, but the key keeps Mockoon's name.
+pub fn serving_error_line(
+  prefix : String,
+  message~ : String,
+  path~ : String?,
+  stub~ : String,
+  at~ : Int64,
+) -> String {
+  let out = StringBuilder(
+    size_hint=prefix.length() + message.length() + stub.length() + 160,
+  )
+  out.write_string(prefix)
+  out.write_string(
+    "\"level\":\"error\",\"message\":\"Error while serving the content: ",
+  )
+  write_escaped(out, message, 0, message.length())
+  out.write_string("\",")
+  if path is Some(path) {
+    out.write_string("\"routePath\":")
+    write_json_string(out, path, 0, path.length())
+    out.write_char(',')
+  }
+  out.write_string("\"routeUUID\":")
+  write_json_string(out, stub, 0, stub.length())
+  out.write_string(",\"timestamp\":\"")
+  write_time(out, at)
+  out.write_string("\"}")
+  out.to_string()
+}
+
+///|
 /// Where the path of the request target `target` starts, as the engine
 /// reads it for its conditions: after the scheme and the authority of an
 /// absolute-form target, at the first `/`, `?` or `#` after them, or at the
@@ -266,6 +305,21 @@ fn write_json_string(
   end : Int32,
 ) -> Unit {
   out.write_char('"')
+  write_escaped(out, s, start, end)
+  out.write_char('"')
+}
+
+///|
+/// Writes the code units of `s` from `start` to `end` escaped as
+/// `write_json_string` escapes them, without the quotes, so that they can
+/// follow text of the same JSON string, such as the fixed start of the
+/// error line's message.
+fn write_escaped(
+  out : StringBuilder,
+  s : String,
+  start : Int32,
+  end : Int32,
+) -> Unit {
   let mut run = start
   for i in start..<end {
     let c = s.unsafe_get(i)
@@ -294,7 +348,6 @@ fn write_json_string(
   if run < end {
     out.write_view(s.view(start_offset=run, end_offset=end))
   }
-  out.write_char('"')
 }
 
 ///|

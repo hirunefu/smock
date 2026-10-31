@@ -272,3 +272,62 @@ test "a reset or a close Fault gives fault and no responseStatus, and a partial 
     ),
   )
 }
+
+///|
+/// The spec's lines for a template failure and a data write failure, each
+/// a second after the one before, then the template failure of a Stub with
+/// no path condition, which has no `routePath`.
+test "an error line names the Mock, the error's message, the Stub's path and the Stub ID" {
+  let prefix = @log.mockoon_prefix(Some("shop"))
+  let failures = [
+    (Some("/orders"), "create-order", "body.customer.name is missing"),
+    (
+      Some("/visits"),
+      "visit",
+      "the Data bucket \"visits\" holds a number, and \"merge\" needs an object",
+    ),
+    (None, "anything", "query.page is missing"),
+  ]
+  let out = []
+  for i, failure in failures {
+    let (path, stub, message) = failure
+    let line = @log.serving_error_line(
+      prefix,
+      message~,
+      path~,
+      stub~,
+      at=example_time + 2750L + 1000L * i.to_int64(),
+    )
+    out.push(line)
+    if !line.has_prefix(prefix) {
+      out.push("does not start with \{prefix}")
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|{"app":"smock","environmentName":"shop","level":"error","message":"Error while serving the content: body.customer.name is missing","routePath":"/orders","routeUUID":"create-order","timestamp":"2026-10-31T09:00:04.000Z"}
+      #|{"app":"smock","environmentName":"shop","level":"error","message":"Error while serving the content: the Data bucket \"visits\" holds a number, and \"merge\" needs an object","routePath":"/visits","routeUUID":"visit","timestamp":"2026-10-31T09:00:05.000Z"}
+      #|{"app":"smock","environmentName":"shop","level":"error","message":"Error while serving the content: query.page is missing","routeUUID":"anything","timestamp":"2026-10-31T09:00:06.000Z"}
+    ),
+  )
+}
+
+///|
+/// A message with quotes, a backslash, a newline, a tab and a control
+/// character, and a pattern and a Stub ID with a quote and a backslash,
+/// which a pattern and an ID may hold.
+test "an error line escapes its message, its path and its Stub ID as JSON.stringify does" {
+  inspect(
+    @log.serving_error_line(
+      @log.mockoon_prefix(Some("ユーザー 一覧")),
+      message="\"name\" at C:\\data\nis\tmissing \u{01}",
+      path=Some("/users/[^\"\\\\]+"),
+      stub="say \"hi\" \\ there",
+      at=example_time,
+    ),
+    content=(
+      #|{"app":"smock","environmentName":"ユーザー 一覧","level":"error","message":"Error while serving the content: \"name\" at C:\\data\nis\tmissing \u0001","routePath":"/users/[^\"\\\\]+","routeUUID":"say \"hi\" \\ there","timestamp":"2026-10-31T09:00:01.250Z"}
+    ),
+  )
+}
