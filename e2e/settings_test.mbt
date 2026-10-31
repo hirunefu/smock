@@ -23,7 +23,7 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  --replicas <replicas>                        How many replicas the deployment runs. Above 1, every Admin API response warns that state is per replica. [env: SMOCK_REPLICAS] [default: 1]
       #|  --session-header <session-header>            The request header that carries the Session, as W3C Baggage, on requests and Admin API calls. [env: SMOCK_SESSION_HEADER] [default: baggage]
       #|  --session-member <session-member>            The member of the Session header whose value is the Session key. [env: SMOCK_SESSION_MEMBER] [default: smock-session]
-      #|  --log-format <log-format>                    The log format: json. [env: SMOCK_LOG_FORMAT] [default: json]
+      #|  --log-format <log-format>                    The log format: json or mockoon. [env: SMOCK_LOG_FORMAT] [default: json]
       #|  --body-file-dir <body-file-dir>              The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
       #|  --template-env <template-env>                The environment variables templates may read as env.NAME, separated by commas, such as REGION,API_BASE. Their values are read once, at startup. A listed value can show in responses, renderings and template error messages, so list only values that may be shown. A name is letters, digits and _, starting with a letter or _, and cannot start with SMOCK_. None by default. [env: SMOCK_TEMPLATE_ENV]
       #|  --header-size-limit <header-size-limit>      The most bytes a request head (request line and header fields) may take. Larger heads get 431. [env: SMOCK_HEADER_SIZE_LIMIT] [default: 16384]
@@ -136,6 +136,7 @@ async test "an invalid value stops startup with a message that names the setting
     (["--port", "8443", "--tls-port", "8443"], Map([])),
     ([], { "SMOCK_PORT": "9000", "SMOCK_TLS_PORT": "9000" }),
     (["--log-format", "text"], Map([])),
+    ([], { "SMOCK_LOG_FORMAT": "Mockoon" }),
     ([], { "SMOCK_LOG_FORMAT": "" }),
     (["--dir", ""], Map([])),
     (["--body-file-dir", "../files"], Map([])),
@@ -205,8 +206,9 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "https" for --tls-port (SMOCK_TLS_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "8443" for --tls-port (SMOCK_TLS_PORT): must differ from --port (SMOCK_PORT)
       #|status 2: smock serve: invalid value "9000" for --tls-port (SMOCK_TLS_PORT): must differ from --port (SMOCK_PORT)
-      #|status 2: smock serve: invalid value "text" for --log-format (SMOCK_LOG_FORMAT): must be json
-      #|status 2: smock serve: invalid value "" for --log-format (SMOCK_LOG_FORMAT): must be json
+      #|status 2: smock serve: invalid value "text" for --log-format (SMOCK_LOG_FORMAT): must be json or mockoon
+      #|status 2: smock serve: invalid value "Mockoon" for --log-format (SMOCK_LOG_FORMAT): must be json or mockoon
+      #|status 2: smock serve: invalid value "" for --log-format (SMOCK_LOG_FORMAT): must be json or mockoon
       #|status 2: smock serve: invalid value "" for --dir (SMOCK_DIR): must not be empty
       #|status 2: smock serve: invalid value "../files" for --body-file-dir (SMOCK_BODY_FILE_DIR): must be a relative path inside the definitions directory
       #|status 2: smock serve: invalid value "/srv/files" for --body-file-dir (SMOCK_BODY_FILE_DIR): must be a relative path inside the definitions directory
