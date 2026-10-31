@@ -14,6 +14,16 @@ fn is_server_line(line : String) -> Bool {
 }
 
 ///|
+/// The `message` of the log line `line`, or `line` itself when it has none.
+fn message_of(line : String) -> String {
+  let entry = @json.parse(line) catch { _ => return line }
+  match entry {
+    Object({ "message": String(message), .. }) => message
+    _ => line
+  }
+}
+
+///|
 /// Waits until smock has written `count` `Server started on port …` lines
 /// to stdout, while it runs, and returns every line of stdout so far.
 async fn Smock::started_lines(self : Smock, count : Int32) -> Array[String] {
@@ -151,10 +161,7 @@ async test "a reload that adds a Mock, one that changes nothing and one that fai
       if is_server_line(line) {
         out.push(masked_line(line, replace~))
       } else {
-        match @json.parse(line) {
-          Object({ "message": String(message), .. }) => out.push(message)
-          _ => out.push(line)
-        }
+        out.push(message_of(line))
       }
     }
     out.push("exit status \{stopped.status}")
@@ -213,4 +220,57 @@ async test "SIGINT and SIGHUP, which end smock at once, write no Server stopped 
       ),
     )
   })
+}
+
+///|
+async test "invalid definitions, a plain or a TLS port taken and a certificate that cannot be loaded write no Server started line before exit status 1" {
+  let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+  let out = []
+  let report = (name : String, stopped : Stopped) => {
+    let last = stopped.stdout.last().map_or("none", message_of)
+    out.push(
+      "\{name}: status \{stopped.status}, \{stopped.stdout.filter(is_server_line).length()} started or stopped lines, last line \{last}",
+    )
+  }
+  let broken =
+    #|{ "stubs": [{ "id": "", "mock": "default",
+    #|  "request": { "method": "GET", "path": "/" },
+    #|  "response": { "status": 200 } }] }
+  with_definitions([("broken.json", broken)], dir => {
+    report(
+      "invalid definitions",
+      run_smock(["serve", "--dir", dir, "--port", "0"], env~),
+    )
+  })
+  let _ = with_smock(["--port", "0"], first => {
+    report(
+      "the plain port taken",
+      run_smock(["serve", "--port", first.port.to_string()], env~),
+    )
+    report(
+      "the TLS port taken",
+      run_smock(["serve", "--port", "0"], env={
+        "SMOCK_LOG_FORMAT": "mockoon",
+        "SMOCK_TLS_PORT": first.tls_port.to_string(),
+      }),
+    )
+  })
+  with_certificates(certs => {
+    report(
+      "a certificate that cannot be loaded",
+      run_smock(
+        ["serve", "--port", "0", ..certs.args(cert="\{certs.dir}/missing.pem")],
+        env~,
+      ),
+    )
+  })
+  inspect(
+    out.join("\n"),
+    content=(
+      #|invalid definitions: status 1, 0 started or stopped lines, last line invalid definitions
+      #|the plain port taken: status 1, 0 started or stopped lines, last line cannot listen
+      #|the TLS port taken: status 1, 0 started or stopped lines, last line cannot listen
+      #|a certificate that cannot be loaded: status 1, 0 started or stopped lines, last line cannot load the TLS certificate
+    ),
+  )
 }
