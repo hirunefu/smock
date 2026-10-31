@@ -16,7 +16,9 @@ smock's peak memory and any OOM kills. A plan (bench/plan.json by default,
 or bench/plan-autopilot.json for the smallest GKE Autopilot Pods and the
 Helm chart's default) says which profiles and cases run, at which rates and
 for how long. Each run checks the targets of bench/targets.json, each under
-one of those profiles.
+one of those profiles. With --log-format mockoon, smock writes a line to
+stdout for each request, which the run reads through a pipe and counts
+against the requests smock answered.
 
 usage:
   python3 bench/bench.py run [options]    run the benchmark (--help lists the options)
