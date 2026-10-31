@@ -324,3 +324,115 @@ async test "smock's Mockoon-equivalent lines for the Mock probe equal the lines 
     })
   })
 }
+
+///|
+/// `actual` against `expected`, as Mockoon's tests compare them with
+/// `strictEqual`: `"ok"`, or what `actual` is instead. `None` stands for
+/// JavaScript's `undefined`.
+fn strict_equal(actual : Json?, expected : Json?) -> String {
+  if actual == expected {
+    return "ok"
+  }
+  match actual {
+    Some(json) => "got \{json.stringify()}"
+    None => "got undefined"
+  }
+}
+
+///|
+async test "the assertions of Mockoon's own logging test hold for smock's lines: the started message, then a Transaction recorded line for GET /api/test with status 200 and no transaction, and stdout holds the texts Mockoon's tests look for" {
+  // Mockoon's mock1 environment, as packages/cli/test/specs/logging.test.ts
+  // starts it: a route GET /api/test that answers mock-content-1.
+  let mock1 =
+    #|mocks:
+    #|  - { name: mock1 }
+    #|stubs:
+    #|  - id: api-test
+    #|    mock: mock1
+    #|    request: { method: GET, path: /api/test }
+    #|    response: { status: 200, body: mock-content-1 }
+  with_definitions([("mock1.yaml", mock1)], dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let mut port = 0
+    let mut response = ""
+    let stopped = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      port = smock.port
+      response = smock.send("GET", "/api/test")
+      smock.transaction_lines(1) |> ignore
+    })
+    let logs = mockoon_equivalent(stopped.stdout).map(line => {
+      @json.parse(line) catch {
+        _ => fail("not JSON: \{line}")
+      }
+    })
+    let get = (i : Int32, key : String) => {
+      match logs.get(i) {
+        Some(Object(log)) => log.get(key)
+        _ => None
+      }
+    }
+    let stdout = stopped.stdout.join("\n")
+    let started = "Server started on port \{port}"
+    // Mockoon's logs[1], the token line, has no counterpart, so its
+    // logs[2] is smock's logs[1]; its port 3000 is the one smock picked.
+    let assertions = [
+      (
+        "logs[0].message is 'Server started on port <port>'",
+        strict_equal(get(0, "message"), Some(Json::string(started))),
+      ),
+      (
+        "logs[1].message is 'Transaction recorded'",
+        strict_equal(
+          get(1, "message"),
+          Some(Json::string("Transaction recorded")),
+        ),
+      ),
+      (
+        "logs[1].requestMethod is 'GET'",
+        strict_equal(get(1, "requestMethod"), Some(Json::string("GET"))),
+      ),
+      (
+        "logs[1].requestPath is '/api/test'",
+        strict_equal(get(1, "requestPath"), Some(Json::string("/api/test"))),
+      ),
+      (
+        "logs[1].responseStatus is 200",
+        strict_equal(get(1, "responseStatus"), Some(Json::number(200))),
+      ),
+      (
+        "logs[1].transaction is undefined",
+        strict_equal(get(1, "transaction"), None),
+      ),
+      (
+        "stdout includes '\"environmentName\":\"mock1\"'",
+        stdout.contains("\"environmentName\":\"mock1\"").to_string(),
+      ),
+      (
+        "stdout includes 'Server started on port <port>'",
+        stdout.contains(started).to_string(),
+      ),
+    ]
+    inspect(
+      (
+        $|\{response}
+        $|\{assertions.map(a => "\{a.0}: \{a.1}").join("\n")}
+      ),
+      content=(
+        #|HTTP/1.1 200 OK
+        #|Smock-Mock: mock1; via=default
+        #|Date: <now>
+        #|Content-Length: 14
+        #|
+        #|mock-content-1
+        #|logs[0].message is 'Server started on port <port>': ok
+        #|logs[1].message is 'Transaction recorded': ok
+        #|logs[1].requestMethod is 'GET': ok
+        #|logs[1].requestPath is '/api/test': ok
+        #|logs[1].responseStatus is 200: ok
+        #|logs[1].transaction is undefined: ok
+        #|stdout includes '"environmentName":"mock1"': true
+        #|stdout includes 'Server started on port <port>': true
+      ),
+    )
+  })
+}
