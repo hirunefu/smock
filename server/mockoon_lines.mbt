@@ -1,8 +1,9 @@
 // The Mockoon-equivalent lines of the mockoon log format, which smock
 // writes to stdout: a Server started line for each Mock once the plain and
 // TLS ports listen, a Transaction recorded line for each request a Mock
-// handles, and a Server stopped line for each Mock when the drain ends, all
-// built by the log package from a prefix cached for each Mock.
+// handles, after an Error while serving the content line when its Stub's
+// content failed, and a Server stopped line for each Mock when the drain
+// ends, all built by the log package from a prefix cached for each Mock.
 
 ///|
 /// The Mockoon-equivalent lines: where they go, and the start of each
