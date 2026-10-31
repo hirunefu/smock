@@ -295,6 +295,37 @@ opens them, and its other streams are answered meanwhile.
 - On SIGTERM, event streams go on until they end or the drain timeout cuts
   them, as over HTTP/1.1.
 
+## Faults
+
+A Stub's [connection Fault](definition-files.md#connection-faults) takes
+its nearest HTTP/2 form: it fails the request on its own stream, or, for
+`close`, the connection. smock decides Faults as over HTTP/1.1, with the
+same draws, so a probability and [`fault.seed` or
+`--seed`](definition-files.md#seeds) give the same Faults over both.
+
+| Fault | What the client receives | Journal entry |
+|---|---|---|
+| `reset` | Once the request has arrived in full, body included, RST_STREAM with `INTERNAL_ERROR` on its stream. The other streams of the connection go on. | No status. |
+| `partial` | HEADERS, with the `content-length` of the whole body, and the first half of the body, or the first half of the events, rounded down, each after its delay. Then RST_STREAM with `INTERNAL_ERROR`. A response with no body to halve, such as one to HEAD, a 204, or a stream of a single event, sends its HEADERS without ending the stream, then the reset. | Its status. |
+| `close` | GOAWAY with `NO_ERROR`, naming the highest stream the client has opened, then nothing more. smock reads and discards what the client sends, and closes the connection when the client closes it, or after a second. | No status. |
+
+- A Fault with a delay comes once the delay is over, and holds up only its
+  own stream, as any delay does ([Streams that wait](#streams-that-wait)).
+  Half a body larger than the client's windows goes out as the client
+  widens them, then the reset.
+- `close` ends the other streams of the connection with it. A stream whose
+  response waits, for a delay, for window or for its next event, gets
+  nothing more, and is in the Journal, as a request whose client goes away
+  is. A stream whose request is still arriving never reaches the Mocks:
+  smock reads no more frames once it has sent the GOAWAY. The stream ID the
+  GOAWAY names is at least that of every stream smock has begun to answer,
+  so a client knows that any of them may have reached the Mocks (RFC 9113,
+  section 8.7), and that the streams above it did not.
+- The request is in the Journal before its RST_STREAM or GOAWAY goes out.
+- Over HTTP/2, no Fault resets the TCP connection: `reset` and `partial`
+  reset a stream with RST_STREAM, a frame, and the connection that `close`
+  ends closes with a FIN.
+
 ## The Journal
 
 An HTTP/2 request is in the Journal like any other, with `version`
@@ -407,6 +438,13 @@ So a list just over the limit gets a 431, which tells the client why,
 while what moonhttp holds of one header block, and of the list it decodes
 to, stays within twice the limit.
 
+moonhttp 0.14.0 counts a decoded list in 32 bits, so its count wraps past
+2^31 octets, and moonhttp then passes the list on instead of resetting the
+stream. A block reaches that only when it may be over 524,288 octets, with
+a `--header-size-limit` over 262,144: each octet names at most one table
+entry, of at most 4,096 octets. smock's own count still refuses such a list
+with 431.
+
 ### Timeouts
 
 Over HTTP/2, the read, idle and write timeouts work per stream and per
@@ -472,6 +510,7 @@ connection.
 | Pattern | Bound | Past it |
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
+| HPACK bomb: a small header block that decodes to a large list, such as one that names a large table entry over and over | moonhttp keeps no more of a decoded list than twice `--header-size-limit`, counted as RFC 7541 counts it. smock then holds the list to `--header-size-limit` and `--header-count-limit` ([Header lists](#header-lists)). The table smock decodes header blocks with is 4,096 octets. So is the one it encodes responses with, however large a table the client allows: smock lowers a larger SETTINGS_HEADER_TABLE_SIZE to 4,096 before moonhttp sees it, since an encoder may use any table up to the size the client allows (RFC 7541, section 4.2). | 431 for a list over `--header-size-limit` or with too many fields. RST_STREAM `ENHANCE_YOUR_CALM`, with no status, for a list over twice it. A block that does not decode is a connection error, not a defence: GOAWAY `COMPRESSION_ERROR`, with no log line ([Connection errors](#connection-errors)). |
 | Frames that do no work: SETTINGS, PING, PRIORITY, reset and empty-frame floods (CVE-2019-9512, -9513, -9514, -9515, -9518) | At most 100 in any one second ([Frames that do no work](#frames-that-do-no-work)). | GOAWAY `ENHANCE_YOUR_CALM`, and the connection closes. |
 | A client that stops reading or keeps its windows at zero (CVE-2019-9517) | `--write-timeout-ms`: a write that makes no progress, or a body that waits for a window, for that long ([Timeouts](#timeouts)). | The connection closes, without GOAWAY. A stream whose own window alone stays at zero gets RST_STREAM `CANCEL`, and the connection goes on. |
 | Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. Each window update lets smock send, which starts the write timeout again, so a client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
@@ -538,6 +577,10 @@ opens a new connection for the rest.
   `ENHANCE_YOUR_CALM` ([Header lists](#header-lists)).
 - A connection that a defence closes with GOAWAY gets `ENHANCE_YOUR_CALM`,
   and is logged ([Defences](#defences)).
+- A header block that does not decode gets `COMPRESSION_ERROR`: one with a
+  Huffman code that holds EOS or is badly padded, an index that names no
+  entry, or a table size update past 4,096 octets, the size of the table
+  smock decodes with.
 - HEADERS on a stream ID that the client has already used get
   `PROTOCOL_ERROR` (RFC 9113, section 5.1.1). That covers a stream that
   has ended, one the client reset, and an ID the client skipped when it

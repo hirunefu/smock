@@ -5,7 +5,8 @@
 // smock owns the I/O, the mapping onto the engine and the timeouts. The
 // loop here ties together parts that change apart:
 //
-// - the frame reader (`FrameReader`, http2_frames.mbt), with
+// - the frame reader (`FrameReader`, http2_frames.mbt), which caps the
+//   header table size the client's SETTINGS allow, with
 //   `H2Connection::judge`, where each frame is judged before it reaches
 //   the `Conn`, and counted when it does no work (`NoWorkFrames`,
 //   http2_defences.mbt);
@@ -25,6 +26,9 @@
 //   resume as the client widens them (`H2Connection::write_slowly`,
 //   http2_windows.mbt), and the streams of Server-Sent Events
 //   (`H2Connection::start_events`, http2_events.mbt);
+// - the HTTP/2 forms of the connection Faults (http2_faults.mbt): RST_STREAM
+//   for `reset`, half the response then RST_STREAM for `partial`, and
+//   GOAWAY for `close`;
 // - the deadlines of the connection and of its streams, with the write
 //   timeout of the bodies that wait for the client's windows, which the
 //   connection's one watchdog keeps (`H2Connection::expire`).
@@ -33,8 +37,6 @@
 // (requests.mbt). Until they get forms of their own, some cases are served
 // in an interim way, so that a client's run ends rather than hangs:
 //
-// - a Fault ends its stream with RST_STREAM INTERNAL_ERROR, its Journal
-//   entry committed as the engine made it;
 // - for the drain, the connection is idle while no stream is in progress,
 //   and while smock drains, it closes, without GOAWAY, as soon as none is.
 
@@ -44,7 +46,9 @@
 /// (4,096 octets), the initial window (65,535 octets), the frame size
 /// (16,384 octets) and extended CONNECT (off), with at most
 /// `--http2-max-concurrent-streams` concurrent streams, and a header list
-/// of at most `header_list_bound`.
+/// of at most `header_list_bound`. The header table is the one smock decodes
+/// requests with; the one it encodes responses with stays at 4,096 octets
+/// too, whatever the client allows (`FrameReader::cap_header_table`).
 ///
 /// The `Conn` holds the client to these from the first stream, before the
 /// client acknowledges them: moonhttp applies the limits that protect this
@@ -270,6 +274,12 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
   out : WatchedStream[S],
 ) -> Unit {
   for ;; {
+    // After the GOAWAY of a close Fault, queued while a frame was handled,
+    // the frames already read go no further.
+    if self.closing {
+      let _ = self.read_more(stream, out)
+      return
+    }
     let octets = match self.reader.next() {
       Preface(preface) => preface
       Frame(head, frame) => {
@@ -772,10 +782,12 @@ fn[S : @io.Writer + ReadOutput] H2Connection::close_after_goaway(
 /// Answers the request that has arrived in full on `stream`, through the
 /// steps every request to the Mocks takes. A response with no delay whose
 /// body fits the windows is queued at once, while the event is handled,
-/// with no task. One with a delay waits in a task of its own (`wait`), and
-/// so do the rest of a body larger than the windows (`write_slowly`) and
-/// the events of a stream of Server-Sent Events, whose HEADERS are queued
-/// at once (`start_events`); each writes to `out`.
+/// with no task, and so is a connection Fault with no delay (`reset_after`,
+/// `close_by_fault`, and `queue` for a partial one). One with a delay waits
+/// in a task of its own (`wait`), and so do the rest of a body larger than
+/// the windows (`write_slowly`) and the events of a stream of Server-Sent
+/// Events, whose HEADERS are queued at once (`start_events`); each writes
+/// to `out`.
 fn[S : @io.Writer + ReadOutput] H2Connection::respond(
   self : H2Connection,
   stream : Int32,
@@ -795,21 +807,39 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
     self.wait(stream, outcome, head~, connect~, out)
     return
   }
-  if outcome.plan.fault is None && outcome.plan.body is Events(events) {
-    self.start_events(stream, outcome, events, head~, connect~, out)
-    return
+  match outcome.plan.fault {
+    Some(Reset) => {
+      self.reset_after(stream, outcome.journal)
+      ports.done(outcome, self.last_read)
+      return
+    }
+    Some(Close) => {
+      self.close_by_fault(stream, outcome.journal, out)
+      ports.done(outcome, self.last_read)
+      return
+    }
+    _ => ()
   }
-  let rest = self.queue(
-    stream,
-    outcome.plan,
-    outcome.journal,
-    head~,
-    connect~,
-    now=self.now,
-  )
-  if rest.length() > 0 {
-    self.write_slowly(stream, rest, outcome, out)
-    return
+  match outcome.plan.body {
+    Events(events) => {
+      self.start_events(stream, outcome, events, head~, connect~, out)
+      return
+    }
+    Bytes(body) => {
+      let rest = self.queue(
+        stream,
+        outcome.plan,
+        body,
+        outcome.journal,
+        head~,
+        connect~,
+        now=self.now,
+      )
+      if rest.length() > 0 {
+        self.write_slowly(stream, rest, outcome, out)
+        return
+      }
+    }
   }
   ports.done(outcome, self.last_read)
 }
@@ -818,8 +848,8 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
 /// Answers `stream`, whose request the engine decided `outcome` for, and
 /// was a HEAD when `head` is true, or a CONNECT when `connect` is true, in a
 /// task of its own: once the plan's delay is over, the task queues the
-/// response and writes it to `out`, while the connection's other streams
-/// are answered meanwhile.
+/// response, or carries out the plan's connection Fault, and writes it to
+/// `out`, while the connection's other streams are answered meanwhile.
 ///
 /// The task ends with its stream, however the stream ends: when its
 /// response is queued and written, when a reset cancels it
@@ -851,31 +881,45 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
     // From here on the response ends the stream, and commits the entry.
     entry = None
     let now = @async.now()
-    if outcome.plan.fault is None && outcome.plan.body is Events(events) {
-      let more = self.open_events(
-        stream,
-        outcome.plan,
-        outcome.journal,
-        events.length(),
-        head~,
-        connect~,
-        now~,
-      )
-      if more {
-        self.send_events(stream, events, outcome.journal, out)
-      }
-    } else {
-      let rest = self.queue(
-        stream,
-        outcome.plan,
-        outcome.journal,
-        head~,
-        connect~,
-        now~,
-      )
-      if rest.length() > 0 {
-        let _ = self.trickle(stream, rest, outcome.journal, out)
-      }
+    let partial = outcome.plan.fault is Some(Partial)
+    match outcome.plan.fault {
+      Some(Reset) => self.reset_after(stream, outcome.journal)
+      Some(Close) => self.close_by_fault(stream, outcome.journal, out)
+      _ =>
+        match outcome.plan.body {
+          Events(events) => {
+            let more = self.open_events(
+              stream,
+              outcome.plan,
+              outcome.journal,
+              events.length(),
+              head~,
+              connect~,
+              now~,
+            )
+            if more &&
+              self.send_events(stream, events, outcome.journal, out, partial~) &&
+              partial {
+              self.reset_after(stream, None)
+            }
+          }
+          Bytes(body) => {
+            let rest = self.queue(
+              stream,
+              outcome.plan,
+              body,
+              outcome.journal,
+              head~,
+              connect~,
+              now~,
+            )
+            if rest.length() > 0 &&
+              self.trickle(stream, rest, outcome.journal, out, end=!partial) &&
+              partial {
+              self.reset_after(stream, None)
+            }
+          }
+        }
     }
     self.waiting.remove(stream)
     let _ = self.writer.write(out)
@@ -894,7 +938,9 @@ async fn H2Connection::answered(self : H2Connection) -> Unit {
   self.end_stream()
   let now = @async.now()
   self.watch_windows(now)
-  guard self.became_idle && self.reading && self.idle() else { return }
+  guard !self.closing && self.became_idle && self.reading && self.idle() else {
+    return
+  }
   if self.ports.lifecycle.is_draining() {
     self.group.return_immediately(())
     return
@@ -906,23 +952,28 @@ async fn H2Connection::answered(self : H2Connection) -> Unit {
 }
 
 ///|
-/// Queues on `stream`, at `now`, the response `plan` describes to a request
-/// that was a HEAD when `head` is true, or a CONNECT when `connect` is
-/// true, and commits the Journal entry `entry` just before the frame that
-/// ends the stream. A response whose body fits the stream's windows is
-/// queued whole: its HEADERS, then its body as DATA, which ends the stream.
-/// A response to HEAD, and one that has no content, such as a 2xx to a
-/// CONNECT, sends no DATA: its HEADERS end the stream.
+/// Queues on `stream`, at `now`, the response `plan` describes, whose body
+/// is `body`, to a request that was a HEAD when `head` is true, or a
+/// CONNECT when `connect` is true, and commits the Journal entry `entry`
+/// just before the frame that ends the stream. A response whose body fits
+/// the stream's windows is queued whole: its HEADERS, then its body as
+/// DATA, which ends the stream. A response to HEAD, and one that has no
+/// content, such as a 2xx to a CONNECT, sends no DATA: its HEADERS end the
+/// stream.
 ///
 /// A body that does not fit gets its HEADERS and as much of the body as the
 /// windows allow; `queue` then returns the rest, which the caller sends in
 /// the stream's task as the windows widen (`trickle`), with the entry still
 /// to commit. Otherwise it returns nothing.
 ///
-/// For now, a Fault ends the stream with RST_STREAM INTERNAL_ERROR instead,
-/// the entry committed first, as the engine made it. A stream of
-/// Server-Sent Events without a Fault is not queued here, but by
-/// `open_events` and `send_events`.
+/// With a partial Fault, the HEADERS carry the length of the whole `body`,
+/// and the DATA half of it, rounded down, which does not end the stream:
+/// RST_STREAM INTERNAL_ERROR ends it instead, the entry committed just
+/// before (`reset_after`). One that has no content to halve, such as a
+/// response to HEAD, sends its HEADERS without ending the stream, then the
+/// reset. A half that does not fit the windows is returned, as a body that
+/// does not fit is, and the caller resets the stream once it is sent. The
+/// other Faults, and a stream of Server-Sent Events, are not queued here.
 ///
 /// It runs while the event is handled, when the stream has no task, or in
 /// the stream's own task, which goes on once it returns: so a reset here
@@ -931,22 +982,22 @@ fn H2Connection::queue(
   self : H2Connection,
   stream : Int32,
   plan : @engine.ResponsePlan,
+  body : BytesView,
   entry : @engine.JournalEntry?,
   head~ : Bool,
   connect~ : Bool,
   now~ : Int64,
 ) -> BytesView {
   let ports = self.ports
-  guard plan.fault is None && plan.body is Bytes(body) else {
-    self.reset_after(stream, entry)
-    return b""
-  }
+  let partial = plan.fault is Some(Partial)
   // HEAD gets the length of the body without the body, as on HTTP/1.1. A
   // 2xx to a CONNECT gets neither: smock opens no tunnel.
-  let sent = if has_content(plan.status, connect~) && !head {
-    body
-  } else {
+  let sent = if !has_content(plan.status, connect~) || head {
     body[0:0]
+  } else if partial {
+    body[0:body.length() / 2]
+  } else {
+    body
   }
   let fields = response_fields(
     plan.status,
@@ -955,6 +1006,16 @@ fn H2Connection::queue(
     date=ports.dates.at(now),
     connect~,
   )
+  if sent.length() == 0 && partial {
+    self.conn.headers(stream, fields) catch {
+      _ => {
+        self.reset_after(stream, entry)
+        return sent
+      }
+    }
+    self.reset_after(stream, entry)
+    return sent
+  }
   if sent.length() == 0 {
     ports.commit(entry)
     self.conn.headers(stream, fields, end=true) catch {
@@ -980,6 +1041,14 @@ fn H2Connection::queue(
       }
     }
     return sent[room:]
+  }
+  if partial {
+    // What is sent fits the windows, so the `Conn` takes it.
+    self.conn.data(stream, sent) catch {
+      _ => return sent[0:0]
+    }
+    self.reset_after(stream, entry)
+    return sent[0:0]
   }
   ports.commit(entry)
   // The body fits the windows, so the `Conn` takes it.
@@ -1047,8 +1116,10 @@ fn H2Connection::send_continue(self : H2Connection, stream : Int32) -> Unit {
 
 ///|
 /// Commits the Journal entry `entry`, if there is one, then ends `stream`
-/// with RST_STREAM INTERNAL_ERROR. It is called from `queue`, so the reset
-/// leaves the stream's task be.
+/// with RST_STREAM INTERNAL_ERROR: a reset Fault, the end of a partial one,
+/// or a response the `Conn` refuses. It is called where the response is
+/// queued, while the event is handled or in the stream's own task, so the
+/// reset leaves the task be.
 fn H2Connection::reset_after(
   self : H2Connection,
   stream : Int32,

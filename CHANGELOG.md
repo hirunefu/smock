@@ -69,9 +69,16 @@ of each GitHub release include its section
   body. An events Stub streams one event stream per HTTP/2 stream, several
   at once on one connection: the DATA of its last event ends the HTTP/2
   stream, and a client that resets the HTTP/2 stream ends the event stream
-  at once. A client that sends more than 100 frames that do no work in one
-  second, such as a flood of PING or SETTINGS frames, gets GOAWAY
-  `ENHANCE_YOUR_CALM`, and smock logs one line that names the pattern. See
+  at once. A connection Fault takes its nearest HTTP/2 form: `reset` resets
+  its stream alone, `partial` sends half the body, or half the events, then
+  resets the stream, and `close` sends GOAWAY and closes the connection,
+  with the same draws and seeds as over HTTP/1.1. A client that sends more
+  than 100 frames that do no work in one second, such as a flood of PING or
+  SETTINGS frames, gets GOAWAY `ENHANCE_YOUR_CALM`, and smock logs one line
+  that names the pattern. The HPACK table smock encodes responses with
+  stays at 4,096 octets, however large a table the client allows, and a
+  header block that does not decode ends the connection with GOAWAY
+  `COMPRESSION_ERROR`. See
   [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
@@ -164,6 +171,11 @@ of each GitHub release include its section
   and a larger one gets 431 on its stream, while a header block over twice
   the limit closes the connection. So a head that fits over HTTP/1.1 can
   get 431 over HTTP/2. See [Header lists](docs/http2.md#header-lists).
+- The Definition-file Schema's description of a connection Fault's `kind`
+  gives its HTTP/2 form beside its HTTP/1.1 one: RST_STREAM on the
+  request's stream for `reset`, half the response then RST_STREAM for
+  `partial`, and GOAWAY then the close for `close`. The format is
+  unchanged. See [Faults](docs/http2.md#faults).
 
 ### Fixed
 
