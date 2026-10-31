@@ -59,6 +59,9 @@ such as Mock, Stub and Session.
 - [bench/README.md](../bench/README.md) describes the release benchmark:
   how to run it on a machine, on GKE Autopilot and in CI, what a run
   writes, and how to compare runs.
+- [llm-sdks/README.md](../llm-sdks/README.md) describes the SDK job,
+  which reads smock's LLM responses with the vendors' official SDKs in
+  CI: what it checks, how to run it, and how to raise a pin.
 - [merging-into-main.md](merging-into-main.md) is the maintainer's
   checklist before an integration branch is merged into `main`.
 - [releasing.md](releasing.md) says how the maintainer makes a release,

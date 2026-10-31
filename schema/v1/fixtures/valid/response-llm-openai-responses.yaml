@@ -1,0 +1,22 @@
+mocks:
+  - name: openai
+stubs:
+  - id: responses
+    mock: openai
+    request: { method: POST, path: /v1/responses }
+    response:
+      status: 200
+      headers: { x-ratelimit-remaining-requests: "59" }
+      llm:
+        api: openai-responses
+        text: Hi there! How can I assist you today?
+        id: resp_test_1
+        model: gpt-6-astra
+        usage: { input: 37, output: 11 }
+    fault: { seed: 7 }
+  - id: empty
+    mock: openai
+    request: { method: POST, path: /v1/responses/empty }
+    response:
+      status: 200
+      llm: { api: openai-responses }

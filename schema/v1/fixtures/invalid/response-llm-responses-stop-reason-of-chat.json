@@ -1,0 +1,10 @@
+{
+  "mocks": [{ "name": "openai" }],
+  "stubs": [
+    {
+      "id": "responses",
+      "mock": "openai",
+      "response": { "status": 200, "llm": { "api": "openai-responses", "text": "Hello.", "stopReason": "length" } }
+    }
+  ]
+}

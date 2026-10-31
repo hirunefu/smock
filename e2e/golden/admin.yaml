@@ -801,6 +801,44 @@ stubs:
                   id: string
                   data: string
                   json: null
+              llm:
+                api: openai-chat
+                text: ""
+                chunks:
+                  - string
+                chunkSize: 4
+                toolCalls:
+                  - name: string
+                    arguments: {}
+                    id: string
+                id: string
+                model: string
+                usage:
+                  input: 0
+                  output: 0
+                stopReason: stop
+                timing:
+                  first:
+                    fixed: 0
+                    uniform:
+                      min: 0
+                      max: 0
+                    lognormal:
+                      median: 0
+                      sigma: 0
+                  interval:
+                    fixed: 0
+                    uniform:
+                      min: 0
+                      max: 0
+                    lognormal:
+                      median: 0
+                      sigma: 0
+                error:
+                  after: 0
+                  type: string
+                  code: string
+                  message: string
             responses:
               - weight: 1
                 status: 200
@@ -815,6 +853,44 @@ stubs:
                     id: string
                     data: string
                     json: null
+                llm:
+                  api: openai-chat
+                  text: ""
+                  chunks:
+                    - string
+                  chunkSize: 4
+                  toolCalls:
+                    - name: string
+                      arguments: {}
+                      id: string
+                  id: string
+                  model: string
+                  usage:
+                    input: 0
+                    output: 0
+                  stopReason: stop
+                  timing:
+                    first:
+                      fixed: 0
+                      uniform:
+                        min: 0
+                        max: 0
+                      lognormal:
+                        median: 0
+                        sigma: 0
+                    interval:
+                      fixed: 0
+                      uniform:
+                        min: 0
+                        max: 0
+                      lognormal:
+                        median: 0
+                        sigma: 0
+                  error:
+                    after: 0
+                    type: string
+                    code: string
+                    message: string
             variables: {}
             dataWrites:
               - op: set
@@ -960,6 +1036,44 @@ stubs:
                 id: string
                 data: string
                 json: null
+            llm:
+              api: openai-chat
+              text: ""
+              chunks:
+                - string
+              chunkSize: 4
+              toolCalls:
+                - name: string
+                  arguments: {}
+                  id: string
+              id: string
+              model: string
+              usage:
+                input: 0
+                output: 0
+              stopReason: stop
+              timing:
+                first:
+                  fixed: 0
+                  uniform:
+                    min: 0
+                    max: 0
+                  lognormal:
+                    median: 0
+                    sigma: 0
+                interval:
+                  fixed: 0
+                  uniform:
+                    min: 0
+                    max: 0
+                  lognormal:
+                    median: 0
+                    sigma: 0
+              error:
+                after: 0
+                type: string
+                code: string
+                message: string
           responses:
             - weight: 1
               status: 200
@@ -974,6 +1088,44 @@ stubs:
                   id: string
                   data: string
                   json: null
+              llm:
+                api: openai-chat
+                text: ""
+                chunks:
+                  - string
+                chunkSize: 4
+                toolCalls:
+                  - name: string
+                    arguments: {}
+                    id: string
+                id: string
+                model: string
+                usage:
+                  input: 0
+                  output: 0
+                stopReason: stop
+                timing:
+                  first:
+                    fixed: 0
+                    uniform:
+                      min: 0
+                      max: 0
+                    lognormal:
+                      median: 0
+                      sigma: 0
+                  interval:
+                    fixed: 0
+                    uniform:
+                      min: 0
+                      max: 0
+                    lognormal:
+                      median: 0
+                      sigma: 0
+                error:
+                  after: 0
+                  type: string
+                  code: string
+                  message: string
           variables: {}
           dataWrites:
             - op: set

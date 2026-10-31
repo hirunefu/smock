@@ -171,7 +171,7 @@ let price_stream_example : (String, String) = (
     #|      events:
     #|        - { event: price, id: "1", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
     #|        - { delay: 500, event: price, id: "2", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
-    #|        - { delay: 500, event: done, data: "[DONE]" }
+    #|        - { delay: 500, data: "[DONE]" }
     #|    fault: { seed: 7 }
   ),
 )
@@ -194,7 +194,7 @@ test "worked example: templated Server-Sent Events, the same on every run from t
       #|Smock-Mock: market; via=default
       #|after 0 ms: event "price", id "1", data "{\"symbol\":\"ABC\",\"price\":105.49,\"at\":\"2026-10-13T09:00:00.000Z\"}"
       #|after 500 ms: event "price", id "2", data "{\"symbol\":\"ABC\",\"price\":101.49,\"at\":\"2026-10-13T09:00:00.500Z\"}"
-      #|after 500 ms: event "done", id -, data "[DONE]"
+      #|after 500 ms: event -, id -, data "[DONE]"
       #|
     ),
   )
@@ -323,7 +323,6 @@ test "rendering a templated Stub shows its rendered events, with the time and th
       #|      },
       #|      {
       #|        "delay": 500,
-      #|        "event": "done",
       #|        "data": "[DONE]"
       #|      }
       #|    ]

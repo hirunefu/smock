@@ -3,6 +3,7 @@ import {
   "smock/xml",
   "smock/smock/cookies",
   "smock/smock/definitions",
+  "smock/smock/llm",
   "smock/smock/log",
   "smock/smock/prng",
   "smock/smock/template",

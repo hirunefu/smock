@@ -1,0 +1,11 @@
+mocks:
+  - name: anthropic
+stubs:
+  - id: messages
+    mock: anthropic
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: Hello!
+        error: { after: 2, type: server_error, message: Overloaded }

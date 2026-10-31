@@ -1,0 +1,33 @@
+mocks:
+  - name: openai
+stubs:
+  - id: chat
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    responses:
+      - status: 200
+        llm:
+          api: openai-chat
+          text: Hello! How can I assist you today?
+          timing:
+            first: { lognormal: { median: 400, sigma: 0.5 } }
+            interval: { uniform: { min: 15, max: 40 } }
+      - status: 200
+        llm:
+          api: openai-chat
+          timing:
+            first: { fixed: 400 }
+            interval: { fixed: 0 }
+      - status: 200
+        llm:
+          api: openai-chat
+          timing:
+            first: { uniform: { min: 100, max: 300 } }
+            interval: { lognormal: { median: 25, sigma: 0 } }
+      - status: 200
+        llm: { api: openai-chat, timing: { first: { fixed: 2147483647 } } }
+      - status: 200
+        llm: { api: openai-chat, timing: { interval: { fixed: 30 } } }
+      - status: 200
+        llm: { api: openai-chat, timing: {} }
+    fault: { seed: 7, delay: { fixed: 250 } }

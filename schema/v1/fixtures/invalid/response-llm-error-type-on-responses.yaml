@@ -1,0 +1,11 @@
+mocks:
+  - name: openai
+stubs:
+  - id: responses
+    mock: openai
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: Hello.
+        error: { type: server_error, message: Overloaded }

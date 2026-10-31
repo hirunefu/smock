@@ -4,6 +4,9 @@ smock is a mock server for HTTP/1.1, HTTP/2, HTTPS and Server-Sent Events. It
 stands in for the services a system depends on, on Kubernetes and on
 developers' machines. It is written in MoonBit ([ADR 0001](docs/adr/0001-moonbit-with-c-only-for-tls.md)).
 The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
+[LLM responses](docs/definition-files.md#llm-responses) stand in for the
+OpenAI Chat Completions, OpenAI Responses and Anthropic Messages APIs in
+tests of code that calls one.
 
 ## Documentation
 
@@ -508,9 +511,11 @@ Server-Sent Events, and the conditions the sample fails, with expected and
 actual values as in a Near miss (empty when it meets them all). The Stub is
 rendered even when the sample fails them, and a
 [templated](docs/definition-files.md#templates) response is rendered for the
-sample. `--time` (RFC 3339) and `--seed` fix the clock and the random source
-of the rendering; without a seed, it uses the Stub's `fault.seed`, or a
-fresh one. A Stub with
+sample. An [LLM response](docs/definition-files.md#llm-responses) shows the
+reply the sample's body asks for: the JSON body, or a stream's events,
+each with its wait. `--time` (RFC 3339) and `--seed` fix the clock and the
+random source of the rendering; without a seed, it uses the Stub's
+`fault.seed`, or a fresh one. A Stub with
 [`responses`](docs/definition-files.md#several-responses) renders the one
 the seed picks, and `--response <i>` renders the one at index `i`, from 0.
 The rendering shows the `time`, the `seed` and the `responseIndex` it used,
@@ -574,9 +579,10 @@ for Mockoon and Prism users.
 how Stubs match requests (method, path, query parameters, headers, cookies
 and body, exactly, by RE2 pattern, as JSON, by form field or by paths into
 XML, negated or by presence with `$not` and `$exists`, and by array element
-with `$includes`), the order they are tried in (priority, then file-name
+with `$includes` and `$last`), the order they are tried in (priority, then file-name
 order), what a Mock answers when nothing matches, responses with inline
 bodies, body files that serve byte ranges, JSON or Server-Sent Events,
+LLM responses in an LLM API's wire form,
 several responses picked at random by weight (`responses`), response
 templates and their helpers (fake data, time and dates, conversions,
 strings, encodings, JWTs and arithmetic), Variables that keep a value from
@@ -1065,6 +1071,12 @@ Packages of `smock/smock`:
   and writes the file. Before it returns a file, it loads it with
   `definitions`, as `smock check` would. Its parts, one file each, are
   listed in `importopenapi/import.mbt`.
+- `llm`: LLM responses. It writes a reply declared by its content in one
+  LLM API's wire form, from the declaration's strings, the request's JSON
+  body, the time and the ids generator, and returns the headers smock sets
+  with the body. It also holds each API's vocabulary and the load checks
+  that `definitions` uses. It imports neither `definitions` nor `engine`,
+  and draws no wait.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
@@ -1132,8 +1144,8 @@ Packages of `smock/smock`:
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
-packages that decide a response, `definitions`, `engine` and `template`,
-the ones they import, `prng`, `cookies`, `unicode` and `log`, and the
+packages that decide a response, `definitions`, `engine`, `template` and
+`llm`, the ones they import, `prng`, `cookies`, `unicode` and `log`, and the
 OpenAPI converter, `importopenapi`, must stay that way:
 `scripts/check-no-io.sh` fails if one of them leaves out `wasm-gc`, reads
 the environment, binds C or imports a package that does I/O.
@@ -1199,7 +1211,8 @@ scripts/test-release-notes.sh        # the release notes, with CHANGELOG.md's li
 scripts/test-sbom.sh                 # the SBOM scripts, and the check that the SBOM and NOTICE agree (needs jq)
 scripts/test-h2spec-verdict.sh       # how a run of h2spec is judged against its list of cases
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
-scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture (needs yq and jq)
+scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture, and the SDK job takes it (needs yq and jq)
+scripts/check-llm-sdks.sh dist/smock # the official LLM SDKs, pinned by hash, read smock's LLM responses (needs python3 and PyPI)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
 scripts/test-helm-chart-on-kind.sh smock:dev   # the chart on a kind cluster (needs kind, kubectl and helm)
 ```
@@ -1225,9 +1238,17 @@ example of [docs/importing-openapi.md](docs/importing-openapi.md) and the
 OAI's Petstore (`e2e/golden/documents/`) with the binary, and compares each
 result with its committed golden file. A change to what the import writes,
 or to one of these documents, regenerates the golden file in the same
-change, with the command that the failing test prints. Adding a fixture
-file under `schema/v1/fixtures/` adds it to the cross-check; the README
-there says which directory a fixture belongs in.
+change, with the command that the failing test prints. The goldens in
+`engine/llm_golden_*_test.mbt` compare what `llm` Stubs send with the
+examples of the vendors' documents, through the comparison in
+`engine/llm_golden_test.mbt`. Each example is copied there with its source
+and the date it was read. Those from OpenAI's OpenAPI document come with
+its licence, MIT. Anthropic's documents and OpenAI's guides grant none, so
+their examples are short excerpts, used as test data only. Each golden
+names the fields and events where smock differs on purpose; any other
+difference fails the test. Adding a fixture file under
+`schema/v1/fixtures/` adds it to the cross-check; the README there says
+which directory a fixture belongs in.
 
 `scripts/check-h2spec.sh` runs h2spec 2.6.0, the HTTP/2 conformance tool,
 against a smock binary: every case of its `generic`, `http2` and `hpack`
@@ -1266,6 +1287,11 @@ tests on wasm-gc, h2spec and the scripts from
 `scripts/check-release-workflow.sh` to `scripts/test-helm-chart.sh` run on
 linux/amd64; the rest run on linux/amd64 and linux/arm64
 (`.github/workflows/build-test.yml`).
+The SDK job, `scripts/check-llm-sdks.sh`, runs after `build-test.yml`,
+with the release binary built there, and reads smock's
+[LLM responses](docs/definition-files.md#llm-responses) with the
+vendors' official SDKs, as applications call them
+([llm-sdks/README.md](llm-sdks/README.md)).
 
 The native build links OpenSSL 3 (on Debian and Ubuntu, `libssl-dev`).
 `prebuild.py`, which `moon` runs with `python3` before every native build,

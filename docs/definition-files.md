@@ -39,6 +39,23 @@ in a definitions directory, such as `defs/`, that `smock serve --dir` and
   - [Server-Sent Events](#server-sent-events)
   - [JSON bodies](#json-bodies)
   - [Several responses](#several-responses)
+- [LLM responses](#llm-responses)
+  - [Streams](#streams)
+  - [Chunks](#chunks)
+  - [Timing](#timing)
+  - [Usage and stop reasons](#usage-and-stop-reasons)
+  - [Ids, seeds and time](#ids-seeds-and-time)
+  - [Tool calls](#tool-calls)
+  - [Mid-stream errors](#mid-stream-errors)
+  - [Templates in LLM replies](#templates-in-llm-replies)
+  - [The size bound](#the-size-bound)
+  - [OpenAI Responses](#openai-responses)
+  - [Anthropic Messages](#anthropic-messages)
+  - [Agent loops](#agent-loops)
+  - [Paths and compatible endpoints](#paths-and-compatible-endpoints)
+  - [Errors before the reply](#errors-before-the-reply)
+  - [Model lists and other paths](#model-lists-and-other-paths)
+  - [Prompts in the Journal](#prompts-in-the-journal)
 - [Templates](#templates)
   - [Inserting values](#inserting-values)
   - [Structured templates](#structured-templates)
@@ -354,6 +371,9 @@ value in its place.
 - `{ "$includes": <condition> }` holds when the value is an array with at
   least one element that meets the condition, wherever it sits. It never
   holds for a value that is not an array.
+- `{ "$last": <condition> }` holds when the value is an array with at least
+  one element, and its last element meets the condition. It never holds
+  for an empty array or a value that is not an array.
 
 `<condition>` is any `json` condition: a value, an object of keys, a
 pattern or another operator.
@@ -385,6 +405,50 @@ that has a line whose `sku` starts with `A-`.
 - A body that does not parse as JSON never meets a `json` condition, so
   `{ "json": { "$not": … } }` fails on it too.
 
+`$last` matches the last message of a conversation, however long it is.
+An LLM client sends the whole conversation in each request, so a Stub can
+answer the turn after a tool call. Each API has its own form:
+
+```yaml
+stubs:
+  # OpenAI Chat Completions: the last message is a tool result.
+  - id: chat-after-tool
+    mock: llm
+    request:
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: tool } } } }
+    response: { status: 200 }
+  # Anthropic Messages: the last message is a user message that holds a
+  # tool result.
+  - id: messages-after-tool
+    mock: llm
+    request:
+      path: /v1/messages
+      body:
+        json:
+          messages:
+            $last: { role: user, content: { $includes: { type: tool_result } } }
+    response: { status: 200 }
+  # OpenAI Responses: the last input item is a tool result.
+  - id: responses-after-tool
+    mock: llm
+    request:
+      path: /v1/responses
+      body: { json: { input: { $last: { type: function_call_output } } } }
+    response: { status: 200 }
+```
+
+The Responses API also takes `input` as a string. A string is not an
+array, so it never meets `$last`. [Agent loops](#agent-loops) shows each
+API's loop with LLM replies, and how the reply quotes the tool's result.
+
+`$last` nests as the other operators do.
+`{ "$not": { "$last": { "role": "tool" } } }` holds when the last message
+is not a tool result, and also for an empty array, a value that is not an
+array and a missing key. `{ "$last": { "role": { "$not": "user" } } }`
+holds when the last element is an object whose `role` is missing or is
+not `user`.
+
 A key that starts with `$` is written `$$` and the rest, as in
 [response templates](#structured-templates): `{ "$$ref": "#/a" }` matches
 a body with the key `$ref`. A key that starts with one `$` and is not an
@@ -393,7 +457,7 @@ operator makes the definition set invalid, with a message that suggests
 not `true` or `false`:
 
 ```console
-orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$ref" for the literal key "$ref"
+orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are "$not", "$exists", "$includes" and "$last"; write "$$ref" for the literal key "$ref"
 orders.json: /stubs/1/request/body/json/tags/length: is not allowed beside "$includes": an operator is the only key of its object
 ```
 
@@ -407,7 +471,9 @@ for smock 0.1 now mean something else:
 
 Any other key that starts with `$` in a `json` condition is now an error,
 so a file with one fails to load rather than change its meaning: write
-the key with `$$`.
+the key with `$$`. This is why `$last`, added later, changed no file: a
+file with a lone `$last` key failed to load before, and `$$last` still
+means the key `$last`.
 
 ### Cookies
 
@@ -1177,8 +1243,9 @@ sends `{"id":1,"price":9.9}`. smock writes every number itself, in the
 shortest form that reads back as the same 64-bit float: `9.90` is sent as
 `9.9` and `1e3` as `1000`, and an integer beyond 2^53 keeps its digits. When
 the exact bytes matter, use `body`. A response gives at most one of `body`,
-`bodyFile`, `json` and `events`, and an event gives exactly one of `data`
-and `json`, which is sent as one `data:` line of compact JSON.
+`bodyFile`, `json`, `events` and [`llm`](#llm-responses), and an event
+gives exactly one of `data` and `json`, which is sent as one `data:` line
+of compact JSON.
 
 ### Several responses
 
@@ -1199,7 +1266,7 @@ Stub answers about one request in ten with a 503:
 - A Stub gives exactly one of `response` and `responses`.
 - `responses` holds 1 to 100 responses, in the order written. Each is a
   response as `response` gives it, with its own status, headers, body,
-  body file, `json` or events, and `template`, plus `weight`.
+  body file, `json`, events or `llm`, and `template`, plus `weight`.
 - `weight` is an integer from 1 to 1,000,000, by default 1. A response is
   picked with the probability of its weight over the sum of the weights:
   9 and 1 give the 200 to nine requests in ten.
@@ -1234,6 +1301,2254 @@ failed to render, a [data write](#when-a-write-fails) failed, or
 `smock render` and the Admin render operation show the index the seed
 picks, and `--response <i>` (the Admin API's `response=<i>`) renders the
 response at index `i` ([Rendering a template](#rendering-a-template)).
+
+## LLM responses
+
+A response can give `llm` in place of a body, to stand in for an LLM API
+in tests of code that calls one, such as an agent or a chat feature. It
+declares the reply by what it says, and smock writes it in that API's wire
+form, so an official SDK reads it as it reads the vendor's reply. This Stub
+answers OpenAI Chat Completions requests:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: hello
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+```
+
+An SDK reaches it through its base URL, such as
+`OpenAI(base_url="http://localhost:8080/v1", api_key="test")` in
+openai-python, which sends `POST /v1/chat/completions`. The request
+decides the form of the reply: with `stream: true` it gets a
+[stream](#streams), and otherwise one JSON body. A request for
+`gpt-6-astra` without `stream` gets one `chat.completion` body, such as this
+one, which [`smock render`](#rendering-a-template) shows with `--seed 7` and
+`--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"message":{"role":"assistant","content":"Hello! How can I assist you today?","refusal":null,"annotations":[]},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"service_tier":"default"}
+```
+
+The fields of `llm`:
+
+| Field | Value | When left out |
+|---|---|---|
+| `api` | `openai-chat`, OpenAI Chat Completions; `openai-responses`, [OpenAI Responses](#openai-responses); or `anthropic-messages`, [Anthropic Messages](#anthropic-messages) | required |
+| `text` | the text of the reply | empty |
+| `chunks` | the text as a list of at least one piece, in place of `text` | — |
+| `chunkSize` | code points per piece of a stream, an integer from 1 to 1,000,000 | 4 |
+| `toolCalls` | a list of [tool calls](#tool-calls), each `{name, arguments, id}` | none |
+| `id` | the reply's id, sent as written | generated |
+| `model` | the reply's model | the request's |
+| `usage` | `{input, output}`, token counts, integers from 0 to 2^53-1 | both 0 |
+| `stopReason` | a stop reason of the API, such as `length` | derived |
+| `timing` | `{first, interval}`, the [waits of a stream](#timing), each a distribution of the [delay](#delays) | no waits |
+| `error` | `{after, type, message}`, or `{after, code, message}` for `openai-responses`: a [mid-stream error](#mid-stream-errors) | none |
+
+- `api` names the API whose wire form the reply takes. It is required, and
+  smock never infers it from the request's path, so a proxy or a base path
+  of its own does not change the reply. The preset neither sets nor checks
+  `request.path`: the Stub's conditions choose it, as for any Stub.
+- An `openai-chat` reply is the assistant's message, with `text` as its
+  `content`, or `""` when the text is empty, then its
+  [tool calls](#tool-calls), and the [stop reason](#usage-and-stop-reasons)
+  as its `finish_reason`. With tool calls and empty text, `content` is
+  `null`. Its fields
+  and their order follow the example of OpenAI's API reference, and so do
+  its fixed values, such as `refusal: null` and `service_tier: "default"`.
+  `usage` has the example's members, with the
+  [declared counts](#usage-and-stop-reasons) and every other count 0. There
+  is no `system_fingerprint`.
+- An `openai-responses` reply is a Response object, with `text` in its
+  message item and each tool call in a `function_call` item.
+  [OpenAI Responses](#openai-responses) says more.
+- An `anthropic-messages` reply is a `message` object, with `text` in its
+  text block and each tool call in a `tool_use` block.
+  [Anthropic Messages](#anthropic-messages) says more.
+- smock sets `Content-Type: application/json`, or `text/event-stream` for
+  a stream. A `Content-Type` the Stub gives is replaced, as for `events`.
+  smock also adds an `x-request-id` header, or `request-id` for
+  `anthropic-messages`, unless the Stub gives its own.
+  Other headers, such as a rate-limit header, are sent as written.
+- The reply's id is generated with the vendor's prefix, unless `id` fixes
+  it. `created`, or Responses' `created_at`, is the time smock received the
+  request. `model` is the Stub's `model`, or else the request's. [Ids,
+  seeds and time](#ids-seeds-and-time) says more.
+
+An LLM response is a response like any other. `status` is required, as
+always. `llm` may stand in `response` or in any element of
+[`responses`](#several-responses), so weighted responses can answer one
+request in ten with an ordinary 429. Request conditions,
+[templates](#templates-in-llm-replies), Faults, Ephemeral Stubs, the
+Journal and [`smock render`](#rendering-a-template) work as for other
+responses: a rendering shows the JSON body, or the events
+for a sample whose body sets `stream: true`, with the ids and the waits its
+seed gives and its time as `created`. A response gives at most one of
+`body`, `bodyFile`, `json`, `events` and `llm`.
+
+These are reported with the field's JSON Pointer:
+
+- a missing or unknown `api`;
+- an unknown field of `llm` or of its `usage`;
+- a count that is not an integer from 0 to 2^53-1;
+- a stop reason that is not a word of the API;
+- the errors of [chunks](#chunks), of [tool calls](#tool-calls) and of a
+  [mid-stream error](#mid-stream-errors);
+- a wait of `timing` that is not one distribution of the delay;
+- a reply as written over the [size bound](#the-size-bound);
+- `llm` beside another body.
+
+`smock check` reports them, and so do startup and a reload, which keeps the
+set served. An Ephemeral Stub with one of them gets 400 `invalid_stub`.
+
+The wire forms follow the vendors' documents as they were read on
+2026-10-22 and 2026-10-23. When a vendor changes its documented form, a
+minor release may change what an existing `llm` Stub sends, with a
+CHANGELOG entry. CI also reads smock's replies with the vendors' official
+Python SDKs, at pinned versions, as applications call them. A change that
+a newer version of an SDK brings to what an existing `llm` Stub sends
+ships the same way.
+
+### Streams
+
+A request whose body is a JSON object with `stream: true` gets the reply as
+[Server-Sent Events](#server-sent-events), as the vendor streams it. Any
+other request gets the JSON reply: a body that is not JSON, no `stream`,
+`stream: false`, or the string `"true"`. So one Stub serves both kinds of
+call, and an SDK reads the reply with the parser it chose for its own
+request. Only an `llm` response reads the request body for this; other
+Stubs pay nothing. An
+`anthropic-messages` stream is a series of named events, which
+[Messages streams](#messages-streams) lists.
+
+An `openai-chat` stream is a series of `chat.completion.chunk` objects.
+Each one is one `data:` line of compact JSON, with no `event:` line, and
+every chunk carries the reply's id, `created` and model. In order:
+
+1. the opening chunk, whose `delta` gives `role: assistant` and an empty
+   `content`, or a `null` one when [tool calls](#tool-calls) follow no
+   text;
+2. one chunk per piece of the text, whose `delta` gives the piece as
+   `content`;
+3. for each [tool call](#tool-calls), a chunk that opens it, then one
+   chunk per piece of its arguments;
+4. the closing chunk, whose `delta` is empty and whose `finish_reason` is
+   the [stop reason](#usage-and-stop-reasons);
+5. when the request asks for usage, the
+   [usage chunk](#usage-and-stop-reasons), with no choice;
+6. `data: [DONE]`.
+
+There is no `obfuscation` field, no `system_fingerprint` and no SSE comment
+line. The text is cut into pieces of 4 code points, the last one shorter,
+unless `chunkSize` or `chunks` says otherwise ([Chunks](#chunks)). The
+pieces join to exactly the text, and a piece never splits a code point, so
+every `data:` line is valid UTF-8. Empty text with no tool call sends the
+opening and closing chunks only. A [mid-stream error](#mid-stream-errors)
+ends the stream early, without the closing chunk or `[DONE]`.
+
+For the Stub above, a request for `gpt-6-astra` with `stream: true` gets
+this stream, which `smock render` shows with the same seed and time:
+
+```text
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"Hell"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"o! H"},"logprobs":null,"finish_reason":null}]}
+
+  … "ow c", "an I", " ass", "ist ", "you ", "toda" …
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"y?"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
+
+data: [DONE]
+
+```
+
+An `openai-responses` stream is a series of named events instead, each
+with an `event:` line and a `sequence_number`, and no `[DONE]`:
+[The Responses stream](#the-responses-stream) lists them.
+
+A stream travels as the events of an `events` response do:
+
+- smock sends the head and every event before the first piece at once,
+  then each later event after the wait its [`timing`](#timing) gives.
+  Without `timing`, every event follows at once.
+- To an HTTP/1.1 client the stream is sent with chunked framing, so the
+  connection carries the next request. An HTTP/1.0 client gets it
+  unframed, and smock closes the connection to end it.
+- A reply to `HEAD`, or with status 204 or 304, is the status and the
+  headers alone, for the stream as for the JSON reply.
+- smock plans the whole JSON body, or every event, before it applies
+  [Faults](#faults). A delay holds back the status line of either. A
+  `partial` Fault sends the first half of the events, rounded down, and
+  does not end the stream; for the JSON reply, it sends half the body.
+  `reset` and `close` are unchanged.
+- The stream's [Journal](../README.md#the-journal) entry is committed
+  before its last event, as for `events`.
+- A client that closes the connection mid-stream ends the stream: smock
+  notices when it next writes an event, and the Journal keeps the
+  request's entry. A [drain](../README.md#run) on SIGTERM waits for a
+  stream in progress, its waits included.
+
+### Chunks
+
+A stream sends the text in pieces, one chunk each. Two fields choose the
+pieces, so a test can stream one code point at a time, or place a split
+exactly where its parser might fail:
+
+- `chunkSize` sets how many code points each piece holds: an integer from
+  1 to 1,000,000, 4 by default. The last piece is shorter, and a size
+  above the text's length sends the text as one piece.
+- `chunks` gives the pieces themselves, in place of `text`: a list of at
+  least one text. Each element is one piece, sent as its own chunk even
+  when it is empty. The text is their join, which the JSON reply carries.
+  `chunkSize` does not apply to `chunks`.
+
+```yaml
+- id: one-at-a-time
+  mock: openai
+  request:
+    method: POST
+    path: /v1/chat/completions
+    headers: { X-Test-Case: one-at-a-time }
+  response:
+    status: 200
+    llm: { api: openai-chat, text: 晴れです。, chunkSize: 1 }
+- id: split-emoji
+  mock: openai
+  request:
+    method: POST
+    path: /v1/chat/completions
+    headers: { X-Test-Case: split-emoji }
+  response:
+    status: 200
+    llm:
+      api: openai-chat
+      chunks: ["Thumbs up: ", "", "👍", "🏽"]
+```
+
+The first Stub streams the content pieces `"晴"`, `"れ"`, `"で"`, `"す"`
+and `"。"`. The second streams `"Thumbs up: "`, `""`, `"👍"` and `"🏽"`,
+and its JSON reply's content is `"Thumbs up: 👍🏽"`.
+
+- A piece never splits a code point, so every `data:` line is valid UTF-8,
+  whatever the size. Pieces are counted in code points, not in characters
+  as they show, so a piece may split a character made of several code
+  points, such as a flag or an emoji with a skin tone. With `chunks`, a
+  split can go between any two code points.
+- An empty element of `chunks` is a piece like any other: it is sent as a
+  chunk whose content is `""`.
+- `text` beside `chunks`, an empty `chunks`, an element that is not a
+  string, and a `chunkSize` that is not an integer from 1 to 1,000,000 are
+  load errors.
+
+### Timing
+
+`timing` paces a stream, to test time to first token or how a UI shows a
+slow reply. `first` is the wait before the first piece, and `interval` the
+wait before each later one. Each takes one distribution of the
+[delay](#delays) Fault, `fixed`, `uniform` or `lognormal`, in whole
+milliseconds. This Stub waits about 400 ms before the first piece, and 15
+to 40 ms before each later one:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: slow-hello
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        timing:
+          first: { lognormal: { median: 400, sigma: 0.5 } }
+          interval: { uniform: { min: 15, max: 40 } }
+```
+
+- **Where the waits go.** smock writes the head and every event before the
+  first piece at once. It waits `first` before the first event that
+  carries a piece, counted from the head, and `interval` before each later
+  one. The events that open or close the reply, an item, a part, a
+  [tool call](#tool-calls) or a block of an `anthropic-messages` stream
+  follow the event before them at once. A piece of a tool call's arguments
+  is a piece, and so is an empty element of [`chunks`](#chunks), so each
+  waits as one. A reply with no piece, such as one with empty text, waits
+  `first` before its first closing event: Chat's closing chunk, Responses'
+  `response.output_text.done`, or the last function call's
+  `response.function_call_arguments.done` when there is no message item,
+  or Messages' `message_delta`. A
+  [mid-stream error](#mid-stream-errors) waits as a next piece would.
+- **Responses' `completed_at`.** In an `openai-responses` stream, the
+  `completed_at` of `response.completed` is the time smock received the
+  request plus the stream's waits up to that event, in whole seconds, so a
+  slow stream completes later than it was created. `created_at` stays the
+  time received. A JSON reply has no wait, so its `completed_at` is the
+  time received.
+- **Either may be left out**, for no wait there. Without `timing`, a stream
+  has no wait at all.
+- **No `probability`.** Unlike a delay, a wait applies to every stream, so
+  `probability` in `first` or `interval` is a load error, as is an unknown
+  distribution, a negative wait or an unknown member of `timing`.
+- **Draws.** Each wait is drawn on its own, in order, from the Stub's
+  random source: from a generator of its own, seeded with the one draw
+  every matched request takes XOR a fixed constant, which differs from the
+  ids' one. So [`fault.seed` and `--seed`](#seeds) replay a slow run
+  exactly, and adding `timing` changes no id, no Fault decision, no pick
+  among `responses` and no helper output.
+- **Only streams.** A JSON reply is written at once, whatever `timing`
+  gives. A [delay](#delays) Fault still holds back the status line of
+  either, before the stream's own waits.
+- **Render.** [`smock render`](#rendering-a-template) shows each event's
+  wait as its `delay`, drawn as for a request. With `--seed 7` and a
+  sample that sets `stream: true`, the Stub above waits 824 ms before
+  `"Hell"`, then 27, 20, 38, 19, 40, 38, 26 and 28 ms before the next
+  eight pieces. The opening chunk, the closing chunk and `[DONE]` wait 0.
+  The same Stub with `api: openai-responses` waits the same 1060 ms in
+  all, so with `--time 2026-10-23T00:00:00Z` its `response.completed`
+  gives `completed_at` 1792713601, one second after its `created_at`.
+
+### Usage and stop reasons
+
+`usage` declares the token counts the reply reports, and `stopReason` why
+the reply ended. This Stub stands for a reply cut short by the token limit:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: truncated
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: The weather in Paris is
+        usage: { input: 31, output: 5 }
+        stopReason: length
+```
+
+smock counts no tokens and estimates none: the reply reports the counts
+as written. Each one is an integer from 0 to 2^53-1, 9007199254740991, and
+0 when left out. An [`openai-responses`](#openai-responses) reply gives
+them as `input_tokens` and `output_tokens`, with `total_tokens` their sum.
+An `anthropic-messages` reply gives them as `input_tokens` and
+`output_tokens`, with no total and no cache counts. Its stream gives
+`input_tokens` in `message_start`, with `output_tokens` 0, and
+`output_tokens` in `message_delta`. An `openai-chat` reply
+gives `input` as `prompt_tokens`, `output` as `completion_tokens`, and
+their sum as `total_tokens`. The detail objects of OpenAI's example
+follow, every count in them 0. A request
+for `gpt-6-astra` without `stream` gets this reply, which `smock render`
+shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"message":{"role":"assistant","content":"The weather in Paris is","refusal":null,"annotations":[]},"logprobs":null,"finish_reason":"length"}],"usage":{"prompt_tokens":31,"completion_tokens":5,"total_tokens":36,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"service_tier":"default"}
+```
+
+The JSON reply always carries `usage`. An `openai-chat` [stream](#streams)
+carries it only when the request asks for it, as the vendor's does:
+
+- When the request's body sets `stream_options.include_usage` to `true`,
+  every chunk carries `"usage":null`. After the closing chunk comes the
+  usage chunk, whose `choices` is empty and whose `usage` gives the counts,
+  then `data: [DONE]`. An SDK reads the counts from that last chunk.
+- Any other stream has no `usage` member and no usage chunk. That includes
+  `include_usage: false` and the string `"true"`.
+
+The same request with `stream: true` and
+`stream_options: { include_usage: true }` gets a stream that ends with
+these events:
+
+```text
+  … "The ", "weat", "her ", "in P", "aris" …
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":" is"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"length"}],"usage":null}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[],"usage":{"prompt_tokens":31,"completion_tokens":5,"total_tokens":36,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}}
+
+data: [DONE]
+
+```
+
+`stopReason` is written in the word of the Stub's API:
+
+- For `openai-chat` it is the `finish_reason`, one of `stop`, `length`,
+  `tool_calls`, `content_filter` and `function_call`, which OpenAI
+  deprecates. It goes in the JSON reply's `finish_reason` and in the
+  closing chunk's.
+- For `openai-responses`, which has no stop word, it is an incomplete
+  reason, one of `max_output_tokens`, `max_messages`, `content_filter` and
+  `steered`, which makes the reply [incomplete](#incomplete-replies).
+- For `anthropic-messages` it is the `stop_reason`, one of `end_turn`,
+  `max_tokens`, `stop_sequence`, `tool_use`, `pause_turn`, `refusal` and
+  `model_context_window_exceeded`. It goes in the JSON reply's
+  `stop_reason` and in the stream's `message_delta`. `stop_sequence` and
+  `refusal` each add a member to both
+  ([Anthropic Messages](#anthropic-messages)).
+- Any word of the API may be written, whatever the reply holds. So a test
+  can send `length` for a reply cut short, or `content_filter` for a
+  filtered one.
+- Left out, smock derives it from the reply: for `openai-chat`,
+  `tool_calls` when the reply has [tool calls](#tool-calls) and `stop`
+  otherwise; for `anthropic-messages`, `tool_use` when the reply has tool
+  calls and `end_turn` otherwise. An `openai-responses` reply is then
+  `completed`.
+- A word that is not one of the API's, such as Anthropic's `end_turn` on
+  `openai-chat`, or Chat's `length` on `openai-responses`, is a load error
+  that lists the API's words. smock checks it when it loads the Stub, so a
+  reply never carries a word its SDK does not know.
+
+### Ids, seeds and time
+
+smock generates ids for each reply: the reply's id, the id of each item
+the reply holds and of each [tool call](#tool-calls), and a request id,
+which it sends in a header. Each is the vendor's prefix and 24 characters
+from `A`-`Z`, `a`-`z` and `0`-`9`:
+
+| API | Reply's id | Items and tool calls | Request-id header |
+|---|---|---|---|
+| `openai-chat` | `chatcmpl-` | tool call `call_` | `x-request-id: req_…` |
+| `openai-responses` | `resp_` | message item `msg_`, function call `fc_`, its `call_id` `call_` | `x-request-id: req_…` |
+| `anthropic-messages` | `msg_` | tool use `toolu_` | `request-id: req_…` |
+
+- One reply has one id: the JSON reply and every event of the stream carry
+  the same one.
+- The ids come from the Stub's random source: from a generator of their
+  own, seeded with the one draw every matched request takes XOR a fixed
+  constant. So [`fault.seed` and `--seed`](#seeds) replay them, and an
+  `llm` response changes no Fault decision, no pick among `responses` and
+  no helper output.
+- A seeded Stub's generator advances once per request the Stub matches,
+  whatever the Session. So the n-th request it matches gets the same ids
+  in every run. Which request is the n-th depends on the order the
+  requests arrive in, such as when tests run in parallel. A test that
+  must know an id in advance fixes it.
+- `id` fixes the reply's id. smock sends it exactly as written, with no
+  prefix, in the JSON reply and in every event of the stream. Fixing it
+  changes no other id: the ids draw in a fixed order of slots, the reply's
+  first, then the Responses message item's, then two for each tool call,
+  and the request id's last. Every slot draws whether or not the Stub
+  fixes its id, or its API uses it. So adding `id` to a Stub keeps the
+  request ids of a recorded run, and a Stub that moves from `openai-chat`
+  to `openai-responses` keeps the 24 characters of its reply's id and its
+  request id.
+- The Responses message item's `msg_` id and a function call item's `fc_`
+  id are always generated: no field fixes them.
+- `created`, and Responses' `created_at`, is the time smock received the
+  request, in whole seconds since the Unix epoch: the time `now()` reads.
+  In a rendering, it is the rendering's time.
+- The reply's `model` is the Stub's `model` when given. Otherwise it is the
+  request's `model` when that is a string, and otherwise the empty string,
+  such as when the body is not JSON. `llm` adds no condition on the model,
+  so one Stub answers every model. A Stub that should answer one model
+  adds a body condition on it, as below.
+- smock adds the request-id header to the JSON reply and to the stream,
+  after the Stub's own header fields. openai-python and
+  anthropic-sdk-python each read it as the reply's `_request_id`. A header
+  the Stub gives under that name, in any case, takes its place: smock then
+  sends the Stub's field alone. The request id still draws its slot, so no
+  other id changes.
+
+This Stub answers only requests for `gpt-6-astra`, and fixes the reply's
+id, its model and its request id, so that a test can assert all three:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: astra
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: gpt-6-astra } }
+    response:
+      status: 200
+      headers: { x-request-id: req_test_1 }
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        id: chatcmpl-test-1
+        model: gpt-6-astra-2026-10-01
+```
+
+A request for `gpt-6-astra` gets a reply that begins
+`{"id":"chatcmpl-test-1","object":"chat.completion","created":…,"model":"gpt-6-astra-2026-10-01",`,
+with `x-request-id: req_test_1`. A request for another model does not
+match it.
+
+### Tool calls
+
+`toolCalls` declares the function tool calls of the reply, so that an
+agent's tool loop runs against smock. This Stub answers a conversation
+whose [last message](#operators-in-json-conditions) is the user's with
+text and a call of `get_weather`:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: user } } } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Let me check.
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+        usage: { input: 31, output: 18 }
+```
+
+Each tool call has these fields:
+
+| Field | Value | When left out |
+|---|---|---|
+| `name` | the function's name, non-empty text | required |
+| `arguments` | a JSON object, or a string sent as written | required |
+| `id` | the call id, sent as written | generated |
+
+- The text comes first, then each tool call in the order written.
+- An object in `arguments` is written as compact JSON, its members in the
+  order written and its numbers as a `json` body writes them. A string is
+  sent exactly as written, so a test can send
+  [arguments that are not valid JSON](#broken-arguments).
+- smock checks no `name` against a vendor's naming rule, and no
+  `arguments` against the request's `tools`.
+- With tool calls, empty text gives no content: `content` is `null` in the
+  JSON reply and in the stream's opening chunk, and no chunk carries
+  content, even when `chunks` gives empty pieces. So openai-python's
+  stream helper builds the same message from the stream as from the JSON
+  reply. An `openai-responses` reply has no message item then, and an
+  `anthropic-messages` reply no text block.
+- Left out, the [stop reason](#usage-and-stop-reasons) is `tool_calls`, or
+  `tool_use` for `anthropic-messages`. A written one is sent whatever the
+  reply holds.
+- A missing `name` or `arguments`, an empty `name`, `arguments` that are
+  neither an object nor a string, an unknown field of a tool call, and two
+  tool calls of one `llm` with the same `id` are load errors. With
+  [templates](#templates-in-llm-replies), ids that insert a value are
+  compared after rendering.
+- `openai-responses` sends them as
+  [function call items](#function-call-items), and `anthropic-messages` as
+  `tool_use` blocks ([Messages tool calls](#messages-tool-calls)).
+
+A request for `gpt-6-astra` without `stream` gets this reply, which
+`smock render` shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`.
+The message gives `tool_calls` after its content, each call's arguments
+as a JSON string:
+
+```json
+{"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"message":{"role":"assistant","content":"Let me check.","tool_calls":[{"id":"call_oLxN2ar43pJJV6rqKHXsG45M","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}],"refusal":null,"annotations":[]},"logprobs":null,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":31,"completion_tokens":18,"total_tokens":49,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"service_tier":"default"}
+```
+
+In a [stream](#streams), the text's pieces come first. Then each tool
+call, counted from 0 as its `index`, opens with a chunk that gives its
+`index`, its call id, `type: function`, its name and empty arguments. One
+chunk follows per piece of its arguments, with the `index` and the piece
+alone. The arguments are cut as the text is, into pieces of `chunkSize`
+code points, 4 by default; `chunks` does not apply to them. Every
+tool-call chunk carries the integer `index`, so openai-python joins the
+pieces of each call. The same request with `stream: true` gets these
+events after the text's pieces:
+
+```text
+  … "Let ", "me c", "heck", "." …
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_oLxN2ar43pJJV6rqKHXsG45M","type":"function","function":{"name":"get_weather","arguments":""}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"ci"}}]},"logprobs":null,"finish_reason":null}]}
+
+  … "ty\":", "\"Par" …
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"is\"}"}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+```
+
+Call ids follow the rules of [Ids, seeds and time](#ids-seeds-and-time):
+
+- A tool call's call id is `call_` and 24 characters, or `toolu_` and 24
+  characters for `anthropic-messages`, the same in every event of a
+  stream, unless `id` fixes it. smock sends a fixed id exactly as written,
+  with no prefix.
+- Each tool call draws two slots of the ids' order, after the reply's and
+  before the request id's. `openai-chat` sends the second as the call id.
+  `openai-responses` sends the first as its function call item's `fc_` id
+  and the second as its `call_id`. `anthropic-messages` sends the second
+  as the `tool_use` id. So a Stub that moves between the APIs keeps the 24
+  characters of each call id. Adding a tool call changes the request id,
+  and not the reply's id.
+- A fixed `id` still draws its slots, so fixing one call id changes no
+  other id.
+- The call ids of one reply must differ, so two tool calls of one `llm`
+  with the same `id` are a load error. Templated ids that render the same
+  give the [template error](#templates-in-llm-replies) 500.
+
+When the agent sends the tool's result back, a second Stub answers it. A
+condition on the last message tells the turns apart, as the
+[`$last` examples](#operators-in-json-conditions) show for each API:
+
+```yaml
+- id: answer-weather
+  mock: openai
+  request:
+    method: POST
+    path: /v1/chat/completions
+    body: { json: { messages: { $last: { role: tool } } } }
+  response:
+    status: 200
+    llm: { api: openai-chat, text: It is 18°C in Paris. }
+```
+
+[Agent loops](#agent-loops) shows the whole loop for each API, with a
+reply that quotes the tool's result.
+
+#### Broken arguments
+
+A model can send arguments that are not valid JSON, and an agent should
+survive them. Give `arguments` as a string to send it exactly as written:
+
+```yaml
+- id: broken-arguments
+  mock: openai
+  request:
+    method: POST
+    path: /v1/chat/completions
+    headers: { X-Test-Case: broken-arguments }
+  response:
+    status: 200
+    llm:
+      api: openai-chat
+      toolCalls:
+        - name: get_weather
+          arguments: '{"city": "Par'
+```
+
+The JSON reply's call has `"arguments":"{\"city\": \"Par"`, and a stream
+sends the same text in pieces. smock does not check it. Checked with
+openai-python 3.36.1: `chat.completions.create()` returns the arguments as
+the string they are, so the agent's own `json.loads` raises
+`JSONDecodeError`. `chat.completions.parse()` and the
+`chat.completions.stream()` helper parse the arguments of a strict
+function tool, such as one made with `openai.pydantic_function_tool`, and
+raise pydantic's `ValidationError`.
+
+Under `api: anthropic-messages`, the vendor's `input` is always an object,
+and smock sends a string that holds a JSON object as that object. Any
+other string, such as this one, is sent as a JSON string: the JSON reply's
+`tool_use` block has `"input":"{\"city\": \"Par"`. A stream sends the
+text as written, in `partial_json` pieces, so a client that reads the raw
+events sees it exactly. The vendor never sends such a stream. Checked with
+anthropic-sdk-python 2.1.0:
+
+- `messages.create()` returns the string as the block's `input`. With
+  `stream=True`, it yields the events with their pieces as written.
+- `messages.stream()` parses the pieces of each block as they arrive, as
+  partial JSON. On arguments that are not JSON, such as `not JSON`, it
+  raises `ValueError` mid-stream, as it would on such a vendor stream.
+- JSON cut short, such as the Stub's above, is no error to it: the block's
+  `input` is what has arrived whole, here `{}`.
+
+### Mid-stream errors
+
+`error` cuts a stream short with the API's own error, after part of the
+text, so a test can check how its client handles a model that fails
+mid-reply, such as an overloaded one. This Stub sends `Hello`, then an
+error:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: cut-short
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          type: server_error
+          message: The server had an error while processing your request. Sorry about that!
+```
+
+The fields of `error`:
+
+| Field | Value | When left out |
+|---|---|---|
+| `after` | how many code points of the text come before the error, an integer from 0 | 0 |
+| `type` | the error's type: non-empty text, or for `anthropic-messages` one of Anthropic's error types | required |
+| `code` | in place of `type`, for `openai-responses` only: the error's code, non-empty text | required |
+| `message` | the error's message, non-empty text, a template with `template: true` | required |
+
+- **What is sent.** A request with `stream: true` gets the reply's opening
+  events, then the text's pieces up to exactly `after` code points, the
+  piece that holds the cut ending there, then the error. The stream ends
+  there. No tool call, closing event or end marker follows, so the client
+  sees an interrupted stream.
+- **Chat's form.** For `openai-chat`, the stream opens with the opening
+  chunk, and the error is a `data:` line of its own, in place of a chunk:
+  `{"error":{"message":…,"type":…,"param":null,"code":null}}`. No closing
+  chunk, usage chunk or `[DONE]` follows.
+- **Messages' form.** For `anthropic-messages`, the stream opens with
+  `message_start`, and the error is an event named `error`:
+  `event: error`, then `data: {"type":"error","error":{"type":…,"message":…}}`.
+  When `after` is above 0, the text block's `content_block_start` and its
+  `content_block_delta` events come before it; at 0, no `content_block_*`
+  event is sent. No `content_block_stop`, `tool_use` block,
+  `message_delta` or `message_stop` follows
+  ([Messages streams](#messages-streams)).
+- **Responses' form.** For `openai-responses`, the stream opens with
+  `response.created` and `response.in_progress`, and the error is an event
+  named `error`: `event: error`, then
+  `data: {"type":"error","code":…,"message":…,"param":null,"sequence_number":…}`,
+  whose `sequence_number` is one more than the event before it. When
+  `after` is above 0, the message item's `response.output_item.added` and
+  `response.content_part.added` and its `response.output_text.delta`
+  events come before it; at 0, no item is sent. No `.done` event, function
+  call item, `response.completed` or `response.incomplete` follows
+  ([The Responses stream](#the-responses-stream)).
+- **Counted in code points.** `after` counts code points of the text, not
+  pieces, so the cut stays where it is when `chunkSize` or `chunks`
+  changes. `after: 0` sends the error right after Chat's opening chunk,
+  `response.in_progress` or `message_start`. An empty element of
+  [`chunks`](#chunks) counts 0 code points: one before the cut is sent,
+  and the text stops at the piece that reaches `after`. An `after` past
+  the end of a text as written is a load error.
+- **With templates.** With [`template: true`](#templates-in-llm-replies),
+  `message` is a text template, such as `Overloaded: ${body.model}`,
+  rendered for each request. `after`, `type` and `code` are never
+  templates. A templated text is known only once it is rendered, so an
+  `after` past its end is no load error: when the rendered text is
+  shorter than `after`, the error follows the whole text. A message that
+  renders empty is sent empty.
+- **Waits.** The error waits as a next piece would: `first` when no piece
+  came before it, and `interval` otherwise ([Timing](#timing)).
+- **Only streams.** A request that does not stream gets the ordinary
+  reply, whole, so one Stub serves both. smock keeps no table of statuses:
+  an error in place of the whole reply is an ordinary response
+  ([Errors before the reply](#errors-before-the-reply)).
+- **Status and Journal.** The status is the Stub's, 200 here, sent before
+  the stream starts. The [Journal](../README.md#the-journal) entry has
+  that status, and is committed before the last event, the error, as for
+  `events`.
+- **What openai-python does.** It raises `APIError` on Chat's error frame,
+  from `create(stream=True)` and from the `chat.completions.stream()`
+  helper, with the message, and the `error` object as its `body`. It
+  raises nothing on the Responses `error` event:
+  `responses.create(stream=True)` and the `responses.stream()` helper
+  yield it, after the events before it, as a `ResponseErrorEvent` with its
+  `code`, `message` and `param`. So a client reads it from the stream, as
+  below. The stream then ends without `response.completed`, and the
+  helper's `get_final_response()` raises `RuntimeError`, as on an
+  [incomplete reply](#incomplete-replies). With `max_retries` at its
+  default it does not retry either: the status was 200. Checked with
+  openai-python 3.36.1, and the Responses `error` event with 3.37.0.
+- **What anthropic-sdk-python does.** It picks its error class by the
+  HTTP status, which is 200 on a stream. So on any `event: error` it
+  raises `APIStatusError` with `status_code` 200, never `OverloadedError`,
+  and the type is in the body's `error.type`: the exception's `body` is
+  the event's data. It raises from `messages.create(stream=True)` and from
+  the `messages.stream()` helper, after the events and the text before
+  the error. With `max_retries` at its default it does not retry. Checked
+  with anthropic-sdk-python 2.1.0.
+- **Per API.** `openai-chat` and `anthropic-messages` give `type`, and
+  `openai-responses` gives `code`, as each API names it. So the other one
+  is a load error that names the member to give, and a Stub that moves to
+  another `api` renames it there. Anthropic's `type` is one of its
+  documented error types: `invalid_request_error`,
+  `authentication_error`, `billing_error`, `permission_error`,
+  `not_found_error`, `conflict_error`, `request_too_large`,
+  `rate_limit_error`, `api_error`, `timeout_error` and
+  `overloaded_error`. An OpenAI `type` or `code` is any non-empty text.
+- `type` on `openai-responses` or `code` on another API, another
+  Anthropic type, an empty `type`, `code` or `message`, an `after` that is
+  not an integer from 0 or that passes the end of a text as written, and an
+  unknown field of `error` are load errors.
+
+A request for `gpt-6-astra` with `stream: true` gets this stream, which
+[`smock render`](#rendering-a-template) shows with `--seed 7` and
+`--time 2026-10-23T00:00:00Z`. The second piece, `"o! H"` without the
+error, ends at the cut:
+
+```text
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"Hell"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"o"},"logprobs":null,"finish_reason":null}]}
+
+data: {"error":{"message":"The server had an error while processing your request. Sorry about that!","type":"server_error","param":null,"code":null}}
+
+```
+
+With `api: openai-responses`, `path: /v1/responses`, and
+`code: server_error` in place of `type`, a Responses request for
+`gpt-6-astra` with `stream: true` gets `response.created`,
+`response.in_progress`, the message item's two opening events and the
+deltas `"Hell"` and `"o"`, then this, with the same seed and time:
+
+```text
+event: error
+data: {"type":"error","code":"server_error","message":"The server had an error while processing your request. Sorry about that!","param":null,"sequence_number":6}
+
+```
+
+openai-python yields that event, so a client that streams looks for it:
+
+```python
+stream = client.responses.create(model="gpt-6-astra", input="Hello!", stream=True)
+for event in stream:
+    if event.type == "error":
+        print(event.code, event.message)
+```
+
+### Templates in LLM replies
+
+With [`template: true`](#templates), an LLM reply is rendered for each
+request, so it can echo the request, or read a [Variable](#variables) or
+a [Data bucket](#data-buckets). This Stub echoes the user's last message:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: echo
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: 'You said: ${last(body.messages).content}'
+```
+
+A request whose last message is `Say "hi"`, a line break and `then stop`
+gets a reply whose message has
+`"content":"You said: Say \"hi\"\nthen stop"`. With `stream: true`, the
+pieces are `You `, `said`, `: Sa`, `y \"h`, `i\"\nt`, `hen ` and `stop`,
+as `smock render` shows with `--seed 7`.
+
+- `text`, each element of `chunks`, `id`, `model`, each tool call's
+  `name`, `id` and string `arguments`, and the
+  [error's](#mid-stream-errors) `message` are text templates. An object
+  `arguments` is a [structured template](#structured-templates), whose
+  members keep the types of what they insert. `api`, `stopReason`,
+  `usage`, `chunkSize`, `timing`, and the error's `after`, `type` and
+  `code` are never templates. Header values are templates, as in any
+  response.
+- smock renders the text whole for each request, then cuts it into
+  pieces, so echoed text is cut like any other. Each element of `chunks`
+  is rendered on its own and stays one piece. A tool call's arguments are
+  rendered, then cut.
+- These templates escape nothing. smock writes what they give into the
+  JSON it builds, so a quote or a line break from the request is
+  JSON-escaped on the wire, whatever the Stub's `Content-Type`. An object
+  or an array in a text template needs `json(x)`, as in any text template.
+- Helpers, such as `fake.uuid()`, draw in render order: the header values,
+  then `id`, `model`, the text or each chunk in order, each tool call's
+  `id`, `name` and `arguments`, then the error's `message`. So
+  [`fault.seed`](#seeds) replays them, and adding an error changes nothing
+  drawn before it. The generated ids draw from a generator of their own,
+  so a helper changes none of them.
+- The templates read `vars` and `data` as any response's do: after the
+  Stub's [`variables`](#variables) and [`dataWrites`](#writing-buckets-datawrites)
+  have written, so the reply reads what they just did. A Scenario moves on
+  an `llm` Stub as on any other.
+  [Conversations of several turns](#conversations-of-several-turns) uses
+  both.
+- A syntax error is a load error at the field's JSON Pointer, such as
+  `/stubs/0/response/llm/text`. Two tool calls whose ids insert nothing
+  and are the same are a load error, as without templates. Ids that
+  insert a value are compared after rendering.
+
+This Stub's calls take the user's last message and the whole
+conversation:
+
+```yaml
+- id: search
+  mock: openai
+  request: { method: POST, path: /v1/chat/completions }
+  response:
+    status: 200
+    template: true
+    llm:
+      api: openai-chat
+      toolCalls:
+        - name: search
+          arguments: { query: "${last(body.messages).content}", limit: "${body.limit ?? 5}" }
+        - name: log
+          arguments: '{"messages":${json(body.messages)}}'
+```
+
+For the request above, the first call's arguments are
+`{"query":"Say \"hi\"\nthen stop","limit":5}`, and the second's
+`{"messages":[{"role":"user","content":"Say \"hi\"\nthen stop"}]}`.
+
+A template that fails to render, such as one that inserts a missing
+value, gives the usual [500 `template failed`](#missing-values-and-render-errors),
+with `at` under the `llm` field, such as
+`"at":"/response/llm/text","message":"body.messages is missing"`. Two tool
+call ids that render the same give it too. A streamed request gets the
+500, not a stream, since smock renders the whole reply before it sends
+the head. Every template renders for every request, so an error's
+`message` that fails gives the 500 to a request that does not stream too.
+
+The SDKs [retry](#retries) a 500 twice by default. So one call to a Stub
+whose template fails makes three requests, with three Journal entries,
+and takes three draws from a seeded Stub's random source: the requests
+after it get other ids and waits than in a run without the failure. A
+test that expects the 500 builds its client with `max_retries=0`.
+
+### The size bound
+
+An LLM reply takes at most 1 MiB once encoded: its JSON body, or all the
+events of its stream, with their `event:` and `data:` lines and blank
+lines, in UTF-8. This is the bound of a
+[rendered body](#missing-values-and-render-errors), counted on its own:
+the strings that a template renders keep their own count.
+
+A stream carries much more than its text. Each piece goes in an event of
+its own, and every Chat chunk repeats the reply's id and model. At 4 code
+points per piece, a stream of ASCII text reaches 1 MiB at about 20,000
+characters for `openai-chat` and `openai-responses`, and at about 35,000
+for `anthropic-messages`. A larger `chunkSize` lets a stream carry more.
+The JSON reply carries the text once, so it holds almost 1 MiB of it.
+
+- A reply as written is encoded when the files are loaded, both as the
+  JSON reply and as the stream to a request whose body is
+  `{"stream":true,"stream_options":{"include_usage":true}}`, with no model
+  from the request. Either one over the bound is a load error at the
+  `llm` field, which `smock check` reports, such as
+  `/stubs/0/response/llm: the reply takes more than 1 MiB as a stream`.
+  A [mid-stream error](#mid-stream-errors) ends the stream early, so then
+  the JSON reply can be the larger: a long text cut early loads, unless
+  its JSON reply alone passes the bound.
+- A reply can still pass the bound for one request. A template can insert
+  a long value, in the text or in an error's `message`, and a long `model`
+  from the request, or a setting that a Responses object copies, such as
+  `tools`, goes into the reply. A Responses stream carries those settings
+  three times. Such a request gets
+  the [500 `template failed`](#missing-values-and-render-errors), with
+  `at` at the `llm` field, and no stream:
+  `"at":"/response/llm","message":"the reply takes more than 1 MiB as a stream"`.
+  The SDKs [retry](#retries) it, as any 500.
+- smock stops encoding a reply as soon as it passes the bound, so a long
+  echo costs no more than a reply of 1 MiB.
+
+### OpenAI Responses
+
+`api: openai-responses` answers OpenAI's Responses API with a Response
+object. This Stub answers it at its path, `/v1/responses`:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: hello
+    mock: openai
+    request: { method: POST, path: /v1/responses }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: Hi there! How can I assist you today?
+        usage: { input: 37, output: 11 }
+```
+
+openai-python reaches it through the same base URL as Chat Completions,
+`OpenAI(base_url="http://localhost:8080/v1", api_key="test")`. Then
+`client.responses.create(model="gpt-6-astra", instructions="You are a helpful assistant.", input="Hello!")`
+sends `POST /v1/responses`, and gets this reply, which
+[`smock render`](#rendering-a-template) shows with `--seed 7` and
+`--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"completed","completed_at":1792713600,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":37,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":11,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":48},"user":null,"metadata":{}}
+```
+
+- `output` holds the message item, with `text` as its `output_text`, or
+  `""` when the text is empty. Its id is `msg_` and 24 generated
+  characters. Each [tool call](#function-call-items) follows it as a
+  `function_call` item. With tool calls and empty text, there is no
+  message item.
+- `usage` gives the [declared counts](#usage-and-stop-reasons) as
+  `input_tokens` and `output_tokens`, with `total_tokens` their sum.
+- `created_at` and `completed_at` are the time smock received the
+  request, in whole seconds. A [stream](#the-responses-stream)'s
+  `completed_at` adds its waits.
+- The Response object gives back the settings the request gave, copied as
+  given: smock does not interpret them. They are `instructions`,
+  `previous_response_id`,
+  `tools`, `tool_choice`, `temperature`, `top_p`, `max_output_tokens`,
+  `parallel_tool_calls`, `metadata`, `store`, `text`, `truncation`,
+  `reasoning`, `user`, `safety_identifier`, `prompt_cache_key`,
+  `top_logprobs`, `max_tool_calls` and `background`.
+- A setting the request leaves out takes the value of OpenAI's examples,
+  such as `tools: []` and `store: true`. The examples do not show the last
+  five, so smock leaves them out too.
+- `model` is the Stub's, or else the request's, as for every API.
+  `service_tier` is always `default`, the examples' tier, and
+  `conversation` is not copied.
+- The other members, their order and their fixed values follow the
+  examples of OpenAI's API reference, such as `error: null`,
+  `access_programs: null` and `temperature: 1.0`.
+- smock keeps no Responses state. `previous_response_id` is only copied,
+  and a request with `background: true` gets this same reply, not a queued
+  one. [Responses follow-ups](#responses-follow-ups) shows how Stubs
+  answer a follow-up and `GET /v1/responses/{id}`.
+
+#### The Responses stream
+
+A request with `stream: true` gets the reply as a stream of named events,
+as OpenAI streams it. Each event has an `event:` line equal to its `type`,
+and one `data:` line of compact JSON whose `sequence_number` counts from
+0, one more each time. In order:
+
+1. `response.created`, then `response.in_progress`, each with the Response
+   object in progress: `status: "in_progress"`, `output: []`,
+   `usage: null` and `completed_at: null`;
+2. `response.output_item.added`, which opens the message item at
+   `output_index` 0, with `status: "in_progress"` and no content;
+3. `response.content_part.added`, which opens its `output_text` part,
+   still empty;
+4. one `response.output_text.delta` per piece of the text, whose `delta`
+   is the piece;
+5. `response.output_text.done` with the whole `text`, then
+   `response.content_part.done` with the whole part and
+   `response.output_item.done` with the whole item;
+6. for each [tool call](#function-call-items), its `function_call` item
+   at the next `output_index`: added, its arguments in pieces, then done;
+7. `response.completed` with the whole Response object, or
+   `response.incomplete` when the Stub writes a stop reason
+   ([Incomplete replies](#incomplete-replies)).
+
+No `data: [DONE]` follows. The text is cut into pieces as for every API
+([Chunks](#chunks)). Empty text with no tool call keeps the message item
+and its part, with no delta. With tool calls, empty text gives no message
+item, so steps 2 to 5 are left out. A
+[mid-stream error](#mid-stream-errors) ends the stream early with an
+`error` event, without the item's closing events, the function call items
+or `response.completed`. Every event carries the same `resp_`
+id, and the events of an item the same item id. The Response
+object of the last event is the JSON reply, but for its `completed_at`:
+the time smock received the request plus the stream's waits up to that
+event, in whole seconds ([Timing](#timing)). Without `timing`, that is the
+time received.
+
+For the `hello` Stub above, the same request with `stream: true` gets this
+stream, which `smock render` shows with the same seed and time:
+
+```text
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"in_progress","completed_at":null,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+  … response.in_progress, with the same Response object …
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"in_progress","role":"assistant","content":[]},"sequence_number":2}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[],"logprobs":[]},"sequence_number":3}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"delta":"Hi t","sequence_number":4,"logprobs":[]}
+
+  … "here", "! Ho", "w ca", "n I ", "assi", "st y", "ou t", "oday", "?" …
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"text":"Hi there! How can I assist you today?","sequence_number":14,"logprobs":[]}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"part":{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]},"sequence_number":15}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]}]},"sequence_number":16}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"completed","completed_at":1792713600,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":37,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":11,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":48},"user":null,"metadata":{}},"sequence_number":17}
+
+```
+
+openai-python reads it with `client.responses.create(..., stream=True)`,
+which yields each event, or with the `client.responses.stream(...)` helper,
+whose `get_final_response()` gives the Response that the JSON reply gives.
+
+#### Function call items
+
+An `openai-responses` reply sends each [tool call](#tool-calls) as a
+`function_call` item, after its message item. This Stub answers the first
+turn of an agent loop, told apart by the
+[last item of `input`](#operators-in-json-conditions):
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { input: { $last: { role: user } } } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: Let me check.
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+        usage: { input: 31, output: 18 }
+```
+
+`client.responses.create(model="gpt-6-astra", input=[{"role": "user", "content": "Weather in Paris?"}])`
+gets this reply, which `smock render` shows with `--seed 7` and
+`--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"completed","completed_at":1792713600,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Let me check.","annotations":[],"logprobs":[]}]},{"type":"function_call","id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","call_id":"call_oLxN2ar43pJJV6rqKHXsG45M","name":"get_weather","arguments":"{\"city\":\"Paris\"}","status":"completed"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":31,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":18,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":49},"user":null,"metadata":{}}
+```
+
+- `output` holds the message item, then one item per tool call, in the
+  order written, with the members of the "Functions" example of OpenAI's
+  API reference: `type: function_call`, `id`, `call_id`, `name`,
+  `arguments` and `status: completed`. `arguments` is a JSON string, as
+  for `openai-chat`.
+- With tool calls and empty text, there is no message item: `output`
+  holds the function call items alone, and a stream sends no text event,
+  even when `chunks` gives empty pieces. Empty text without tool calls
+  keeps the message item.
+- An item's `id` is `fc_` and 24 generated characters: no field fixes it.
+  Its `call_id` is `call_` and 24 characters, the same ones an
+  `openai-chat` reply gives the call, or the tool call's `id` as written.
+  [Ids, seeds and time](#ids-seeds-and-time) says more.
+- A written stop reason makes the reply [incomplete](#incomplete-replies),
+  and its message item with it. The function call items stay
+  `completed`.
+
+In a stream, each tool call's item follows the message item, at the next
+`output_index`:
+
+1. `response.output_item.added`, with the item, `arguments: ""` and
+   `status: "in_progress"`;
+2. one `response.function_call_arguments.delta` per piece of the
+   arguments, with `item_id`, `output_index` and the piece as `delta`;
+3. `response.function_call_arguments.done`, with the whole `arguments`;
+4. `response.output_item.done`, with the whole item, whose `id` and
+   `call_id` are those of its `added`.
+
+The arguments are cut as the text is, into pieces of `chunkSize` code
+points, 4 by default; `chunks` does not apply to them. Each piece waits as
+a piece of the text does ([Timing](#timing)). The closing event's Response
+holds every item, as the JSON reply does. For the Stub above, the same
+request with `stream: true` gets these events after the message item's:
+
+```text
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","call_id":"call_oLxN2ar43pJJV6rqKHXsG45M","name":"get_weather","arguments":"","status":"in_progress"},"sequence_number":11}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","output_index":1,"delta":"{\"ci","sequence_number":12}
+
+  … "ty\":", "\"Par" …
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","output_index":1,"delta":"is\"}","sequence_number":15}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","output_index":1,"arguments":"{\"city\":\"Paris\"}","sequence_number":16}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","call_id":"call_oLxN2ar43pJJV6rqKHXsG45M","name":"get_weather","arguments":"{\"city\":\"Paris\"}","status":"completed"},"sequence_number":17}
+
+  … response.completed, whose output holds both items …
+```
+
+Checked with openai-python 3.36.1: `client.responses.create()` gives each
+call as a `ResponseFunctionToolCall` in `response.output`, and the
+`client.responses.stream(...)` helper's `get_final_response()` builds the
+same items from the stream. When the agent sends the call's output back, a
+second Stub
+answers it:
+
+```yaml
+- id: answer-weather
+  mock: openai
+  request:
+    method: POST
+    path: /v1/responses
+    body: { json: { input: { $last: { type: function_call_output } } } }
+  response:
+    status: 200
+    llm: { api: openai-responses, text: It is 18°C in Paris. }
+```
+
+[A Responses loop](#a-responses-loop) quotes the call's output in the
+reply, and [Responses follow-ups](#responses-follow-ups) answers a request
+that sends only that output.
+
+#### Incomplete replies
+
+The Responses API has no stop word. For `openai-responses`, `stopReason`
+is an incomplete reason instead: `max_output_tokens`, `max_messages`,
+`content_filter` or `steered`. A reply that writes one is incomplete. Its
+`status` is `incomplete`, `incomplete_details` gives the reason,
+`completed_at` is `null`, and its message item's `status` is `incomplete`
+too. A [function call item](#function-call-items) stays `completed`. Left
+out, the reply is `completed`. The vendor sends `steered` only
+after a steer over its WebSocket mode, which smock does not serve, and
+smock accepts it as any word of the API. This Stub stands for a reply cut
+short by the token limit:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: truncated
+    mock: openai
+    request: { method: POST, path: /v1/responses }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: The weather in Paris is
+        usage: { input: 31, output: 5 }
+        stopReason: max_output_tokens
+```
+
+The same request gets this reply:
+
+```json
+{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"incomplete","completed_at":null,"error":null,"incomplete_details":{"reason":"max_output_tokens"},"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"incomplete","role":"assistant","content":[{"type":"output_text","text":"The weather in Paris is","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":31,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":36},"user":null,"metadata":{}}
+```
+
+A stream of an incomplete reply ends with `response.incomplete`, whose
+Response object is the JSON reply above, `completed_at` null included.
+openai-python's `client.responses.stream(...)` helper raises
+`RuntimeError` in `get_final_response()` when the stream ends without
+`response.completed`, as it does with OpenAI's own incomplete streams. So a
+client reads the `response.incomplete` event instead:
+
+```python
+with client.responses.stream(model="gpt-6-astra", input="Hello!") as stream:
+    for event in stream:
+        if event.type == "response.incomplete":
+            reason = event.response.incomplete_details.reason
+```
+
+A Stub moves between `openai-chat` and `openai-responses` by changing `api`
+alone, unless it writes a stop reason that the other API does not have, or
+a [mid-stream error](#mid-stream-errors). Chat's `length` on
+`openai-responses` is a load error at `stopReason`, so rewrite or drop it,
+and an error's `type` is a load error there, so rename it `code`. The reply's id keeps its 24 characters, with the
+other API's prefix, and the request id stays the same.
+
+### Anthropic Messages
+
+With `api: anthropic-messages`, the reply takes the form of Anthropic's
+Messages API. This Stub answers its path, `POST /v1/messages`:
+
+```yaml
+mocks:
+  - name: anthropic
+stubs:
+  - id: hello
+    mock: anthropic
+    request: { method: POST, path: /v1/messages }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: Hello!
+        usage: { input: 12, output: 6 }
+```
+
+anthropic-sdk-python reaches it with
+`Anthropic(base_url="http://localhost:8080", api_key="test")`. The base
+URL has no `/v1`, since the SDK adds it. A request for `claude-test` gets
+one `message` body, such as this one, which `smock render` shows with
+`--seed 7` and `--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[{"type":"text","text":"Hello!"}],"model":"claude-test","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":6}}
+```
+
+- Its members and their order follow the replies in Anthropic's guide on
+  working with messages. `content` holds the text block, with the text,
+  then a `tool_use` block per [tool call](#messages-tool-calls). Empty text
+  with no tool call gives an empty reply: `content` is `[]`, with no block.
+- `usage` gives `input` as `input_tokens` and `output` as
+  `output_tokens`, with no total and no cache counts.
+- The reply's id is `msg_` and 24 characters, unless `id` fixes it. smock
+  adds a `request-id: req_…` header, not `x-request-id`, unless the Stub
+  gives its own `request-id`. [Ids, seeds and time](#ids-seeds-and-time)
+  says more.
+- A request with `stream: true` gets the reply as named events
+  ([Messages streams](#messages-streams)).
+- Ollama's Anthropic compatibility offers the same path, so the Stub
+  stands in for it too.
+
+`stopReason` takes Anthropic's words: `end_turn`, `max_tokens`,
+`stop_sequence`, `tool_use`, `pause_turn`, `refusal` and
+`model_context_window_exceeded`. Left out, it is `tool_use` when the reply
+has [tool calls](#messages-tool-calls), and `end_turn` otherwise. A word of
+another API, such as `stop`, is a load error. Two words add a member:
+
+- With `stop_sequence`, the reply's `stop_sequence` is the first element
+  of the request's `stop_sequences`, when that is a string. Otherwise it
+  is `null`, as it is with every other stop reason. smock does not search
+  the text for the sequences, so it gives the first one, whichever would
+  have matched.
+- With `refusal`, the reply also carries
+  `"stop_details":{"type":"refusal","category":null,"explanation":null}`,
+  after `stop_sequence`, and so does the stream's `message_delta`. Any
+  other stop reason leaves `stop_details` out.
+  A refusal with empty text has no block, as the vendor's has none.
+
+This Stub stands for a refusal, and the reply it gives:
+
+```yaml
+- id: refused
+  mock: anthropic
+  request:
+    method: POST
+    path: /v1/messages
+    headers: { X-Test-Case: refused }
+  response:
+    status: 200
+    llm: { api: anthropic-messages, stopReason: refusal }
+```
+
+```json
+{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":null,"explanation":null},"usage":{"input_tokens":0,"output_tokens":0}}
+```
+
+A Stub without `stopReason` moves between `openai-chat` and
+`anthropic-messages` by changing `api` alone. Its seed gives the same ids,
+behind the other API's prefix: `chatcmpl-oniRcSDFUU6bnxe66XwQR5pl` becomes
+`msg_oniRcSDFUU6bnxe66XwQR5pl`, a call id `call_…` becomes `toolu_…`, and
+the request id stays the same, in the other header. A written stop reason
+must be rewritten in the other API's word, and a
+[mid-stream error](#mid-stream-errors)'s `type` must be one of Anthropic's
+error types.
+
+#### Messages streams
+
+A request with `stream: true` gets the reply as Anthropic streams it: a
+series of named events. Each event is an `event:` line that names it, then
+one `data:` line of compact JSON whose `type` is the same name.
+anthropic-sdk-python skips an event that has no `event:` line, so every
+event has one. In order:
+
+1. `message_start`, with the message: its id and model, no content yet,
+   `stop_reason` and `stop_sequence` null, and `usage` with the
+   `input_tokens`, and `output_tokens` 0;
+2. for the text, a text block at `index` 0: `content_block_start`, with an
+   empty text, then one `content_block_delta` per piece, whose
+   `text_delta` gives the piece, then `content_block_stop`;
+3. for each [tool call](#messages-tool-calls), a `tool_use` block at the
+   next `index`: `content_block_start`, with the call id, the name and an
+   empty `input`, then a `content_block_delta` whose `input_json_delta`
+   gives an empty `partial_json`, one more per piece of the arguments,
+   then `content_block_stop`;
+4. `message_delta`, whose `delta` gives `stop_reason` and `stop_sequence`,
+   and `stop_details` on a refusal, and whose `usage` gives the
+   `output_tokens`;
+5. `message_stop`.
+
+There is no `ping` event, no SSE comment line and no `data: [DONE]`. The
+text is cut into pieces as for every API ([Chunks](#chunks)). Empty text
+has no text block, even when `chunks` gives empty pieces: with no tool
+call, the stream is `message_start`, `message_delta` and `message_stop`,
+as the JSON reply's `content` is `[]`. A
+[mid-stream error](#mid-stream-errors) ends the stream early with an
+`error` event, without `content_block_stop`, `message_delta` or
+`message_stop`. [`timing`](#timing) waits before each text delta and each
+piece of a tool call's arguments, and a reply with no piece waits `first`
+before `message_delta`. From these events, `messages.stream()` in
+anthropic-sdk-python builds the message that the JSON reply gives, and
+`get_final_message()` returns it, as long as each tool call's arguments
+are a JSON object ([Broken arguments](#broken-arguments)).
+
+For the `hello` Stub above, a request for `claude-test` with
+`stream: true` gets this stream, which `smock render` shows with the same
+seed and time:
+
+```text
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hell"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"o!"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":6}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+```
+
+#### Messages tool calls
+
+An `anthropic-messages` reply sends each of its [tool calls](#tool-calls)
+as a `tool_use` block, after the text block, as the reply in Anthropic's
+guide on handling tool calls does. This Stub answers with text and a call
+of `get_weather`:
+
+```yaml
+- id: ask-weather
+  mock: anthropic
+  request:
+    method: POST
+    path: /v1/messages
+    headers: { X-Test-Case: ask-weather }
+  response:
+    status: 200
+    llm:
+      api: anthropic-messages
+      text: Let me check.
+      toolCalls:
+        - name: get_weather
+          arguments: { city: Paris }
+      usage: { input: 31, output: 18 }
+```
+
+A request for `claude-test` without `stream` gets this reply, which
+`smock render` shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[{"type":"text","text":"Let me check."},{"type":"tool_use","id":"toolu_oLxN2ar43pJJV6rqKHXsG45M","name":"get_weather","input":{"city":"Paris"}}],"model":"claude-test","stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":31,"output_tokens":18}}
+```
+
+- Each block is `{"type":"tool_use","id","name","input"}`, in the order
+  the calls are written.
+- Its id is `toolu_` and the 24 characters of the call id's slot, unless
+  the call's `id` fixes it. The same Stub under `openai-chat` sends
+  `call_oLxN2ar43pJJV6rqKHXsG45M`.
+- `input` is an object in every reply of the vendor. An object in
+  `arguments` is the `input`. A string that holds a JSON object, such as
+  `'{"city": "Paris"}'`, is sent as that object. Any other string is sent
+  as a JSON string ([Broken arguments](#broken-arguments)).
+- With tool calls, empty text has no text block, so the first `tool_use`
+  block is the first block.
+- Left out, the stop reason is `tool_use`.
+
+In a [stream](#messages-streams), each tool call is a block at the next
+`index`, after the text block. `content_block_start` gives the call id,
+the name and an empty `input`. A `content_block_delta` follows whose
+`input_json_delta` has an empty `partial_json`, as in Anthropic's
+examples, then one per piece of the arguments, then `content_block_stop`.
+The arguments' text is cut into pieces of `chunkSize` code points, as the
+text is; `chunks` does not apply to it. Each piece
+[waits](#timing) as a piece of the text does, and the empty first one
+does not. anthropic-sdk-python joins the pieces of each block and parses
+them into its `input`. The same request with `stream: true` gets these
+events after the text block:
+
+```text
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_oLxN2ar43pJJV6rqKHXsG45M","name":"get_weather","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"ci"}}
+
+  … "ty\":", "\"Par" …
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"is\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":18}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+```
+
+### Agent loops
+
+An agent sends the whole conversation in each request. When the model
+calls a tool, the agent runs the tool and sends the conversation again,
+with the tool's result as its last message. The model then answers with
+text, or calls another tool. Two Stubs follow this loop: the first calls
+the tool, and the second answers once the last message is the tool's
+result. A [`$last` condition](#operators-in-json-conditions) tells the
+two requests apart, and the second Stub quotes the result with
+[`last()`](#helpers), in a [template](#templates-in-llm-replies). Each
+API sends the result in its own form:
+
+| `api` | The last message is the tool's result when | The result in a template |
+|---|---|---|
+| `openai-chat` | `messages: { $last: { role: tool } }` | `last(body.messages).content` |
+| `anthropic-messages` | `messages: { $last: { role: user, content: { $includes: { type: tool_result } } } }` | `find(last(body.messages).content, 'type', 'tool_result').content` |
+| `openai-responses` | `input: { $last: { type: function_call_output } }` | `last(body.input).output` |
+
+- The first Stub takes the same condition under `$not`, so it answers
+  every other request to its path, and the two never both match.
+  `$last: { role: user }` would not do for every API: Anthropic sends a
+  tool's result in a user message, and a Responses request often gives
+  `input` as a string, which never meets `$last`.
+- A user message can hold text after its tool results, so the Messages
+  template finds the `tool_result` block rather than taking the last one.
+- The result is inserted as text when the agent sends it as a string, as
+  the vendors' examples do. A result sent as an array of content blocks is
+  an array, which a text template inserts only with `json(x)`; otherwise
+  the request gets the [500 `template failed`](#missing-values-and-render-errors).
+- smock checks no request against its `tools`, so the Stubs need none,
+  and neither do the sketches below. The sketches were checked with
+  openai-python 3.37.0 and anthropic-sdk-python 2.1.0.
+
+#### A Chat Completions loop
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: tool } } } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: It is ${last(body.messages).content} in Paris.
+```
+
+An agent built on openai-python runs the loop like this:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="test")
+messages = [{"role": "user", "content": "Weather in Paris?"}]
+first = client.chat.completions.create(model="gpt-6-astra", messages=messages)
+call = first.choices[0].message.tool_calls[0]
+messages.append(first.choices[0].message)
+messages.append({"role": "tool", "tool_call_id": call.id, "content": "18°C"})
+second = client.chat.completions.create(model="gpt-6-astra", messages=messages)
+print(second.choices[0].message.content)  # It is 18°C in Paris.
+```
+
+The second request's last message is
+`{"role":"tool","tool_call_id":"call_…","content":"18°C"}`, so
+`answer-weather` answers it, and quotes `18°C`.
+
+#### A Messages loop
+
+```yaml
+mocks:
+  - name: anthropic
+stubs:
+  - id: ask-weather
+    mock: anthropic
+    request:
+      method: POST
+      path: /v1/messages
+      body:
+        json:
+          messages:
+            $not:
+              $last: { role: user, content: { $includes: { type: tool_result } } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: anthropic
+    request:
+      method: POST
+      path: /v1/messages
+      body:
+        json:
+          messages:
+            $last: { role: user, content: { $includes: { type: tool_result } } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: anthropic-messages
+        text: "It is ${find(last(body.messages).content, 'type', 'tool_result').content} in Paris."
+```
+
+With anthropic-sdk-python:
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(base_url="http://localhost:8080", api_key="test")
+messages = [{"role": "user", "content": "Weather in Paris?"}]
+first = client.messages.create(model="claude-test", max_tokens=1024, messages=messages)
+call = first.content[0]
+messages.append({"role": "assistant", "content": first.content})
+messages.append({"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": call.id, "content": "18°C"},
+]})
+second = client.messages.create(model="claude-test", max_tokens=1024, messages=messages)
+print(second.content[0].text)  # It is 18°C in Paris.
+```
+
+The first reply has no text, so its `tool_use` block is `content[0]`.
+The second request's last message is the user's, and holds the
+`tool_result` block, so `answer-weather` answers it.
+
+#### A Responses loop
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { input: { $not: { $last: { type: function_call_output } } } } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { input: { $last: { type: function_call_output } } } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-responses
+        text: It is ${last(body.input).output} in Paris.
+```
+
+With openai-python, the agent sends the whole conversation as `input`
+items:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="test")
+first = client.responses.create(model="gpt-6-astra", input="Weather in Paris?")
+call = first.output[0]
+items = [{"role": "user", "content": "Weather in Paris?"}, *first.output]
+items.append({"type": "function_call_output", "call_id": call.call_id, "output": "18°C"})
+second = client.responses.create(model="gpt-6-astra", input=items)
+print(second.output_text)  # It is 18°C in Paris.
+```
+
+The first request gives `input` as a string, which `ask-weather` answers.
+The first reply has no text, so its function call item is `output[0]`.
+The second request's last item is the call's output, so `answer-weather`
+answers it.
+
+#### Responses follow-ups
+
+A Responses request can name an earlier Response with
+`previous_response_id`, and send only the new items. The vendor then
+reads the earlier turns from its store. smock keeps no Responses state:
+it only copies `previous_response_id` into the reply. A follow-up is an
+ordinary request, so a body condition on `previous_response_id` answers
+it. When the first reply's `id` is fixed, the follow-up can name it:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: { $exists: false } } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        id: resp_weather
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: resp_weather } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-responses
+        text: It is ${last(body.input).output} in Paris.
+  - id: get-weather
+    mock: openai
+    request: { method: GET, path: /v1/responses/resp_weather }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        id: resp_weather
+        model: gpt-6-astra
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+```
+
+```python
+first = client.responses.create(model="gpt-6-astra", input="Weather in Paris?")
+call = first.output[0]
+second = client.responses.create(
+    model="gpt-6-astra",
+    previous_response_id=first.id,
+    input=[{"type": "function_call_output", "call_id": call.call_id, "output": "18°C"}],
+)
+print(second.output_text)  # It is 18°C in Paris.
+print(second.previous_response_id)  # resp_weather
+print(client.responses.retrieve(first.id).output[0].name)  # get_weather
+```
+
+- The follow-up sends only the call's output, so its last item is that
+  output, and the template quotes it as in the loop above.
+- A follow-up of another id matches no Stub, and gets the Mock's
+  [`noMatch` reply](#when-no-stub-matches).
+- `client.responses.retrieve()` sends `GET /v1/responses/{id}`. smock
+  does not store the first reply, so an ordinary Stub answers it. This one
+  gives the same `id` and tool call. A GET has no body, so it gets the JSON
+  reply, and its Stub gives `model`, which no request names. Its
+  `created_at` and the ids it does not fix are new.
+
+When the first reply's id is generated, a follow-up cannot name it. Then
+`previous_response_id: { $exists: true }` answers any follow-up, and a
+[Scenario](#scenarios) tells which turn it follows:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: { $exists: false } } }
+    scenario: { name: weather, moveTo: Asked }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: { $exists: true } } }
+    scenario: { name: weather, requires: Asked, moveTo: Answered }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-responses
+        text: It is ${last(body.input).output} in Paris.
+```
+
+The same agent gets the same answer. A follow-up before the question, or
+after the answer, matches no Stub, since `answer-weather` requires
+`Asked`. A Stub that requires `Answered` would answer the next turn, as
+[Conversations of several turns](#conversations-of-several-turns) shows.
+
+#### Conversations of several turns
+
+A conversation goes on after the answer. When the user asks again, the
+last message is the user's once more, as on the first turn, so the
+messages alone do not say which turn it is. A [Scenario](#scenarios)
+follows the turns, and a [Variable](#variables) counts them:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    scenario: { name: weather, requires: Started, moveTo: Asked }
+    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: tool } } } }
+    scenario: { name: weather, requires: Asked, moveTo: Answered }
+    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: It is ${last(body.messages).content} in Paris.
+  - id: next-question
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    scenario: { name: weather, requires: Answered }
+    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: Turn ${vars.turns}. Ask me about another city.
+```
+
+The agent of [the Chat Completions loop](#a-chat-completions-loop) gets
+the tool call, then `It is 18°C in Paris.` When it then appends the
+answer and the user's next question, the third request gets
+`Turn 3. Ask me about another city.`
+
+- `ask-weather` and `next-question` have the same request conditions.
+  Their `requires` tell them apart, so neither shadows the other
+  ([Warnings](#a-stub-that-can-never-match)).
+- Each Stub adds one to `turns`, and the reply reads the new count, since
+  a response sees the Variables its Stub has just written. A test can
+  also read the count through the
+  [Admin API](#through-the-admin-api), or count the Journal's entries.
+- The state and the count belong to the
+  [Session](../README.md#sessions-and-ephemeral-stubs). Give each test
+  its own Session, or reset it, so that each conversation starts in
+  `Started` with no count. Requests without a Session share one state
+  and one count.
+- The same Stubs work for the other APIs with their own
+  [conditions](#agent-loops), and for Responses follow-ups with
+  `previous_response_id: { $exists: true }`.
+
+### Paths and compatible endpoints
+
+The preset neither sets nor checks `request.path`. A Stub's conditions
+decide which requests it answers, as for any Stub, and smock checks no
+request against a vendor's schema. So `openai-chat` also stands in for
+the services that offer Chat Completions to OpenAI's SDKs at paths of
+their own. Give the Stub the service's path, and point the client's base
+URL at smock with the same path, such as
+`http://localhost:8080/v1beta/openai/` for Gemini:
+
+| Service | Its base URL | The Stub's path |
+|---|---|---|
+| OpenAI | `https://api.openai.com/v1` | `/v1/chat/completions` |
+| Gemini, OpenAI compatibility | `https://generativelanguage.googleapis.com/v1beta/openai/` | `/v1beta/openai/chat/completions` |
+| Anthropic, OpenAI SDK compatibility | `https://api.anthropic.com/v1/` | `/v1/chat/completions` |
+| Ollama, OpenAI compatibility | `http://localhost:11434/v1/` | `/v1/chat/completions` |
+
+Gemini's own `generateContent` and Ollama's own `/api/chat` have other
+wire forms, which `llm` does not write. `openai-responses` stands in the
+same way for the Responses API, at `/v1/responses` under OpenAI's base URL,
+or under Ollama's, whose OpenAI compatibility serves it too.
+
+Azure OpenAI puts the deployment's name in the path. For
+`model="my-gpt"`, openai-python's
+`AzureOpenAI(azure_endpoint="http://localhost:8080", api_version="2024-10-21", api_key="test")`
+sends `POST /openai/deployments/my-gpt/chat/completions?api-version=2024-10-21`.
+A path pattern answers every deployment. The query does not count, since
+the Stub lists no query parameter:
+
+```yaml
+mocks:
+  - name: azure
+stubs:
+  - id: azure-chat
+    mock: azure
+    request:
+      method: POST
+      path: { pattern: "/openai/deployments/[^/]+/chat/completions" }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+```
+
+The reply is in OpenAI's form. It has none of Azure's content-filter
+members, such as `prompt_filter_results` and `content_filter_results`.
+
+### Errors before the reply
+
+`llm` declares a reply that succeeds, or one that a
+[mid-stream error](#mid-stream-errors) cuts short. An error that comes in
+place of the reply, such as a 429 or a 529, is an ordinary response with
+the vendor's error body. Each vendor has one shape:
+
+- OpenAI: `{"error": {"message", "type", "param", "code"}}`. All four
+  members are present, and `param` and `code` may be `null`. A 429 or a
+  503 may carry `Retry-After`, in seconds. Every reply carries an
+  `x-request-id` header.
+- Anthropic: `{"type": "error", "error": {"type", "message"},
+  "request_id"}`. Every reply carries a `request-id` header, with the same
+  id as `request_id`. Some 429s carry `retry-after`. The error's `type`
+  follows the status:
+
+  | Status | `error.type` |
+  |---|---|
+  | 400 | `invalid_request_error` |
+  | 401 | `authentication_error` |
+  | 402 | `billing_error` |
+  | 403 | `permission_error` |
+  | 404 | `not_found_error` |
+  | 409 | `conflict_error` |
+  | 413 | `request_too_large` |
+  | 429 | `rate_limit_error` |
+  | 500 | `api_error` |
+  | 504 | `timeout_error` |
+  | 529 | `overloaded_error` |
+
+smock adds no request-id header to an ordinary response, only to an
+`llm` reply, so the recipes below write one. Their messages and ids are
+examples. The SDKs choose the error they raise by the status, such as
+`RateLimitError` for a 429, and keep the body in it.
+
+#### Retries
+
+The official SDKs, openai-python and anthropic-sdk-python, retry a
+request that gets 408, 409, 429 or any 5xx, twice by default, so one call
+can make three requests. Before each retry they wait out the reply's
+`Retry-After`: openai-python up to 120 s, and it does not retry when asked
+to wait longer. Without one, they back off from about half a second. Both
+obey `x-should-retry`: with `false`, they do not retry, whatever the
+status. So that a test sees each error once and does not wait, either:
+
+- build the client with `max_retries=0`, such as
+  `OpenAI(base_url="http://localhost:8080/v1", api_key="test", max_retries=0)`
+  or `Anthropic(base_url="http://localhost:8080", api_key="test", max_retries=0)`;
+- or send `x-should-retry: "false"` in the Stub's headers. Quote it: a
+  header value is a string, and YAML reads a bare `false` as a boolean.
+
+Each retry is a request of its own: it matches a Stub, takes a draw from
+the Stub's random source, and gets its own Journal entry.
+
+#### A 401 without a key
+
+smock ignores `Authorization`, `x-api-key` and `anthropic-version`, as it
+ignores every header a Stub does not list, so any key works, such as
+`api_key="test"`. A test that needs a 401 adds an ordinary Stub with a
+`headers` condition, declared before the Stubs it guards:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: no-key
+    mock: openai
+    request:
+      headers: { Authorization: { $exists: false } }
+    response:
+      status: 401
+      headers: { x-request-id: req_eTuAaXsuWSSRENWrCE3JNEi7 }
+      json:
+        error:
+          message: Incorrect API key provided.
+          type: invalid_request_error
+          param: null
+          code: invalid_api_key
+  - id: hello
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+```
+
+Anthropic's API takes its key in `x-api-key` or in `Authorization`, so
+its Stub checks both:
+
+```yaml
+- id: no-key
+  mock: anthropic
+  request:
+    headers:
+      x-api-key: { $exists: false }
+      Authorization: { $exists: false }
+  response:
+    status: 401
+    headers: { request-id: req_KEdIon5S7matgpJr8lPWEQTb }
+    json:
+      type: error
+      error: { type: authentication_error, message: Invalid API key. }
+      request_id: req_KEdIon5S7matgpJr8lPWEQTb
+```
+
+To refuse every key but the test's own, write a condition such as
+`{ $not: "Bearer sk-test" }` in place of `{ $exists: false }`. Both SDKs
+raise `AuthenticationError` for a 401, and neither retries it
+([Retries](#retries)).
+
+#### A 429 with Retry-After
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: rate-limited
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 429
+      headers:
+        Retry-After: "20"
+        x-request-id: req_5K5eWPUAGI1WXJRVsFgWLtIw
+        x-should-retry: "false"
+      json:
+        error:
+          message: Rate limit reached for requests.
+          type: rate_limit_error
+          param: null
+          code: slow_down
+```
+
+Both SDKs retry a 429 twice by default, as they retry 408, 409 and every
+5xx, after waiting out its `Retry-After`, openai-python up to 120 s
+([Retries](#retries)). Both obey `x-should-retry: "false"`, so
+openai-python raises `RateLimitError` at once. Without it, the call would
+wait 20 s twice and raise only after the third 429. `max_retries=0` on the
+client does the same for every Stub. Anthropic's 429 has the `error.type`
+`rate_limit_error`.
+
+To rate-limit one call in ten, give the 429 beside an `llm` reply in
+[weighted responses](#several-responses):
+
+```yaml
+- id: chat
+  mock: openai
+  request: { method: POST, path: /v1/chat/completions }
+  responses:
+    - weight: 9
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+    - weight: 1
+      status: 429
+      headers:
+        Retry-After: "1"
+        x-request-id: req_5K5eWPUAGI1WXJRVsFgWLtIw
+        x-should-retry: "false"
+      json:
+        error:
+          message: Rate limit reached for requests.
+          type: rate_limit_error
+          param: null
+          code: slow_down
+  fault: { seed: 7 }
+```
+
+With its retries on, an SDK would retry the 429 and most likely get the
+reply, so the code under test would not see it. `x-should-retry: "false"`
+keeps the 429 for the code under test, and `fault.seed` gives the 429 to
+the same calls on every run.
+
+#### A 529 when overloaded
+
+Anthropic answers 529 when its API is overloaded:
+
+```yaml
+mocks:
+  - name: anthropic
+stubs:
+  - id: overloaded
+    mock: anthropic
+    request: { method: POST, path: /v1/messages }
+    response:
+      status: 529
+      headers: { request-id: req_5J4ymbACTcA49ramAi1T8pGa }
+      json:
+        type: error
+        error: { type: overloaded_error, message: Overloaded }
+        request_id: req_5J4ymbACTcA49ramAi1T8pGa
+```
+
+A 529 is a 5xx, so both SDKs retry it twice by default, as they retry
+408, 409 and 429, after waiting out a `Retry-After`, openai-python up to
+120 s. Both obey `x-should-retry: "false"` in the Stub's headers
+([Retries](#retries)). With
+`Anthropic(base_url="http://localhost:8080", api_key="test", max_retries=0)`,
+anthropic-sdk-python raises `OverloadedError` at once. OpenAI's counterpart
+is a 503, with `type: service_unavailable_error` and
+`code: server_is_overloaded`, which may carry `Retry-After`. openai-python
+raises `InternalServerError` for it.
+
+### Model lists and other paths
+
+`llm` writes only the reply to a prompt. Ordinary `json` Stubs answer the
+rest of an API, such as its model list, `GET /v1/models`. In OpenAI's
+shape:
+
+```yaml
+- id: models
+  mock: openai
+  request: { method: GET, path: /v1/models }
+  response:
+    status: 200
+    json:
+      object: list
+      data:
+        - { id: gpt-6-astra, object: model, created: 1792713600, owned_by: system }
+```
+
+In Anthropic's shape:
+
+```yaml
+- id: models
+  mock: anthropic
+  request: { method: GET, path: /v1/models }
+  response:
+    status: 200
+    json:
+      data:
+        - { type: model, id: claude-test, display_name: Claude Test, created_at: "2026-10-01T00:00:00Z", lifecycle: active }
+      has_more: false
+      first_id: claude-test
+      last_id: claude-test
+```
+
+A request that no Stub matches gets smock's own `noMatch` reply, a 404 with
+`{"error":"no Stub matched"}`, and a [Near miss](#when-no-stub-matches)
+that names the closest Stub. A client that reads the vendor's error body
+needs a Stub that answers every other path of the Mock with it. That is an
+ordinary Stub with no conditions, not the
+[Default Mock](#hosts-and-the-default-mock), which answers the Hosts that
+no Mock lists. Leave out its `priority` and declare it after the Mock's
+other Stubs, so that it is tried last: a Stub without a priority is tried
+after every Stub with one, and among those in declaration order
+([Which Stub answers](#which-stub-answers)).
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: chat
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+  - id: other-paths
+    mock: openai
+    response:
+      status: 404
+      template: true
+      headers: { x-request-id: req_eTuAaXsuWSSRENWrCE3JNEi7 }
+      json:
+        error:
+          message: Invalid URL (${method} ${path})
+          type: invalid_request_error
+          param: null
+          code: null
+```
+
+openai-python raises `NotFoundError` for it, and does not retry it. For
+Anthropic, the body is
+`{"type":"error","error":{"type":"not_found_error","message":"Not found"},"request_id":"req_…"}`,
+with the same id in `request-id`.
+
+With such a Stub, every request of the Mock matches. None has a Near miss,
+and `GET /v1/journal/unmatched` lists none of them. The Journal names the
+Stub that answered each request, so a test finds stray calls by that
+Stub's id.
+
+### Prompts in the Journal
+
+An LLM request carries the whole conversation, and often the tools'
+schemas, so its body often passes 4 KiB. The
+[Journal](../README.md#the-journal) keeps the first 4 KiB of each body by
+default, and the entry's body then says `truncated: true`. A test that
+reads prompts from the Journal raises `--journal-body-limit`
+(`SMOCK_JOURNAL_BODY_LIMIT`), such as `--journal-body-limit 1048576`. Each
+entry then takes more of the Journal's byte bound. Conditions and
+templates always read the whole body.
 
 ## Templates
 
@@ -1273,6 +3588,9 @@ What is a template with `template: true`:
 - Header values are text templates, each value of an array on its own,
   except `Content-Type`, which must not contain `${`. An array's length is
   fixed: a template cannot add or drop a field.
+- In `llm`, the text, each chunk, `id`, `model` and each tool call's
+  `name`, `id` and `arguments` are templates, as
+  [Templates in LLM replies](#templates-in-llm-replies) says.
 - `status` and an event's `delay` are never templated.
 
 With `template` off, nothing is parsed or rendered: `${` is plain text and
@@ -1509,6 +3827,7 @@ space before the name, a space after it) gets
 | Helper | Arguments | Output |
 |---|---|---|
 | `find(array, member, value)` | an array; a string; a string, a number, a boolean or null | The first element of `array` that is an object whose member `member` meets `value`. |
+| `last(array)` | an array | The last element of `array`, with its own type. |
 
 `value` is taken as text: a string as it is, a number as smock writes it
 in `json`, and `true`, `false` and `null` as those words. Unlike the
@@ -1537,6 +3856,46 @@ response:
 
 `?sku=42` with the body `{"items":[{"sku":7,"qty":3},{"sku":42,"qty":1}]}`
 gets `{"sku":42,"qty":1}`, and `?sku=5` gets `"no such item"`.
+
+`last` gives the last element of an array, and steps can follow it, as
+they follow any call. An empty array gives a missing value, so `??` gives
+a fallback. A value that is not an array is an error. Like `find`, `last`
+gives an element and builds nothing.
+
+```yaml
+response:
+  status: 200
+  template: true
+  json:
+    answer: It is ${last(body.messages).content ?? 'unknown'} in Paris.
+```
+
+The body
+`{"messages":[{"role":"user","content":"Weather?"},{"role":"tool","content":"18 °C"}]}`
+gets `{"answer":"It is 18 °C in Paris."}`, and `{"messages":[]}` gets
+`{"answer":"It is unknown in Paris."}`.
+
+A response reads the Data buckets after its own Stub's writes ([When data
+is written](#when-data-is-written)). So `last` answers the item that the
+Stub's `append` just added to a keyed bucket, its [new key](#new-keys)
+included:
+
+```yaml
+- id: add-order
+  mock: shop
+  request: { method: POST, path: /api/v1/orders }
+  dataWrites:
+    - { op: append, bucket: orders, value: "${body}" }
+  response:
+    status: 201
+    template: true
+    headers: { Location: "/api/v1/orders/${last(data.orders).id}" }
+    json: "${last(data.orders)}"
+```
+
+With the orders 1001 to 1003 keyed by `id`, `POST /api/v1/orders` with
+the body `{"status":"new"}` gets `Location: /api/v1/orders/1004` and
+`{"status":"new","id":1004}`. The next one in the same Session gets 1005.
 
 **Encodings.** Each argument may be any expression.
 
@@ -1803,9 +4162,14 @@ response:
   events:
     - { event: price, id: "1", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
     - { delay: 500, event: price, id: "2", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
-    - { delay: 500, event: done, data: "[DONE]" }
+    - { delay: 500, data: "[DONE]" }
 fault: { seed: 7 }
 ```
+
+The last event is `data: [DONE]` alone, the frame that ends an OpenAI
+Chat Completions stream, which has no `event:` line. To stand in for an
+LLM API, an [LLM response](#llm-responses) writes the reply in the API's
+wire form, so no event needs writing by hand.
 
 ### Escaping and line breaks
 
@@ -1847,8 +4211,9 @@ text, a zero divisor, and a bound exceeded. `range` gives at most 1000
 values, one response runs at most 10,000 loop iterations in all, a
 helper's result takes at most 1 MiB, an arithmetic helper's numbers have
 at most 18 digits before the point and 18 after, and a rendered body, or
-all the events of a response together, takes at most 1 MiB. Bounds that
-literals give are checked when the files are loaded.
+all the events of a response together, takes at most 1 MiB. So does an
+[LLM reply](#the-size-bound) once encoded. Bounds that literals give are
+checked when the files are loaded.
 
 When a template cannot be rendered for a request, the client gets status
 500, `Content-Type: application/json` and
@@ -2223,6 +4588,27 @@ error. A response that serves [byte ranges](#range-requests) answers the
 sample's `Range` header, so the rendering shows the 206 or the 416 a
 request would get.
 
+An [LLM response](#llm-responses) renders as a request gets it. A sample
+that gets a [stream](#streams), such as one whose body sets
+`stream: true` for `openai-chat`, shows the events, each with its
+[wait](#timing) as `delay`, and a null `body`. Any other sample shows the
+JSON body. The seed fixes the ids and the waits, and the reply's time,
+such as `created`, is the rendering's time. For the
+[`slow-hello` Stub](#timing), with `sample.json` holding
+
+```json
+{"method": "POST", "path": "/v1/chat/completions",
+ "body": "{\"model\": \"gpt-6-astra\", \"stream\": true, \"messages\": [{\"role\": \"user\", \"content\": \"Hi\"}]}"}
+```
+
+this command lists the waits of the events, from the opening chunk to
+`[DONE]`:
+
+```sh
+smock render --dir defs slow-hello --request sample.json --seed 7 | jq -c '[.response.events[].delay]'
+# [0,824,27,20,38,19,40,38,26,28,0,0]
+```
+
 A rendering reads and writes no live [Variables](#variables), so it stays
 the same on every run:
 
@@ -2454,6 +4840,7 @@ of a Stub of the bucket's Mock, the values of `variables` included.
 - [`find`](#helpers) picks an item by its key:
   `${find(data.orders, 'id', path[3]) ?? null}` answers the order of
   `/api/v1/orders/1002`, whose `id` is `1002` or `"1002"`.
+- [`last`](#helpers) reads the last item: `${last(data.orders).id}`.
 - The first step must name a bucket of the Stub's Mock. An unknown name,
   an index (`${data[0]}`) and `${data}` alone are errors when loading. A
   loop variable cannot be named `data`.
@@ -2583,10 +4970,10 @@ order has that key, and writes nothing.
 - `merge` without `key` cannot write to a keyed bucket, which holds an
   array. It is an error when loading.
 
-A Stub's response cannot read a key that its own `append` made, since a
-template has no index from the end of an array. A Stub that must answer
-the new item takes the key from the request, and puts it in the value.
-A [CRUD Stub](#crud-stubs) answers what it creates.
+A Stub's response reads the bucket after its own writes, so
+`${last(data.orders)}` answers the item that its `append` just added, new
+key included, as the [`last` example](#helpers) shows. A [CRUD
+Stub](#crud-stubs) answers what it creates.
 
 As for other writes, only a Session's first write to a bucket copies it,
 and the [state bound](#copies-and-the-state-bound) counts what each item
@@ -3398,8 +5785,10 @@ apply, and how long the delay is, and, for a Stub with
   advances once per request the Stub matches. An Ephemeral Stub with a seed
   gets its own generator when it is added, which a reload keeps. So the n-th
   request a seeded Stub matches gets the same Faults in every run, whatever
-  requests other Stubs get, and the same response among `responses`. The
-  generator is a fixed algorithm, the same on every platform.
+  requests other Stubs get, the same response among `responses`, the same
+  [ids in an LLM reply](#ids-seeds-and-time) and the same
+  [waits of an LLM stream](#timing). The generator is a fixed algorithm,
+  the same on every platform.
 - Stubs without a seed draw from the process generator, which they share.
   smock picks its seed at startup and logs it:
 

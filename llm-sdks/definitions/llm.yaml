@@ -1,0 +1,345 @@
+# The Definition file of the SDK job (llm-sdks/README.md). llm-sdks/check.py
+# calls each Stub through an official SDK, as applications call the API, and
+# checks what the SDK reads against what the Stub declares. Each Stub
+# answers one model, so the script picks a Stub by the model it asks for.
+# One Mock answers both vendors' SDKs, which tell their APIs apart by path.
+mocks:
+  - name: llm
+stubs:
+  # Chat Completions: text only, with every id generated. In pieces of 4
+  # code points, the text is "Hi! ", "こんにち", "は。 👋", "🏽 Ho" and so
+  # on: one ends inside a Japanese word, and one between the two code
+  # points of the emoji.
+  - id: chat-text
+    mock: llm
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-text } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: "Hi! こんにちは。 👋🏽 How can I help?"
+        usage: { input: 19, output: 10 }
+
+  # Chat Completions: text and two tool calls, with every id fixed, so
+  # that the reply the stream helper builds can equal the JSON reply,
+  # ids included. The arguments nest an object and hold CJK text and a
+  # number.
+  - id: chat-tools
+    mock: llm
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-tools } }
+    response:
+      status: 200
+      headers: { x-request-id: req_sdk_chat_tools }
+      llm:
+        api: openai-chat
+        id: chatcmpl-sdk-chat-tools
+        model: chat-tools-2026-10-23
+        text: Let me check both.
+        toolCalls:
+          - name: get_weather
+            id: call_sdk_weather
+            arguments: { city: 東京, days: 3, units: { temperature: celsius } }
+          - name: get_time
+            id: call_sdk_time
+            arguments: { timezone: Asia/Tokyo }
+        usage: { input: 52, output: 31 }
+
+  # Chat Completions: one tool call and no text, so that content is null,
+  # with every id generated.
+  - id: chat-call-only
+    mock: llm
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-call-only } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+        usage: { input: 40, output: 12 }
+
+  # Chat Completions: a reply cut at the token limit, with a written stop
+  # reason.
+  - id: chat-length
+    mock: llm
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-length } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: The weather in Paris is
+        usage: { input: 31, output: 5 }
+        stopReason: length
+
+  # Chat Completions: the docs' cut-short Stub
+  # (docs/definition-files.md#mid-stream-errors), whose stream a mid-stream
+  # error cuts after 5 code points of the text. A request that does not
+  # stream gets the whole text.
+  - id: chat-error
+    mock: llm
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-error } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          type: server_error
+          message: The server had an error while processing your request. Sorry about that!
+
+  # Responses: text only, with every id generated. The text is chat-text's,
+  # cut the same way.
+  - id: responses-text
+    mock: llm
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { model: responses-text } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: "Hi! こんにちは。 👋🏽 How can I help?"
+        usage: { input: 37, output: 11 }
+
+  # Responses: text and two tool calls, with the id, the model, the call
+  # ids and the request id fixed. The message item's msg_ id and each
+  # function call item's fc_ id are always generated. The arguments hold an
+  # array, a boolean, a null and CJK text.
+  - id: responses-tools
+    mock: llm
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { model: responses-tools } }
+    response:
+      status: 200
+      headers: { x-request-id: req_sdk_responses_tools }
+      llm:
+        api: openai-responses
+        id: resp_sdk_responses_tools
+        model: responses-tools-2026-10-23
+        text: Let me look both up.
+        toolCalls:
+          - name: get_forecast
+            id: call_sdk_forecast
+            arguments: { cities: [Paris, 東京], days: 2, hourly: false }
+          - name: get_alerts
+            id: call_sdk_alerts
+            arguments: { region: 関東, severity: null }
+        usage: { input: 64, output: 29 }
+
+  # Responses: a reply cut at the token limit. The written stop reason
+  # makes the reply incomplete, and its stream ends with
+  # response.incomplete instead of response.completed.
+  - id: responses-incomplete
+    mock: llm
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { model: responses-incomplete } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: The weather in Paris is
+        usage: { input: 31, output: 5 }
+        stopReason: max_output_tokens
+
+  # Responses: chat-error's Stub, with the code in place of the type.
+  - id: responses-error
+    mock: llm
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { model: responses-error } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          code: server_error
+          message: The server had an error while processing your request. Sorry about that!
+
+  # Anthropic Messages: text only, with every id generated. The text is
+  # chat-text's, cut the same way.
+  - id: messages-text
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-text } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: "Hi! こんにちは。 👋🏽 How can I help?"
+        usage: { input: 23, output: 10 }
+
+  # Anthropic Messages: text and two tool calls, with every id, the model
+  # and the request id fixed, so that the message the stream helper builds
+  # can equal the JSON reply, ids included. The first call's arguments nest
+  # an object and hold CJK text and a number. The second's are a string
+  # that holds a JSON object, which the JSON reply sends as that object.
+  - id: messages-tools
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-tools } }
+    response:
+      status: 200
+      headers: { request-id: req_sdk_messages_tools }
+      llm:
+        api: anthropic-messages
+        id: msg_sdk_messages_tools
+        model: messages-tools-2026-10-23
+        text: Let me check both.
+        toolCalls:
+          - name: get_weather
+            id: toolu_sdk_weather
+            arguments: { city: 東京, days: 3, units: { temperature: celsius } }
+          - name: get_time
+            id: toolu_sdk_time
+            arguments: '{"timezone": "Asia/Tokyo"}'
+        usage: { input: 412, output: 87 }
+
+  # Anthropic Messages: one tool call and no text, so that the tool_use
+  # block is the only block, with every id generated.
+  - id: messages-call-only
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-call-only } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+        usage: { input: 40, output: 12 }
+
+  # Anthropic Messages: a reply that stopped at a stop sequence. Its
+  # stop_sequence is the first of the request's stop_sequences.
+  - id: messages-stop-sequence
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-stop-sequence } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: "Step 1: open the box."
+        usage: { input: 28, output: 9 }
+        stopReason: stop_sequence
+
+  # Anthropic Messages: a refusal after some text. The reply carries
+  # stop_details.
+  - id: messages-refusal
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-refusal } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: I can't help with that.
+        usage: { input: 18, output: 7 }
+        stopReason: refusal
+
+  # Anthropic Messages: text, then a tool call whose arguments are not
+  # JSON. The JSON reply sends them as a JSON string, and the stream as
+  # written, in partial_json pieces.
+  - id: messages-broken-arguments
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-broken-arguments } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: Let me check.
+        toolCalls:
+          - name: get_weather
+            id: toolu_sdk_broken
+            arguments: not JSON
+
+  # Anthropic Messages: chat-error's Stub, with one of Anthropic's error
+  # types and its message.
+  - id: messages-error
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-error } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          type: overloaded_error
+          message: Overloaded
+
+  # The docs' 429 (docs/definition-files.md#a-429-with-retry-after), in
+  # OpenAI's form, and the docs' 529 (#a-529-when-overloaded), in
+  # Anthropic's. Each response is the docs' as written, and changes when
+  # the docs' does. Each Stub answers its model on any path, so that both
+  # SDKs get both replies.
+  - id: rate-limited
+    mock: llm
+    request:
+      method: POST
+      body: { json: { model: rate-limited } }
+    response:
+      status: 429
+      headers:
+        Retry-After: "20"
+        x-request-id: req_5K5eWPUAGI1WXJRVsFgWLtIw
+        x-should-retry: "false"
+      json:
+        error:
+          message: Rate limit reached for requests.
+          type: rate_limit_error
+          param: null
+          code: slow_down
+
+  - id: overloaded
+    mock: llm
+    request:
+      method: POST
+      body: { json: { model: overloaded } }
+    response:
+      status: 529
+      headers: { request-id: req_5J4ymbACTcA49ramAi1T8pGa }
+      json:
+        type: error
+        error: { type: overloaded_error, message: Overloaded }
+        request_id: req_5J4ymbACTcA49ramAi1T8pGa

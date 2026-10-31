@@ -1,0 +1,5 @@
+# The SDKs the SDK job reads smock's LLM responses with, each pinned to one
+# version. requirements.txt pins them and every package they need by
+# version and hash. llm-sdks/README.md says how to raise a pin.
+openai==3.37.0
+anthropic==2.1.0

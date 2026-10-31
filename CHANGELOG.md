@@ -156,6 +156,118 @@ of each GitHub release include its section
   `encode_response` writes for a field name or value. They join
   `is_token`, `is_field_value` and `is_host_value`, which were public
   already.
+- A `json` condition can match the last element of an array with
+  `{ "$last": <condition> }`. It holds when the value is an array with at
+  least one element, and its last element meets the condition, so a Stub
+  can match the last message of a conversation, such as
+  `messages: { $last: { role: tool } }`. It nests with the other
+  operators. No file changes meaning: a lone `$last` key failed to load
+  before, and `$$last` still means the key `$last`. See
+  [Operators in json conditions](docs/definition-files.md#operators-in-json-conditions).
+- A template helper, `last(array)`, gives the last element of an array,
+  with its own type, and steps can follow it, so
+  `${last(body.messages).content}` quotes the last message of a
+  conversation. An empty array gives a missing value, so `??` applies.
+  Since a response reads the Data buckets after its own Stub's writes,
+  `${last(data.orders)}` answers the item that the Stub's `append` just
+  added, its new key included. See
+  [Helpers](docs/definition-files.md#helpers).
+- LLM API presets: a response can give `llm` in place of a body, an LLM
+  response that smock writes in the wire form of an LLM API. The request
+  decides between JSON and a stream: a request whose JSON body has
+  `stream: true` gets Server-Sent Events, and any other request one JSON
+  body, so one Stub serves both. With `api: openai-chat`, it answers OpenAI
+  Chat Completions requests with one `chat.completion` JSON body, or with
+  `chat.completion.chunk` events that carry the text in pieces and end
+  with `data: [DONE]`: `text` as the assistant's content, an id that
+  `fault.seed` and `--seed` replay, or the one `id` fixes, `created` the
+  time the request was received, and the Stub's `model`, or else the
+  request's. A piece holds 4 code points, or `chunkSize` of them, and
+  never splits one; or `chunks` gives the pieces themselves in place of
+  `text`, an empty one included. `toolCalls: [{ name, arguments, id }]`
+  declares function tool calls, after the text: the JSON reply gives them
+  in `message.tool_calls`, with `content: null` when the text is empty,
+  and a stream opens each one with its integer `index`, call id and name,
+  then sends its arguments in pieces of the same size. `arguments` is an
+  object, written as compact JSON, or a string sent as written, so broken
+  arguments can be tested; a call id is `call_` and 24 characters, or the
+  one `id` fixes. smock adds an `x-request-id: req_…`
+  header to the reply, unless the Stub gives its own.
+  `usage: { input, output }` declares the token counts, which the reply
+  gives with their total, and a stream whose request sets
+  `stream_options.include_usage` gets `usage: null` on every chunk and a
+  last usage chunk before `[DONE]`. `stopReason` writes the
+  `finish_reason` in the API's own word, checked at load, and is
+  `tool_calls` with tool calls, or else `stop`, when left out. With
+  `api: openai-responses`, it answers OpenAI Responses
+  requests with a Response object: the text in its message item, each
+  tool call in a `function_call` item after it, the usage, a `resp_` id,
+  `created_at` and `completed_at` the time the request was received, and
+  the settings the request gave, such as `instructions` and `tools`,
+  copied back. A function call item's id is `fc_` and 24 characters, and
+  its `call_id` is `call_` and the 24 characters a Chat reply gives the
+  call, or the one `id` fixes; with tool calls and empty text, there is
+  no message item. Its `stopReason` is an incomplete reason, such as
+  `max_output_tokens`, which makes the reply `incomplete`. A Responses
+  request with `stream: true` gets the Responses events, each with an
+  `event:` line and a `sequence_number` from 0: from `response.created`
+  through the message item's text deltas and each function call's
+  argument deltas to `response.completed`, or to `response.incomplete`
+  with a stop reason, and no `[DONE]`.
+  With `api: anthropic-messages`, it answers Anthropic
+  Messages requests with one `message` JSON body, or with events each named
+  by an `event:` line, as anthropic-sdk-python's `messages.stream()` reads
+  them: `message_start`, the text block's start, a `text_delta` per piece
+  and its stop, a block per tool call, then `message_delta` and
+  `message_stop`, with no `ping`. The reply has `text` in a text block, or
+  no block when it is empty, then each tool call in a `tool_use` block
+  with a `toolu_` id, or the one `id` fixes. Its `input` is the
+  arguments' object, or a string that holds one as that object, and any
+  other string as a JSON string; a stream starts the block with
+  `input: {}` and an empty `partial_json`, then sends the arguments' text
+  as written in `input_json_delta` pieces. The reply has an id `msg_…`,
+  usage as `input_tokens` and `output_tokens`, which a stream gives in
+  `message_start` and `message_delta`, and a `request-id: req_…` header in
+  place of `x-request-id`. Its `stopReason` is Anthropic's `stop_reason`,
+  `tool_use` with tool calls, or else `end_turn`, when left out; with
+  `stop_sequence`, the reply echoes the request's first stop sequence, and
+  a refusal carries `stop_details`, in the JSON body and in
+  `message_delta`. A Stub without a stop reason or an error moves between
+  the APIs by changing `api` alone.
+  `timing: { first, interval }` paces a stream: a wait before the first
+  piece, counted from the head, and one before each later piece, each
+  drawn from a distribution of the delay Fault, which `fault.seed` and
+  `--seed` replay. A Responses stream's `completed_at` adds the waits to
+  the time received. `error: { after, type, message }` cuts a stream with
+  the API's own error after `after` code points of the text, in place of
+  the rest, with no end marker: for `openai-chat`, a
+  `data: {"error": …}` frame, which openai-python raises as `APIError`;
+  for `openai-responses`, which gives `code` in place of `type`, an
+  `error` event numbered next, with no `.done` event or
+  `response.completed`, which openai-python yields rather than raises;
+  for `anthropic-messages`, an `event: error` with no `content_block_stop`,
+  `message_delta` or `message_stop`, which anthropic-sdk-python raises as
+  `APIStatusError` with status 200 and the type in the body's
+  `error.type`, never `OverloadedError`. A request that does not stream
+  gets the ordinary reply. `anthropic-messages` gives one of Anthropic's
+  error types. With `template: true`, the text,
+  each chunk, `id`, `model`, each tool call's `name`, `id` and
+  `arguments`, and the error's `message` are templates: the text is
+  rendered whole, then cut into pieces, an error's `after` past it puts
+  the error after the whole text, what they insert is JSON-escaped on the
+  wire, and a template that fails gives the 500 `template failed` and no
+  stream. The encoded reply, the JSON body or all the events, takes at
+  most 1 MiB, the bound of a rendered body: about 20,000 characters of
+  text in an OpenAI stream at 4 code points per piece. A reply as written
+  over it, as JSON or as a stream, is a load error, and one that a
+  template or a long request value pushes over it gets the 500
+  `template failed` and no stream. It works with request conditions,
+  `responses`, Faults, Scenarios, Variables, Data buckets, Ephemeral Stubs
+  and the Journal.
+  `smock render` and the Admin render operation show the reply the
+  sample's body asks for, the JSON body or a stream's events, each event
+  with its wait, with the ids and the waits the seed fixes. See
+  [LLM responses](docs/definition-files.md#llm-responses).
 
 ### Changed
 
@@ -170,6 +282,12 @@ of each GitHub release include its section
   each SBOM, so it refuses the images of 0.3.0 and earlier. Check one of
   those with the script from its own tag, such as
   `git show v0.3.0:scripts/verify-image.sh`.
+- The docs' templated Server-Sent Events example now ends with
+  `data: [DONE]` alone, without `event: done`. OpenAI's `[DONE]` frame has
+  no `event:` line, and a stream written by hand could copy the old one.
+  The example points to
+  [LLM responses](docs/definition-files.md#llm-responses), which write an
+  LLM API's reply in its wire form.
 - smock is built with the MoonBit toolchain moonc v0.10.17+d971670cd, up
   from v0.10.14+7d59c7ec9, which `smock --version`, the startup log entry,
   `smock_build_info` and the Admin API status operation name. NOTICE

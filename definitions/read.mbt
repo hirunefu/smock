@@ -532,9 +532,8 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   let mut request = no_conditions()
   let mut response = Response::{
     status: 0,
-    headers: ReadOnlyArray::from_array([]),
+    headers: Written(ReadOnlyArray::from_array([])),
     body: Bytes(b""),
-    template: None,
     serves_ranges: false,
     reads_variables: false,
     reads_data: false,
@@ -748,25 +747,53 @@ fn File::read_fault(self : File, pointer : String, json : Json) -> Fault? {
 ///|
 /// Reads a delay: exactly one distribution, and a probability.
 fn File::read_delay(self : File, pointer : String, json : Json) -> Delay? {
-  guard json is Object(delay) else {
+  let mut probability = 1.0
+  let distribution = self.read_distribution(pointer, json, (key, field, value) => {
+    if key == "probability" {
+      probability = self.read_probability(field, value)
+    } else {
+      self.unknown_field(field)
+    }
+  })
+  distribution.map(distribution => { distribution, probability, })
+}
+
+///|
+/// Reads a wait of an LLM reply's stream: exactly one distribution, as a
+/// delay gives it, but without a probability, since every stream waits.
+fn File::read_wait(self : File, pointer : String, json : Json) -> Distribution? {
+  self.read_distribution(pointer, json, (_, field, _) => {
+    self.unknown_field(field)
+  })
+}
+
+///|
+/// Reads exactly one distribution, `fixed`, `uniform` or `lognormal`, from
+/// the object `json` at `pointer`. Each other member goes to `other`, with
+/// its key, its JSON Pointer and its value.
+fn File::read_distribution(
+  self : File,
+  pointer : String,
+  json : Json,
+  other : (String, String, Json) -> Unit,
+) -> Distribution? {
+  guard json is Object(fields) else {
     self.error(pointer, "must be an object")
     return None
   }
   let mut distribution = None
-  let mut probability = 1.0
-  for key, value in delay {
+  for key, value in fields {
     let field = child_pointer(pointer, key)
     match key {
       "fixed" =>
         distribution = self.read_milliseconds(field, value).map(ms => Fixed(ms))
       "uniform" => distribution = self.read_uniform(field, value)
       "lognormal" => distribution = self.read_lognormal(field, value)
-      "probability" => probability = self.read_probability(field, value)
-      _ => self.unknown_field(field)
+      _ => other(key, field, value)
     }
   }
   let given = ["fixed", "uniform", "lognormal"].filter(key => {
-    delay.contains(key)
+    fields.contains(key)
   })
   match given.length() {
     0 =>
@@ -782,7 +809,7 @@ fn File::read_delay(self : File, pointer : String, json : Json) -> Delay? {
       )
     }
   }
-  distribution.map(distribution => { distribution, probability, })
+  distribution
 }
 
 ///|
@@ -1179,6 +1206,10 @@ fn File::read_json_operator(
       self
       .read_json_condition_value(at, operand)
       .map(expected => Expected::Includes(expected))
+    "$last" =>
+      self
+      .read_json_condition_value(at, operand)
+      .map(expected => Expected::Last(expected))
     _ => self.read_exists(at, operand).map(present => Exists(present))
   }
 }
@@ -1277,7 +1308,7 @@ let value_operators : Array[String] = ["$not", "$exists"]
 /// The operators of a value in a `json` condition, in the order messages
 /// list them. One of them where it is not allowed is reported as allowed
 /// only in a `json` condition, not as unknown.
-let json_operators : Array[String] = ["$not", "$exists", "$includes"]
+let json_operators : Array[String] = ["$not", "$exists", "$includes", "$last"]
 
 ///|
 /// The key of `members`, an object in a value position, that makes it an

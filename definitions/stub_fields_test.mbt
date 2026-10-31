@@ -574,12 +574,12 @@ test "a response gives at most one of body, bodyFile, json and events" {
       body_files=[("x.json", b"x")],
     ),
     content=(
-      #|a.json: /stubs/0/response: has "body" and "bodyFile"; give at most one of "body", "bodyFile", "json" and "events"
-      #|a.json: /stubs/1/response: has "bodyFile" and "events"; give at most one of "body", "bodyFile", "json" and "events"
-      #|a.json: /stubs/2/response: has "body" and "events"; give at most one of "body", "bodyFile", "json" and "events"
-      #|a.json: /stubs/3/response: has "body" and "json"; give at most one of "body", "bodyFile", "json" and "events"
-      #|a.json: /stubs/4/response: has "bodyFile" and "json"; give at most one of "body", "bodyFile", "json" and "events"
-      #|a.json: /stubs/5/response: has "json" and "events"; give at most one of "body", "bodyFile", "json" and "events"
+      #|a.json: /stubs/0/response: has "body" and "bodyFile"; give at most one of "body", "bodyFile", "json", "events" and "llm"
+      #|a.json: /stubs/1/response: has "bodyFile" and "events"; give at most one of "body", "bodyFile", "json", "events" and "llm"
+      #|a.json: /stubs/2/response: has "body" and "events"; give at most one of "body", "bodyFile", "json", "events" and "llm"
+      #|a.json: /stubs/3/response: has "body" and "json"; give at most one of "body", "bodyFile", "json", "events" and "llm"
+      #|a.json: /stubs/4/response: has "bodyFile" and "json"; give at most one of "body", "bodyFile", "json", "events" and "llm"
+      #|a.json: /stubs/5/response: has "json" and "events"; give at most one of "body", "bodyFile", "json", "events" and "llm"
     ),
   )
 }
@@ -605,7 +605,7 @@ test "the snapshot holds a Stub's response as its only response, of weight 1, wh
     for i, weighted in ordinary.responses {
       let response = weighted.response
       out.push(
-        "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, template \{response.template is Some(_)}",
+        "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, template \{response.body is Template(_)}",
       )
     }
   }
@@ -642,8 +642,12 @@ test "the snapshot holds a Stub's responses in the order written, each with its 
     }
     for i, weighted in ordinary.responses {
       let response = weighted.response
+      let headers = match response.headers {
+        Written(fields) => fields.length()
+        Templated(fields) => fields.length()
+      }
       out.push(
-        "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, headers \{response.headers.length()}, template \{response.template is Some(_)}",
+        "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, headers \{headers}, template \{response.body is Template(_)}",
       )
     }
   }
@@ -654,6 +658,79 @@ test "the snapshot holds a Stub's responses in the order written, each with its 
       #|weighted 1: weight 1, status 503, headers 1, template false
       #|weighted 2: weight 1000000, status 201, headers 0, template true
       #|one 0: weight 1, status 204, headers 0, template false
+    ),
+  )
+}
+
+///|
+test "the snapshot holds what a response sends as one kind, and its header values apart from it, as written or as templates" {
+  let file =
+    #|{ "mocks": [{ "name": "m" }],
+    #|  "stubs": [
+    #|    { "id": "s", "mock": "m",
+    #|      "responses": [
+    #|        { "status": 204 },
+    #|        { "status": 200, "headers": { "X-A": ["1", "2"] }, "body": "a" },
+    #|        { "status": 200, "bodyFile": "t.txt" },
+    #|        { "status": 200, "json": { "a": 1 } },
+    #|        { "status": 200, "headers": { "X-A": "1" },
+    #|          "events": [{ "data": "a" }, { "json": [1] }] },
+    #|        { "status": 200, "template": true, "headers": { "X-A": "${method}" },
+    #|          "body": "${path}" },
+    #|        { "status": 200, "template": true, "bodyFile": "t.txt" },
+    #|        { "status": 200, "template": true, "json": { "a": "${method}" } },
+    #|        { "status": 200, "template": true,
+    #|          "events": [{ "data": "${method}" }, { "json": ["${path}"] }] },
+    #|        { "status": 200, "template": false, "body": "${path}" },
+    #|        { "status": 200, "headers": { "X-A": "1" },
+    #|          "llm": { "api": "openai-chat", "text": "${path}" } },
+    #|        { "status": 200, "template": true, "headers": { "X-A": "${method}" },
+    #|          "llm": { "api": "openai-chat" } } ] } ] }
+  let set : @definitions.DefinitionSet = {
+    files: [("a.json", @utf8.encode(file))],
+    body_files: [("t.txt", b"${method}")],
+  }
+  guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
+  guard snapshot.mocks[0].stubs[0].serves is Ordinary(ordinary) else {
+    fail("not an ordinary Stub")
+  }
+  let out = []
+  for i, weighted in ordinary.responses {
+    let response = weighted.response
+    let headers = match response.headers {
+      Written(fields) =>
+        "headers as written: [\{fields.iter().map(f => "\{f.0}: \{f.1}").collect().join(", ")}]"
+      Templated(fields) =>
+        "headers as templates: [\{fields.iter().map(f => f.0).collect().join(", ")}]"
+    }
+    let body = match response.body {
+      Bytes(bytes) => "bytes [\{@utf8.decode_lossy(bytes)}]"
+      Events(events) => "\{events.length()} events"
+      Template(Text(_)) => "a text template"
+      Template(Json(_)) => "a JSON template"
+      Template(Events(events)) => "\{events.length()} event templates"
+      Llm({ declaration, strings: Written(strings), .. }) =>
+        "an LLM reply for \{declaration.api.name()}, text [\{strings.text}]"
+      Llm({ declaration, strings: Templated(_), .. }) =>
+        "an LLM reply for \{declaration.api.name()}, its strings as templates"
+    }
+    out.push("\{i}: \{body}; \{headers}")
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|0: bytes []; headers as written: []
+      #|1: bytes [a]; headers as written: [X-A: 1, X-A: 2]
+      #|2: bytes [${method}]; headers as written: []
+      #|3: bytes [{"a":1}]; headers as written: [Content-Type: application/json]
+      #|4: 2 events; headers as written: [X-A: 1]
+      #|5: a text template; headers as templates: [X-A]
+      #|6: a text template; headers as templates: []
+      #|7: a JSON template; headers as templates: [Content-Type]
+      #|8: 2 event templates; headers as templates: []
+      #|9: bytes [${path}]; headers as written: []
+      #|10: an LLM reply for openai-chat, text [${path}]; headers as written: [X-A: 1]
+      #|11: an LLM reply for openai-chat, its strings as templates; headers as templates: [X-A]
     ),
   )
 }
@@ -700,7 +777,7 @@ test "a Stub gives exactly one of response and responses, 1 to 100 responses, ea
       #|a.json: /stubs/7/responses/0: must be an object
       #|a.json: /stubs/7/responses/1: needs "status"
       #|a.json: /stubs/7/responses/2/wieght: is not a known field
-      #|a.json: /stubs/7/responses/3: has "body" and "json"; give at most one of "body", "bodyFile", "json" and "events"
+      #|a.json: /stubs/7/responses/3: has "body" and "json"; give at most one of "body", "bodyFile", "json", "events" and "llm"
     ),
   )
 }

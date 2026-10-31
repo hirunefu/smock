@@ -1,0 +1,11 @@
+mocks:
+  - name: openai
+stubs:
+  - id: responses
+    mock: openai
+    request: { method: POST, path: /v1/responses }
+    responses:
+      - { status: 200, llm: { api: openai-responses, text: The weather in, stopReason: max_output_tokens } }
+      - { status: 200, llm: { api: openai-responses, text: Hello., stopReason: max_messages } }
+      - { status: 200, llm: { api: openai-responses, stopReason: content_filter } }
+      - { status: 200, llm: { api: openai-responses, text: Hello., stopReason: steered } }
