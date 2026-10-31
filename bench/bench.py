@@ -1295,6 +1295,17 @@ def grew(before, after, name, labelled=False):
     return after[name] - before[name]
 
 
+def transaction_lines(count, metrics):
+    """The Transaction recorded lines a step's smock wrote in the mockoon
+    format, `count`, against the requests it answered, as
+    smock_requests_total counts them in `metrics`, its /metrics scraped
+    once the load has ended (as metric_values reads them; None when smock
+    did not answer): whether they are equal, or None when that is unknown.
+    The counter has no series until it first counts."""
+    answered = None if metrics is None else round(metrics.get("smock_requests_total", 0.0))
+    return {"count": count, "requests_answered": answered, "equal": None if answered is None else count == answered}
+
+
 def restarted(before, after):
     """Whether smock restarted between two scrapes of its /metrics: its
     process started at another time."""
@@ -1937,8 +1948,40 @@ def cpu_wait(cpu):
     return (cpu["window"] or {}).get("scheduling_delay_s") if "window" in cpu else cpu.get("scheduling_delay_s")
 
 
-def case_row(case):
-    """A case's row of its profile's table in summary.md."""
+def transaction_lines_cell(lines):
+    """A step's Transaction recorded lines, as summary.md shows them: the
+    count, with the requests smock answered where they are not equal."""
+    if lines is None:
+        return None
+    if lines["equal"]:
+        return lines["count"]
+    return f"{lines['count']} for {shown(lines['requests_answered'])} requests"
+
+
+def transaction_line_failures(summary):
+    """What went wrong with the Transaction recorded lines of a run in the
+    mockoon format: a sentence for each step whose count differs from the
+    requests smock answered."""
+    return [f"in {case['id']}, smock wrote {case['transaction_lines']['count']} Transaction recorded lines for the "
+            f"{case['transaction_lines']['requests_answered']} requests it answered"
+            for case in summary["cases"] if (case.get("transaction_lines") or {}).get("equal") is False]
+
+
+def log_format(conditions):
+    """The log format a run's smock ran with, as the arguments its
+    conditions record name it: json, smock's default, when they name none,
+    as for a run from before the option or a GKE run, which records no
+    arguments."""
+    args = conditions["smock"].get("args") or []
+    for name, value in zip(args, args[1:]):
+        if name == "--log-format":
+            return value
+    return "json"
+
+
+def case_row(case, log_lines=False):
+    """A case's row of its profile's table in summary.md, with its
+    Transaction recorded lines when `log_lines`."""
     latency, release, lag = case["latency_ms"], case["latency_from_release_ms"], case["generator_lag_ms"]
     memory, cpu, others = case["memory"], case["smock_cpu"] or {}, case.get("other_tasks")
     name = case["case"]
@@ -1959,6 +2002,8 @@ def case_row(case):
              None if utilization is None else f"{utilization * 100:.1f}", cpu.get("throttled_s"),
              cpu_wait(cpu), None if others is None else f"{others['share'] * 100:.2f}",
              mib(case["rss_kib"]["max"], 1024), peak, memory["oom_kills"]]
+    if log_lines:
+        cells.append(transaction_lines_cell(case.get("transaction_lines")))
     return "| " + " | ".join(shown(cell) for cell in cells) + " |"
 
 
@@ -2022,6 +2067,16 @@ def summary_markdown(summary, conditions, stopped=None):
         lines += ["", f"**Not a full run:** the command line changed the plan ({shown_overrides})."]
     if not summary["complete"] and not stopped:
         lines += ["", "**Incomplete:** the run stopped before its last case."]
+    mockoon = log_format(conditions) == "mockoon"
+    if mockoon:
+        lines += ["", "**Log format mockoon:** smock ran with `--log-format mockoon`, and wrote a line to stdout for "
+                      "each request, which the run read through a pipe, as a container runtime does. *Transaction "
+                      "lines* is how many Transaction recorded lines smock wrote in each step, with the requests it "
+                      "answered (smock_requests_total) where they differ. The targets are for reference only: the "
+                      "mode is measured against a run in the json format (bench/README.md)."]
+        failures = transaction_line_failures(summary)
+        if failures:
+            lines += ["", f"**Transaction lines differ** from the requests smock answered: {'; '.join(failures)}."]
     lines += ["", *targets_section(summary["targets"], kubernetes_architecture(machine["architecture"]),
                                    conditions["targets"]["file"])]
     lines += ["", "## Reading the cases", "",
@@ -2052,8 +2107,9 @@ def summary_markdown(summary, conditions, stopped=None):
                 lines += ["", idle_line(idle)]
         cases = [case for case in summary["cases"] if case["profile"] == profile["name"]]
         if cases:
-            lines += ["", "| " + " | ".join(CASE_COLUMNS) + " |", "|" + "---|" * len(CASE_COLUMNS)]
-            lines += [case_row(case) for case in cases]
+            columns = (*CASE_COLUMNS, "Transaction lines") if mockoon else CASE_COLUMNS
+            lines += ["", "| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+            lines += [case_row(case, mockoon) for case in cases]
     return "\n".join(lines) + "\n"
 
 

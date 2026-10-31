@@ -1703,5 +1703,77 @@ class MockoonStdout(unittest.TestCase):
         self.assertEqual(self.read(TRANSACTION + MOCKOON_DRAIN.rstrip("\n"), 5), (1, [MOCKOON_DRAIN.rstrip("\n")]))
 
 
+class TransactionLinesCheck(unittest.TestCase):
+    """In the mockoon format, each step checks that smock wrote a
+    Transaction recorded line for each request it answered, as
+    smock_requests_total counts them once the load has ended. A count that
+    differs is a failure: the summary names the step, and the run exits
+    with 1."""
+
+    def test_the_count_is_checked_against_the_requests_smock_answered(self):
+        answered = scrape(requests=(6000, 3999, 1))
+        self.assertEqual(harness.transaction_lines(10000, answered),
+                         {"count": 10000, "requests_answered": 10000, "equal": True})
+        self.assertEqual(harness.transaction_lines(9998, answered),
+                         {"count": 9998, "requests_answered": 10000, "equal": False})
+        self.assertEqual(harness.transaction_lines(10001, answered),
+                         {"count": 10001, "requests_answered": 10000, "equal": False})
+        # Before its first request, smock_requests_total has no series.
+        self.assertEqual(harness.transaction_lines(0, scrape(requests=())),
+                         {"count": 0, "requests_answered": 0, "equal": True})
+        # A smock that did not answer the scrape cannot be checked.
+        self.assertEqual(harness.transaction_lines(10000, None),
+                         {"count": 10000, "requests_answered": None, "equal": None})
+
+    def test_a_count_that_differs_is_a_failure_the_summary_names(self):
+        def shown_step(rate):
+            step = step_measured(rate=rate)
+            step.update(latency_from_release_ms={"p50": 0.3, "p90": 0.5, "p99": 1.0, "p99_9": 1.5, "max": 3.0},
+                        rss_kib={"first": 16000, "last": 17000, "max": 17000}, other_tasks=None, smock_cpu=None)
+            return step
+
+        def counted(rate, lines):
+            return {**shown_step(rate), "transaction_lines": lines}
+
+        oom_killed = {**shown_step(4000), "smock_ready": False}
+        summary = summary_of(steps=[
+            counted(500, {"count": 10000, "requests_answered": 10000, "equal": True}),
+            counted(1000, {"count": 19998, "requests_answered": 20000, "equal": False}),
+            counted(2000, {"count": 40000, "requests_answered": None, "equal": None}),
+            oom_killed])
+        self.assertEqual(harness.transaction_line_failures(summary), [
+            "in http-keep-alive@small@1000, smock wrote 19998 Transaction recorded lines for the 20000 requests it "
+            "answered"])
+        conditions = summary_conditions()
+        conditions["smock"]["args"] = ["serve", "--port", "0", "--log-format", "mockoon"]
+        text = harness.summary_markdown(summary, conditions)
+        rows = markdown_table(markdown_sections(text)["small: CPU limit 250m, memory limit 512Mi"])
+        self.assertEqual([row["Transaction lines"] for row in rows],
+                         ["10000", "19998 for 20000 requests", "40000 for - requests", "-"])
+        self.assertIn("**Log format mockoon:**", text)
+        self.assertIn("**Transaction lines differ** from the requests smock answered: in http-keep-alive@small@1000, "
+                      "smock wrote 19998 Transaction recorded lines for the 20000 requests it answered.", text)
+        # In the json format, there is nothing to count.
+        text = harness.summary_markdown(summary_of(steps=[shown_step(500)]), summary_conditions())
+        self.assertNotIn("Transaction", text)
+        self.assertNotIn("Log format", text)
+
+
+class LogFormatOfARun(unittest.TestCase):
+    """A run's conditions record smock's arguments, which name the log
+    format it ran with."""
+
+    def test_the_log_format_is_the_one_smocks_arguments_name_or_else_json(self):
+        def conditions(args):
+            return {"smock": {"version": "0.3.0"} if args is None else {"version": "0.3.0", "args": args}}
+
+        self.assertEqual(harness.log_format(conditions(["serve", "--port", "0", "--log-format", "mockoon"])),
+                         "mockoon")
+        self.assertEqual(harness.log_format(conditions(["serve", "--log-format", "json", "--port", "0"])), "json")
+        # A run before the option, and a GKE run, record no such argument.
+        self.assertEqual(harness.log_format(conditions(["serve", "--port", "0"])), "json")
+        self.assertEqual(harness.log_format(conditions(None)), "json")
+
+
 if __name__ == "__main__":
     unittest.main()
