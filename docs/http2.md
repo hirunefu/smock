@@ -455,7 +455,8 @@ first stream:
 - A header block over the bound as received, its HEADERS and CONTINUATION
   frames together, ends the connection with GOAWAY `ENHANCE_YOUR_CALM`.
   Every stream of the connection ends with it, and the client opens a new
-  connection for the rest.
+  connection for the rest. smock logs it as a CONTINUATION flood
+  ([Defences](#defences)).
 
 So a list just over the limit gets a 431, which tells the client why,
 while what moonhttp holds of one header block, and of the list it decodes
@@ -533,6 +534,7 @@ connection.
 | Pattern | Bound | Past it |
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
+| CONTINUATION flood (2024): a header block that never ends, as CONTINUATION frames keep coming | A header block, its HEADERS and CONTINUATION frames together, holds at most twice `--header-size-limit` octets as received, the bound moonhttp keeps ([Header lists](#header-lists)), and ends within `--read-timeout-ms` ([Timeouts](#timeouts)). An empty CONTINUATION frame that does not end its block is a frame that does no work ([Frames that do no work](#frames-that-do-no-work)). | GOAWAY `ENHANCE_YOUR_CALM`, and the connection closes, for a block over the bound. A block still open at the read timeout is a timeout instead: GOAWAY `NO_ERROR`, and the connection closes, with no log line. |
 | HPACK bomb: a small header block that decodes to a large list, such as one that names a large table entry over and over | moonhttp keeps no more of a decoded list than twice `--header-size-limit`, counted as RFC 7541 counts it. smock then holds the list to `--header-size-limit` and `--header-count-limit` ([Header lists](#header-lists)). The table smock decodes header blocks with is 4,096 octets. So is the one it encodes responses with, however large a table the client allows: smock lowers a larger SETTINGS_HEADER_TABLE_SIZE to 4,096 before moonhttp sees it, since an encoder may use any table up to the size the client allows (RFC 7541, section 4.2). | 431 for a list over `--header-size-limit` or with too many fields. RST_STREAM `ENHANCE_YOUR_CALM`, with no status, for a list over twice it. A block that does not decode is a connection error, not a defence: GOAWAY `COMPRESSION_ERROR`, with no log line ([Connection errors](#connection-errors)). |
 | Frames that do no work: SETTINGS, PING, PRIORITY, reset and empty-frame floods (CVE-2019-9512, -9513, -9514, -9515, -9518) | At most 100 in any one second ([Frames that do no work](#frames-that-do-no-work)). | GOAWAY `ENHANCE_YOUR_CALM`, and the connection closes. |
 | A client that stops reading or keeps its windows at zero (CVE-2019-9517) | The output bound: once what smock has queued for the connection and not yet written passes 16 KiB, it stops reading and queues no more ([The output bound](#the-output-bound)). Then `--write-timeout-ms`: a write that makes no progress, or a body that waits for a window, for that long ([Timeouts](#timeouts)). | The connection closes, without GOAWAY. A stream whose own window alone stays at zero gets RST_STREAM `CANCEL`, and the connection goes on. |
@@ -541,18 +543,24 @@ connection.
 | Request bodies | `--body-limit` per stream, under the concurrent-streams limit. | 413, then RST_STREAM `NO_ERROR` on that stream ([Request bodies](#request-bodies)). |
 
 A defence that closes a connection with GOAWAY uses `ENHANCE_YOUR_CALM`,
-and names the pattern in the GOAWAY's debug data. The connection then
-closes at once. Its streams in progress end with it. A response still
-waiting, for its delay or for the client's windows, goes no further, and
-its request's Journal entry is committed then. A request still arriving
-never reaches the Mocks. The client opens a new connection for the rest.
+and names the pattern in the GOAWAY's debug data. A header block over the
+bound is the exception: moonhttp keeps that bound and sends the GOAWAY,
+whose debug data gives its own reason, `a field block past
+SETTINGS_MAX_HEADER_LIST_SIZE`. The connection then closes at once. Its
+streams in progress end with it. A response still waiting, for its delay
+or for the client's windows, goes no further, and its request's Journal
+entry is committed then. A request still arriving never reaches the Mocks.
+The client opens a new connection for the rest.
 
 Unlike a timeout, such a close is logged: one line per connection, at
 level `warn`, that names the pattern and the kind of frame that passed the
-bound. No metric counts it.
+bound. No metric counts it. For a header block over the bound, the
+pattern is `CONTINUATION flood`, and the frame `HEADERS` or
+`CONTINUATION`, whichever took the block past the bound.
 
 ```json
 {"time":"2026-10-25T09:00:00.000Z","level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}
+{"time":"2026-10-25T09:00:00.000Z","level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"CONTINUATION flood","frame":"CONTINUATION"}
 ```
 
 ### Frames that do no work
@@ -574,6 +582,8 @@ These frames count:
 - PRIORITY frames (`PRIORITY`): smock ignores priority signals.
 - DATA frames that carry no data, padded or not, and do not end their
   stream (`empty DATA`).
+- CONTINUATION frames with no octets that do not end their header block
+  (`empty CONTINUATION`).
 - DATA, WINDOW_UPDATE and RST_STREAM frames on a stream that has closed
   (`DATA on a closed stream`, and so on), and HEADERS on a stream that
   smock reset, which are ignored (`HEADERS on a stream smock reset`).
@@ -583,9 +593,10 @@ These frames count:
 
 The bound holds for any one second, however long the connection lives: a
 client that sends such frames now and then is never cut. Frames that do
-some work never count: HEADERS that open a stream, DATA that carries a
-body, and WINDOW_UPDATE frames on the connection or on a stream in
-progress. The replies these frames make smock owe fall under
+some work never count: HEADERS that open a stream, CONTINUATION frames
+that carry part of a header block or end it, DATA that carries a body, and
+WINDOW_UPDATE frames on the connection or on a stream in progress. The
+replies these frames make smock owe fall under
 [the output bound](#the-output-bound).
 
 ## The drain
@@ -621,7 +632,8 @@ opens a new connection for the rest.
 - A frame larger than 16,384 octets, the frame size smock advertises,
   gets `FRAME_SIZE_ERROR`.
 - A header block over twice `--header-size-limit` as received gets
-  `ENHANCE_YOUR_CALM` ([Header lists](#header-lists)).
+  `ENHANCE_YOUR_CALM` ([Header lists](#header-lists)), and is logged as a
+  CONTINUATION flood ([Defences](#defences)).
 - A connection that a defence closes with GOAWAY gets `ENHANCE_YOUR_CALM`,
   and is logged ([Defences](#defences)).
 - A header block that does not decode gets `COMPRESSION_ERROR`: one with a
