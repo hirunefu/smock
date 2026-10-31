@@ -285,9 +285,10 @@ def plan_profiles(plan, names=None):
 
 
 def plan_cases(plan, names=None):
-    """The cases of the plan to run, all of them by default. The plan's
-    cases must be ones the harness can run, and only the harness on one
-    machine can hold idle connections."""
+    """The cases of the plan to run: by default all of them but those that
+    run only on one machine (local_only), such as h2c-multiplexed. The
+    plan's cases must be ones the harness can run, and only the harness on
+    one machine can hold idle connections."""
     for name in names or []:
         if name not in [case["name"] for case in plan["cases"]]:
             raise GkeError(f"the plan has no case {name}")
@@ -295,8 +296,14 @@ def plan_cases(plan, names=None):
         problem = harness.case_problem(case)
         if problem:
             raise GkeError(problem)
-    cases = [case for case in plan["cases"] if names is None or case["name"] in names]
+    if names is None:
+        cases = [case for case in plan["cases"] if not case.get("local_only")]
+    else:
+        cases = [case for case in plan["cases"] if case["name"] in names]
     for case in cases:
+        if case.get("local_only"):
+            raise GkeError(f"case {case['name']} runs only on one machine (local_only), which keeps the GKE run's "
+                           "time down: leave it out of --cases")
         if case.get("idle_connections"):
             raise GkeError(f"case {case['name']} holds idle connections, which the GKE run cannot: "
                            "leave it out with --cases")

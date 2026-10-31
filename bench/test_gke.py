@@ -186,6 +186,8 @@ class Manifests(Helper):
         self.assertEqual(container["image"], GENERATOR_IMAGE)
         self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
         env = {variable["name"]: variable["value"] for variable in container["env"]}
+        # Every case of the plan but h2c-multiplexed, which runs only on one
+        # machine.
         self.assertEqual((env["PROFILE"], env["CASES"]),
                          ("chart-default", "http-keep-alive,https-keep-alive,h2c-keep-alive,h2-keep-alive"))
 
@@ -607,6 +609,9 @@ class Plan(Helper):
         status, stdout, stderr = self.plan()
         self.assertEqual(status, 0, stderr)
         lines = [line.split() for line in stdout.splitlines()]
+        # The four cases of the plan that are not local only: 8 steps of
+        # plain HTTP, 6 of TLS, 8 of h2c and 8 of h2, but none of
+        # h2c-multiplexed.
         self.assertEqual([line[:2] for line in lines],
                          [["autopilot-burst-min", "30"], ["autopilot-min", "30"], ["chart-default", "30"]])
         deadlines = {line[0]: int(line[2]) for line in lines}
@@ -618,7 +623,10 @@ class Plan(Helper):
         self.assertEqual(status, 0, stderr)
         self.assertEqual([line.split()[:2] for line in stdout.splitlines()],
                          [["autopilot-min", "6"], ["chart-default", "6"]])
-        for args, expected in ((["--profiles", "huge"], "no profile huge"), (["--cases", "grpc"], "no case grpc")):
+        for args, expected in ((["--profiles", "huge"], "no profile huge"), (["--cases", "grpc"], "no case grpc"),
+                               (["--cases", "http-keep-alive,h2c-multiplexed"],
+                                "case h2c-multiplexed runs only on one machine (local_only), which keeps the GKE "
+                                "run's time down: leave it out of --cases")):
             status, _, stderr = self.plan(*args)
             self.assertEqual(status, 1)
             self.assertIn(expected, stderr)
@@ -1702,6 +1710,25 @@ class Generator(Helper):
         self.assertIn(f"Idle RSS: {idle['rss_kib'] / 1024:.1f} MiB, 0.5 s after startup", markdown)
         self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
         self.assertIsNone(conditions["gke"]["profiles"]["small"]["ended_early"])
+
+    def test_without_cases_named_it_runs_every_case_of_the_plan_but_those_that_run_only_on_one_machine(self):
+        # Such as h2c-multiplexed in bench/plan-autopilot.json.
+        plan = json.loads(self.generator_plan().read_text())
+        plan["cases"].append({**plan["cases"][0], "name": "h2c-multiplexed", "protocol": "h2c", "connections": 16,
+                              "streams_per_connection": 4, "local_only": True})
+        plan_path = self.directory() / "plan.json"
+        plan_path.write_text(json.dumps(plan))
+        with LocalSmock() as smock:
+            status, lines, output = self.generate(plan_path, smock, cases="")
+        self.assertEqual(status, 0, output)
+        self.assertEqual([line["result"]["id"] for line in lines if line["kind"] == "step"],
+                         ["http-keep-alive@small", "https-keep-alive@small"])
+        # So no port is checked over HTTP/2 either.
+        [check] = [line for line in lines if line["kind"] == "traffic-check"]
+        self.assertEqual(check["http2"], {})
+        summary, _, _ = self.summarize(plan_path, output)
+        self.assertTrue(summary["complete"])
+        self.assertEqual([case["id"] for case in summary["cases"]], ["http-keep-alive@small", "https-keep-alive@small"])
 
     def test_the_http2_steps_go_over_h2c_to_the_plain_port_and_over_h2_to_the_tls_port(self):
         plan_path = self.generator_plan(http2=True)
