@@ -165,13 +165,19 @@ SIGHUP do not drain: they end smock at once, cutting whatever is in
 flight, so that Ctrl-C stops a local smock promptly.
 
 - `/readyz` fails from the moment the signal arrives. The plain and TLS
-  listeners close, so new connections are refused, and idle keep-alive
-  connections close at once.
+  listeners close, so new connections are refused, and idle HTTP/1.1
+  keep-alive connections close at once.
 - Responses in progress finish with `Connection: close`, and their
   connections close after them. Server-Sent Event streams and pending
   delays go on. A stream whose client has gone away counts too, until smock
   next writes an event to it and notices, which an event's long delay can
   put off until the drain timeout.
+- Each HTTP/2 connection, idle or not, gets GOAWAY, then a PING. Once the
+  client answers the PING, or a second later at most, a second GOAWAY names
+  the last stream smock received. The streams up to it finish, as above,
+  and the client sends the others again on a new connection. Once no
+  stream is in progress, the connection closes
+  ([The drain](docs/http2.md#the-drain)).
 - smock exits with status 0 as soon as nothing is in flight, and at the
   latest when the drain timeout (`--drain-timeout-ms`) expires: what is still
   running then is cut. Keep the Pod's `terminationGracePeriodSeconds` above

@@ -222,7 +222,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
     }
     self.waiting.remove(stream)
     let _ = self.writer.write(out)
-    self.answered()
+    self.answered(out)
   })
   self.waiting[stream] = task
 }

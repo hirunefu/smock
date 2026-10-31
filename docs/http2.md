@@ -293,7 +293,7 @@ opens them, and its other streams are answered meanwhile.
   learns that a client has gone only when it next writes an event; over
   HTTP/2, the RST_STREAM tells it at once.
 - On SIGTERM, event streams go on until they end or the drain timeout cuts
-  them, as over HTTP/1.1.
+  them, as over HTTP/1.1 ([The drain](#the-drain)).
 
 ## Faults
 
@@ -563,6 +563,29 @@ client that sends such frames now and then is never cut. Frames that do
 some work never count: HEADERS that open a stream, DATA that carries a
 body, and WINDOW_UPDATE frames on the connection or on a stream in
 progress.
+
+## The drain
+
+On SIGTERM, smock drains each HTTP/2 connection in two steps, as RFC 9113
+suggests (section 6.8), so that no request the client has sent is lost.
+
+1. The connection, idle or not, gets GOAWAY with `NO_ERROR` and the
+   highest stream ID there is, 2^31-1, then a PING. The client opens no
+   more streams, and the streams it has already sent, which smock may not
+   have received yet, are still served.
+2. A client that answers the PING has read the GOAWAY. smock then sends a
+   second GOAWAY with `NO_ERROR`, which names the last stream it received.
+   When no answer comes, it sends it a second after the first.
+3. The streams up to that ID finish, delays and event streams among them.
+   The streams above it never reach the Mocks: the client sends them again
+   on a new connection.
+4. Once no stream is in progress, the connection closes, as after any
+   GOAWAY with `NO_ERROR` ([Timeouts](#timeouts)). So a connection with no
+   stream in progress closes about two seconds after SIGTERM at the latest,
+   and sooner when its client answers the PING or closes the connection.
+
+At the drain timeout (`--drain-timeout-ms`), what is still open is cut and
+counted in `connectionsCut`, as over HTTP/1.1. See [Run](../README.md#run).
 
 ## Connection errors
 

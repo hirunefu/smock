@@ -1,5 +1,6 @@
 // The connections of the plain and TLS ports, each served in its own task,
-// so that a drain can close the idle ones and cut the rest.
+// so that a drain can close the idle ones, have the HTTP/2 ones send their
+// GOAWAYs, and cut the rest.
 
 ///|
 /// One connection of the plain or the TLS port.
@@ -7,8 +8,12 @@ priv struct Connection {
   /// Whether it waits for its next request and has received nothing of
   /// it: from when it opens, through a TLS handshake, until the first byte
   /// of a request, and again after each response. An HTTP/2 connection is
-  /// idle while it waits with no stream in progress.
+  /// never idle: it closes itself once it has drained (`drain`).
   mut idle : Bool
+  /// While it is served over HTTP/2, what starts its drain, which tells the
+  /// client with GOAWAY to send no more streams, then closes the connection
+  /// once none is in progress (`H2Connection::start_drain`).
+  mut drain : (() -> Unit)?
   /// The task that serves it.
   mut task : @async.Task[Unit]?
 }
@@ -38,7 +43,7 @@ fn[X] Connections::serve(
 ) -> Unit {
   let id = self.next_id
   self.next_id += 1
-  let connection = { idle: true, task: None, }
+  let connection = { idle: true, drain: None, task: None, }
   self.live[id] = connection
   let task = group.spawn(allow_failure=true, () => {
     defer {
@@ -52,10 +57,13 @@ fn[X] Connections::serve(
 }
 
 ///|
-/// Closes every idle connection.
-fn Connections::close_idle(self : Connections) -> Unit {
+/// Starts the drain of every connection: an HTTP/2 connection starts its
+/// own, with GOAWAY, and an idle one of the others closes at once.
+fn Connections::drain(self : Connections) -> Unit {
   for _, connection in self.live {
-    if connection.idle && connection.task is Some(task) {
+    if connection.drain is Some(drain) {
+      drain()
+    } else if connection.idle && connection.task is Some(task) {
       task.cancel()
     }
   }
