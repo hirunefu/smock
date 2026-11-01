@@ -560,10 +560,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
       // frames.
       Reset(stream~, remote~, ..) => {
         // Reset before smock finished its response: the defence against
-        // Rapid Reset and MadeYouReset counts it, below. Spec F's exception
-        // goes here: a client reset of a gRPC call that its deadline is
-        // about to end does not count, once per stream. A call that smock
-        // has ended with DEADLINE_EXCEEDED is finished already.
+        // Rapid Reset and MadeYouReset counts it, below.
         let early = self.streams.unfinished(stream)
         // smock's own resets give no event, so one not from the client is
         // moonhttp's.

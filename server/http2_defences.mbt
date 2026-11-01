@@ -114,8 +114,6 @@ fn H2Connection::no_work(
       None
     }
   } else if ftype == @http2.frame_rst_stream {
-    // Spec F's exception goes here: a client reset of a gRPC call that smock
-    // ended with DEADLINE_EXCEEDED does not count, once per stream.
     if self.closed(head.stream_id) {
       Some("RST_STREAM on a closed stream")
     } else {
