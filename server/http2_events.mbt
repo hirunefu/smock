@@ -57,15 +57,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_events(
       out,
       partial~,
     )
-    if finished && partial {
-      self.reset_after(stream, None)
-    }
-    self.waiting.remove(stream)
-    // A reset that came first leaves nothing of the task's to write.
-    if finished {
-      let _ = self.writer.write(out)
-    }
-    self.answered(out)
+    self.end_task(stream, out, finished~, reset=partial)
   })
   self.waiting[stream] = task
 }

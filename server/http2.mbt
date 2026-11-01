@@ -1113,6 +1113,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
     // What was queued before goes out first, so that the response keeps
     // within the output bound.
     let mut finished = self.drained(stream, out)
+    // Whether the task sent the rest of a partial Fault's response, which
+    // a reset then ends.
+    let mut reset = false
     if finished {
       // From here on the response ends the stream, and commits the entry.
       entry = None
@@ -1141,9 +1144,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
                   out,
                   partial~,
                 )
-                if finished && partial {
-                  self.reset_after(stream, None)
-                }
+                reset = partial
               }
             }
             Bytes(body) => {
@@ -1165,22 +1166,40 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
                   out,
                   end=!partial,
                 )
-                if finished && partial {
-                  self.reset_after(stream, None)
-                }
+                reset = partial
               }
             }
           }
       }
     }
-    self.waiting.remove(stream)
-    // A reset that came first leaves nothing of the task's to write.
-    if finished {
-      let _ = self.writer.write(out)
-    }
-    self.answered(out)
+    self.end_task(stream, out, finished~, reset~)
   })
   self.waiting[stream] = task
+}
+
+///|
+/// Ends the task of `stream`, which writes to `out`. When `finished` is
+/// true, the task has queued the stream's response in full, and with
+/// `reset` RST_STREAM INTERNAL_ERROR follows it, as after the rest of a
+/// partial Fault's response (`reset_after`); what it queued is then
+/// written. When `finished` is false, a reset of the stream or the end of
+/// the connection came first, and left nothing of the task's to write.
+/// Either way the stream waits no more (`answered`).
+async fn[S : @io.Writer + ReadOutput] H2Connection::end_task(
+  self : H2Connection,
+  stream : Int32,
+  out : WatchedStream[S],
+  finished~ : Bool,
+  reset~ : Bool = false,
+) -> Unit {
+  if finished && reset {
+    self.reset_after(stream, None)
+  }
+  self.waiting.remove(stream)
+  if finished {
+    let _ = self.writer.write(out)
+  }
+  self.answered(out)
 }
 
 ///|
