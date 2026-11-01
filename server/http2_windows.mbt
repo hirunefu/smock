@@ -203,7 +203,7 @@ fn H2Connection::unblock(self : H2Connection, stream : Int32) -> Unit {
 /// Sends `rest`, the part of the body of the response on `stream` that did
 /// not fit the windows when it was queued, in a task of its own, a slow
 /// write, which writes to `out` (`trickle`). `outcome` is what the engine
-/// decided for the request; its request is counted when the task ends.
+/// decided for the request, `request`; it is counted when the task ends.
 /// With a partial Fault, `rest` is the rest of the half that Fault sends,
 /// and once it is queued the task resets the stream with RST_STREAM
 /// INTERNAL_ERROR (`reset_after`).
@@ -214,12 +214,14 @@ fn H2Connection::unblock(self : H2Connection, stream : Int32) -> Unit {
 fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
   self : H2Connection,
   stream : Int32,
+  request : H2Request,
   rest : BytesView,
   outcome : @engine.Outcome,
   out : WatchedStream[S],
 ) -> Unit {
   // The read that brought the request in full.
   let stopwatch = self.last_read
+  self.will_wait(stream, request, outcome)
   let task = self.group.spawn(no_wait=true, () => {
     defer self.ports.done(outcome, stopwatch)
     let partial = outcome.plan.fault is Some(Partial)
