@@ -184,6 +184,7 @@ priv struct PendingLine {
 }
 
 ///|
+/// A connection's pending line, with no outcome yet.
 fn PendingLine::new() -> PendingLine {
   { outcome: None, }
 }
