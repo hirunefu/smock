@@ -584,11 +584,12 @@ have in progress at once. It is 100 by default, and can be from 1 to 1000.
   are ignored.
 
 Each stream in progress can hold a request body of up to `--body-limit`.
-So the request bodies one connection holds at once can reach the
-concurrent-streams limit times the body limit: 100 × 10 MiB with the
-defaults, against 10 MiB for an HTTP/1.1 connection. For a small Pod, lower
-either flag, such as `--http2-max-concurrent-streams 10` or a smaller
-`--body-limit`.
+So the request bodies one connection holds in memory at once can reach
+the concurrent-streams limit times the body limit: 100 × 10 MiB, about
+1 GiB, with the defaults, against 10 MiB for an HTTP/1.1 connection. Flow
+control does not bound it, since smock hands back the window of each DATA
+frame as soon as the frame arrives. For a small Pod, lower either flag,
+such as `--http2-max-concurrent-streams 10` or a smaller `--body-limit`.
 
 ### The output bound
 

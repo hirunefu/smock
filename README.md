@@ -126,7 +126,11 @@ No metric counts it. See [Defences](docs/http2.md#defences).
 Over HTTP/2, a body over `--body-limit` gets 413 on its stream alone, and
 the connection's other streams go on. When the client is still sending the
 body, RST_STREAM `NO_ERROR` follows the 413, to stop the upload. See
-[Request bodies](docs/http2.md#request-bodies).
+[Request bodies](docs/http2.md#request-bodies). Since the limit applies to
+each stream, one HTTP/2 connection can hold request bodies of up to
+`--http2-max-concurrent-streams` × `--body-limit` in memory at once: about
+1 GiB with the defaults (100 × 10 MiB). For a small Pod, lower either flag
+([Limits and timeouts](docs/http2.md#limits-and-timeouts)).
 
 Over HTTP/2, a request over a header limit gets 431 on its stream alone,
 and the connection stays open. The read timeout applies to each stream
