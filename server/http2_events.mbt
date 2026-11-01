@@ -105,24 +105,7 @@ fn H2Connection::open_events(
   )
   let sent = if partial { count / 2 } else { count }
   if head || sent == 0 || !has_content(plan.status, connect~) {
-    if partial {
-      self.conn.headers(stream, fields) catch {
-        _ => {
-          self.reset_after(stream, entry)
-          return false
-        }
-      }
-      self.reset_after(stream, entry)
-      return false
-    }
-    ports.commit(entry)
-    self.conn.headers(stream, fields, end=true) catch {
-      _ => {
-        self.reset_after(stream, None)
-        return false
-      }
-    }
-    self.streams.ended_by_smock(stream)
+    self.headers_only(stream, fields, entry, partial~)
     return false
   }
   self.conn.headers(stream, fields) catch {

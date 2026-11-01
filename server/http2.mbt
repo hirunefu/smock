@@ -1286,25 +1286,8 @@ fn H2Connection::queue(
     date=ports.dates.at(now),
     connect~,
   )
-  if sent.length() == 0 && partial {
-    self.conn.headers(stream, fields) catch {
-      _ => {
-        self.reset_after(stream, entry)
-        return sent
-      }
-    }
-    self.reset_after(stream, entry)
-    return sent
-  }
   if sent.length() == 0 {
-    ports.commit(entry)
-    self.conn.headers(stream, fields, end=true) catch {
-      _ => {
-        self.reset_after(stream, None)
-        return sent
-      }
-    }
-    self.streams.ended_by_smock(stream)
+    self.headers_only(stream, fields, entry, partial~)
     return sent
   }
   self.conn.headers(stream, fields) catch {
@@ -1343,6 +1326,39 @@ fn H2Connection::queue(
   }
   self.streams.ended_by_smock(stream)
   sent[0:0]
+}
+
+///|
+/// Queues on `stream` the HEADERS `fields` of a response that sends no DATA,
+/// and commits the Journal entry `entry`: the HEADERS end the stream, with
+/// `entry` committed just before. With `partial`, as for a partial Fault,
+/// they do not: RST_STREAM INTERNAL_ERROR ends the stream instead, at once,
+/// with `entry` committed just before (`reset_after`). HEADERS the `Conn`
+/// refuses get that reset too. It runs where the response is queued, so the
+/// reset leaves the stream's task be.
+fn H2Connection::headers_only(
+  self : H2Connection,
+  stream : Int32,
+  fields : Array[@header.Header],
+  entry : @engine.JournalEntry?,
+  partial~ : Bool,
+) -> Unit {
+  if partial {
+    // HEADERS the `Conn` refuses get the same reset.
+    self.conn.headers(stream, fields) catch {
+      _ => ()
+    }
+    self.reset_after(stream, entry)
+    return
+  }
+  self.ports.commit(entry)
+  self.conn.headers(stream, fields, end=true) catch {
+    _ => {
+      self.reset_after(stream, None)
+      return
+    }
+  }
+  self.streams.ended_by_smock(stream)
 }
 
 ///|
