@@ -37,16 +37,19 @@ priv trait ReadOutput {
 }
 
 ///|
+/// A read of plain TCP produces no output, so there is none to hold.
 impl ReadOutput for @socket.Tcp with fn hold_read_output(_) {
 
 }
 
 ///|
+/// A read of plain TCP never leaves output.
 impl ReadOutput for @socket.Tcp with fn has_read_output(_) {
   false
 }
 
 ///|
+/// A read of plain TCP leaves no output to send.
 impl ReadOutput for @socket.Tcp with fn write_read_output(_, _) {
 
 }
