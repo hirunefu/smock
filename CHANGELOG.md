@@ -179,11 +179,11 @@ of each GitHub release include its section
   then wait in a queue of up to 1,024, and the new metric
   `smock_log_lines_dropped_total` counts those dropped beyond it. The
   four lines and the envelope are a stable contract: a change to them is
-  a breaking change, listed under Changed.
-  `json` stays the default, on stderr, and costs nothing more per request.
-  [Logs](docs/migrating-from-mockoon.md#logs) in the Mockoon migration
-  guide shows the setting for the binary, Docker and the Helm chart, and
-  lists every line and how it differs from Mockoon's. See also
+  a breaking change, listed under Changed. `json` stays the default, on
+  stderr, and serving a request in it adds one test of a value fixed at
+  startup. [Logs](docs/migrating-from-mockoon.md#logs) in the Mockoon
+  migration guide shows the setting for the binary, Docker and the Helm
+  chart, and lists every line and how it differs from Mockoon's. See also
   [Run](README.md#run).
 
 ### Changed
