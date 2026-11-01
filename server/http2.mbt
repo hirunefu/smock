@@ -688,7 +688,7 @@ fn H2Connection::idle(self : H2Connection) -> Bool {
 
 ///|
 /// Writes what the `Conn` queued, and in the mockoon log format the lines
-/// of the streams whose responses have ended (`write_ended`), then reads
+/// of the streams whose responses have ended (`write_output`), then reads
 /// more from `stream`, and returns whether the connection goes on: not once
 /// the client has closed it, nor after a GOAWAY with NO_ERROR, once what
 /// the client sends after it has been read and discarded (`discard`). After
@@ -700,13 +700,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::read_more(
   stream : S,
   out : WatchedStream[S],
 ) -> Bool {
-  if self.writer.write(out) {
-    self.now = @async.now()
-  }
-  // The lines of the streams answered in place, whose last frames that
-  // write sent, are written before the reader reads again.
-  if self.lines is Some(lines) && lines.ended.length() > 0 {
-    self.write_ended()
+  if self.write_output(out) {
     self.now = @async.now()
   }
   let idle = self.idle()

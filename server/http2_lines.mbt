@@ -147,7 +147,35 @@ fn H2Connection::will_wait(
 /// task is writing what the connection queued, it waits until that task
 /// has written them.
 async fn H2Connection::write_ended(self : H2Connection) -> Unit {
-  guard self.lines is Some(lines) && lines.ended.length() > 0 else { return }
-  self.writer.wait()
-  lines.write_ended()
+  if self.lines is Some(lines) && lines.ended.length() > 0 {
+    self.writer.wait()
+    lines.write_ended()
+  }
+}
+
+///|
+/// Writes to `out` what the `Conn` queued, as `H2Writer::write` does, and
+/// returns whether there was anything to write. In the mockoon log format,
+/// it then writes the lines of the streams whose responses have ended, such
+/// as those answered in place since the reader last read, and returns true.
+/// The reader calls it before it reads again. In the json format it is
+/// `H2Writer::write` alone, called last, so the reader pays nothing more
+/// for it.
+async fn[S : @io.Writer + ReadOutput] H2Connection::write_output(
+  self : H2Connection,
+  out : WatchedStream[S],
+) -> Bool {
+  // Each arm ends in its own call, so that the json format's is a tail call
+  // that adds no state of its own.
+  match self.lines {
+    None => self.writer.write(out)
+    Some(lines) =>
+      if lines.ended.is_empty() {
+        self.writer.write(out)
+      } else {
+        let _ = self.writer.write(out)
+        self.write_ended()
+        true
+      }
+  }
 }
