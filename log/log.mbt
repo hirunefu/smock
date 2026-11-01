@@ -97,16 +97,28 @@ fn Logger::write(
     "level": Json::string(level),
     "msg": Json::string(msg),
   }
-  for key, value in fields {
-    // A field never replaces the entry's own keys; it moves aside instead.
-    let key = if key is ("time" | "level" | "msg") {
-      "fields.\{key}"
-    } else {
-      key
-    }
-    entry[key] = value
-  }
+  add_fields(entry, fields, Json)
   (self.write_line)(Json::object(entry).stringify())
+}
+
+///|
+/// Adds `fields` to `entry`, an entry of `format` that holds only its own
+/// keys so far. A field never replaces the entry's own keys, `time`,
+/// `level` or `msg` in the `Json` format, `app`, `level`, `message` or
+/// `timestamp` in the `Mockoon` format: it moves aside, to
+/// `fields.<name>`, instead.
+fn add_fields(
+  entry : Map[String, Json],
+  fields : Map[String, Json],
+  format : Format,
+) -> Unit {
+  for key, value in fields {
+    let own = match format {
+      Json => key is ("time" | "level" | "msg")
+      Mockoon => key is ("app" | "level" | "message" | "timestamp")
+    }
+    entry[if own { "fields.\{key}" } else { key }] = value
+  }
 }
 
 ///|
