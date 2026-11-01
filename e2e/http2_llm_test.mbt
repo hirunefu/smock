@@ -98,3 +98,36 @@ async test "h2c: a streamed request to an openai-chat Stub gets HEADERS with tex
     })
   })
 }
+
+///|
+async test "h2c: the same request without stream gets the chat.completion JSON body, with its content-length, as any body" {
+  with_definitions([("openai.json", openai_chat)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let from = @async.now()
+      let response = client.request(
+        "POST",
+        "/v1/chat/completions",
+        authority="localhost",
+        headers=[("content-type", "application/json")],
+        body=@utf8.encode(chat_request("false")),
+      )
+      let to = @async.now()
+      inspect(
+        mask_created(response.render(), from~, to~),
+        content=(
+          #|200
+          #|content-type: application/json
+          #|x-ratelimit-remaining-requests: 59
+          #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
+          #|smock-mock: openai; via=default
+          #|date: <now>
+          #|content-length: 561
+          #|
+          #|{"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion","created":<received>,"model":"gpt-6-astra","choices":[{"index":0,"message":{"role":"assistant","content":"Hello! 天気は晴れ 👍","refusal":null,"annotations":[]},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"service_tier":"default"}
+        ),
+      )
+    })
+  })
+}
