@@ -63,22 +63,55 @@ pub(all) struct Outcome {
   /// clause of the Stub that matched, with the state before and after.
   /// There is none when no Stub matched, or when the Stub has no clause.
   scenario : ScenarioMove?
-  /// Why the template of the Stub that matched could not be rendered, a
-  /// value of its `variables` or `dataWrites` included, when it could not:
-  /// the response is then the 500 `template failed`. The Journal entry, when
-  /// there is one, holds the same.
-  template_error : TemplateError?
-  /// Why a write of the Stub's `dataWrites` could not be applied, when one
-  /// could not: the response is then the 500 `data write failed`. The
-  /// Journal entry, when there is one, holds the same.
-  data_error : DataError?
-  /// The path of the Stub that matched, as written, when the request has a
-  /// template error or a data error: its exact path, the text of its path
-  /// pattern, or a CRUD Stub's list path. There is none for a Stub with no
-  /// path condition, and none for a request with neither error, so that a
-  /// request answered as planned pays nothing for it.
-  failed_stub_path : String?
+  /// Why the Stub that matched could not serve its own content, when it
+  /// could not: the response is then the 500 `template failed` or
+  /// `data write failed`. There is none for a request answered as planned,
+  /// so that it pays nothing for it.
+  content_error : ContentError?
 } derive(Debug)
+
+///|
+/// Why the Stub that matched a request could not serve its own content,
+/// with the Stub, as the Mockoon-equivalent error line names it.
+pub(all) struct ContentError {
+  /// The ID of the Stub that matched.
+  stub : String
+  /// The path of the Stub as written: its exact path, the text of its path
+  /// pattern, or a CRUD Stub's list path. There is none for a Stub with no
+  /// path condition.
+  path : String?
+  /// What failed. The Journal entry, when there is one, holds the same.
+  failure : ContentFailure
+} derive(Debug)
+
+///|
+/// What kept the Stub that matched a request from serving its content.
+pub(all) enum ContentFailure {
+  /// A template could not be rendered, a value of the Stub's `variables` or
+  /// `dataWrites` included: the response is the 500 `template failed`.
+  Template(TemplateError)
+  /// A write of the Stub's `dataWrites` could not be applied: the response
+  /// is the 500 `data write failed`.
+  Data(DataError)
+} derive(Debug)
+
+///|
+/// The message of `failure`, as the 500's body gives it.
+pub fn ContentFailure::message(self : ContentFailure) -> String {
+  match self {
+    Template(error) => error.message
+    Data(error) => error.message
+  }
+}
+
+///|
+/// The content error of `stub`, which failed with `failure`.
+fn ContentError::new(
+  stub : @definitions.Stub,
+  failure : ContentFailure,
+) -> ContentError {
+  { stub: stub.id, path: written_path(stub), failure, }
+}
 
 ///|
 /// The Stub that matched a request, by its ID, and where it comes from. A
@@ -497,10 +530,8 @@ pub fn Engine::handle(
   let mut response_index = None
   let mut variables_written = none_written
   let mut data_written = no_buckets_written
-  let mut data_error = None
   let mut crud_called = None
-  let mut template_error = None
-  let mut failed_stub_path = None
+  let mut content_error = None
   let mut near_miss = None
   let plan : ResponsePlan = match matched {
     // The match decision: one sequence of steps, each taken in turn, which
@@ -575,13 +606,11 @@ pub fn Engine::handle(
               )
             catch {
               ValueFailed(error) => {
-                template_error = Some(error)
-                failed_stub_path = written_path(stub)
+                content_error = Some(ContentError::new(stub, Template(error)))
                 failed = Some(template_failed(stub.id, error))
               }
               ApplyFailed(error) => {
-                data_error = Some(error)
-                failed_stub_path = written_path(stub)
+                content_error = Some(ContentError::new(stub, Data(error)))
                 failed = Some(data_write_failed(stub.id, error))
               }
               StateLimitReached(message) =>
@@ -626,8 +655,7 @@ pub fn Engine::handle(
               ) catch {
                 RenderError(at~, message~) => {
                   let error = TemplateError::{ at, message, }
-                  template_error = Some(error)
-                  failed_stub_path = written_path(stub)
+                  content_error = Some(ContentError::new(stub, Template(error)))
                   template_failed(stub.id, error)
                 }
               }
@@ -711,11 +739,10 @@ pub fn Engine::handle(
         response_index~,
         variables_written~,
         data_written~,
-        data_error~,
+        content_error~,
         crud=crud_called,
         near_miss~,
         plan~,
-        template_error~,
         digest=self.snapshot.digest,
         now~,
       ),
@@ -730,9 +757,7 @@ pub fn Engine::handle(
     near_miss,
     matched: source,
     scenario,
-    template_error,
-    data_error,
-    failed_stub_path,
+    content_error,
   }
 }
 

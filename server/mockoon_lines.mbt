@@ -136,23 +136,13 @@ fn MockoonLines::serving_error(
   self : MockoonLines,
   outcome : @engine.Outcome,
 ) -> String? {
-  let message = match outcome.template_error {
-    Some(error) => error.message
-    None =>
-      match outcome.data_error {
-        Some(error) => error.message
-        None => return None
-      }
-  }
-  guard outcome.matched is Some(FromFile(stub) | Ephemeral(stub)) else {
-    abort("a template or data error comes from the Stub that matched")
-  }
+  guard outcome.content_error is Some(error) else { return None }
   Some(
     @log.serving_error_line(
       self.prefix(outcome.resolution),
-      message~,
-      path=outcome.failed_stub_path,
-      stub~,
+      message=error.failure.message(),
+      path=error.path,
+      stub=error.stub,
       at=@async.now(),
     ),
   )
