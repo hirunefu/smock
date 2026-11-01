@@ -300,7 +300,8 @@ async fn Smock::s_client(
 /// certificates in `trusted`, that offers `offer` by ALPN, then sends
 /// `GET path` for that Host over the protocol ALPN selected: HTTP/2 for
 /// `h2`, else HTTP/1.1. Returns the protocol selected and the response's
-/// status line, or why the handshake failed.
+/// status line, or why the handshake failed: the alert smock sent, named
+/// as in RFC 8446, section 6, or else OpenSSL's reason.
 async fn Smock::alpn_offer(
   self : Smock,
   offer : Array[String],
@@ -309,6 +310,10 @@ async fn Smock::alpn_offer(
   path~ : String = "/users/1",
 ) -> String {
   let tls = self.tls(alpn=offer, server_name~, trusted~) catch {
+    HandshakeAlert(120) =>
+      return "handshake failed: smock sent alert no_application_protocol"
+    HandshakeAlert(alert) =>
+      return "handshake failed: smock sent alert \{alert}"
     @openssl.Failed(reason) => return "handshake failed: \{reason}"
     err => raise err
   }
@@ -354,7 +359,7 @@ async test "ALPN: a client offering h2 and http/1.1, or h2 alone, gets h2 and is
             #|offers [h2]: ALPN h2, HTTP/2 200
             #|offers [http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
             #|offers []: ALPN none, HTTP/1.1 200 OK
-            #|offers [spdy/3.1]: handshake failed: tlsv1 alert no application protocol
+            #|offers [spdy/3.1]: handshake failed: smock sent alert no_application_protocol
           ),
         )
       })
@@ -410,14 +415,14 @@ async test "with --tls-http2 off, or SMOCK_TLS_HTTP2=off, ALPN offers http/1.1 a
         content=(
           #|--tls-http2 off:
           #|offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
-          #|offers [h2]: handshake failed: tlsv1 alert no application protocol
+          #|offers [h2]: handshake failed: smock sent alert no_application_protocol
           #|offers [http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
           #|offers []: ALPN none, HTTP/1.1 200 OK
           #|h2c on the plain port: HTTP/2 200
           #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["http/1.1"],"certFile":"*/rsa-chain.pem","keyFile":"*/rsa-key.pem"}
           #|SMOCK_TLS_HTTP2=off:
           #|offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
-          #|offers [h2]: handshake failed: tlsv1 alert no application protocol
+          #|offers [h2]: handshake failed: smock sent alert no_application_protocol
           #|offers [http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
           #|offers []: ALPN none, HTTP/1.1 200 OK
           #|h2c on the plain port: HTTP/2 200

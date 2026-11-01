@@ -18,12 +18,21 @@ struct TlsClient {
 }
 
 ///|
+/// A TLS handshake that smock failed with an alert, by the alert's code,
+/// such as 120 for no_application_protocol (RFC 8446, section 6). The code
+/// is the same in every OpenSSL version; OpenSSL's text for it is not, and
+/// before 3.4 there is none for no_application_protocol.
+suberror HandshakeAlert {
+  HandshakeAlert(Int32)
+}
+
+///|
 /// Opens a TLS connection to smock's TLS port that offers the protocols in
 /// `alpn` by ALPN, or no ALPN when it is empty, sends `server_name` by SNI
 /// and checks smock's certificate for it, trusting only the PEM
 /// certificates in `trusted` (by default the test root CA). A handshake
-/// that fails raises OpenSSL's reason, such as `tlsv1 alert no application
-/// protocol`.
+/// that fails raises `HandshakeAlert` when smock sent an alert, and
+/// OpenSSL's reason otherwise.
 async fn Smock::tls(
   self : Smock,
   alpn~ : Array[String],
@@ -40,7 +49,13 @@ async fn Smock::tls(
   let client = { tcp, tls, input: FixedArray::make(16 * 1024, b'\x00'), }
   let handshake = @async.with_timeout_opt(patience_ms, () => {
     for ;; {
-      let done = tls.handshake()
+      let done = tls.handshake() catch {
+        err =>
+          match tls.alert_received() {
+            Some(alert) => raise HandshakeAlert(alert)
+            None => raise err
+          }
+      }
       client.flush()
       if done {
         break

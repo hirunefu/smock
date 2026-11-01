@@ -80,12 +80,12 @@ async test "--tls-http2 holds for the certificate files and for a Mock's own cer
         #|certificate files, reloaded: offers [h2, http/1.1]: ALPN h2, HTTP/2 200; offers [h2]: ALPN h2, HTTP/2 200
         #|users' own, reloaded: offers [h2, http/1.1]: ALPN h2, HTTP/2 200; offers [h2]: ALPN h2, HTTP/2 200
         #|--tls-http2 off:
-        #|certificate files: offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: tlsv1 alert no application protocol
-        #|users' own: offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: tlsv1 alert no application protocol
+        #|certificate files: offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: smock sent alert no_application_protocol
+        #|users' own: offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: smock sent alert no_application_protocol
         #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
         #|{"level":"info","msg":"TLS certificate reloaded","mock":"users","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2124-07-01T00:00:00.000Z"}
-        #|certificate files, reloaded: offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: tlsv1 alert no application protocol
-        #|users' own, reloaded: offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: tlsv1 alert no application protocol
+        #|certificate files, reloaded: offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: smock sent alert no_application_protocol
+        #|users' own, reloaded: offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: smock sent alert no_application_protocol
       ),
     )
   })
@@ -128,8 +128,8 @@ async test "--tls-http2 holds for the self-signed certificate, and for the one g
       #|self-signed: offers [h2, http/1.1]: ALPN h2, HTTP/2 200; offers [h2]: ALPN h2, HTTP/2 200
       #|generated again: true, offers [h2, http/1.1]: ALPN h2, HTTP/2 200; offers [h2]: ALPN h2, HTTP/2 200
       #|--tls-http2 off:
-      #|self-signed: offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: tlsv1 alert no application protocol
-      #|generated again: true, offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: tlsv1 alert no application protocol
+      #|self-signed: offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: smock sent alert no_application_protocol
+      #|generated again: true, offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK; offers [h2]: handshake failed: smock sent alert no_application_protocol
     ),
   )
 }
