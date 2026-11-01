@@ -263,6 +263,17 @@ pub fn Engine::status(self : Engine) -> Status {
 }
 
 ///|
+/// The names of the Mocks served, in the order the status lists them,
+/// without the rest of the status.
+pub fn Engine::mock_names(self : Engine) -> Array[String] {
+  let names = []
+  for mock in self.snapshot.mocks {
+    names.push(mock.name)
+  }
+  names
+}
+
+///|
 /// The name of the Mock whose Hosts include `host`, compared as Host
 /// resolution compares Hosts: case-insensitively, without a port and
 /// without a trailing dot. `None` when no Mock lists it, even when there is

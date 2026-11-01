@@ -34,8 +34,8 @@ fn MockoonLines::new(
 /// definition set loads, and after each reload that swaps the set.
 fn MockoonLines::rebuild(self : MockoonLines, engine : @engine.Engine) -> Unit {
   let prefixes = Map([])
-  for mock in engine.status().mocks {
-    prefixes[mock.name] = @log.mockoon_prefix(Some(mock.name))
+  for name in engine.mock_names() {
+    prefixes[name] = @log.mockoon_prefix(Some(name))
   }
   self.prefixes = prefixes
 }
