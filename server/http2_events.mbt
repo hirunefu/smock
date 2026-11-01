@@ -9,13 +9,13 @@
 // does a delay.
 
 ///|
-/// Answers `stream`, whose request the engine decided `outcome` for, a
-/// stream of Server-Sent Events `events` with no delay of its own, and was
-/// a HEAD when `head` is true, or a CONNECT when `connect` is true: its
-/// HEADERS are queued at once, while the event is handled, and its events
-/// go out from a task of its own, which writes to `out` (`send_events`). A
-/// response with no body is its HEADERS alone, and needs no task
-/// (`open_events`). With a partial Fault, the task sends half the events,
+/// Answers `stream`, whose request, `request`, the engine decided `outcome`
+/// for, a stream of Server-Sent Events `events` with no delay of its own,
+/// and was a HEAD when `head` is true, or a CONNECT when `connect` is true:
+/// its HEADERS are queued at once, while the event is handled, and its
+/// events go out from a task of its own, which writes to `out`
+/// (`send_events`). A response with no body is its HEADERS alone, and needs
+/// no task (`open_events`): it has ended in place (`ended_in_place`). With a partial Fault, the task sends half the events,
 /// then resets the stream with RST_STREAM INTERNAL_ERROR (`reset_after`).
 ///
 /// The task ends with its stream, as the task of a delay does
@@ -25,6 +25,7 @@
 fn[S : @io.Writer + ReadOutput] H2Connection::start_events(
   self : H2Connection,
   stream : Int32,
+  request : H2Request,
   outcome : @engine.Outcome,
   events : ReadOnlyArray[@definitions.SseEvent],
   head~ : Bool,
@@ -44,7 +45,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_events(
     now=self.now,
   )
   if !more {
-    ports.done(outcome, stopwatch)
+    self.ended_in_place(request, outcome)
     return
   }
   let task = self.group.spawn(no_wait=true, () => {

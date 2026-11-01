@@ -165,6 +165,10 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       drain: Off,
       final_at: forever,
       last_read: Stopwatch::start(),
+      lines: match self.mockoon {
+        Some(lines) => Some(H2Lines::new(lines))
+        None => None
+      },
     }
     watchdog.expired = Some(now => h2.expire(now, out))
     watchdog.read_by(h2.idle_deadline, now)
@@ -298,6 +302,9 @@ priv struct H2Connection {
   mut final_at : Int64
   /// Started at the last read.
   mut last_read : Stopwatch
+  /// The Transaction recorded lines still to write, in the mockoon log
+  /// format only.
+  lines : H2Lines?
 }
 
 ///|
@@ -673,6 +680,12 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::read_more(
   if self.writer.write(out) {
     self.now = @async.now()
   }
+  // The lines of the streams answered in place, whose last frames that
+  // write sent, are written before the reader reads again.
+  if self.lines is Some(lines) && lines.ended.length() > 0 {
+    self.write_ended()
+    self.now = @async.now()
+  }
   let idle = self.idle()
   if idle && self.drain is Told {
     self.close_after_goaway(out)
@@ -1039,19 +1052,19 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
   match outcome.plan.fault {
     Some(Reset) => {
       self.reset_after(stream, outcome.journal)
-      ports.done(outcome, self.last_read)
+      self.ended_in_place(request, outcome)
       return
     }
     Some(Close) => {
       self.close_by_fault(stream, outcome.journal, out)
-      ports.done(outcome, self.last_read)
+      self.ended_in_place(request, outcome)
       return
     }
     _ => ()
   }
   match outcome.plan.body {
     Events(events) => {
-      self.start_events(stream, outcome, events, head~, connect~, out)
+      self.start_events(stream, request, outcome, events, head~, connect~, out)
       return
     }
     Bytes(body) => {
@@ -1070,7 +1083,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
       }
     }
   }
-  ports.done(outcome, self.last_read)
+  self.ended_in_place(request, outcome)
 }
 
 ///|

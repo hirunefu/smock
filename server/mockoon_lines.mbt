@@ -85,37 +85,66 @@ fn MockoonLines::prefix(
 }
 
 ///|
-/// Writes the Transaction recorded line of `request`, which the engine
-/// decided `outcome` for, with the time now: with its planned status, as
-/// the Journal records it, also when the request ended before the status
-/// was sent, or with the reset or close Fault that ended it before any
-/// status.
+/// Writes the Transaction recorded line of the request with the method
+/// `meth` and the target `target`, which the engine decided `outcome` for,
+/// with the time now (`transaction_line`), and returns once it is out.
 ///
 /// When the Stub that matched failed its own content, the request's error
 /// line (`serving_error`) comes first, queued with it, so that no other line
 /// comes between them.
 async fn MockoonLines::transaction(
   self : MockoonLines,
-  request : @http1.Request,
+  meth~ : String,
+  target~ : String,
   outcome : @engine.Outcome,
 ) -> Unit {
+  let error = self.serving_error(outcome)
+  let line = self.transaction_line(meth~, target~, outcome)
+  if error is Some(error) {
+    self.out.queue(error)
+  }
+  self.out.write(line)
+}
+
+///|
+/// Queues the lines that `transaction` writes, for the next flush of `out`,
+/// so that the lines of several requests go out together.
+fn MockoonLines::queue_transaction(
+  self : MockoonLines,
+  meth~ : String,
+  target~ : String,
+  outcome : @engine.Outcome,
+) -> Unit {
+  if self.serving_error(outcome) is Some(error) {
+    self.out.queue(error)
+  }
+  self.out.queue(self.transaction_line(meth~, target~, outcome))
+}
+
+///|
+/// The Transaction recorded line of the request with the method `meth` and
+/// the target `target`, which the engine decided `outcome` for, with the
+/// time now: with its planned status, as the Journal records it, also when
+/// the request ended before the status was sent, or with the reset or close
+/// Fault that ended it before any status.
+fn MockoonLines::transaction_line(
+  self : MockoonLines,
+  meth~ : String,
+  target~ : String,
+  outcome : @engine.Outcome,
+) -> String {
   let ended : @log.TransactionEnd = match outcome.plan.fault {
     Some(Reset) => Reset
     Some(Close) => Close
     Some(Partial) | None => Status(outcome.plan.status)
   }
-  let error = self.serving_error(outcome)
-  let line = @log.transaction_line(
+  @log.transaction_line(
     self.prefix(outcome.resolution),
-    meth=request.meth,
-    target=request.target,
+    meth~,
+    target~,
     ended~,
     at=@async.now(),
   )
-  if error is Some(error) {
-    self.out.queue(error)
-  }
-  self.out.write(line)
 }
 
 ///|
@@ -172,5 +201,5 @@ async fn PendingLine::write(
 ) -> Unit {
   guard self.outcome is Some(outcome) else { return }
   self.outcome = None
-  self.lines.transaction(request, outcome)
+  self.lines.transaction(meth=request.meth, target=request.target, outcome)
 }
