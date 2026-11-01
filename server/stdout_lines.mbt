@@ -23,22 +23,22 @@
 /// library's event loop ignores SIGPIPE, so the write fails with EPIPE
 /// rather than ending smock.
 pub struct StdoutLines {
-  /// Held while lines are written.
-  priv turn : @async.Mutex
   /// The lines given and not written yet, oldest first.
   priv queued : @deque.Deque[String]
   /// Whether each line of `queued`, in the same order, is one of smock's
   /// own, which `push` gave.
   priv own : @deque.Deque[Bool]
   /// How many lines of `queued` are smock's own.
-  priv mut own_queued : Int32
+  priv own_queued : Ref[Int32]
   /// How many of smock's own lines `push` dropped because `own_line_bound`
   /// of them were waiting.
   priv mut dropped : Int64
   /// Wakes the task that writes the lines `push` queues (`run`).
   priv pushed : @cond_var.Cond
-  /// Writes bytes to stdout, or drops them when they cannot be written.
-  priv sink : async (Bytes) -> Unit noraise
+  /// Writes every line queued, in its turn: `flush` runs it protected from
+  /// cancellation. It is made once, with the writer, so that `flush` makes
+  /// no closure for each line.
+  priv write_queued : async () -> Unit
 }
 
 ///|
@@ -62,14 +62,32 @@ pub fn StdoutLines::new() -> StdoutLines {
 /// A writer of whole lines through `sink`, which writes each line's bytes:
 /// to stdout, or, in tests, wherever a test wants them.
 fn StdoutLines::writing_to(sink : async (Bytes) -> Unit noraise) -> StdoutLines {
+  // Held while lines are written.
+  let turn = @async.Mutex()
+  let queued = @deque.Deque([])
+  let own = @deque.Deque([])
+  let own_queued = Ref(0)
   {
-    turn: @async.Mutex(),
-    queued: @deque.Deque([]),
-    own: @deque.Deque([]),
-    own_queued: 0,
+    queued,
+    own,
+    own_queued,
     dropped: 0L,
     pushed: @cond_var.Cond(),
-    sink,
+    write_queued: async fn() {
+      turn.acquire()
+      defer turn.release()
+      // Lines given while one is written are written in the same turn, so
+      // that whoever waits for the turn finds its own line already out.
+      while queued.pop_front() is Some(line) {
+        if own.pop_front() is Some(true) {
+          own_queued.val -= 1
+        }
+        let bytes = @buffer.Buffer(size_hint=line.length() + 1)
+        bytes.write_string_utf8(line)
+        bytes.write_byte(b'\n')
+        sink(bytes.to_bytes())
+      }
+    },
   }
 }
 
@@ -81,13 +99,13 @@ fn StdoutLines::writing_to(sink : async (Bytes) -> Unit noraise) -> StdoutLines 
 /// `own_line_bound` of smock's own lines are waiting already, `line` is
 /// dropped and counted instead.
 pub fn StdoutLines::push(self : StdoutLines, line : String) -> Unit {
-  if self.own_queued >= own_line_bound {
+  if self.own_queued.val >= own_line_bound {
     self.dropped += 1L
     return
   }
   self.queued.push_back(line)
   self.own.push_back(true)
-  self.own_queued += 1
+  self.own_queued.val += 1
   self.pushed.signal()
 }
 
@@ -108,21 +126,7 @@ async fn StdoutLines::write(self : StdoutLines, line : String) -> Unit {
 /// out, even when the task is cancelled meanwhile. `serve` calls it last,
 /// so that no line is left when the process exits.
 async fn StdoutLines::flush(self : StdoutLines) -> Unit {
-  @async.protect_from_cancel(() => {
-    self.turn.acquire()
-    defer self.turn.release()
-    // Lines given while one is written are written in the same turn, so
-    // that whoever waits for the turn finds its own line already out.
-    while self.queued.pop_front() is Some(line) {
-      if self.own.pop_front() is Some(true) {
-        self.own_queued -= 1
-      }
-      let bytes = @buffer.Buffer(size_hint=line.length() + 1)
-      bytes.write_string_utf8(line)
-      bytes.write_byte(b'\n')
-      (self.sink)(bytes.to_bytes())
-    }
-  })
+  @async.protect_from_cancel(self.write_queued)
 }
 
 ///|
