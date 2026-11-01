@@ -890,12 +890,12 @@ fn host_of(request : Request) -> String? {
 /// `users.example.com:8080` in `http://users.example.com:8080/users/1`,
 /// without any user information. Other targets have none.
 fn authority_of(target : String) -> String? {
-  guard scheme_end(target) is Some(end) else { return None }
-  let rest = target[end + 3:]
-  let authority = match rest.find_by(c => c is ('/' | '?' | '#')) {
-    Some(i) => rest[:i]
-    None => rest
-  }
+  let parts = @log.target_parts(target)
+  guard parts.authority >= 0 else { return None }
+  let authority = target.view(
+    start_offset=parts.authority,
+    end_offset=parts.path,
+  )
   let authority = match authority.rev_find("@") {
     Some(i) => authority[i + 1:]
     None => authority
@@ -904,43 +904,14 @@ fn authority_of(target : String) -> String? {
 }
 
 ///|
-/// Where the scheme of an absolute-form target ends: the index of its
-/// `://`.
-fn scheme_end(target : String) -> Int32? {
-  guard target.find("://") is Some(end) && end > 0 else { return None }
-  for i, c in target[:end] {
-    let ok = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (i > 0 && ((c >= '0' && c <= '9') || c is ('+' | '-' | '.')))
-    if !ok {
-      return None
-    }
-  }
-  Some(end)
-}
-
-///|
 /// The path of a request target: everything before the query, after the
 /// scheme and authority of an absolute-form target, where an empty path is
-/// `/`.
+/// `/` (`@log.target_parts`).
 fn path_of(target : String) -> String {
-  let target = match scheme_end(target) {
-    Some(end) => {
-      let rest = target[end + 3:]
-      match rest.find_by(c => c is ('/' | '?' | '#')) {
-        Some(i) => rest[i:]
-        None => ""
-      }
-    }
-    None => target[:]
-  }
-  let path = match target.find("?") {
-    Some(i) => target[:i]
-    None => target
-  }
-  if path == "" {
+  let parts = @log.target_parts(target)
+  if parts.path == parts.query {
     "/"
   } else {
-    path.to_owned()
+    target.view(start_offset=parts.path, end_offset=parts.query).to_owned()
   }
 }

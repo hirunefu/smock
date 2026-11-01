@@ -96,12 +96,11 @@ pub fn transaction_line(
   )
   write_json_string(out, meth, 0, meth.length())
   out.write_string(",\"requestPath\":")
-  let start = path_start(target)
-  let end = query_start(target, start)
-  if start == end {
+  let parts = target_parts(target)
+  if parts.path == parts.query {
     out.write_string("\"/\"")
   } else {
-    write_json_string(out, target, start, end)
+    write_json_string(out, target, parts.path, parts.query)
   }
   out.write_string(",\"requestProxied\":false,")
   if ended is Status(status) {
@@ -152,56 +151,6 @@ pub fn serving_error_line(
   write_time(out, at)
   out.write_string("\"}")
   out.to_string()
-}
-
-///|
-/// Where the path of the request target `target` starts, as the engine
-/// reads it for its conditions: after the scheme and the authority of an
-/// absolute-form target, at the first `/`, `?` or `#` after them, or at the
-/// end when none follows; otherwise at the start.
-fn path_start(target : String) -> Int32 {
-  let length = target.length()
-  // The first `://`, which ends the scheme of an absolute-form target.
-  let mut colon = -1
-  for i in 0..<(length - 2) {
-    if target.unsafe_get(i) == ':' &&
-      target.unsafe_get(i + 1) == '/' &&
-      target.unsafe_get(i + 2) == '/' {
-      colon = i
-      break
-    }
-  }
-  if colon <= 0 {
-    return 0
-  }
-  // A scheme is a letter, then letters, digits, `+`, `-` and `.`.
-  for i in 0..<colon {
-    let c = target.unsafe_get(i)
-    let letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-    let other = (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'
-    if !(letter || (i > 0 && other)) {
-      return 0
-    }
-  }
-  for i in (colon + 3)..<length {
-    let c = target.unsafe_get(i)
-    if c == '/' || c == '?' || c == '#' {
-      return i
-    }
-  }
-  length
-}
-
-///|
-/// Where the query of `target` starts: at its first `?` from `from` on, or
-/// at the end when it has none.
-fn query_start(target : String, from : Int32) -> Int32 {
-  for i in from..<target.length() {
-    if target.unsafe_get(i) == '?' {
-      return i
-    }
-  }
-  target.length()
 }
 
 ///|

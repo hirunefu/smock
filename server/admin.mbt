@@ -645,10 +645,14 @@ fn metrics(admin : Admin, _call : Call) -> Reply {
 }
 
 ///|
-/// The path of a request target, without the query.
+/// The path of a request target, without the query: the whole target up to
+/// its query (`@log.target_parts`), the scheme and authority of an
+/// absolute-form target included.
 fn path_of(target : String) -> String {
-  match target.find("?") {
-    Some(i) => target[:i].to_owned()
-    None => target
+  let query = @log.target_parts(target).query
+  if query == target.length() {
+    target
+  } else {
+    target.view(end_offset=query).to_owned()
   }
 }
