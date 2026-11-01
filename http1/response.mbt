@@ -301,8 +301,18 @@ fn write_connection(
 
 ///|
 /// Whether a response with `status` has content: one with status 1xx, 204
-/// or 304 has none (RFC 9110, sections 15.2, 15.3.5 and 15.4.5).
-fn has_content(status : Int32) -> Bool {
+/// or 304 has none (RFC 9110, sections 15.2, 15.3.5 and 15.4.5), so it
+/// carries neither a body nor its length. HTTP/2 frames a response by the
+/// same rule.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.has_content(200), content="true")
+///   inspect(@http1.has_content(204), content="false")
+///   inspect(@http1.has_content(101), content="false")
+/// }
+/// ```
+pub fn has_content(status : Int32) -> Bool {
   !(status is (100..<=199 | 204 | 304))
 }
 

@@ -152,7 +152,9 @@ of each GitHub release include its section
   `is_authority_form`, for a host and a port, the target of a CONNECT;
   `is_visible_ascii`, for characters from 0x21 to 0x7E alone;
   `expects_continue`, which tells whether an Expect field value asks for
-  `100 Continue`, as its parser reads it; and `field_octets`, the octets
+  `100 Continue`, as its parser reads it; `has_content`, which tells
+  whether a response with a status has content; `is_space_or_tab`, for
+  the white space around a field value; and `field_octets`, the octets
   `encode_response` writes for a field name or value. They join
   `is_token`, `is_field_value` and `is_host_value`, which were public
   already.

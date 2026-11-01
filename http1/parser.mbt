@@ -763,8 +763,18 @@ fn is_100_continue(value : StringView, at : Int32) -> Bool {
 }
 
 ///|
-/// Whether the code unit `c` is a space or a tab.
-fn is_space_or_tab(c : UInt16) -> Bool {
+/// Whether the code unit `c` is a space or a tab: the white space allowed
+/// around a field value (RFC 9110, section 5.5), which HTTP/2 does not
+/// allow there.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.is_space_or_tab(' '), content="true")
+///   inspect(@http1.is_space_or_tab('\t'), content="true")
+///   inspect(@http1.is_space_or_tab('x'), content="false")
+/// }
+/// ```
+pub fn is_space_or_tab(c : UInt16) -> Bool {
   c == ' ' || c == '\t'
 }
 
