@@ -83,7 +83,7 @@ write, while every other connection goes on.
 smock's own lines then wait in a queue of up to 1,024 lines: one beyond
 it is dropped and counted in `smock_log_lines_dropped_total`.
 The `mockoon` format costs CPU. In the benchmark on an M1 laptop, smock
-spent about 8 to 10 µs more CPU on each request than in `json`, 40% to
+spent about 8 to 11 µs more CPU on each request than in `json`, 40% to
 90% more, with the same latency at every rate up to the performance
 targets. Under a CPU limit it runs out sooner: the most it kept up with
 fell from 4,000 to 2,000 requests/s under 50m, and from 20,000 to 12,500
