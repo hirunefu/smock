@@ -50,3 +50,64 @@ async test "h2c and h2: with SMOCK_LOG_FORMAT=mockoon, each request a Mock handl
     })
   })
 }
+
+///|
+async test "h2c: a delayed response logs after its delay, while a fast stream on the connection logs at once, and a Server-Sent Event stream logs once, after its last event" {
+  with_definitions([("slow.json", slow)], dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let _ = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let out = []
+      let client = smock.h2c()
+      defer client.close()
+      let start = @async.now()
+      let delayed = client.send("GET", "/delayed", authority="localhost")
+      let quick = client.request("GET", "/quick", authority="localhost")
+      out.push("/quick answers: \{quick.status}")
+      let line = smock.transaction_lines(1)[0]
+      out.push(mask_timestamp(line))
+      out.push("written during the delay: \{written_at(line) - start < 1000}")
+      out.push("/delayed answers: \{client.response(delayed).status}")
+      let line = smock.transaction_lines(2)[1]
+      out.push(mask_timestamp(line))
+      out.push("written after the delay: \{written_at(line) - start >= 1000}")
+      let start = @async.now()
+      let stream = client.send("GET", "/stream", authority="localhost")
+      guard client.stream_event(stream) is Response(_) else {
+        fail("no HEADERS")
+      }
+      guard client.stream_event(stream) is Data(_) else {
+        fail("no first event")
+      }
+      @async.sleep(300)
+      out.push(
+        "after the first event: \{transactions(smock.stdout).length() - 2} lines",
+      )
+      let rest = client.response(stream)
+      out.push("/stream ends: \{rest.ended}")
+      let line = smock.transaction_lines(3)[2]
+      out.push(mask_timestamp(line))
+      out.push(
+        "written after the last event: \{written_at(line) - start >= 1000}",
+      )
+      // The stream is one request: no more lines come.
+      @async.sleep(300)
+      out.push("lines in all: \{transactions(smock.stdout).length()}")
+      inspect(
+        out.join("\n"),
+        content=(
+          #|/quick answers: 200
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/quick","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written during the delay: true
+          #|/delayed answers: 200
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/delayed","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written after the delay: true
+          #|after the first event: 0 lines
+          #|/stream ends: end
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/stream","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written after the last event: true
+          #|lines in all: 3
+        ),
+      )
+    })
+  })
+}

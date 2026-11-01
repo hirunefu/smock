@@ -41,12 +41,15 @@ priv struct H2Lines {
   lines : MockoonLines
   /// The lines of the streams whose responses have ended, oldest first.
   ended : Array[H2Line]
+  /// The lines of the streams whose responses wait in a task of their own,
+  /// by stream.
+  waiting : Map[Int32, H2Line]
 }
 
 ///|
 /// The lines of a new connection, which go to `lines`.
 fn H2Lines::new(lines : MockoonLines) -> H2Lines {
-  { lines, ended: [], }
+  { lines, ended: [], waiting: Map([]), }
 }
 
 ///|
@@ -91,4 +94,34 @@ async fn H2Connection::write_ended(self : H2Connection) -> Unit {
   guard self.lines is Some(lines) && lines.ended.length() > 0 else { return }
   self.writer.wait()
   lines.write_ended()
+}
+
+///|
+/// Writes the line of `stream`, whose response waited in a task of its own,
+/// and returns once it is out. The task writes it as it ends, unless a
+/// reset or the end of the connection cut it short first.
+async fn H2Lines::write_waiting(self : H2Lines, stream : Int32) -> Unit {
+  guard self.waiting.get(stream) is Some(line) else { return }
+  self.waiting.remove(stream)
+  self.lines.transaction(meth=line.meth, target=line.target, line.outcome)
+}
+
+///|
+/// The response to the request on `stream`, which the engine decided
+/// `outcome` for, is to wait in a task of its own: in the mockoon log
+/// format, its line waits until the task ends (`end_task`). It is set
+/// before the task is spawned, which may run at once.
+fn H2Connection::will_wait(
+  self : H2Connection,
+  stream : Int32,
+  request : H2Request,
+  outcome : @engine.Outcome,
+) -> Unit {
+  if self.lines is Some(lines) {
+    lines.waiting[stream] = {
+      meth: request.meth,
+      target: request.target,
+      outcome,
+    }
+  }
 }

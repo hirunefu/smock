@@ -48,6 +48,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_events(
     self.ended_in_place(request, outcome)
     return
   }
+  self.will_wait(stream, request, outcome)
   let task = self.group.spawn(no_wait=true, () => {
     defer ports.done(outcome, stopwatch)
     let partial = outcome.plan.fault is Some(Partial)

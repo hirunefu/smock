@@ -1046,7 +1046,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
   let head = incoming.meth == "HEAD"
   let connect = incoming.meth == "CONNECT"
   if outcome.plan.delay_ms > 0 {
-    self.wait(stream, outcome, head~, connect~, out)
+    self.wait(stream, request, outcome, head~, connect~, out)
     return
   }
   match outcome.plan.fault {
@@ -1078,7 +1078,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
         now=self.now,
       )
       if rest.length() > 0 {
-        self.write_slowly(stream, rest, outcome, out)
+        self.write_slowly(stream, request, rest, outcome, out)
         return
       }
     }
@@ -1087,9 +1087,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
 }
 
 ///|
-/// Answers `stream`, whose request the engine decided `outcome` for, and
-/// was a HEAD when `head` is true, or a CONNECT when `connect` is true, in a
-/// task of its own: once the plan's delay is over, the task queues the
+/// Answers `stream`, whose request, `request`, the engine decided `outcome`
+/// for, and was a HEAD when `head` is true, or a CONNECT when `connect` is
+/// true, in a task of its own: once the plan's delay is over, the task queues the
 /// response, or carries out the plan's connection Fault, and writes it to
 /// `out`, while the connection's other streams are answered meanwhile.
 ///
@@ -1105,6 +1105,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
 fn[S : @io.Writer + ReadOutput] H2Connection::wait(
   self : H2Connection,
   stream : Int32,
+  request : H2Request,
   outcome : @engine.Outcome,
   head~ : Bool,
   connect~ : Bool,
@@ -1112,6 +1113,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
 ) -> Unit {
   // The read that brought the request in full.
   let stopwatch = self.last_read
+  self.will_wait(stream, request, outcome)
   let task = self.group.spawn(no_wait=true, () => {
     let ports = self.ports
     let mut entry = outcome.journal
@@ -1210,6 +1212,12 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::end_task(
     let _ = self.writer.write(out)
   }
   self.answered(out)
+  // In the mockoon log format, the stream's line, once its last frames are
+  // written, by another task if one was writing.
+  if self.lines is Some(lines) {
+    self.writer.wait()
+    lines.write_waiting(stream)
+  }
 }
 
 ///|
