@@ -75,8 +75,12 @@ each request a Mock handles, after an
 `Error while serving the content: …` line when the Stub's template or
 data write failed; and `Server stopped` for each Mock when the drain
 ends. It writes nothing to stderr but usage errors. Each line is written
-whole and at once, also to a pipe, and never waits in a buffer, so a
-reader of stdout that stops reading stalls smock.
+whole, by one write, also to a pipe, and no buffer holds it back. A
+request's lines are written before its connection takes its next
+request, so a reader of stdout that stops reading holds up each
+connection with a line to write, while every other connection goes on.
+smock's own lines then wait in a queue of up to 1,024 lines: one beyond
+it is dropped and counted in `smock_log_lines_dropped_total`.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md#logs)
 lists the lines and how they differ from the Mockoon CLI's.
 
@@ -324,7 +328,10 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock_state_writes_refused_total` show the bytes of per-Session state
   that [the state bound](docs/definition-files.md#the-state-bound) counts,
   Variables and copies of Data buckets, and the writes it refused, from
-  requests, CRUD Stubs and Admin API sets, without labels.
+  requests, CRUD Stubs and Admin API sets, without labels;
+  `smock_log_lines_dropped_total` counts smock's own log lines that the
+  `mockoon` log format dropped because 1,024 of them were waiting for
+  stdout ([Run](#run)), and stays 0 in the `json` format.
 - What smock's process and its cgroup use is read when `/metrics` is
   scraped, so serving requests costs nothing for it. The standard process
   metrics of Prometheus's client libraries: `process_cpu_seconds_total`

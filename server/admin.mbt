@@ -16,6 +16,9 @@ priv struct Admin {
   state_metrics : StateMetrics
   /// The process and cgroup metrics, brought up to date on each scrape.
   process_metrics : ProcessMetrics
+  /// The metric of the log lines dropped, brought up to date on each
+  /// scrape.
+  log_metrics : LogMetrics
   /// Where changes made through the Admin API are logged.
   logger : @log.Logger
   /// The token every operation needs, as UTF-8, or `None` when
@@ -134,7 +137,8 @@ fn route(
 /// Creates the Admin API of a process whose life `lifecycle` follows.
 ///
 /// - `metrics` holds the metrics `/metrics` serves, among them
-///   `journal_metrics`, `state_metrics` and `process_metrics`.
+///   `journal_metrics`, `state_metrics`, `process_metrics` and
+///   `log_metrics`.
 /// - `logger` logs each change made through the Admin API.
 /// - `token` is the bearer token every operation needs, or `None` to turn
 ///   authentication off.
@@ -149,6 +153,7 @@ fn Admin::new(
   journal_metrics~ : JournalMetrics,
   state_metrics~ : StateMetrics,
   process_metrics~ : ProcessMetrics,
+  log_metrics~ : LogMetrics,
   logger~ : @log.Logger,
   token~ : String?,
   replica~ : String,
@@ -164,6 +169,7 @@ fn Admin::new(
     journal_metrics,
     state_metrics,
     process_metrics,
+    log_metrics,
     logger,
     token: token.map(token => @utf8.encode(token)),
     replica,
@@ -624,13 +630,15 @@ fn query_parameter(target : String, name : String) -> Result[String?, String] {
 ///|
 /// Brings the metrics that are read, not counted, up to date before a
 /// scrape: the Journal's and the per-Session state's, once the definitions
-/// have loaded, and the process and cgroup metrics, from their files.
+/// have loaded, the process and cgroup metrics, from their files, and the
+/// log lines dropped.
 async fn refresh_metrics(admin : Admin) -> Unit {
   if admin.lifecycle.engine is Some(engine) {
     admin.journal_metrics.update(engine.journal_stats())
     admin.state_metrics.update(engine.state_stats())
   }
   admin.process_metrics.update()
+  admin.log_metrics.update()
 }
 
 ///|

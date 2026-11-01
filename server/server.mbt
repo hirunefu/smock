@@ -104,6 +104,7 @@ pub async fn serve(
       started_at~,
       files=ProcessFiles::of_self(),
     ),
+    log_metrics=LogMetrics::register(metrics, stdout),
     logger~,
     token~,
     replica=replica_name(),

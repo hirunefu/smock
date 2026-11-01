@@ -408,8 +408,10 @@ env:
 or with `--set env.SMOCK_LOG_FORMAT=mockoon`. Kubernetes collects both
 streams, so `kubectl logs` and a log collector read either format with
 no other change. In the `mockoon` format each line is written whole and
-at once, and a reader of stdout that stops reading stalls smock; the
-container runtime reads it all the time. The
+at once, and the container runtime reads stdout all the time. A reader
+that stops reading holds up only the connections whose requests have a
+line to write, and smock's own lines beyond 1,024 waiting are dropped and
+counted in `smock_log_lines_dropped_total`. The
 [migration guide](https://github.com/hirunefu/smock/blob/main/docs/migrating-from-mockoon.md#logs)
 lists the lines and how they differ from Mockoon's.
 
