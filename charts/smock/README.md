@@ -411,7 +411,10 @@ no other change. In the `mockoon` format each line is written whole and
 at once, and the container runtime reads stdout all the time. A reader
 that stops reading holds up only the connections whose requests have a
 line to write, and smock's own lines beyond 1,024 waiting are dropped and
-counted in `smock_log_lines_dropped_total`. The
+counted in `smock_log_lines_dropped_total`. The `mockoon` format costs
+CPU: on an M1 laptop smock spent about 8 to 10 µs more on each request
+than in `json`, 40% to 90% more, so a Pod that comes close to its CPU
+limit in `json` needs a higher one in `mockoon`. The
 [migration guide](https://github.com/hirunefu/smock/blob/main/docs/migrating-from-mockoon.md#logs)
 lists the lines and how they differ from Mockoon's.
 

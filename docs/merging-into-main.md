@@ -78,9 +78,10 @@ pre-merge run compares with them.
   The mode on stalls when the comparison fails by the rule at a step
   that counts. Then take the numbers to the maintainer before the merge,
   who decides what to do: request lines are written by an async write
-  that their own request awaits, so a stall shows there. Its missed targets are for reference only. The run itself
-  exits with 1 when a step's `Transaction recorded` lines differ from the
-  requests smock answered: a bug to fix before the merge.
+  that their own request awaits, so a stall shows there. Its missed
+  targets are for reference only. The run itself exits with 1 when a
+  step's `Transaction recorded` lines differ from the requests smock
+  answered: a bug to fix before the merge.
 - [ ] **Run the benchmark on GKE Autopilot** with `scripts/gke-bench.sh`
   ([On GKE Autopilot](../bench/README.md#on-gke-autopilot)). It needs gcloud
   logged in (`gcloud auth login`), docker, kubectl, python3, setsid, curl,
