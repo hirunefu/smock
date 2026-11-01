@@ -511,7 +511,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
   let headers = DecodedHeaders::new()
   // In the mockoon log format, the outcome of the request whose Transaction
   // recorded line is still to be written.
-  let pending = match self.mockoon {
+  let pending_line = match self.mockoon {
     Some(_) => Some(PendingLine::new())
     None => None
   }
@@ -531,8 +531,8 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
     )
     defer {
       self.traffic.record(outcome, stopwatch.seconds())
-      if pending is Some(pending) {
-        pending.outcome = Some(outcome)
+      if pending_line is Some(pending_line) {
+        pending_line.outcome = Some(outcome)
       }
     }
     let plan = outcome.plan
@@ -644,7 +644,8 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       ),
     )
   }
-  let writable = if self.mockoon is Some(lines) && pending is Some(pending) {
+  let writable = if self.mockoon is Some(lines) &&
+    pending_line is Some(pending_line) {
     // Each request's line comes once `respond` is done with it, however it
     // ended, so that the json format's request path stays as it was.
     serve_connection(
@@ -652,7 +653,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       self.settings,
       connection~,
       respond=(stream, request, stopwatch, now) => {
-        defer lines.write_pending(request, pending)
+        defer lines.write_pending(request, pending_line)
         respond(stream, request, stopwatch, now)
       },
       reject~,
