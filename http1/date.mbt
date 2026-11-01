@@ -41,8 +41,10 @@ pub fn DateCache::at(self : DateCache, ms : Int64) -> String {
 fn http_date(seconds : Int64) -> String {
   let days = floor_div(seconds, 86_400L)
   let second_of_day = seconds - days * 86_400L
-  // After Howard Hinnant's `civil_from_days`. Years start in March, so
-  // that the leap day ends them.
+  // After Howard Hinnant's `civil_from_days`, as smock's log package
+  // computes it: a protocol module imports nothing from smock, so it keeps
+  // its own copy, with `floor_div` and `write_padded`. Years start in
+  // March, so that the leap day ends them.
   let z = days + 719_468L
   let era = floor_div(z, 146_097L)
   let doe = z - era * 146_097L

@@ -126,21 +126,12 @@ fn write_time(out : StringBuilder, ms : Int64) -> Unit {
   let ms_per_day = 86_400_000L
   let days = floor_div(ms, ms_per_day)
   let ms_of_day = ms - days * ms_per_day
-  // As `civil_from_days`, inline, so that no tuple is built.
-  let z = days + 719_468L
-  let era = floor_div(z, 146_097L)
-  let doe = z - era * 146_097L
-  let yoe = (doe - doe / 1460L + doe / 36_524L - doe / 146_096L) / 365L
-  let doy = doe - (365L * yoe + yoe / 4L - yoe / 100L)
-  let mp = (5L * doy + 2L) / 153L
-  let day = doy - (153L * mp + 2L) / 5L + 1L
-  let month = if mp < 10L { mp + 3L } else { mp - 9L }
-  let year = yoe + era * 400L + (if month <= 2L { 1L } else { 0L })
-  write_padded(out, year, 4)
+  let date = civil_from_days(days)
+  write_padded(out, date.year, 4)
   out.write_char('-')
-  write_padded(out, month, 2)
+  write_padded(out, date.month, 2)
   out.write_char('-')
-  write_padded(out, day, 2)
+  write_padded(out, date.day, 2)
   out.write_char('T')
   write_padded(out, ms_of_day / 3_600_000L, 2)
   out.write_char(':')
@@ -336,11 +327,22 @@ pub fn days_from_civil(year : Int32, month : Int32, day : Int32) -> Int64 {
 }
 
 ///|
+/// A date in the proleptic Gregorian calendar, as `civil_from_days` gives
+/// it. It is a value type, so returning one builds nothing.
+#valtype
+pub struct CivilDate {
+  year : Int64
+  /// From 1 to 12.
+  month : Int64
+  /// From 1 to 31.
+  day : Int64
+}
+
+///|
 /// The date `days` days after 1970-01-01, before it when negative, in the
-/// proleptic Gregorian calendar: its year, its month from 1 and its day of
-/// the month from 1, after Howard Hinnant's `civil_from_days`.
+/// proleptic Gregorian calendar, after Howard Hinnant's `civil_from_days`.
 /// `days_from_civil` is its inverse.
-pub fn civil_from_days(days : Int64) -> (Int64, Int64, Int64) {
+pub fn civil_from_days(days : Int64) -> CivilDate {
   // Years start in March, so that the leap day ends them.
   let z = days + 719_468L
   let era = floor_div(z, 146_097L)
@@ -351,5 +353,5 @@ pub fn civil_from_days(days : Int64) -> (Int64, Int64, Int64) {
   let day = doy - (153L * mp + 2L) / 5L + 1L
   let month = if mp < 10L { mp + 3L } else { mp - 9L }
   let year = yoe + era * 400L + (if month <= 2L { 1L } else { 0L })
-  (year, month, day)
+  { year, month, day, }
 }
