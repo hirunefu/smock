@@ -88,10 +88,11 @@ priv struct H2Writer {
   /// so that the one writing writes once more: what the `Conn` queued
   /// since, and the output reads left.
   mut more : Bool
-  /// Whether it has taken a HEADERS or DATA frame to write since the reader
-  /// last set it to false, at the client's last PING
-  /// (`H2Connection::no_work`).
-  mut responded : Bool
+  /// How many of the client's PINGs pass without being counted among the
+  /// frames that do no work (`H2Connection::no_work`): one for each HEADERS
+  /// or DATA frame it has taken to write, less one for each PING that
+  /// passed so, up to `ping_credit_bound`.
+  mut ping_credit : Int32
   /// Signalled when a task stops writing.
   done : @async.CondVar
 }
@@ -107,7 +108,7 @@ fn H2Writer::new(conn : @http2.Conn) -> H2Writer {
     busy: false,
     writing_for: 0,
     more: false,
-    responded: false,
+    ping_credit: 0,
     done: @async.CondVar::Cond(),
   }
 }
@@ -241,15 +242,15 @@ fn H2Writer::frame_room(self : H2Writer) -> Int32 {
 
 ///|
 /// The writer has taken `queued` to write, whole frames as the `Conn`
-/// queues them: `responded` becomes true if they hold a HEADERS or DATA
-/// frame. It reads only the frames' headers, and none once `responded` is
-/// true.
+/// queues them: each HEADERS or DATA frame among them lets one more PING
+/// pass (`ping_credit`). It reads only the frames' headers, and none once
+/// `ping_credit` is at `ping_credit_bound`.
 fn H2Writer::sends(self : H2Writer, queued : Bytes) -> Unit {
   let mut at = 0
-  while !self.responded && at + 9 <= queued.length() {
+  while self.ping_credit < ping_credit_bound && at + 9 <= queued.length() {
     let ftype = queued[at + 3].to_int()
     if ftype == @http2.frame_headers || ftype == @http2.frame_data {
-      self.responded = true
+      self.ping_credit += 1
     }
     at += 9 +
       (

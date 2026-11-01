@@ -804,12 +804,12 @@ These frames count:
 
 - SETTINGS frames (`SETTINGS`). An acknowledgement counts only beyond the
   one smock is owed for its own SETTINGS (`SETTINGS acknowledgement`).
-- PING frames (`PING`), each only when smock has sent no HEADERS or DATA
-  since the client's last PING. gRPC counts PINGs this way, so a client
-  that sends a PING for each DATA frame it receives, to estimate its
-  bandwidth, is not cut while responses stream to it. A PING
-  acknowledgement counts when it answers no PING that smock sent
-  (`PING acknowledgement`).
+- PING frames (`PING`), beyond one for each HEADERS or DATA frame smock
+  has sent on the connection. smock saves up at most 100 of these. So a
+  client that sends a PING for each DATA frame it receives, to estimate
+  its bandwidth, is not cut while responses stream to it, however many
+  frames come between its PINGs. A PING acknowledgement counts when it
+  answers no PING that smock sent (`PING acknowledgement`).
 - PRIORITY frames (`PRIORITY`): smock ignores priority signals.
 - DATA frames that carry no data, padded or not, and do not end their
   stream (`empty DATA`).
