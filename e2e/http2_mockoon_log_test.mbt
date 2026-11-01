@@ -250,7 +250,7 @@ async test "h2c: a close Fault ends the connection's other streams, and a stream
       let entries = smock
         .journal_endings()
         .split("\n")
-        .map(e => e.to_string())
+        .map(e => e.to_owned())
         .collect()
       entries.sort_by((a, b) => a.lexical_compare(b))
       out.push(entries.join("\n"))
@@ -366,6 +366,244 @@ async test "h2c: a stream whose client closes the connection during its delay lo
           #|written when the connection ended, before the delay is over: true
           #|lines in all: 1
           #|GET /delayed: 200
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: a stream and a delayed response that the drain timeout cuts each log the planned status when they are cut, before drain ended and Server stopped" {
+  with_definitions([("m.json", drain_defs)], dir => {
+    let env = {
+      "SMOCK_LOG_FORMAT": "mockoon",
+      "SMOCK_DRAIN_TIMEOUT_MS": "1500",
+    }
+    let stopped = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let ticks = client.send("GET", "/ticks", authority="localhost")
+      guard client.stream_event(ticks) is Response(_) else {
+        fail("no HEADERS")
+      }
+      let _ = client.send("GET", "/stalled", authority="localhost")
+      @async.sleep(settle_ms)
+      let start = @async.now()
+      smock.terminate()
+      let status = smock.exited()
+      let lines = smock.transaction_lines(2)
+      let cut = lines
+        .iter()
+        .all(line => (written_at(line) - start >= 1500) catch { _ => false })
+      inspect(
+        (
+          $|\{masked_lines(lines)}
+          $|written once the drain timeout cut them: \{cut}
+          $|exit status \{status}
+        ),
+        content=(
+          #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/ticks","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/stalled","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written once the drain timeout cut them: true
+          #|exit status 0
+        ),
+      )
+    })
+    // The lines of the drain, in order: the cut requests' lines come
+    // before the drain ends.
+    guard stopped.stdout.search_by(line => message_of(line) == "drain started")
+      is Some(started) else {
+      fail("no drain started line:\n\{stopped.stdout.join("\n")}")
+    }
+    inspect(
+      stopped.stdout[started:].map(message_of).join("\n"),
+      content=(
+        #|drain started
+        #|Transaction recorded
+        #|Transaction recorded
+        #|drain ended
+        #|Server stopped
+      ),
+    )
+  })
+}
+
+///|
+async test "h2c: a template failure and a data write failure write the error line, then the Transaction recorded line, in place, after a delay, and when a reset Fault replaces the 500, with the Journal off" {
+  with_definitions(failing_shop(), dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon", "SMOCK_JOURNAL": "off" }
+    let _ = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let out = []
+      let requests = [
+        ("/orders", "{\"customer\":{}}"),
+        ("/visits", ""),
+        ("/slow-orders", "{}"),
+        ("/reset-orders", "{}"),
+      ]
+      for request in requests {
+        let (path, body) = request
+        let response = client.request("POST", path, body=@utf8.encode(body))
+        out.push("\{path}: \{response.status}, \{response.ended}")
+      }
+      smock.transaction_lines(4) |> ignore
+      let lines = served_lines(smock.stdout)
+      // Each line takes its own time, and the error line comes first.
+      let mut ordered = true
+      for i in 0..<(lines.length() / 2) {
+        if written_at(lines[2 * i]) > written_at(lines[2 * i + 1]) {
+          ordered = false
+        }
+      }
+      out.push(masked_lines(lines))
+      out.push(
+        "each error line written at or before its Transaction recorded line: \{ordered}",
+      )
+      inspect(
+        out.join("\n"),
+        content=(
+          #|/orders: 500, end
+          #|/visits: 500, end
+          #|/slow-orders: 500, end
+          #|/reset-orders: 0, reset INTERNAL_ERROR
+          #|{"app":"smock","environmentName":"shop","level":"error","message":"Error while serving the content: body.customer.name is missing","routePath":"/orders","routeUUID":"create-order","timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"shop","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/orders","requestProxied":false,"responseStatus":500,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"shop","level":"error","message":"Error while serving the content: the Data bucket \"visits\" holds a number, and \"merge\" needs an object","routePath":"/visits","routeUUID":"visit","timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"shop","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/visits","requestProxied":false,"responseStatus":500,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"shop","level":"error","message":"Error while serving the content: body.customer.name is missing","routePath":"/slow-orders","routeUUID":"slow-order","timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"shop","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/slow-orders","requestProxied":false,"responseStatus":500,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"shop","level":"error","message":"Error while serving the content: body.customer.name is missing","routePath":"/reset-orders","routeUUID":"reset-order","timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"shop","fault":"reset","level":"info","message":"Transaction recorded","requestMethod":"POST","requestPath":"/reset-orders","requestProxied":false,"timestamp":"<timestamp>"}
+          #|each error line written at or before its Transaction recorded line: true
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: a stream smock refuses before it reaches a Mock (431, 413, 400, REFUSED_STREAM) or that the client resets before its request ends gets no Transaction recorded line" {
+  with_definitions([("slow.json", slow)], dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let args = [
+      "--dir", dir, "--port", "0", "--http2-max-concurrent-streams", "1", "--header-size-limit",
+      "400", "--body-limit", "10",
+    ]
+    let _ = with_smock(args, env~, smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let out = []
+      let big = client.request("GET", "/quick", authority="localhost", headers=[
+        ("x-big", "x".repeat(500)),
+      ])
+      out.push("a header list over the limit: \{big.status}, \{big.ended}")
+      let malformed = client.request("GET", "/quick", authority="localhost", headers=[
+        ("host", "elsewhere.example.com"),
+      ])
+      out.push(
+        "a host that differs from :authority: \{malformed.status}, \{malformed.ended}",
+      )
+      let unfinished = client.send(
+        "POST",
+        "/quick",
+        authority="localhost",
+        end=false,
+      )
+      client.conn.reset(unfinished, code=@http2.error_cancel)
+      client.flush()
+      // Last, since the client counts the stream open until it reads the
+      // RST_STREAM NO_ERROR that follows the 413.
+      let over = client.send(
+        "POST",
+        "/quick",
+        authority="localhost",
+        headers=[("content-length", "100")],
+        end=false,
+      )
+      let over = client.response(over)
+      out.push("a body over the limit: \{over.status}, \{over.ended}")
+      // A client of its own, since moonhttp's client opens no stream past
+      // the limit: stream 3 comes while stream 1 waits for its delay.
+      let raw = smock.raw_h2()
+      defer raw.close()
+      raw.send([
+        headers_frame(
+          1,
+          raw.block(request_fields("GET", "/delayed", "localhost")),
+        ),
+        headers_frame(
+          3,
+          raw.block(request_fields("GET", "/quick", "localhost")),
+        ),
+      ])
+      out.push(raw.frames_until_stream_ends(1))
+      // Only the delayed stream reached a Mock.
+      @async.sleep(settle_ms)
+      out.push(masked_lines(transactions(smock.stdout)))
+      out.push(smock.journal_endings())
+      inspect(
+        out.join("\n"),
+        content=(
+          #|a header list over the limit: 431, end
+          #|a host that differs from :authority: 400, end
+          #|a body over the limit: 413, end
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=1, MAX_HEADER_LIST_SIZE=800]
+          #|SETTINGS ACK
+          #|RST_STREAM 3 REFUSED_STREAM
+          #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: slow; via=default, date: <now>, content-length: 4]
+          #|DATA 1 END_STREAM 4 octets
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/delayed","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|GET /delayed: 200
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c and h2: with no request refused, the Transaction recorded lines number the requests that smock_requests_total counts" {
+  with_definitions([("m.json", faults)], dir => {
+    with_certificates(certs => {
+      let args = ["--dir", dir, "--port", "0", ..certs.args()]
+      let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+      // Requests that end every way: a whole response, a 404, a reset and a
+      // partial Fault on one connection; a close Fault on one of its own;
+      // and a client that closes its connection during a delay.
+      let stopped = with_smock(args, env~, smock => {
+        for tls in [false, true] {
+          let client = if tls { smock.h2() } else { smock.h2c() }
+          defer client.close()
+          for path in ["/fast", "/nope", "/reset", "/partial"] {
+            let _ = client.request("GET", path, authority="localhost")
+          }
+          let closing = if tls { smock.h2() } else { smock.h2c() }
+          defer closing.close()
+          let _ = closing.request("GET", "/close", authority="localhost")
+          let gone = if tls { smock.h2() } else { smock.h2c() }
+          let _ = gone.send("GET", "/slow", authority="localhost")
+          @async.sleep(settle_ms)
+          gone.close()
+        }
+        let lines = smock.transaction_lines(12).length()
+        let mut counted = 0.0
+        for sample in smock.metrics().1 {
+          if sample.name == "smock_requests_total" {
+            counted += sample.value
+          }
+        }
+        inspect(
+          "requests counted: \{counted}\nlines: \{lines}",
+          content=(
+            #|requests counted: 12
+            #|lines: 12
+          ),
+        )
+      })
+      inspect(
+        transactions(stopped.stdout).length(),
+        content=(
+          #|12
         ),
       )
     })
