@@ -263,8 +263,8 @@ Before an integration branch is merged into `main`, the
    at a step that counts: a regression, failed requests, a smock that was
    not ready, or a step the mode-on run did not measure, at or below the
    target rate. Then the numbers go to the maintainer before the merge,
-   who decides whether a bounded asynchronous queue for the log lines
-   comes first. The targets the mode-on run missed fail the comparison's
+   who decides what to do: request lines are written by an async write
+   that their own request awaits, so a stall shows there. The targets the mode-on run missed fail the comparison's
    exit status too, but they are for reference only and do not count as
    a stall. A step whose `Transaction recorded` lines differ from the
    requests answered is a bug to fix before the merge.
