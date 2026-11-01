@@ -25,8 +25,9 @@ pub struct StdoutLines {
 }
 
 ///|
-/// The writer of whole lines to stdout. A process has one: `smock serve`
-/// creates it and hands it to the logger and to `serve`.
+/// The writer of whole lines to stdout. A process has one in the mockoon
+/// log format, and none in the json format: `smock serve` creates it and
+/// hands it to the logger and to `serve`.
 pub fn StdoutLines::new() -> StdoutLines {
   { turn: @async.Mutex(), queued: @deque.Deque([]), pushed: @cond_var.Cond(), }
 }

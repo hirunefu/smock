@@ -149,32 +149,34 @@ fn MockoonLines::serving_error(
 }
 
 ///|
-/// Writes the lines of `request` once the request path is done with it, if
-/// the engine decided an outcome for it, which `pending` then holds, and
-/// empties `pending`.
-async fn MockoonLines::write_pending(
-  self : MockoonLines,
-  request : @http1.Request,
-  pending : PendingLine,
-) -> Unit {
-  guard pending.outcome is Some(outcome) else { return }
-  pending.outcome = None
-  self.transaction(request, outcome)
-}
-
-///|
 /// The engine's outcome for the request of one connection whose Transaction
-/// recorded line is still to be written. The request path sets it where it
-/// counts the request, after the response's last byte, without waiting, and
-/// the line is written once the request path is done with the request. So
-/// the request path waits for nothing more there, and the json format,
-/// which writes no line, adds only a test to it.
+/// recorded line is still to be written, with the lines it goes to. The
+/// request path sets it where it counts the request, after the response's
+/// last byte, without waiting, and the line is written once the request
+/// path is done with the request. So the request path waits for nothing
+/// more there, and the json format, which writes no line, adds only a test
+/// to it.
 priv struct PendingLine {
+  lines : MockoonLines
   mut outcome : @engine.Outcome?
 }
 
 ///|
-/// A connection's pending line, with no outcome yet.
-fn PendingLine::new() -> PendingLine {
-  { outcome: None, }
+/// A pending line of a connection whose lines go to `lines`, with no
+/// outcome yet.
+fn PendingLine::new(lines : MockoonLines) -> PendingLine {
+  { lines, outcome: None, }
+}
+
+///|
+/// Writes the lines of `request` once the request path is done with it, if
+/// the engine decided an outcome for it, which the pending line then holds,
+/// and empties the pending line.
+async fn PendingLine::write(
+  self : PendingLine,
+  request : @http1.Request,
+) -> Unit {
+  guard self.outcome is Some(outcome) else { return }
+  self.outcome = None
+  self.lines.transaction(request, outcome)
 }
