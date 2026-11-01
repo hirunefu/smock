@@ -246,8 +246,7 @@ fn H2Connection::refused_at_open(
     return false
   }
   if !self.settings_acked &&
-    self.streams.open_count() >=
-    self.ports.settings.http2_max_concurrent_streams {
+    self.streams.open_count() >= self.max_concurrent_streams {
     return false
   }
   self.reset_early(frame)

@@ -148,6 +148,10 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       watchdog,
       idle_timeout,
       read_timeout: self.settings.read_timeout_ms.to_int64(),
+      max_concurrent_streams: self.settings.http2_max_concurrent_streams,
+      header_size_limit: self.settings.header_size_limit,
+      header_count_limit: self.settings.header_count_limit,
+      body_limit: self.settings.body_limit,
       now,
       read_at: now,
       idle_deadline: now + idle_timeout,
@@ -246,6 +250,13 @@ priv struct H2Connection {
   watchdog : Watchdog
   idle_timeout : Int64
   read_timeout : Int64
+  /// The limits of the connection's streams: `--http2-max-concurrent-streams`,
+  /// and those each request is held to, `--header-size-limit`,
+  /// `--header-count-limit` and `--body-limit`.
+  max_concurrent_streams : Int32
+  header_size_limit : Int32
+  header_count_limit : Int32
+  body_limit : Int32
   /// The time, as `@async.now()` gives it, read again after each wait of
   /// the reader: for reading or for writing.
   mut now : Int64
@@ -464,8 +475,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         // moonhttp refuses a stream past the limit before it reports one,
         // since smock advertised the limit; this holds the bound whatever
         // a version of moonhttp enforces.
-        if self.streams.open_count() >
-          self.ports.settings.http2_max_concurrent_streams {
+        if self.streams.open_count() > self.max_concurrent_streams {
           self.reset(stream, @http2.error_refused_stream)
           // Once the client knows the limit, the refusal counts toward the
           // bound on Rapid Reset, as moonhttp's does (`refused_at_open`).
@@ -475,7 +485,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           continue
         }
         // Counted as received, before the fields are mapped.
-        if is_list_over(fields, self.ports.settings.header_size_limit) {
+        if is_list_over(fields, self.header_size_limit) {
           self.refused = stream
           self.refused_status = 431
           continue
@@ -485,7 +495,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           deadline=self.header_at + self.read_timeout,
         )
         // Cookies are joined by now, so they count as one field.
-        if request.headers.length() > self.ports.settings.header_count_limit {
+        if request.headers.length() > self.header_count_limit {
           self.refused = stream
           self.refused_status = 431
           continue
@@ -496,7 +506,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           continue
         }
         // Refused before any of the body is read, as on HTTP/1.1.
-        if request.declared > self.ports.settings.body_limit.to_int64() {
+        if request.declared > self.body_limit.to_int64() {
           self.refused = stream
           self.refused_status = 413
           continue
@@ -518,7 +528,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         // CONNECT's has once its HEADERS arrived, is discarded.
         if self.requests.get(stream) is Some(request) {
           // A body that passes the limit is refused before it is kept.
-          if data.length() > self.ports.settings.body_limit - request.received() {
+          if data.length() > self.body_limit - request.received() {
             self.requests.remove(stream)
             self.refused = stream
             self.refused_status = 413
