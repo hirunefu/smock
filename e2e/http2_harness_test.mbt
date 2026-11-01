@@ -524,11 +524,13 @@ struct RawH2 {
 ///|
 /// Opens a connection to smock's plain port, or with `tls` to its TLS port,
 /// offering `h2` alone by ALPN, and sends the preface and, unless
-/// `settings` is false, an empty SETTINGS frame.
+/// `settings` is false, an empty SETTINGS frame. With `preface` false, it
+/// sends neither, so that a test can send the preface itself.
 async fn Smock::raw_h2(
   self : Smock,
   settings~ : Bool = true,
   tls~ : Bool = false,
+  preface~ : Bool = true,
 ) -> RawH2 {
   let wire = if tls {
     let tls = self.tls(alpn=["h2"])
@@ -548,6 +550,9 @@ async fn Smock::raw_h2(
     decoder: @hpack.Decoder::new(),
     buf: FixedArray::make(16 * 1024, b'\x00'),
     received: b"",
+  }
+  if !preface {
+    return raw
   }
   wire.write(@http2.preface)
   if settings {

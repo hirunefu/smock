@@ -82,7 +82,9 @@ fn header_list_bound(limit : Int32) -> Int32 {
 /// when smock already drains. On the plain port, `read` starts with the
 /// connection preface, which told the connection apart from HTTP/1.1; on
 /// the TLS port, where ALPN did, it is empty, and the `Conn` checks the
-/// preface as it comes (a wrong one gets GOAWAY PROTOCOL_ERROR).
+/// preface as it comes (a wrong one gets GOAWAY PROTOCOL_ERROR). There, as
+/// on the plain port, the rest of the preface has the read timeout from its
+/// first octet (`H2Connection::expire`).
 ///
 /// One task reads, a frame at a time, hands each frame to the connection's
 /// `Conn`, and handles the events it produced, in order; before it reads
@@ -149,6 +151,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       now,
       read_at: now,
       idle_deadline: now + idle_timeout,
+      preface_deadline: forever,
       header_at: now,
       header_stream: 0,
       became_idle: false,
@@ -254,6 +257,11 @@ priv struct H2Connection {
   /// and from when what was queued is written after the last stream in
   /// progress ends. `forever` from when a stream begins.
   mut idle_deadline : Int64
+  /// While part of the client's connection preface has come and the rest
+  /// has not, as on the TLS port it can, when the read timeout ends the
+  /// connection: the read timeout after the read that brought its first
+  /// octets. `forever` before them, and once the preface is whole.
+  mut preface_deadline : Int64
   /// When the last field block began: the read that brought its HEADERS.
   mut header_at : Int64
   /// The stream of the last field block.
@@ -308,7 +316,14 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
       return
     }
     let octets = match self.reader.next() {
-      Preface(preface) => preface
+      Preface(preface) => {
+        // The idle timeout runs again from the read that made the preface
+        // whole, as on the plain port, where the loop starts after it.
+        self.preface_deadline = forever
+        self.idle_deadline = self.read_at + self.idle_timeout
+        self.watchdog.read_by(self.idle_deadline, self.now)
+        preface
+      }
       Frame(head, frame) => {
         if !self.judge(head, frame) {
           // The GOAWAY the judge queued goes out first.
@@ -325,6 +340,12 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
         return
       }
       NeedMore => {
+        // The first octets of a preface that is not whole: the rest has
+        // the read timeout from them.
+        if self.preface_deadline == forever && self.reader.preface_begun() {
+          self.preface_deadline = self.read_at + self.read_timeout
+          self.watchdog.read_by(self.preface_deadline, self.now)
+        }
         if !self.read_more(stream, out) {
           return
         }
@@ -721,6 +742,11 @@ async fn[S : @io.Reader] H2Connection::discard(
 ///   open no stream, such as PING, SETTINGS and WINDOW_UPDATE, do not
 ///   restart it, and a field block that has begun holds it off. Past it,
 ///   the connection gets GOAWAY with NO_ERROR and closes.
+/// - The read timeout of the preface runs from the read that brought its
+///   first octets, while the rest is still to come, as it can on the TLS
+///   port, and holds off the idle timeout, which runs again once the
+///   preface is whole. Past it, the connection gets GOAWAY with NO_ERROR
+///   and closes.
 /// - The write timeout of the slow writes runs while they wait for the
 ///   client to widen a window (`watch_windows`). Past it for the
 ///   connection window, the connection closes with no GOAWAY, as for a
@@ -746,7 +772,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
     self.watchdog.time_out_writing(now)
     return forever
   }
-  if self.idle_until() <= now || self.block_deadline() <= now {
+  if self.idle_until() <= now ||
+    self.block_deadline() <= now ||
+    self.preface_deadline <= now {
     self.go_away(out)
     return forever
   }
@@ -790,9 +818,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
 
 ///|
 /// The earliest deadline of the connection: the idle deadline, that of
-/// each request in progress, that of a field block still open, those of
-/// the slow writes that wait for window, and that of the drain's final
-/// GOAWAY.
+/// each request in progress, that of a field block still open, that of a
+/// preface that is not whole, those of the slow writes that wait for
+/// window, and that of the drain's final GOAWAY.
 fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   let mut next = self.idle_until()
   for _, request in self.requests {
@@ -803,6 +831,9 @@ fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   let block = self.block_deadline()
   if block < next {
     next = block
+  }
+  if self.preface_deadline < next {
+    next = self.preface_deadline
   }
   if self.window_deadline < next {
     next = self.window_deadline
@@ -820,10 +851,10 @@ fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
 
 ///|
 /// When the idle timeout ends the connection: its idle deadline, unless a
-/// field block has begun, which holds it off, as the first byte of a
-/// request does over HTTP/1.1; `forever` then.
+/// field block or the preface has begun and is not whole, which holds it
+/// off, as the first byte of a request does over HTTP/1.1; `forever` then.
 fn H2Connection::idle_until(self : H2Connection) -> Int64 {
-  if self.streams.in_block {
+  if self.streams.in_block || self.preface_deadline < forever {
     forever
   } else {
     self.idle_deadline

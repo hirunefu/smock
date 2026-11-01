@@ -710,10 +710,11 @@ connection.
   block that has begun holds it off. A new stream restarts it, and it runs
   again from the response that ends the last stream in progress. Past it,
   the connection gets GOAWAY `NO_ERROR` and closes. It also bounds the wait
-  for a connection's first octet, as over HTTP/1.1. On the plain port, the
-  rest of the preface has the read timeout from that octet. On the TLS
-  port, where ALPN has already chosen HTTP/2, the idle timeout bounds the
-  whole preface.
+  for a connection's first octet, as over HTTP/1.1. From that octet, the
+  rest of the preface has the read timeout instead, on either port, and
+  the idle timeout runs again once the preface is whole. On the TLS port,
+  a preface that does not arrive in time gets GOAWAY `NO_ERROR`, after
+  smock's SETTINGS, and the connection closes.
 - `--write-timeout-ms` closes a connection that takes nothing of what smock
   writes for that long, without GOAWAY, as over HTTP/1.1. It also runs
   while a response body waits for the client to widen a flow-control
