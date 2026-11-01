@@ -43,33 +43,27 @@ fn MockoonLines::rebuild(self : MockoonLines, engine : @engine.Engine) -> Unit {
 ///|
 /// Writes the `Server started on port <port>` line of each Mock served, in
 /// the order the Admin API's status lists them, with the time now, once the
-/// plain and TLS listeners are open, `port` being the plain one's.
+/// plain and TLS listeners are open, `port` being the plain one's. The
+/// lines are queued together, so that no other line comes between them.
 async fn MockoonLines::started(self : MockoonLines, port : Int32) -> Unit {
   let at = @async.now()
-  self.write_each(prefix => @log.started_line(prefix, port~, at~))
+  for _, prefix in self.prefixes {
+    self.out.queue(@log.started_line(prefix, port~, at~))
+  }
+  self.out.flush()
 }
 
 ///|
 /// Writes the `Server stopped` line of each Mock served, in the order the
 /// Admin API's status lists them, with the time now, once the drain ends: a
-/// Mock that a reload added included.
+/// Mock that a reload added included. The lines are queued together, so
+/// that no other line comes between them.
 async fn MockoonLines::stopped(self : MockoonLines) -> Unit {
   let at = @async.now()
-  self.write_each(prefix => @log.stopped_line(prefix, at~))
-}
-
-///|
-/// Writes the line that `line` builds from the prefix of each Mock served,
-/// in the order the Admin API's status lists them, all in one write, so
-/// that no other line comes between them.
-async fn MockoonLines::write_each(
-  self : MockoonLines,
-  line : (String) -> String,
-) -> Unit {
-  let lines = self.prefixes.values().map(line).collect()
-  if lines.length() > 0 {
-    self.out.write(lines.join("\n"))
+  for _, prefix in self.prefixes {
+    self.out.queue(@log.stopped_line(prefix, at~))
   }
+  self.out.flush()
 }
 
 ///|
@@ -98,8 +92,8 @@ fn MockoonLines::prefix(
 /// status.
 ///
 /// When the Stub that matched failed its own content, the request's error
-/// line (`serving_error`) comes first, in the same write, so that no other
-/// line comes between them.
+/// line (`serving_error`) comes first, queued with it, so that no other line
+/// comes between them.
 async fn MockoonLines::transaction(
   self : MockoonLines,
   request : @http1.Request,
@@ -118,10 +112,10 @@ async fn MockoonLines::transaction(
     ended~,
     at=@async.now(),
   )
-  match error {
-    Some(error) => self.out.write("\{error}\n\{line}")
-    None => self.out.write(line)
+  if error is Some(error) {
+    self.out.queue(error)
   }
+  self.out.write(line)
 }
 
 ///|

@@ -116,9 +116,17 @@ pub fn StdoutLines::push(self : StdoutLines, line : String) -> Unit {
 /// given, is written whole even when the task is cancelled meanwhile, as
 /// when the drain cuts its connection.
 async fn StdoutLines::write(self : StdoutLines, line : String) -> Unit {
+  self.queue(line)
+  self.flush()
+}
+
+///|
+/// Queues `line` for the next `flush`, after every line given before it.
+/// Unlike `push`, it never drops the line: its caller flushes, and waits
+/// for it. Lines queued with no wait between them come out together.
+fn StdoutLines::queue(self : StdoutLines, line : String) -> Unit {
   self.queued.push_back(line)
   self.own.push_back(false)
-  self.flush()
 }
 
 ///|
