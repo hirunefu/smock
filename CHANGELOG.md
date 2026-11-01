@@ -8,6 +8,8 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-01
+
 ### Added
 
 - Dependabot proposes, once a week, the updates of the GitHub Actions and
@@ -619,7 +621,8 @@ of each GitHub release include its section
 
 - The first public release.
 
-[Unreleased]: https://github.com/hirunefu/smock/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/hirunefu/smock/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/hirunefu/smock/releases/tag/v0.4.0
 [0.3.0]: https://github.com/hirunefu/smock/releases/tag/v0.3.0
 [0.2.0]: https://github.com/hirunefu/smock/releases/tag/v0.2.0
 [0.1.0]: https://github.com/hirunefu/smock/releases/tag/v0.1.0
