@@ -139,7 +139,7 @@ pub fn serving_error_line(
   out.write_string(
     "\"level\":\"error\",\"message\":\"Error while serving the content: ",
   )
-  write_escaped(out, message, 0, message.length())
+  write_json_escaped(out, message, 0, message.length())
   out.write_string("\",")
   if path is Some(path) {
     out.write_string("\"routePath\":")
@@ -305,7 +305,7 @@ fn write_json_string(
   end : Int32,
 ) -> Unit {
   out.write_char('"')
-  write_escaped(out, s, start, end)
+  write_json_escaped(out, s, start, end)
   out.write_char('"')
 }
 
@@ -313,8 +313,10 @@ fn write_json_string(
 /// Writes the code units of `s` from `start` to `end` escaped as
 /// `write_json_string` escapes them, without the quotes, so that they can
 /// follow text of the same JSON string, such as the fixed start of the
-/// error line's message.
-fn write_escaped(
+/// error line's message. The template package writes its JSON strings
+/// with it too, and counts their bytes with its own `json_char_length`,
+/// which a change to the escapes must follow.
+pub fn write_json_escaped(
   out : StringBuilder,
   s : String,
   start : Int32,
