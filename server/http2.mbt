@@ -207,7 +207,8 @@ priv struct H2Connection {
   /// `--header-size-limit` or with more fields than `--header-count-limit`.
   /// It gets that status once it is known whether that frame ended the
   /// stream: on its `End` event, or else once the frame's events are all
-  /// taken. One frame brings at most one such stream.
+  /// taken. One frame brings at most one such stream. Both are set
+  /// together (`will_refuse`).
   mut refused : Int32
   /// The status `refused` gets.
   mut refused_status : Int32
@@ -486,8 +487,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         }
         // Counted as received, before the fields are mapped.
         if is_list_over(fields, self.header_size_limit) {
-          self.refused = stream
-          self.refused_status = 431
+          self.will_refuse(stream, 431)
           continue
         }
         let request = H2Request::new(
@@ -496,19 +496,16 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         )
         // Cookies are joined by now, so they count as one field.
         if request.headers.length() > self.header_count_limit {
-          self.refused = stream
-          self.refused_status = 431
+          self.will_refuse(stream, 431)
           continue
         }
         if request.is_malformed() {
-          self.refused = stream
-          self.refused_status = 400
+          self.will_refuse(stream, 400)
           continue
         }
         // Refused before any of the body is read, as on HTTP/1.1.
         if request.declared > self.body_limit.to_int64() {
-          self.refused = stream
-          self.refused_status = 413
+          self.will_refuse(stream, 413)
           continue
         }
         if request.continues {
@@ -530,8 +527,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           // A body that passes the limit is refused before it is kept.
           if data.length() > self.body_limit - request.received() {
             self.requests.remove(stream)
-            self.refused = stream
-            self.refused_status = 413
+            self.will_refuse(stream, 413)
           } else {
             request.receive(data)
           }
@@ -1363,6 +1359,19 @@ fn H2Connection::headers_only(
     }
   }
   self.streams.ended_by_smock(stream)
+}
+
+///|
+/// The request on `stream` is refused with `status` once it is known
+/// whether the frame being handled ended the stream (`refused`): on its
+/// `End` event, or else once the frame's events are all taken.
+fn H2Connection::will_refuse(
+  self : H2Connection,
+  stream : Int32,
+  status : Int32,
+) -> Unit {
+  self.refused = stream
+  self.refused_status = status
 }
 
 ///|
