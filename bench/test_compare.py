@@ -606,6 +606,27 @@ class Conditions(Comparison):
         report = compared({"plan_sha": "aa"}, {"plan_sha": "cc", "plan_sha_without_about": "a1"})
         self.assertIn("plan (bench/plan-autopilot.json changed)", report)
 
+    def test_runs_in_other_log_formats_name_it_as_a_difference(self):
+        def mockoon(**changes):
+            value = conditions(**changes)
+            value["smock"]["args"] = ["serve", "--port", "0", "--log-format", "mockoon"]
+            return value
+
+        status, report = self.compare(self.summary([step()], conditions=conditions()),
+                                      self.summary([step()], conditions=mockoon()))
+        self.assertEqual(status, 0, report)
+        self.assertIn("Besides smock, the runs differ in: log format (json → mockoon).", report)
+        # A run that names no log format, as one from before the option or
+        # a GKE run, ran in smock's default.
+        json_run = conditions()
+        json_run["smock"]["args"] = ["serve", "--port", "0"]
+        _, report = self.compare(self.summary([step()], conditions=json_run),
+                                 self.summary([step()], conditions=conditions()))
+        self.assertIn("Besides smock, the runs had the same conditions.", report)
+        _, report = self.compare(self.summary([step()], conditions=mockoon()),
+                                 self.summary([step()], conditions=mockoon(plan_sha="cc")))
+        self.assertIn("Besides smock, the runs differ in: plan (bench/plan-autopilot.json changed).", report)
+
     def test_a_gke_run_compared_with_a_run_on_a_machine_is_called_out(self):
         gke = {"region": "us-central1", "zone": "us-central1-a", "compute_class": "autopilot-arm"}
         older = self.summary([step()], conditions=conditions())

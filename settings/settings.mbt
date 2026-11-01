@@ -1,8 +1,11 @@
 ///|
 /// How smock writes its log entries.
 pub(all) enum LogFormat {
-  /// One JSON object per line.
+  /// One JSON object per line, on stderr, in smock's own shape.
   Json
+  /// The Mockoon CLI's envelope, on stdout, for every line, with a
+  /// `Transaction recorded` line for each request a Mock handles.
+  Mockoon
 } derive(Debug, Eq)
 
 ///|
@@ -297,7 +300,11 @@ let serve_settings : Array[Setting] = [
     about: "The member of the Session header whose value is the Session key.",
     default: Some("smock-session"),
   },
-  { name: "log-format", about: "The log format: json.", default: Some("json"), },
+  {
+    name: "log-format",
+    about: "The log format: json or mockoon.",
+    default: Some("json"),
+  },
   body_file_dir_setting,
   template_env_setting,
   {
@@ -600,7 +607,13 @@ pub fn ServeSettings::from_matches(
   let admin_token_file = file_value(matches, "admin-token-file")
   let log_format = match value(matches, "log-format") {
     Some("json") => Json
-    other => raise invalid("log-format", other.unwrap_or(""), "must be json")
+    Some("mockoon") => Mockoon
+    other =>
+      raise invalid(
+        "log-format",
+        other.unwrap_or(""),
+        "must be json or mockoon",
+      )
   }
   let body_file_dir = body_file_dir(matches)
   let session_header = token_value(

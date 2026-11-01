@@ -144,6 +144,49 @@ of each GitHub release include its section
   sample's body asks for, the JSON body or a stream's events, each event
   with its wait, with the ids and the waits the seed fixes. See
   [LLM responses](docs/definition-files.md#llm-responses).
+- `--log-format mockoon` (`SMOCK_LOG_FORMAT=mockoon`) writes the Mockoon
+  CLI's log lines to stdout, so that log pipelines, dashboards, alerts and
+  readiness checks built on them keep working after a move from the
+  Mockoon CLI. Four of its lines come with Mockoon's messages and keys.
+  `Server started on port <port>`, with the plain port, comes once per
+  Mock when every listener is open. A `Transaction recorded` line comes
+  for each request a Mock handles, once its last byte is written: a Stub
+  matched, no Stub matched, or no Mock answered. It names the Mock
+  (`environmentName`, left out when no Mock answered), the method as sent,
+  the path without its query (`requestPath`, an absolute-form target cut
+  to its path), `requestProxied` (always false) and the status, or
+  `fault` (`"reset"` or `"close"`) in place of the status when a
+  connection Fault sent none; a `partial` Fault logs the status it wrote.
+  A delayed response logs after its delay, a Server-Sent Event stream once,
+  when it ends, and a request whose client goes away, whose write times
+  out or that the drain cuts, when it ends, with its planned status.
+  `Error while serving the content: <message>`, at level `error`, comes
+  just before it when the Stub's template cannot be rendered or its data
+  write cannot be applied, with the Stub's path as written (`routePath`,
+  left out for a Stub with no path condition) and its ID (`routeUUID`),
+  also with the Journal off and when a connection Fault replaces the 500.
+  `Server stopped` comes once per Mock when the drain after SIGTERM ends.
+  A reload writes no stop and start pair, and requests the HTTP/1.1 codec
+  rejects, Admin API calls, probes and scrapes get no line. Every other
+  line smock writes goes to stdout too, fatal startup errors included,
+  keeping its message and fields, so stderr carries only usage errors.
+  Every line has the same envelope: `app` (always `"smock"`), `level`,
+  `message` and `timestamp`, with the line's own fields beside them and
+  the keys sorted at every depth, as Mockoon sorts them. Each line is
+  written whole and at once, also to a pipe, and a line that cannot be
+  written is dropped. A reader of stdout that stops reading holds up only
+  the connections whose requests have a line to write; smock's own lines
+  then wait in a queue of up to 1,024, and the new metric
+  `smock_log_lines_dropped_total` counts those dropped beyond it. The
+  format costs CPU: on an M1 laptop smock spent about 8 to 11 µs more on
+  each request than in `json`, 40% to 90% more, so size the CPU limit
+  for it. The four lines and the envelope are a stable contract: a change to them is
+  a breaking change, listed under Changed. `json` stays the default, on
+  stderr, and serving a request in it adds one test of a value fixed at
+  startup. [Logs](docs/migrating-from-mockoon.md#logs) in the Mockoon
+  migration guide shows the setting for the binary, Docker and the Helm
+  chart, and lists every line and how it differs from Mockoon's. See also
+  [Run](README.md#run).
 
 ### Changed
 
@@ -161,6 +204,9 @@ of each GitHub release include its section
   from v0.10.14+7d59c7ec9, which `smock --version`, the startup log entry,
   `smock_build_info` and the Admin API status operation name. NOTICE
   follows its core library. mimalloc is still 2.1.7.
+- With the new `mockoon` log format, an unknown `--log-format` value is a
+  usage error that ends "must be json or mockoon", and the help text reads
+  "The log format: json or mockoon."
 
 ### Fixed
 

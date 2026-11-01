@@ -60,14 +60,53 @@ definitions directory, then listens on the plain port and on the TLS port.
 It watches the directory and swaps in the new definition set when the files
 change, ConfigMap updates included; an invalid set is reported and the
 current one keeps serving
-([docs/definition-files.md](docs/definition-files.md#reloading)). Logs go
-to stderr, one JSON object per line; JSON is the only log format. Log
-entries are a diagnostic aid: their messages and fields may change in any
-release, unlike the Definition file format and the Admin API, which are
-versioned (`v1`). A usage error, such as an
-unknown flag, a missing argument or an invalid setting value, is not a log
-entry: smock writes it to stderr as plain text, before any log entry, and
-exits with status 2. `smock serve --help` lists the settings:
+([docs/definition-files.md](docs/definition-files.md#reloading)).
+
+smock logs one JSON object per line, in one of two formats. In the `json`
+format, the default, log entries go to stderr in smock's own shape: `time`,
+`level` and `msg`, then the entry's fields. It logs nothing per request.
+In the `mockoon` format (`--log-format mockoon`), every line goes to
+stdout instead, in the Mockoon CLI's envelope: `app` (always `"smock"`),
+`level`, `message` and `timestamp`, with the entry's fields beside them
+and the keys sorted at every depth. smock then also writes the Mockoon
+CLI's lines: `Server started on port <port>`, with the plain port, for
+each Mock once every listener is open; a `Transaction recorded` line for
+each request a Mock handles, after an
+`Error while serving the content: …` line when the Stub's template or
+data write failed; and `Server stopped` for each Mock when the drain
+ends. It writes nothing to stderr but usage errors. Each line is written
+whole, by one write, also to a pipe, and no buffer holds it back.
+Container runtimes read stdout all the time. A request's lines are
+written before its connection takes its next request, so a reader of
+stdout that stops reading holds up each connection with a line to
+write, while every other connection goes on.
+smock's own lines then wait in a queue of up to 1,024 lines: one beyond
+it is dropped and counted in `smock_log_lines_dropped_total`.
+The `mockoon` format costs CPU. In the benchmark on an M1 laptop, smock
+spent about 8 to 11 µs more CPU on each request than in `json`, 40% to
+90% more, with the same latency at every rate up to the performance
+targets. Under a CPU limit it runs out sooner: the most it kept up with
+fell from 4,000 to 2,000 requests/s under 50m, and from 20,000 to 12,500
+under 250m, the next steps down in the benchmark.
+[docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md#logs)
+lists the lines and how they differ from the Mockoon CLI's.
+
+The four lines of the Mockoon CLI (`Server started on port …`,
+`Transaction recorded`, `Error while serving the content: …` and
+`Server stopped`) and the envelope of every line in the `mockoon` format
+(stdout, one object per line, `app`, `level`, `message` and `timestamp`,
+keys sorted) are a stable contract, since they copy an outside format.
+Any change to their messages, keys, key order or value forms, a new key
+included, is a breaking change: the CHANGELOG lists it under Changed, and
+the release notes call it out. A fix that makes a line match the Mockoon
+CLI's more closely is such a change too, made the same way. smock's own
+log entries, in either format, are a diagnostic aid: their messages and
+fields may change in any release, unlike the Definition file format and
+the Admin API, which are versioned (`v1`). A usage error, such as an
+unknown flag, a missing argument or an invalid setting value, is not a
+log entry: in either format, smock writes it to stderr as plain text,
+before any log entry, and exits with status 2. `smock serve --help`
+lists the settings:
 
 | Flag | Variable | Default |
 |---|---|---|
@@ -83,7 +122,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--replicas` | `SMOCK_REPLICAS` | 1: above 1, every Admin API response warns that state is per replica |
 | `--session-header` | `SMOCK_SESSION_HEADER` | `baggage`: the W3C Baggage header that carries the [Session](#sessions-and-ephemeral-stubs) |
 | `--session-member` | `SMOCK_SESSION_MEMBER` | `smock-session`: the member of that header whose value is the Session key |
-| `--log-format` | `SMOCK_LOG_FORMAT` | `json`, the only format |
+| `--log-format` | `SMOCK_LOG_FORMAT` | `json` by default (stderr, smock's own shape), or `mockoon` (stdout, the Mockoon CLI's shape, [for Mockoon users](docs/migrating-from-mockoon.md#logs)) |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--template-env` | `SMOCK_TEMPLATE_ENV` | none: templates read no environment variable; a comma-separated list of names lets them read those as `env.NAME`, with values read once at startup ([Environment variables](docs/definition-files.md#environment-variables)) |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
@@ -102,7 +141,10 @@ exits with status 2. `smock serve --help` lists the settings:
 
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout, read, idle or write, closes the connection
-without a response. None is logged.
+without a response. A request rejected this way gets no log line in either
+format, and neither does a read or an idle timeout. A write timeout is not
+logged either, but in the `mockoon` format the request whose response it
+cut short still gets its `Transaction recorded` line.
 
 The write timeout runs only while a write waits on the client to take its
 bytes, on every port and for every write: a response, whole or in part,
@@ -144,7 +186,9 @@ flight, so that Ctrl-C stops a local smock promptly.
 - The admin port serves until exit, so the probes can be read during the
   drain. Log entries mark the start of the drain (`drain started`, with
   `timeoutMs`) and its end (`drain ended`, with `connectionsCut`, the number
-  of connections still open when the timeout expired).
+  of connections still open when the timeout expired). The `mockoon` format
+  also writes `Server stopped` for each Mock served, right after
+  `drain ended`.
 
 With a certificate and its key, smock also serves HTTPS on the TLS port, with
 the same Mocks as the plain port. Both are PEM files, for example the
@@ -293,7 +337,10 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock_state_writes_refused_total` show the bytes of per-Session state
   that [the state bound](docs/definition-files.md#the-state-bound) counts,
   Variables and copies of Data buckets, and the writes it refused, from
-  requests, CRUD Stubs and Admin API sets, without labels.
+  requests, CRUD Stubs and Admin API sets, without labels;
+  `smock_log_lines_dropped_total` counts smock's own log lines that the
+  `mockoon` log format dropped because 1,024 of them were waiting for
+  stdout ([Run](#run)), and stays 0 in the `json` format.
 - What smock's process and its cgroup use is read when `/metrics` is
   scraped, so serving requests costs nothing for it. The standard process
   metrics of Prometheus's client libraries: `process_cpu_seconds_total`
@@ -345,7 +392,10 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   the Journal does not record it. Labels never carry a path, Host, method,
   status or Session, so the number of series stays bounded by the
   Definition files. A request is counted once its response is written; the
-  Admin API, probes and `/metrics` are not counted. No request is logged.
+  Admin API, probes and `/metrics` are not counted. Only the `mockoon` log
+  format logs requests: a `Transaction recorded` line for each request
+  counted here, except those the codec rejects. The `json` format logs
+  none.
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query
@@ -1060,8 +1110,9 @@ Packages of `smock/smock`:
   `users.example.com` and `orders.example.com`, each leaf with its own fixed
   expiry), used only by tests. `scripts/gen-test-certificates.sh`
   regenerates it.
-- `log`: the JSON logger, one object per line, and the RFC 3339 times it
-  writes, which the Admin API and the CLI also read.
+- `log`: the JSON logger, one object per line, in smock's own shape or in
+  the Mockoon CLI's envelope, the Mockoon-equivalent lines, and the RFC 3339
+  times it writes, which the Admin API and the CLI also read.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
 - `e2e`: tests that run the `smock` binary as a black box (native).
 
@@ -1156,7 +1207,11 @@ and the date it was read. Those from OpenAI's OpenAPI document come with
 its licence, MIT. Anthropic's documents and OpenAI's guides grant none, so
 their examples are short excerpts, used as test data only. Each golden
 names the fields and events where smock differs on purpose; any other
-difference fails the test. Adding a fixture file under
+difference fails the test. `e2e/mockoon_golden_test.mbt` compares smock's
+lines in the `mockoon` log format with lines that the Mockoon CLI wrote in
+a local trial, in `e2e/golden/mockoon/` with a note of their source, after
+one rule for each difference decided on purpose; any other difference
+fails the test. Adding a fixture file under
 `schema/v1/fixtures/` adds it to the cross-check; the README there says
 which directory a fixture belongs in.
 

@@ -1,4 +1,5 @@
 import {
+  "smock/smock/log",
   "smock/smock/testcerts",
   "moonbitlang/async",
   "moonbitlang/async/fs",

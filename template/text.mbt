@@ -376,7 +376,7 @@ fn without_controls(s : String, keep_tab~ : Bool) -> String {
 /// `s` escaped as the content of a JSON string.
 fn json_escaped(s : String) -> String {
   let out = StringBuilder()
-  write_json_string_content(out, s)
+  @log.write_json_escaped(out, s, 0, s.length())
   out.to_string()
 }
 
