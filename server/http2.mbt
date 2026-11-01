@@ -921,12 +921,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::go_away(
 /// queued, once the client has read it. A task writes it to `out`, and in
 /// the mockoon log format the lines of the streams whose responses it
 /// ended; from then on, smock reads and discards what the client sends
-/// (`discard`),
-/// until the client closes the connection, or for `closing_ms` at most
-/// after the GOAWAY is written. Closing a socket with unread input makes
-/// the kernel send a reset, which can discard the GOAWAY before the client
-/// reads it. moonbitlang/async offers no half-close, so smock does not shut
-/// down its sending side first.
+/// (`discard`), until the client closes the connection, or for `closing_ms`
+/// at most after the GOAWAY is written. Closing a socket with unread input
+/// makes the kernel send a reset, which can discard the GOAWAY before the
+/// client reads it. moonbitlang/async offers no half-close, so smock does
+/// not shut down its sending side first.
 fn[S : @io.Writer + ReadOutput] H2Connection::close_after_goaway(
   self : H2Connection,
   out : WatchedStream[S],
