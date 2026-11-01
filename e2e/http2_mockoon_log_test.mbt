@@ -171,3 +171,203 @@ async test "h2c: a reset Fault (RST_STREAM) or a close Fault (GOAWAY) logs fault
     })
   })
 }
+
+///|
+async test "h2c: a stream the client resets while its response waits, for a delay or for its next event, logs its planned status once, when the reset comes, as the Journal records it" {
+  with_definitions([("slow.json", slow)], dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let _ = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let out = []
+      let client = smock.h2c()
+      defer client.close()
+      let delayed = client.send("GET", "/delayed", authority="localhost")
+      @async.sleep(200)
+      let reset_at = @async.now()
+      client.conn.reset(delayed, code=@http2.error_cancel)
+      client.flush()
+      let line = smock.transaction_lines(1)[0]
+      out.push(mask_timestamp(line))
+      out.push(
+        "written at the reset, before the delay is over: \{written_at(line) - reset_at < 500}",
+      )
+      let stream = client.send("GET", "/stream", authority="localhost")
+      guard client.stream_event(stream) is Response(_) else {
+        fail("no HEADERS")
+      }
+      guard client.stream_event(stream) is Data(_) else {
+        fail("no first event")
+      }
+      let reset_at = @async.now()
+      client.conn.reset(stream, code=@http2.error_cancel)
+      client.flush()
+      let line = smock.transaction_lines(2)[1]
+      out.push(mask_timestamp(line))
+      out.push(
+        "written at the reset, before the last event: \{written_at(line) - reset_at < 500}",
+      )
+      // Each was one request: no more lines come once their waits are over.
+      @async.sleep(1200)
+      out.push("lines in all: \{transactions(smock.stdout).length()}")
+      out.push(smock.journal_endings())
+      inspect(
+        out.join("\n"),
+        content=(
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/delayed","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written at the reset, before the delay is over: true
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/stream","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written at the reset, before the last event: true
+          #|lines in all: 2
+          #|GET /delayed: 200
+          #|GET /stream: 200
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: a close Fault ends the connection's other streams, and a stream whose response waited logs its planned status, as a client that goes away does" {
+  with_definitions(fault_definitions(), dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let _ = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let out = []
+      let client = smock.h2c()
+      defer client.close()
+      let ticks = client.send("GET", "/ticks")
+      let later = client.send("GET", "/later")
+      let close = client.send("GET", "/close")
+      for stream in [ticks, later, close] {
+        let response = client.response(stream)
+        out.push("stream \{stream}: \{response.status}, \{response.ended}")
+      }
+      let lines = smock.transaction_lines(3)
+      out.push(masked_lines(lines))
+      // The cut streams log no more once their waits would have ended.
+      @async.sleep(700)
+      out.push("lines in all: \{transactions(smock.stdout).length()}")
+      // The cut streams' entries are committed as their tasks end, in
+      // either order.
+      let entries = smock
+        .journal_endings()
+        .split("\n")
+        .map(e => e.to_string())
+        .collect()
+      entries.sort_by((a, b) => a.lexical_compare(b))
+      out.push(entries.join("\n"))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|stream 1: 200, closed
+          #|stream 3: 0, closed
+          #|stream 5: 0, closed
+          #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/ticks","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/later","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","fault":"close","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/close","requestProxied":false,"timestamp":"<timestamp>"}
+          #|lines in all: 3
+          #|GET /close: fault close
+          #|GET /later: 200
+          #|GET /ticks: 200
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: a response the write timeout cuts logs its planned status when it is cut: a stream whose own window stays at zero at its RST_STREAM, a connection whose window stays at zero when it closes" {
+  with_definitions(flow_definitions(), dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let _ = with_smock(
+      ["--dir", dir, "--port", "0", "--write-timeout-ms", "500"],
+      env~,
+      smock => {
+        let out = []
+        // Stream windows of 0, with the connection window open: stream 1's
+        // body waits for its own window until the write timeout resets it,
+        // while stream 3's widens and its body goes out.
+        let raw = smock.raw_h2(settings=false)
+        defer raw.close()
+        let start = @async.now()
+        raw.send([
+          Settings(params=[(@http2.settings_initial_window_size, 0)], ack=false),
+          raw.get(1, "/item"),
+          raw.get(3, "/item"),
+          WindowUpdate(stream_id=3, increment=5),
+        ])
+        let frames = raw.frames_until(start, frame => frame is RstStream(..))
+        out.push("stream 1 ended by \{frames.shown[frames.shown.length() - 1]}")
+        let lines = smock.transaction_lines(2)
+        out.push(masked_lines(lines))
+        let reset_ms = written_at(lines[1]) - start
+        out.push(
+          "stream 1's line at its reset, after at least 500 ms: \{reset_ms >= 500}, within 2000 ms: \{reset_ms < 2000}",
+        )
+        // Wide stream windows, so that only the connection window of 65,535
+        // octets holds the body back, until the write timeout closes the
+        // connection.
+        let raw = smock.raw_h2(settings=false)
+        defer raw.close()
+        let start = @async.now()
+        raw.send([
+          Settings(
+            params=[(@http2.settings_initial_window_size, 1_000_000)],
+            ack=false,
+          ),
+          raw.get(1, "/big"),
+        ])
+        let frames = raw.frames_until(start, _ => false)
+        out.push("the connection ended by \{frames.how}")
+        let line = smock.transaction_lines(3)[2]
+        out.push(mask_timestamp(line))
+        let closed_ms = written_at(line) - start
+        out.push(
+          "written when the connection closed, after at least 500 ms: \{closed_ms >= 500}, within 2000 ms: \{closed_ms < 2000}",
+        )
+        inspect(
+          out.join("\n"),
+          content=(
+            #|stream 1 ended by RST_STREAM 1 CANCEL
+            #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/item","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+            #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/item","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+            #|stream 1's line at its reset, after at least 500 ms: true, within 2000 ms: true
+            #|the connection ended by a FIN
+            #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/big","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+            #|written when the connection closed, after at least 500 ms: true, within 2000 ms: true
+          ),
+        )
+      },
+    )
+  })
+}
+
+///|
+async test "h2c: a stream whose client closes the connection during its delay logs its planned status when the connection ends, as the Journal records it" {
+  with_definitions([("slow.json", slow)], dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let _ = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let out = []
+      let client = smock.h2c()
+      let _ = client.send("GET", "/delayed", authority="localhost")
+      @async.sleep(200)
+      let closed_at = @async.now()
+      client.close()
+      let line = smock.transaction_lines(1)[0]
+      out.push(mask_timestamp(line))
+      out.push(
+        "written when the connection ended, before the delay is over: \{written_at(line) - closed_at < 500}",
+      )
+      @async.sleep(1000)
+      out.push("lines in all: \{transactions(smock.stdout).length()}")
+      out.push(smock.journal_endings())
+      inspect(
+        out.join("\n"),
+        content=(
+          #|{"app":"smock","environmentName":"slow","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/delayed","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|written when the connection ended, before the delay is over: true
+          #|lines in all: 1
+          #|GET /delayed: 200
+        ),
+      )
+    })
+  })
+}

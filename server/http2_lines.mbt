@@ -125,3 +125,27 @@ fn H2Connection::will_wait(
     }
   }
 }
+
+///|
+/// The task of `stream` has been cancelled by a reset, or by a close Fault
+/// on another stream, before it wrote the stream's line: the line waits
+/// for the next task that writes what the connection queued, as the
+/// stream's response has ended (`H2Connection::write_ended`).
+fn H2Lines::cut(self : H2Lines, stream : Int32) -> Unit {
+  guard self.waiting.get(stream) is Some(line) else { return }
+  self.waiting.remove(stream)
+  self.ended.push(line)
+}
+
+///|
+/// Writes every line still to write when the connection ends, once every
+/// task of the connection has ended: those of the streams whose responses
+/// ended, then those of the streams whose tasks the end of the connection
+/// cut short, in the order they began to wait.
+async fn H2Lines::write_rest(self : H2Lines) -> Unit {
+  for _, line in self.waiting {
+    self.ended.push(line)
+  }
+  self.waiting.clear()
+  self.write_ended()
+}

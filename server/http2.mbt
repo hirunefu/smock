@@ -170,6 +170,12 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
         None => None
       },
     }
+    // In the mockoon log format, the lines still to write once every task of
+    // the connection has ended: those of streams whose tasks the end of the
+    // connection cut short, as the drain or a write that timed out does.
+    if h2.lines is Some(lines) {
+      group.add_defer(() => @async.protect_from_cancel(() => lines.write_rest()))
+    }
     watchdog.expired = Some(now => h2.expire(now, out))
     watchdog.read_by(h2.idle_deadline, now)
     // Unset before the loop's task ends, so never once the task group can
@@ -624,6 +630,10 @@ fn H2Connection::stop_waiting(self : H2Connection, stream : Int32) -> Unit {
     self.waiting.remove(stream)
     if !self.writer.writes_for(stream) {
       task.cancel()
+      // The cancelled task writes no line: the next writer does.
+      if self.lines is Some(lines) {
+        lines.cut(stream)
+      }
     }
     self.unblock(stream)
     self.end_stream()
@@ -821,6 +831,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
     self.group.spawn_bg(no_wait=true, () => {
       let _ = self.writer.write(out)
       self.answered(out)
+      self.write_ended()
     })
   }
   self.next_deadline()
@@ -919,6 +930,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::close_after_goaway(
     let now = @async.now()
     self.close_at = now + closing_ms
     self.watchdog.read_by(self.close_at, now)
+    self.write_ended()
   })
 }
 
