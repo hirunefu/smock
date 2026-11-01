@@ -192,3 +192,46 @@ async test "h2c: an llm stream with fixed waits sends its HEADERS and opening ch
     })
   })
 }
+
+///|
+async test "h2c: an llm stream that the client resets mid-stream ends at once: its entry is committed then, its duration up to the reset, and no more of its chunks is sent" {
+  with_definitions([("openai.json", paced_openai)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let start = @async.now()
+      raw.send(raw.post_json(1, "/v1/chat/completions", chat_request("true")))
+      // The HEADERS and the opening chunk, which come at once; the first
+      // piece is due 400 ms after them.
+      let out = [raw.runs_until(data_seen(1, 1))]
+      raw.send([RstStream(stream_id=1, error_code=@http2.error_cancel)])
+      let entries = smock.journal_durations(1, below=400, within=300)
+      let committed_ms = @async.now() - start
+      // Past the time of the stream's last chunk, 1000 ms after its
+      // HEADERS, a fast stream is answered, and nothing more came on the
+      // reset stream.
+      @async.sleep((1300L - (@async.now() - start)).to_int())
+      raw.send([raw.get(3, "/hello")])
+      out.push("--- the reset sent")
+      out.push(raw.runs_until(frame => ends_stream(frame, 3)))
+      inspect(
+        [
+          ..out,
+          "--- committed before the first piece was due: \{entries.length() == 1 && committed_ms < 400}",
+          ..entries,
+        ].join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, content-type: text/event-stream, x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8, smock-mock: openai; via=default, date: <now>]
+          #|DATA 1: 1 frames, 229 octets
+          #|--- the reset sent
+          #|HEADERS 3 END_HEADERS [:status: 200, smock-mock: openai; via=default, date: <now>, content-length: 5]
+          #|DATA 3 END_STREAM: 1 frames, 5 octets
+          #|--- committed before the first piece was due: true
+          #|/v1/chat/completions: stub "paced", status 200, durationMs below 400: true
+        ),
+      )
+    })
+  })
+}
