@@ -29,14 +29,11 @@ pub fn mockoon_prefix(mock : String?) -> String {
 /// on, written at `at`, in milliseconds since the Unix epoch, such as
 /// `{"app":"smock","environmentName":"users","level":"info","message":"Server started on port 8080","timestamp":"2026-10-31T09:00:00.105Z"}`.
 pub fn started_line(prefix : String, port~ : Int32, at~ : Int64) -> String {
-  let out = StringBuilder(size_hint=prefix.length() + 96)
-  out.write_string(prefix)
+  let out = line_start(prefix, 96)
   out.write_string("\"level\":\"info\",\"message\":\"Server started on port ")
   write_decimal(out, port.to_int64())
-  out.write_string("\",\"timestamp\":\"")
-  write_time(out, at)
-  out.write_string("\"}")
-  out.to_string()
+  out.write_string("\",")
+  line_end(out, at)
 }
 
 ///|
@@ -45,14 +42,9 @@ pub fn started_line(prefix : String, port~ : Int32, at~ : Int64) -> String {
 /// epoch, such as
 /// `{"app":"smock","environmentName":"users","level":"info","message":"Server stopped","timestamp":"2026-10-31T09:10:00.004Z"}`.
 pub fn stopped_line(prefix : String, at~ : Int64) -> String {
-  let out = StringBuilder(size_hint=prefix.length() + 80)
-  out.write_string(prefix)
-  out.write_string(
-    "\"level\":\"info\",\"message\":\"Server stopped\",\"timestamp\":\"",
-  )
-  write_time(out, at)
-  out.write_string("\"}")
-  out.to_string()
+  let out = line_start(prefix, 80)
+  out.write_string("\"level\":\"info\",\"message\":\"Server stopped\",")
+  line_end(out, at)
 }
 
 ///|
@@ -84,8 +76,7 @@ pub fn transaction_line(
   ended~ : TransactionEnd,
   at~ : Int64,
 ) -> String {
-  let out = StringBuilder(size_hint=prefix.length() + target.length() + 192)
-  out.write_string(prefix)
+  let out = line_start(prefix, target.length() + 192)
   match ended {
     Status(_) => ()
     Reset => out.write_string("\"fault\":\"reset\",")
@@ -108,10 +99,7 @@ pub fn transaction_line(
     write_decimal(out, status.to_int64())
     out.write_char(',')
   }
-  out.write_string("\"timestamp\":\"")
-  write_time(out, at)
-  out.write_string("\"}")
-  out.to_string()
+  line_end(out, at)
 }
 
 ///|
@@ -131,10 +119,7 @@ pub fn serving_error_line(
   stub~ : String,
   at~ : Int64,
 ) -> String {
-  let out = StringBuilder(
-    size_hint=prefix.length() + message.length() + stub.length() + 160,
-  )
-  out.write_string(prefix)
+  let out = line_start(prefix, message.length() + stub.length() + 160)
   out.write_string(
     "\"level\":\"error\",\"message\":\"Error while serving the content: ",
   )
@@ -147,7 +132,25 @@ pub fn serving_error_line(
   }
   out.write_string("\"routeUUID\":")
   write_json_string(out, stub, 0, stub.length())
-  out.write_string(",\"timestamp\":\"")
+  out.write_char(',')
+  line_end(out, at)
+}
+
+///|
+/// A builder for a Mockoon-equivalent line that starts with `prefix`
+/// (`mockoon_prefix`), with room for `room` more characters.
+fn line_start(prefix : String, room : Int32) -> StringBuilder {
+  let out = StringBuilder(size_hint=prefix.length() + room)
+  out.write_string(prefix)
+  out
+}
+
+///|
+/// Ends the Mockoon-equivalent line in `out` with its last key,
+/// `timestamp`, the time `at` in milliseconds since the Unix epoch, and
+/// returns the line. The keys before it end with a comma.
+fn line_end(out : StringBuilder, at : Int64) -> String {
+  out.write_string("\"timestamp\":\"")
   write_time(out, at)
   out.write_string("\"}")
   out.to_string()
