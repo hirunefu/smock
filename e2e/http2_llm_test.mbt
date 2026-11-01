@@ -131,3 +131,64 @@ async test "h2c: the same request without stream gets the chat.completion JSON b
     })
   })
 }
+
+///|
+/// What the DATA `text` of a Chat Completions stream carries, as
+/// `chunk_carries` tells, or the text itself, escaped, when it is no event.
+fn carried(text : String) -> String {
+  if text.has_prefix("data: ") {
+    chunk_carries(text)
+  } else {
+    text.escape()
+  }
+}
+
+///|
+async test "h2c: an llm stream with fixed waits sends its HEADERS and opening chunk at once, the first piece first after them and each later one interval after the one before, while a fast stream on the connection is answered at once" {
+  with_definitions([("openai.json", paced_openai)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      let start = @async.now()
+      let stream = client.send(
+        "POST",
+        "/v1/chat/completions",
+        authority="localhost",
+        headers=[("content-type", "application/json")],
+        body=@utf8.encode(chat_request("true")),
+      )
+      let hello = client.send("GET", "/hello", authority="localhost")
+      // The HEADERS go out at once, so the waits, counted from them, count
+      // from the request too: the opening chunk at once, the pieces "Hi t",
+      // "here" and "!" 400, 700 and 1000 ms after the HEADERS, then the
+      // closing chunk and [DONE] right after the last piece.
+      let shown = client.timeline(
+        start~,
+        due=[(stream, [0, 0, 400, 700, 1000, 1000, 1000]), (hello, [0, 0])],
+        data=carried,
+      )
+      let entries = smock.journal_once(2, within=0)
+      inspect(
+        [shown, "---", ..entries].join("\n"),
+        content=(
+          #|stream 1:
+          #|  HEADERS at 0 ms: :status: 200, content-type: text/event-stream, x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8, smock-mock: openai; via=default, date: <now>
+          #|  DATA at 0 ms: opening chunk
+          #|  DATA at 400 ms: piece "Hi t"
+          #|  DATA at 700 ms: piece "here"
+          #|  DATA at 1000 ms: piece "!"
+          #|  DATA at 1000 ms: closing chunk
+          #|  DATA at 1000 ms: [DONE]
+          #|  end
+          #|stream 3:
+          #|  HEADERS at 0 ms: :status: 200, smock-mock: openai; via=default, date: <now>, content-length: 5
+          #|  DATA at 0 ms: "hello"
+          #|  end
+          #|---
+          #|/hello: stub "hello", status 200
+          #|/v1/chat/completions: stub "paced", status 200
+        ),
+      )
+    })
+  })
+}

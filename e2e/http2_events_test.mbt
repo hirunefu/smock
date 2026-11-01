@@ -119,14 +119,15 @@ let h2_news_late : String =
 /// Reads events until each stream of `due` has ended, been reset, or the
 /// connection has closed, and shows, for each stream in the order of
 /// `due`, what came on it, a line each: its HEADERS with their fields, each
-/// DATA with its octets as text, and how it ended. `due` gives, for each
-/// stream, when its HEADERS are due and then when each DATA is, in
-/// milliseconds after `start`, and each line says whether it came then
-/// (`arrival`).
+/// DATA with its octets as text, as `data` shows them, and how it ended.
+/// `due` gives, for each stream, when its HEADERS are due and then when
+/// each DATA is, in milliseconds after `start`, and each line says whether
+/// it came then (`arrival`).
 async fn H2Client::timeline(
   self : H2Client,
   start~ : Int64,
   due~ : Array[(Int32, Array[Int32])],
+  data~ : (String) -> String = text => text.escape(),
 ) -> String {
   let seen : Map[Int32, Array[String]] = Map([])
   for stream in due {
@@ -156,12 +157,12 @@ async fn H2Client::timeline(
         let at = when(stream, ms)
         seen.get(stream).unwrap().push("HEADERS \{at}: \{shown.join(", ")}")
       }
-      Data(stream~, data~) if seen.contains(stream) => {
+      Data(stream~, data=octets) if seen.contains(stream) => {
         let at = when(stream, ms)
         seen
         .get(stream)
         .unwrap()
-        .push("DATA \{at}: \{@utf8.decode_lossy(data).escape()}")
+        .push("DATA \{at}: \{data(@utf8.decode_lossy(octets))}")
       }
       End(stream~) if seen.contains(stream) => {
         seen.get(stream).unwrap().push("end")
