@@ -92,13 +92,15 @@ The four lines of the Mockoon CLI (`Server started on port …`,
 keys sorted) are a stable contract, since they copy an outside format.
 Any change to their messages, keys, key order or value forms, a new key
 included, is a breaking change: the CHANGELOG lists it under Changed, and
-the release notes call it out. smock's own log entries, in either format,
-are a diagnostic aid: their messages and fields may change in any
-release, unlike the Definition file format and the Admin API, which are
-versioned (`v1`). A usage error, such as an unknown flag, a missing
-argument or an invalid setting value, is not a log entry: in either
-format, smock writes it to stderr as plain text, before any log entry,
-and exits with status 2. `smock serve --help` lists the settings:
+the release notes call it out. A fix that makes a line match the Mockoon
+CLI's more closely is such a change too, made the same way. smock's own
+log entries, in either format, are a diagnostic aid: their messages and
+fields may change in any release, unlike the Definition file format and
+the Admin API, which are versioned (`v1`). A usage error, such as an
+unknown flag, a missing argument or an invalid setting value, is not a
+log entry: in either format, smock writes it to stderr as plain text,
+before any log entry, and exits with status 2. `smock serve --help`
+lists the settings:
 
 | Flag | Variable | Default |
 |---|---|---|
