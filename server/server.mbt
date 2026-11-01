@@ -14,14 +14,15 @@
 /// self-signed certificate cannot be generated, or a port cannot be listened
 /// on. Every problem is logged first.
 ///
-/// In the mockoon log format, `logger` writes through `stdout`, as the
-/// Mockoon-equivalent lines do, and every line is out when `serve` returns.
+/// `stdout` is given in the mockoon log format only, and decides it here:
+/// `logger` then writes through it, as the Mockoon-equivalent lines do, and
+/// every line is out when `serve` returns.
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
-  stdout~ : StdoutLines,
+  stdout~ : StdoutLines?,
 ) -> Int32 {
-  defer stdout.flush()
+  defer (if stdout is Some(stdout) { stdout.flush() })
   // When the process started, as process_start_time_seconds gives it.
   let started_at = @async.now()
   // Only SIGTERM cancels the program, which starts the drain below. SIGINT
@@ -103,6 +104,7 @@ pub async fn serve(
       started_at~,
       files=ProcessFiles::of_self(),
     ),
+    log_metrics=LogMetrics::register(metrics, stdout),
     logger~,
     token~,
     replica=replica_name(),
@@ -186,14 +188,14 @@ async fn sleep_forever() -> Unit {
 /// open and they have ended, the drain ends. The admin port serves
 /// throughout, so the probes can be read during the drain.
 ///
-/// In the mockoon log format, the `Server started on port …` line of each
-/// Mock comes right after the TLS port's `listening` line, and the
-/// `Server stopped` line of each Mock served then right after `drain ended`.
-/// A reload writes neither.
+/// In the mockoon log format, when `stdout` is given, the
+/// `Server started on port …` line of each Mock comes right after the TLS
+/// port's `listening` line, and the `Server stopped` line of each Mock
+/// served then right after `drain ended`. A reload writes neither.
 async fn run(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
-  stdout : StdoutLines,
+  stdout : StdoutLines?,
   lifecycle : Lifecycle,
   admin : Admin,
   admin_listener : @socket.TcpServer,
@@ -211,7 +213,7 @@ async fn run(
   @async.with_task_group(group => {
     // In the mockoon log format, the lines the logger queues are written
     // as they come, until the end. `serve` writes the last ones.
-    if settings.log_format is Mockoon {
+    if stdout is Some(stdout) {
       group.spawn_bg(no_wait=true, () => stdout.run())
     }
     // The admin port serves until the end, and neither it nor its
@@ -260,9 +262,9 @@ async fn run(
     )
     lifecycle.started(engine)
     // The Mockoon-equivalent lines exist only in the mockoon log format.
-    let mockoon = match settings.log_format {
-      Json => None
-      Mockoon => Some(MockoonLines::new(engine, stdout))
+    let mockoon = match stdout {
+      Some(stdout) => Some(MockoonLines::new(engine, stdout))
+      None => None
     }
     let ports : MockPorts = {
       engine,
@@ -511,8 +513,8 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
   let headers = DecodedHeaders::new()
   // In the mockoon log format, the outcome of the request whose Transaction
   // recorded line is still to be written.
-  let pending = match self.mockoon {
-    Some(_) => Some(PendingLine::new())
+  let pending_line = match self.mockoon {
+    Some(lines) => Some(PendingLine::new(lines))
     None => None
   }
   let respond = async fn(
@@ -531,8 +533,8 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
     )
     defer {
       self.traffic.record(outcome, stopwatch.seconds())
-      if pending is Some(pending) {
-        pending.outcome = Some(outcome)
+      if pending_line is Some(pending_line) {
+        pending_line.outcome = Some(outcome)
       }
     }
     let plan = outcome.plan
@@ -644,21 +646,22 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       ),
     )
   }
-  let writable = if self.mockoon is Some(lines) && pending is Some(pending) {
+  let writable = match pending_line {
     // Each request's line comes once `respond` is done with it, however it
     // ended, so that the json format's request path stays as it was.
-    serve_connection(
-      stream,
-      self.settings,
-      connection~,
-      respond=(stream, request, stopwatch, now) => {
-        defer lines.write_pending(request, pending)
-        respond(stream, request, stopwatch, now)
-      },
-      reject~,
-    )
-  } else {
-    serve_connection(stream, self.settings, connection~, respond~, reject~)
+    Some(pending_line) =>
+      serve_connection(
+        stream,
+        self.settings,
+        connection~,
+        respond=(stream, request, stopwatch, now) => {
+          defer pending_line.write(request)
+          respond(stream, request, stopwatch, now)
+        },
+        reject~,
+      )
+    None =>
+      serve_connection(stream, self.settings, connection~, respond~, reject~)
   }
   writable && !was_reset.val
 }

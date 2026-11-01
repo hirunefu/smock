@@ -39,15 +39,26 @@ async fn main {
       }
       // Log entries go to stderr in the json format. In the mockoon format,
       // every line goes to stdout, through the one writer that the
-      // Mockoon-equivalent lines go through too.
-      let stdout = @server.StdoutLines::new()
-      let logger = match settings.log_format {
+      // Mockoon-equivalent lines go through too. The format is decided here
+      // only: the server writes the Mockoon-equivalent lines when it is
+      // given that writer.
+      let (logger, stdout) = match settings.log_format {
         Json =>
-          @log.Logger(write_line=line => eprintln(line), now=() => @async.now())
-        Mockoon =>
-          @log.Logger(format=Mockoon, write_line=line => stdout.push(line), now=() => {
-            @async.now()
-          })
+          (
+            @log.Logger(write_line=line => eprintln(line), now=() => {
+              @async.now()
+            }),
+            None,
+          )
+        Mockoon => {
+          let stdout = @server.StdoutLines::new()
+          (
+            @log.Logger(format=Mockoon, write_line=line => stdout.push(line), now=() => {
+              @async.now()
+            }),
+            Some(stdout),
+          )
+        }
       }
       let admin_auth = if settings.admin_auth { "on" } else { "off" }
       @buildinfo.current().log_startup(logger, fields={

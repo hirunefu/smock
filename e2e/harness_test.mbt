@@ -360,8 +360,14 @@ struct Serving {
   /// The lines it has written to stdout so far.
   stdout : Array[String]
   /// Reads the lines of stdout, until smock closes it, unless its reading
-  /// end was closed (`close_stdout`).
+  /// end was closed (`close_stdout`) or reading it stopped
+  /// (`stall_stdout`).
   mut stdout_reader : @async.Task[Unit]?
+  /// The reading end of stdout.
+  stdout_pipe : @process.ReadFromProcess
+  /// Whether reading stdout has stopped and left its reading end open
+  /// (`stall_stdout`), until `close_stdout` closes it.
+  stdout_stalled : Ref[Bool]
   /// Whether smock writes its log to stdout: in the mockoon log format.
   logs_to_stdout : Bool
 }
@@ -420,7 +426,6 @@ async fn[X] Serving::start(
     into : Array[String],
     log : Bool,
   ) => {
-    defer output.close()
     for ;; {
       let line = past_spurious_eagain(() => output.read_until("\n"))
       if line is Some(line) {
@@ -435,11 +440,17 @@ async fn[X] Serving::start(
     }
   }
   let stdout_lines = []
+  let stdout_stalled = Ref(false)
   let stdout_reader = group.spawn(() => {
+    // Reading may stop with the reading end left open (`stall_stdout`).
+    defer (if !stdout_stalled.val { stdout.close() })
     read_lines(stdout, stdout_lines, logs_to_stdout)
   })
   let logs = []
-  let reader = group.spawn(() => read_lines(stderr, logs, !logs_to_stdout))
+  let reader = group.spawn(() => {
+    defer stderr.close()
+    read_lines(stderr, logs, !logs_to_stdout)
+  })
   {
     process,
     logs,
@@ -447,6 +458,8 @@ async fn[X] Serving::start(
     reader,
     stdout: stdout_lines,
     stdout_reader: Some(stdout_reader),
+    stdout_pipe: stdout,
+    stdout_stalled,
     logs_to_stdout,
   }
 }
@@ -464,11 +477,30 @@ fn Serving::log(self : Serving) -> Array[String] {
 
 ///|
 /// Closes the reading end of smock's stdout, so that every write smock
-/// makes there from now on fails. The lines read so far stay.
+/// makes there from now on fails, a write that waits on a stalled reader
+/// (`stall_stdout`) included. The lines read so far stay.
 async fn Serving::close_stdout(self : Serving) -> Unit {
+  if self.stdout_stalled.val {
+    self.stdout_stalled.val = false
+    self.stdout_pipe.close()
+  }
   guard self.stdout_reader is Some(reader) else { return }
   self.stdout_reader = None
   // Cancelling the reader closes the reading end, as it ends.
+  reader.cancel()
+  reader.wait() catch {
+    _ => ()
+  }
+}
+
+///|
+/// Stops reading smock's stdout, and leaves its reading end open, as a
+/// reader that has stalled does: once the pipe is full, every write smock
+/// makes there waits, until `close_stdout`. The lines read so far stay.
+async fn Serving::stall_stdout(self : Serving) -> Unit {
+  guard self.stdout_reader is Some(reader) else { return }
+  self.stdout_reader = None
+  self.stdout_stalled.val = true
   reader.cancel()
   reader.wait() catch {
     _ => ()

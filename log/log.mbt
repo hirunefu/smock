@@ -97,16 +97,28 @@ fn Logger::write(
     "level": Json::string(level),
     "msg": Json::string(msg),
   }
-  for key, value in fields {
-    // A field never replaces the entry's own keys; it moves aside instead.
-    let key = if key is ("time" | "level" | "msg") {
-      "fields.\{key}"
-    } else {
-      key
-    }
-    entry[key] = value
-  }
+  add_fields(entry, fields, Json)
   (self.write_line)(Json::object(entry).stringify())
+}
+
+///|
+/// Adds `fields` to `entry`, an entry of `format` that holds only its own
+/// keys so far. A field never replaces the entry's own keys, `time`,
+/// `level` or `msg` in the `Json` format, `app`, `level`, `message` or
+/// `timestamp` in the `Mockoon` format: it moves aside, to
+/// `fields.<name>`, instead.
+fn add_fields(
+  entry : Map[String, Json],
+  fields : Map[String, Json],
+  format : Format,
+) -> Unit {
+  for key, value in fields {
+    let own = match format {
+      Json => key is ("time" | "level" | "msg")
+      Mockoon => key is ("app" | "level" | "message" | "timestamp")
+    }
+    entry[if own { "fields.\{key}" } else { key }] = value
+  }
 }
 
 ///|
@@ -126,21 +138,12 @@ fn write_time(out : StringBuilder, ms : Int64) -> Unit {
   let ms_per_day = 86_400_000L
   let days = floor_div(ms, ms_per_day)
   let ms_of_day = ms - days * ms_per_day
-  // As `civil_from_days`, inline, so that no tuple is built.
-  let z = days + 719_468L
-  let era = floor_div(z, 146_097L)
-  let doe = z - era * 146_097L
-  let yoe = (doe - doe / 1460L + doe / 36_524L - doe / 146_096L) / 365L
-  let doy = doe - (365L * yoe + yoe / 4L - yoe / 100L)
-  let mp = (5L * doy + 2L) / 153L
-  let day = doy - (153L * mp + 2L) / 5L + 1L
-  let month = if mp < 10L { mp + 3L } else { mp - 9L }
-  let year = yoe + era * 400L + (if month <= 2L { 1L } else { 0L })
-  write_padded(out, year, 4)
+  let date = civil_from_days(days)
+  write_padded(out, date.year, 4)
   out.write_char('-')
-  write_padded(out, month, 2)
+  write_padded(out, date.month, 2)
   out.write_char('-')
-  write_padded(out, day, 2)
+  write_padded(out, date.day, 2)
   out.write_char('T')
   write_padded(out, ms_of_day / 3_600_000L, 2)
   out.write_char(':')
@@ -175,20 +178,41 @@ fn write_padded(out : StringBuilder, n : Int64, width : Int32) -> Unit {
     out.write_string(digits)
     return
   }
-  // The number of digits, and the place value of the first.
-  let mut count = 1
+  for _ in decimal_length(n)..<width {
+    out.write_char('0')
+  }
+  write_decimal(out, n)
+}
+
+///|
+/// Writes `n` in decimal to `out`, with no string for its digits unless it
+/// is negative.
+fn write_decimal(out : StringBuilder, n : Int64) -> Unit {
+  if n < 0L {
+    out.write_string(n.to_string())
+    return
+  }
+  // The place value of the first digit.
   let mut unit = 1L
   while n / unit >= 10L {
-    count += 1
     unit *= 10L
-  }
-  for _ in count..<width {
-    out.write_char('0')
   }
   while unit > 0L {
     out.write_char((0x30 + (n / unit % 10L).to_int()).unsafe_to_char())
     unit /= 10L
   }
+}
+
+///|
+/// The number of decimal digits of `n`, which is not negative.
+fn decimal_length(n : Int64) -> Int32 {
+  let mut count = 1
+  let mut rest = n
+  while rest >= 10L {
+    count += 1
+    rest /= 10L
+  }
+  count
 }
 
 ///|
@@ -315,11 +339,22 @@ pub fn days_from_civil(year : Int32, month : Int32, day : Int32) -> Int64 {
 }
 
 ///|
+/// A date in the proleptic Gregorian calendar, as `civil_from_days` gives
+/// it. It is a value type, so returning one builds nothing.
+#valtype
+pub struct CivilDate {
+  year : Int64
+  /// From 1 to 12.
+  month : Int64
+  /// From 1 to 31.
+  day : Int64
+}
+
+///|
 /// The date `days` days after 1970-01-01, before it when negative, in the
-/// proleptic Gregorian calendar: its year, its month from 1 and its day of
-/// the month from 1, after Howard Hinnant's `civil_from_days`.
+/// proleptic Gregorian calendar, after Howard Hinnant's `civil_from_days`.
 /// `days_from_civil` is its inverse.
-pub fn civil_from_days(days : Int64) -> (Int64, Int64, Int64) {
+pub fn civil_from_days(days : Int64) -> CivilDate {
   // Years start in March, so that the leap day ends them.
   let z = days + 719_468L
   let era = floor_div(z, 146_097L)
@@ -330,5 +365,5 @@ pub fn civil_from_days(days : Int64) -> (Int64, Int64, Int64) {
   let day = doy - (153L * mp + 2L) / 5L + 1L
   let month = if mp < 10L { mp + 3L } else { mp - 9L }
   let year = yoe + era * 400L + (if month <= 2L { 1L } else { 0L })
-  (year, month, day)
+  { year, month, day, }
 }

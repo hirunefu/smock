@@ -55,3 +55,13 @@ test "without Definition files, status lists one empty Default Mock named defaul
   let h = harness([])
   inspect(mocks(h), content="default (default): ")
 }
+
+///|
+test "mock_names lists the names of the Mocks in the order status lists them" {
+  let h = harness([
+    mock_file("users", "\"hosts\": [\"users.example.com\"], \"default\": true"),
+    mock_file("orders", "\"hosts\": [\"orders.example.com\"]"),
+  ])
+  inspect(h.engine.mock_names().join(", "), content="orders, users")
+  inspect(harness([]).engine.mock_names().join(", "), content="default")
+}

@@ -92,16 +92,23 @@ fn Harness::failures(self : Harness, mock : String) -> Array[String] raise {
       body~,
       session="s",
     )
-    let error = match (outcome.template_error, outcome.data_error) {
-      (Some(error), None) => "template error at \{error.at}: \{error.message}"
-      (None, Some(error)) => "data error at \{error.at}: \{error.message}"
-      (None, None) => "no error"
-      (Some(_), Some(_)) => "both errors"
+    let (error, template_error, data_error, path) = match
+      outcome.content_error {
+      Some({ failure: Template(error), path, .. }) =>
+        (
+          "template error at \{error.at}: \{error.message}",
+          Some(error),
+          None,
+          path,
+        )
+      Some({ failure: Data(error), path, .. }) =>
+        ("data error at \{error.at}: \{error.message}", None, Some(error), path)
+      None => ("no error", None, None, None)
     }
     let journal = match outcome.journal {
       Some(entry) =>
-        if entry.template_error == outcome.template_error &&
-          entry.data_error == outcome.data_error {
+        if entry.template_error == template_error &&
+          entry.data_error == data_error {
           "the entry's"
         } else {
           "not the entry's"
@@ -109,7 +116,7 @@ fn Harness::failures(self : Harness, mock : String) -> Array[String] raise {
       None => "no entry"
     }
     out.push(
-      "\{meth} \{target}: \{outcome.plan.status}, \{error}, path \{@debug.to_string(outcome.failed_stub_path)}; \{journal}",
+      "\{meth} \{target}: \{outcome.plan.status}, \{error}, path \{@debug.to_string(path)}; \{journal}",
     )
   }
   out

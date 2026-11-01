@@ -82,7 +82,7 @@ fn write_json(out : @buffer.Buffer, json : Json) -> Unit {
     String(s) => {
       let text = StringBuilder()
       text.write_char('"')
-      write_json_string_content(text, s)
+      @log.write_json_escaped(text, s, 0, s.length())
       text.write_char('"')
       out.write_string_utf8(text.to_string())
     }
@@ -180,7 +180,7 @@ pub fn number_text(n : Double, repr : String?) -> String {
 
 ///|
 /// The length of `s` as a JSON string in UTF-8, its quotes included, as
-/// compact JSON writes it with `write_json_string_content`, or a length
+/// compact JSON writes it with `@log.write_json_escaped`, or a length
 /// above `limit` as soon as it passes it, so that a long string is not
 /// walked to its end. The OpenAPI import bounds its samples with it.
 pub fn json_string_bytes(s : String, limit~ : Int32) -> Int32 {
@@ -195,7 +195,7 @@ pub fn json_string_bytes(s : String, limit~ : Int32) -> Int32 {
 }
 
 ///|
-/// The bytes of UTF-8 that `write_json_string_content` writes for `s`.
+/// The bytes of UTF-8 that `@log.write_json_escaped` writes for `s`.
 fn json_string_content_length(s : StringView) -> Int32 {
   let mut n = 0
   for c in s {
@@ -205,35 +205,13 @@ fn json_string_content_length(s : StringView) -> Int32 {
 }
 
 ///|
-/// The bytes of UTF-8 that `write_json_string_content` writes for `c`.
+/// The bytes of UTF-8 that `@log.write_json_escaped` writes for `c`. A
+/// change to its escapes is made here too.
 fn json_char_length(c : Char) -> Int32 {
   match c {
     '"' | '\\' | '\n' | '\r' | '\t' | '\b' | '\u{0c}' => 2
     _ if c < ' ' => 6
     _ => char_utf8_length(c)
-  }
-}
-
-///|
-/// Writes `s` as the content of a JSON string: `"` and `\` escaped, and
-/// control characters as escapes. A change to the escapes is made in
-/// `json_char_length` too.
-fn write_json_string_content(out : StringBuilder, s : String) -> Unit {
-  for c in s {
-    match c {
-      '"' => out.write_string("\\\"")
-      '\\' => out.write_string("\\\\")
-      '\n' => out.write_string("\\n")
-      '\r' => out.write_string("\\r")
-      '\t' => out.write_string("\\t")
-      '\b' => out.write_string("\\b")
-      '\u{0c}' => out.write_string("\\f")
-      _ if c < ' ' => {
-        out.write_string("\\u00")
-        out.write_string(c.to_int().to_string(radix=16).pad_start(2, '0'))
-      }
-      _ => out.write_char(c)
-    }
   }
 }
 

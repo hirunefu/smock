@@ -174,12 +174,16 @@ of each GitHub release include its section
   `message` and `timestamp`, with the line's own fields beside them and
   the keys sorted at every depth, as Mockoon sorts them. Each line is
   written whole and at once, also to a pipe, and a line that cannot be
-  written is dropped. The four lines and the envelope are a stable
-  contract: a change to them is a breaking change, listed under Changed.
-  `json` stays the default, on stderr, and costs nothing more per request.
-  [Logs](docs/migrating-from-mockoon.md#logs) in the Mockoon migration
-  guide shows the setting for the binary, Docker and the Helm chart, and
-  lists every line and how it differs from Mockoon's. See also
+  written is dropped. A reader of stdout that stops reading holds up only
+  the connections whose requests have a line to write; smock's own lines
+  then wait in a queue of up to 1,024, and the new metric
+  `smock_log_lines_dropped_total` counts those dropped beyond it. The
+  four lines and the envelope are a stable contract: a change to them is
+  a breaking change, listed under Changed. `json` stays the default, on
+  stderr, and serving a request in it adds one test of a value fixed at
+  startup. [Logs](docs/migrating-from-mockoon.md#logs) in the Mockoon
+  migration guide shows the setting for the binary, Docker and the Helm
+  chart, and lists every line and how it differs from Mockoon's. See also
   [Run](README.md#run).
 
 ### Changed

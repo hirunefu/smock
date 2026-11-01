@@ -2,7 +2,9 @@
 // what the Mockoon CLI writes, byte for byte where smock can, with `app`
 // set to `smock`. Each is a string built by hand, never a JSON tree, with
 // its keys in the order Mockoon's logger sorts them. The builders do no I/O
-// and read no clock: the caller passes the time.
+// and read no clock: the caller passes the time. The JSON string writers at
+// the end also serve the envelope of smock's own entries (envelope.mbt)
+// and the template package.
 
 ///|
 /// The start of every Mockoon-equivalent line about a request the Mock
@@ -11,17 +13,22 @@
 /// `{"app":"smock",`. The server builds it once per Mock, when a definition
 /// set loads, and every line about the Mock starts with it.
 pub fn mockoon_prefix(mock : String?) -> String {
-  match mock {
-    Some(name) => {
-      let out = StringBuilder(size_hint=name.length() + 40)
-      out.write_string("{\"app\":\"smock\",\"environmentName\":")
-      write_json_string(out, name, 0, name.length())
-      out.write_char(',')
-      out.to_string()
-    }
-    None => "{\"app\":\"smock\","
+  let out = StringBuilder(size_hint=40)
+  out.write_string("{\"app\":")
+  write_json_string(out, app_name, 0, app_name.length())
+  out.write_char(',')
+  if mock is Some(name) {
+    out.write_string("\"environmentName\":")
+    write_json_string(out, name, 0, name.length())
+    out.write_char(',')
   }
+  out.to_string()
 }
+
+///|
+/// The value of `app` on every line of the mockoon format, the envelope of
+/// smock's own entries included.
+let app_name = "smock"
 
 ///|
 /// The `Server started on port <port>` line of the Mock whose prefix is
@@ -29,14 +36,11 @@ pub fn mockoon_prefix(mock : String?) -> String {
 /// on, written at `at`, in milliseconds since the Unix epoch, such as
 /// `{"app":"smock","environmentName":"users","level":"info","message":"Server started on port 8080","timestamp":"2026-10-31T09:00:00.105Z"}`.
 pub fn started_line(prefix : String, port~ : Int32, at~ : Int64) -> String {
-  let out = StringBuilder(size_hint=prefix.length() + 96)
-  out.write_string(prefix)
+  let out = line_start(prefix, 96)
   out.write_string("\"level\":\"info\",\"message\":\"Server started on port ")
-  write_padded(out, port.to_int64(), 1)
-  out.write_string("\",\"timestamp\":\"")
-  write_time(out, at)
-  out.write_string("\"}")
-  out.to_string()
+  write_decimal(out, port.to_int64())
+  out.write_string("\",")
+  line_end(out, at)
 }
 
 ///|
@@ -45,14 +49,9 @@ pub fn started_line(prefix : String, port~ : Int32, at~ : Int64) -> String {
 /// epoch, such as
 /// `{"app":"smock","environmentName":"users","level":"info","message":"Server stopped","timestamp":"2026-10-31T09:10:00.004Z"}`.
 pub fn stopped_line(prefix : String, at~ : Int64) -> String {
-  let out = StringBuilder(size_hint=prefix.length() + 80)
-  out.write_string(prefix)
-  out.write_string(
-    "\"level\":\"info\",\"message\":\"Server stopped\",\"timestamp\":\"",
-  )
-  write_time(out, at)
-  out.write_string("\"}")
-  out.to_string()
+  let out = line_start(prefix, 80)
+  out.write_string("\"level\":\"info\",\"message\":\"Server stopped\",")
+  line_end(out, at)
 }
 
 ///|
@@ -84,8 +83,7 @@ pub fn transaction_line(
   ended~ : TransactionEnd,
   at~ : Int64,
 ) -> String {
-  let out = StringBuilder(size_hint=prefix.length() + target.length() + 192)
-  out.write_string(prefix)
+  let out = line_start(prefix, target.length() + 192)
   match ended {
     Status(_) => ()
     Reset => out.write_string("\"fault\":\"reset\",")
@@ -96,23 +94,19 @@ pub fn transaction_line(
   )
   write_json_string(out, meth, 0, meth.length())
   out.write_string(",\"requestPath\":")
-  let start = path_start(target)
-  let end = query_start(target, start)
-  if start == end {
+  let parts = target_parts(target)
+  if parts.path == parts.query {
     out.write_string("\"/\"")
   } else {
-    write_json_string(out, target, start, end)
+    write_json_string(out, target, parts.path, parts.query)
   }
   out.write_string(",\"requestProxied\":false,")
   if ended is Status(status) {
     out.write_string("\"responseStatus\":")
-    write_padded(out, status.to_int64(), 1)
+    write_decimal(out, status.to_int64())
     out.write_char(',')
   }
-  out.write_string("\"timestamp\":\"")
-  write_time(out, at)
-  out.write_string("\"}")
-  out.to_string()
+  line_end(out, at)
 }
 
 ///|
@@ -132,14 +126,11 @@ pub fn serving_error_line(
   stub~ : String,
   at~ : Int64,
 ) -> String {
-  let out = StringBuilder(
-    size_hint=prefix.length() + message.length() + stub.length() + 160,
-  )
-  out.write_string(prefix)
+  let out = line_start(prefix, message.length() + stub.length() + 160)
   out.write_string(
     "\"level\":\"error\",\"message\":\"Error while serving the content: ",
   )
-  write_escaped(out, message, 0, message.length())
+  write_json_escaped(out, message, 0, message.length())
   out.write_string("\",")
   if path is Some(path) {
     out.write_string("\"routePath\":")
@@ -148,147 +139,28 @@ pub fn serving_error_line(
   }
   out.write_string("\"routeUUID\":")
   write_json_string(out, stub, 0, stub.length())
-  out.write_string(",\"timestamp\":\"")
+  out.write_char(',')
+  line_end(out, at)
+}
+
+///|
+/// A builder for a Mockoon-equivalent line that starts with `prefix`
+/// (`mockoon_prefix`), with room for `room` more characters.
+fn line_start(prefix : String, room : Int32) -> StringBuilder {
+  let out = StringBuilder(size_hint=prefix.length() + room)
+  out.write_string(prefix)
+  out
+}
+
+///|
+/// Ends the Mockoon-equivalent line in `out` with its last key,
+/// `timestamp`, the time `at` in milliseconds since the Unix epoch, and
+/// returns the line. The keys before it end with a comma.
+fn line_end(out : StringBuilder, at : Int64) -> String {
+  out.write_string("\"timestamp\":\"")
   write_time(out, at)
   out.write_string("\"}")
   out.to_string()
-}
-
-///|
-/// Where the path of the request target `target` starts, as the engine
-/// reads it for its conditions: after the scheme and the authority of an
-/// absolute-form target, at the first `/`, `?` or `#` after them, or at the
-/// end when none follows; otherwise at the start.
-fn path_start(target : String) -> Int32 {
-  let length = target.length()
-  // The first `://`, which ends the scheme of an absolute-form target.
-  let mut colon = -1
-  for i in 0..<(length - 2) {
-    if target.unsafe_get(i) == ':' &&
-      target.unsafe_get(i + 1) == '/' &&
-      target.unsafe_get(i + 2) == '/' {
-      colon = i
-      break
-    }
-  }
-  if colon <= 0 {
-    return 0
-  }
-  // A scheme is a letter, then letters, digits, `+`, `-` and `.`.
-  for i in 0..<colon {
-    let c = target.unsafe_get(i)
-    let letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-    let other = (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'
-    if !(letter || (i > 0 && other)) {
-      return 0
-    }
-  }
-  for i in (colon + 3)..<length {
-    let c = target.unsafe_get(i)
-    if c == '/' || c == '?' || c == '#' {
-      return i
-    }
-  }
-  length
-}
-
-///|
-/// Where the query of `target` starts: at its first `?` from `from` on, or
-/// at the end when it has none.
-fn query_start(target : String, from : Int32) -> Int32 {
-  for i in from..<target.length() {
-    if target.unsafe_get(i) == '?' {
-      return i
-    }
-  }
-  target.length()
-}
-
-///|
-/// The entry `msg` at `level`, with `fields`, written at `at`, in
-/// milliseconds since the Unix epoch, in Mockoon's envelope: one JSON
-/// object with `app` (`"smock"`), `level`, `message` and `timestamp` and the
-/// fields beside them, with the keys sorted at every depth. A field named
-/// `app`, `level`, `message` or `timestamp` is written as `fields.<name>`.
-fn mockoon_entry(
-  level : String,
-  msg : String,
-  fields : Map[String, Json],
-  at : Int64,
-) -> String {
-  let entry : Map[String, Json] = {
-    "app": "smock",
-    "level": Json::string(level),
-    "message": Json::string(msg),
-    "timestamp": Json::string(format_time(at)),
-  }
-  for key, value in fields {
-    // A field never replaces the envelope's keys; it moves aside instead.
-    let key = if key is ("app" | "level" | "message" | "timestamp") {
-      "fields.\{key}"
-    } else {
-      key
-    }
-    entry[key] = value
-  }
-  let out = StringBuilder()
-  write_sorted(out, Json::object(entry))
-  out.to_string()
-}
-
-///|
-/// Writes `value` to `out` as compact JSON, with the keys of every object
-/// in it sorted in UTF-16 code-unit order and arrays in their own order:
-/// strings escaped as `write_json_string` escapes them, and numbers, `true`,
-/// `false` and `null` as `Json::stringify` writes them, so that a number
-/// with its own text, such as a large seed, keeps every digit.
-fn write_sorted(out : StringBuilder, value : Json) -> Unit {
-  match value {
-    Object(members) => {
-      let members = members.to_array()
-      members.sort_by((a, b) => code_unit_order(a.0, b.0))
-      out.write_char('{')
-      for i, pair in members {
-        if i > 0 {
-          out.write_char(',')
-        }
-        let (key, value) = pair
-        write_json_string(out, key, 0, key.length())
-        out.write_char(':')
-        write_sorted(out, value)
-      }
-      out.write_char('}')
-    }
-    Array(items) => {
-      out.write_char('[')
-      for i, item in items {
-        if i > 0 {
-          out.write_char(',')
-        }
-        write_sorted(out, item)
-      }
-      out.write_char(']')
-    }
-    String(s) => write_json_string(out, s, 0, s.length())
-    _ => out.write_string(value.stringify())
-  }
-}
-
-///|
-/// How `a` and `b` compare in UTF-16 code-unit order, as JavaScript
-/// compares strings: by their first differing code unit, or, when one is
-/// the start of the other, the shorter first. Upper-case ASCII letters
-/// sort before lower-case ones.
-fn code_unit_order(a : String, b : String) -> Int32 {
-  let length = if a.length() < b.length() { a.length() } else { b.length() }
-  for i in 0..<length {
-    let x = a.unsafe_get(i)
-    let y = b.unsafe_get(i)
-    if x != y {
-      return x.compare(y)
-    }
-  }
-  a.length().compare(b.length())
 }
 
 ///|
@@ -305,7 +177,7 @@ fn write_json_string(
   end : Int32,
 ) -> Unit {
   out.write_char('"')
-  write_escaped(out, s, start, end)
+  write_json_escaped(out, s, start, end)
   out.write_char('"')
 }
 
@@ -313,8 +185,10 @@ fn write_json_string(
 /// Writes the code units of `s` from `start` to `end` escaped as
 /// `write_json_string` escapes them, without the quotes, so that they can
 /// follow text of the same JSON string, such as the fixed start of the
-/// error line's message.
-fn write_escaped(
+/// error line's message. The template package writes its JSON strings
+/// with it too, and counts their bytes with its own `json_char_length`,
+/// which a change to the escapes must follow.
+pub fn write_json_escaped(
   out : StringBuilder,
   s : String,
   start : Int32,

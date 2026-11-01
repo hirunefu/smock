@@ -75,8 +75,13 @@ each request a Mock handles, after an
 `Error while serving the content: …` line when the Stub's template or
 data write failed; and `Server stopped` for each Mock when the drain
 ends. It writes nothing to stderr but usage errors. Each line is written
-whole and at once, also to a pipe, and never waits in a buffer, so a
-reader of stdout that stops reading stalls smock.
+whole, by one write, also to a pipe, and no buffer holds it back.
+Container runtimes read stdout all the time. A request's lines are
+written before its connection takes its next request, so a reader of
+stdout that stops reading holds up each connection with a line to
+write, while every other connection goes on.
+smock's own lines then wait in a queue of up to 1,024 lines: one beyond
+it is dropped and counted in `smock_log_lines_dropped_total`.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md#logs)
 lists the lines and how they differ from the Mockoon CLI's.
 
@@ -87,13 +92,15 @@ The four lines of the Mockoon CLI (`Server started on port …`,
 keys sorted) are a stable contract, since they copy an outside format.
 Any change to their messages, keys, key order or value forms, a new key
 included, is a breaking change: the CHANGELOG lists it under Changed, and
-the release notes call it out. smock's own log entries, in either format,
-are a diagnostic aid: their messages and fields may change in any
-release, unlike the Definition file format and the Admin API, which are
-versioned (`v1`). A usage error, such as an unknown flag, a missing
-argument or an invalid setting value, is not a log entry: in either
-format, smock writes it to stderr as plain text, before any log entry,
-and exits with status 2. `smock serve --help` lists the settings:
+the release notes call it out. A fix that makes a line match the Mockoon
+CLI's more closely is such a change too, made the same way. smock's own
+log entries, in either format, are a diagnostic aid: their messages and
+fields may change in any release, unlike the Definition file format and
+the Admin API, which are versioned (`v1`). A usage error, such as an
+unknown flag, a missing argument or an invalid setting value, is not a
+log entry: in either format, smock writes it to stderr as plain text,
+before any log entry, and exits with status 2. `smock serve --help`
+lists the settings:
 
 | Flag | Variable | Default |
 |---|---|---|
@@ -109,7 +116,7 @@ and exits with status 2. `smock serve --help` lists the settings:
 | `--replicas` | `SMOCK_REPLICAS` | 1: above 1, every Admin API response warns that state is per replica |
 | `--session-header` | `SMOCK_SESSION_HEADER` | `baggage`: the W3C Baggage header that carries the [Session](#sessions-and-ephemeral-stubs) |
 | `--session-member` | `SMOCK_SESSION_MEMBER` | `smock-session`: the member of that header whose value is the Session key |
-| `--log-format` | `SMOCK_LOG_FORMAT` | `json` (stderr, smock's own shape) or `mockoon` (stdout, the Mockoon CLI's shape, [for Mockoon users](docs/migrating-from-mockoon.md#logs)) |
+| `--log-format` | `SMOCK_LOG_FORMAT` | `json` by default (stderr, smock's own shape), or `mockoon` (stdout, the Mockoon CLI's shape, [for Mockoon users](docs/migrating-from-mockoon.md#logs)) |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--template-env` | `SMOCK_TEMPLATE_ENV` | none: templates read no environment variable; a comma-separated list of names lets them read those as `env.NAME`, with values read once at startup ([Environment variables](docs/definition-files.md#environment-variables)) |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
@@ -324,7 +331,10 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock_state_writes_refused_total` show the bytes of per-Session state
   that [the state bound](docs/definition-files.md#the-state-bound) counts,
   Variables and copies of Data buckets, and the writes it refused, from
-  requests, CRUD Stubs and Admin API sets, without labels.
+  requests, CRUD Stubs and Admin API sets, without labels;
+  `smock_log_lines_dropped_total` counts smock's own log lines that the
+  `mockoon` log format dropped because 1,024 of them were waiting for
+  stdout ([Run](#run)), and stays 0 in the `json` format.
 - What smock's process and its cgroup use is read when `/metrics` is
   scraped, so serving requests costs nothing for it. The standard process
   metrics of Prometheus's client libraries: `process_cpu_seconds_total`

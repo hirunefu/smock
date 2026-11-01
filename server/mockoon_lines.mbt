@@ -34,8 +34,8 @@ fn MockoonLines::new(
 /// definition set loads, and after each reload that swaps the set.
 fn MockoonLines::rebuild(self : MockoonLines, engine : @engine.Engine) -> Unit {
   let prefixes = Map([])
-  for mock in engine.status().mocks {
-    prefixes[mock.name] = @log.mockoon_prefix(Some(mock.name))
+  for name in engine.mock_names() {
+    prefixes[name] = @log.mockoon_prefix(Some(name))
   }
   self.prefixes = prefixes
 }
@@ -43,33 +43,27 @@ fn MockoonLines::rebuild(self : MockoonLines, engine : @engine.Engine) -> Unit {
 ///|
 /// Writes the `Server started on port <port>` line of each Mock served, in
 /// the order the Admin API's status lists them, with the time now, once the
-/// plain and TLS listeners are open, `port` being the plain one's.
+/// plain and TLS listeners are open, `port` being the plain one's. The
+/// lines are queued together, so that no other line comes between them.
 async fn MockoonLines::started(self : MockoonLines, port : Int32) -> Unit {
   let at = @async.now()
-  self.write_each(prefix => @log.started_line(prefix, port~, at~))
+  for _, prefix in self.prefixes {
+    self.out.queue(@log.started_line(prefix, port~, at~))
+  }
+  self.out.flush()
 }
 
 ///|
 /// Writes the `Server stopped` line of each Mock served, in the order the
 /// Admin API's status lists them, with the time now, once the drain ends: a
-/// Mock that a reload added included.
+/// Mock that a reload added included. The lines are queued together, so
+/// that no other line comes between them.
 async fn MockoonLines::stopped(self : MockoonLines) -> Unit {
   let at = @async.now()
-  self.write_each(prefix => @log.stopped_line(prefix, at~))
-}
-
-///|
-/// Writes the line that `line` builds from the prefix of each Mock served,
-/// in the order the Admin API's status lists them, all in one write, so
-/// that no other line comes between them.
-async fn MockoonLines::write_each(
-  self : MockoonLines,
-  line : (String) -> String,
-) -> Unit {
-  let lines = self.prefixes.values().map(line).collect()
-  if lines.length() > 0 {
-    self.out.write(lines.join("\n"))
+  for _, prefix in self.prefixes {
+    self.out.queue(@log.stopped_line(prefix, at~))
   }
+  self.out.flush()
 }
 
 ///|
@@ -98,8 +92,8 @@ fn MockoonLines::prefix(
 /// status.
 ///
 /// When the Stub that matched failed its own content, the request's error
-/// line (`serving_error`) comes first, in the same write, so that no other
-/// line comes between them.
+/// line (`serving_error`) comes first, queued with it, so that no other line
+/// comes between them.
 async fn MockoonLines::transaction(
   self : MockoonLines,
   request : @http1.Request,
@@ -118,10 +112,10 @@ async fn MockoonLines::transaction(
     ended~,
     at=@async.now(),
   )
-  match error {
-    Some(error) => self.out.write("\{error}\n\{line}")
-    None => self.out.write(line)
+  if error is Some(error) {
+    self.out.queue(error)
   }
+  self.out.write(line)
 }
 
 ///|
@@ -136,54 +130,47 @@ fn MockoonLines::serving_error(
   self : MockoonLines,
   outcome : @engine.Outcome,
 ) -> String? {
-  let message = match outcome.template_error {
-    Some(error) => error.message
-    None =>
-      match outcome.data_error {
-        Some(error) => error.message
-        None => return None
-      }
-  }
-  guard outcome.matched is Some(FromFile(stub) | Ephemeral(stub)) else {
-    abort("a template or data error comes from the Stub that matched")
-  }
+  guard outcome.content_error is Some(error) else { return None }
   Some(
     @log.serving_error_line(
       self.prefix(outcome.resolution),
-      message~,
-      path=outcome.failed_stub_path,
-      stub~,
+      message=error.failure.message(),
+      path=error.path,
+      stub=error.stub,
       at=@async.now(),
     ),
   )
 }
 
 ///|
-/// Writes the lines of `request` once the request path is done with it, if
-/// the engine decided an outcome for it, which `pending` then holds, and
-/// empties `pending`.
-async fn MockoonLines::write_pending(
-  self : MockoonLines,
-  request : @http1.Request,
-  pending : PendingLine,
-) -> Unit {
-  guard pending.outcome is Some(outcome) else { return }
-  pending.outcome = None
-  self.transaction(request, outcome)
-}
-
-///|
 /// The engine's outcome for the request of one connection whose Transaction
-/// recorded line is still to be written. The request path sets it where it
-/// counts the request, after the response's last byte, without waiting, and
-/// the line is written once the request path is done with the request. So
-/// the request path waits for nothing more there, and the json format,
-/// which writes no line, adds only a test to it.
+/// recorded line is still to be written, with the lines it goes to. The
+/// request path sets it where it counts the request, after the response's
+/// last byte, without waiting, and the line is written once the request
+/// path is done with the request. So the request path waits for nothing
+/// more there, and the json format, which writes no line, adds only a test
+/// to it.
 priv struct PendingLine {
+  lines : MockoonLines
   mut outcome : @engine.Outcome?
 }
 
 ///|
-fn PendingLine::new() -> PendingLine {
-  { outcome: None, }
+/// A pending line of a connection whose lines go to `lines`, with no
+/// outcome yet.
+fn PendingLine::new(lines : MockoonLines) -> PendingLine {
+  { lines, outcome: None, }
+}
+
+///|
+/// Writes the lines of `request` once the request path is done with it, if
+/// the engine decided an outcome for it, which the pending line then holds,
+/// and empties the pending line.
+async fn PendingLine::write(
+  self : PendingLine,
+  request : @http1.Request,
+) -> Unit {
+  guard self.outcome is Some(outcome) else { return }
+  self.outcome = None
+  self.lines.transaction(request, outcome)
 }

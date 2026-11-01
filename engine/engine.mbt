@@ -63,22 +63,55 @@ pub(all) struct Outcome {
   /// clause of the Stub that matched, with the state before and after.
   /// There is none when no Stub matched, or when the Stub has no clause.
   scenario : ScenarioMove?
-  /// Why the template of the Stub that matched could not be rendered, a
-  /// value of its `variables` or `dataWrites` included, when it could not:
-  /// the response is then the 500 `template failed`. The Journal entry, when
-  /// there is one, holds the same.
-  template_error : TemplateError?
-  /// Why a write of the Stub's `dataWrites` could not be applied, when one
-  /// could not: the response is then the 500 `data write failed`. The
-  /// Journal entry, when there is one, holds the same.
-  data_error : DataError?
-  /// The path of the Stub that matched, as written, when the request has a
-  /// template error or a data error: its exact path, the text of its path
-  /// pattern, or a CRUD Stub's list path. There is none for a Stub with no
-  /// path condition, and none for a request with neither error, so that a
-  /// request answered as planned pays nothing for it.
-  failed_stub_path : String?
+  /// Why the Stub that matched could not serve its own content, when it
+  /// could not: the response is then the 500 `template failed` or
+  /// `data write failed`. There is none for a request answered as planned,
+  /// so that it pays nothing for it.
+  content_error : ContentError?
 } derive(Debug)
+
+///|
+/// Why the Stub that matched a request could not serve its own content,
+/// with the Stub, as the Mockoon-equivalent error line names it.
+pub(all) struct ContentError {
+  /// The ID of the Stub that matched.
+  stub : String
+  /// The path of the Stub as written: its exact path, the text of its path
+  /// pattern, or a CRUD Stub's list path. There is none for a Stub with no
+  /// path condition.
+  path : String?
+  /// What failed. The Journal entry, when there is one, holds the same.
+  failure : ContentFailure
+} derive(Debug)
+
+///|
+/// What kept the Stub that matched a request from serving its content.
+pub(all) enum ContentFailure {
+  /// A template could not be rendered, a value of the Stub's `variables` or
+  /// `dataWrites` included: the response is the 500 `template failed`.
+  Template(TemplateError)
+  /// A write of the Stub's `dataWrites` could not be applied: the response
+  /// is the 500 `data write failed`.
+  Data(DataError)
+} derive(Debug)
+
+///|
+/// The message of `failure`, as the 500's body gives it.
+pub fn ContentFailure::message(self : ContentFailure) -> String {
+  match self {
+    Template(error) => error.message
+    Data(error) => error.message
+  }
+}
+
+///|
+/// The content error of `stub`, which failed with `failure`.
+fn ContentError::new(
+  stub : @definitions.Stub,
+  failure : ContentFailure,
+) -> ContentError {
+  { stub: stub.id, path: written_path(stub), failure, }
+}
 
 ///|
 /// The Stub that matched a request, by its ID, and where it comes from. A
@@ -227,6 +260,17 @@ pub fn Engine::status(self : Engine) -> Status {
     digest: self.snapshot.digest,
     last_reload: self.last_reload,
   }
+}
+
+///|
+/// The names of the Mocks served, in the order the status lists them,
+/// without the rest of the status.
+pub fn Engine::mock_names(self : Engine) -> Array[String] {
+  let names = []
+  for mock in self.snapshot.mocks {
+    names.push(mock.name)
+  }
+  names
 }
 
 ///|
@@ -497,10 +541,8 @@ pub fn Engine::handle(
   let mut response_index = None
   let mut variables_written = none_written
   let mut data_written = no_buckets_written
-  let mut data_error = None
   let mut crud_called = None
-  let mut template_error = None
-  let mut failed_stub_path = None
+  let mut content_error = None
   let mut near_miss = None
   let plan : ResponsePlan = match matched {
     // The match decision: one sequence of steps, each taken in turn, which
@@ -575,13 +617,11 @@ pub fn Engine::handle(
               )
             catch {
               ValueFailed(error) => {
-                template_error = Some(error)
-                failed_stub_path = written_path(stub)
+                content_error = Some(ContentError::new(stub, Template(error)))
                 failed = Some(template_failed(stub.id, error))
               }
               ApplyFailed(error) => {
-                data_error = Some(error)
-                failed_stub_path = written_path(stub)
+                content_error = Some(ContentError::new(stub, Data(error)))
                 failed = Some(data_write_failed(stub.id, error))
               }
               StateLimitReached(message) =>
@@ -626,8 +666,7 @@ pub fn Engine::handle(
               ) catch {
                 RenderError(at~, message~) => {
                   let error = TemplateError::{ at, message, }
-                  template_error = Some(error)
-                  failed_stub_path = written_path(stub)
+                  content_error = Some(ContentError::new(stub, Template(error)))
                   template_failed(stub.id, error)
                 }
               }
@@ -711,11 +750,10 @@ pub fn Engine::handle(
         response_index~,
         variables_written~,
         data_written~,
-        data_error~,
+        content_error~,
         crud=crud_called,
         near_miss~,
         plan~,
-        template_error~,
         digest=self.snapshot.digest,
         now~,
       ),
@@ -730,9 +768,7 @@ pub fn Engine::handle(
     near_miss,
     matched: source,
     scenario,
-    template_error,
-    data_error,
-    failed_stub_path,
+    content_error,
   }
 }
 
@@ -890,12 +926,12 @@ fn host_of(request : Request) -> String? {
 /// `users.example.com:8080` in `http://users.example.com:8080/users/1`,
 /// without any user information. Other targets have none.
 fn authority_of(target : String) -> String? {
-  guard scheme_end(target) is Some(end) else { return None }
-  let rest = target[end + 3:]
-  let authority = match rest.find_by(c => c is ('/' | '?' | '#')) {
-    Some(i) => rest[:i]
-    None => rest
-  }
+  let parts = @log.target_parts(target)
+  guard parts.authority >= 0 else { return None }
+  let authority = target.view(
+    start_offset=parts.authority,
+    end_offset=parts.path,
+  )
   let authority = match authority.rev_find("@") {
     Some(i) => authority[i + 1:]
     None => authority
@@ -904,43 +940,14 @@ fn authority_of(target : String) -> String? {
 }
 
 ///|
-/// Where the scheme of an absolute-form target ends: the index of its
-/// `://`.
-fn scheme_end(target : String) -> Int32? {
-  guard target.find("://") is Some(end) && end > 0 else { return None }
-  for i, c in target[:end] {
-    let ok = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (i > 0 && ((c >= '0' && c <= '9') || c is ('+' | '-' | '.')))
-    if !ok {
-      return None
-    }
-  }
-  Some(end)
-}
-
-///|
 /// The path of a request target: everything before the query, after the
 /// scheme and authority of an absolute-form target, where an empty path is
-/// `/`.
+/// `/` (`@log.target_parts`).
 fn path_of(target : String) -> String {
-  let target = match scheme_end(target) {
-    Some(end) => {
-      let rest = target[end + 3:]
-      match rest.find_by(c => c is ('/' | '?' | '#')) {
-        Some(i) => rest[i:]
-        None => ""
-      }
-    }
-    None => target[:]
-  }
-  let path = match target.find("?") {
-    Some(i) => target[:i]
-    None => target
-  }
-  if path == "" {
+  let parts = @log.target_parts(target)
+  if parts.path == parts.query {
     "/"
   } else {
-    path.to_owned()
+    target.view(start_offset=parts.path, end_offset=parts.query).to_owned()
   }
 }

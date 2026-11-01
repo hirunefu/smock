@@ -232,6 +232,85 @@ async test "with the reading end of stdout closed, smock drops its lines, answer
 }
 
 ///|
+async test "with a reader of stdout that stops reading, only the requests whose lines wait are held up, and smock's own lines beyond the queue are dropped and counted" {
+  with_definitions(mockoon_mocks(), dir => {
+    @async.with_task_group(group => {
+      let serving = Serving::start(group, ["--dir", dir, "--port", "0"], env={
+        "SMOCK_LOG_FORMAT": "mockoon",
+      })
+      guard serving.listening_on(["plain", "tls", "admin"]) is Some(ports) else {
+        fail("smock exited before listening:\n\{serving.log().join("\n")}")
+      }
+      serving.stall_stdout()
+      let smock = serving.smock(ports)
+      // Each Admin API change logs a line of smock's own: more of them than
+      // a pipe (64 KiB, or 256 KiB with 16 KiB pages) and the queue (1,024
+      // lines) hold together.
+      let admin = PlainConn(
+        @socket.Tcp::connect(
+          @socket.Addr::parse("127.0.0.1:\{smock.admin_port}"),
+        ),
+      )
+      let mut changed = 0
+      for i in 0..<5000 {
+        admin.write(
+          raw_request(
+            "PUT",
+            "/v1/mocks/users/variables/count",
+            host="localhost",
+            headers=[("Authorization", "Bearer \{test_token}")],
+            body=i.to_string(),
+          ),
+        )
+        if read_admin_response(admin).status == 200 {
+          changed += 1
+        }
+      }
+      admin.close()
+      // Each request on a connection of its own is answered; its connection
+      // then waits for the request's line, and takes no next request.
+      let conns = []
+      let answered = []
+      for _ in 0..<3 {
+        let conn = smock.connect()
+        conn.write("GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        answered.push(status_line(read_response(conn)))
+        conns.push(conn)
+      }
+      conns[0].write("GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+      let held = @async.with_timeout_opt(300, () => conns[0].read_some())
+        is None
+      let (text, _) = smock.metrics()
+      let dropped = metric_value(text, "smock_log_lines_dropped_total")
+      // Once stdout's writes fail, the connection goes on.
+      serving.close_stdout()
+      let next = status_line(read_response(conns[0]))
+      for conn in conns {
+        conn.close()
+      }
+      inspect(
+        (
+          $|Admin API changes answered 200: \{changed} of 5000
+          $|requests on their own connections: \{answered.join(", ")}
+          $|the next request on the first connection held up: \{held}
+          $|smock's own lines dropped: \{dropped > 0.0}
+          $|the next request once stdout's writes fail: \{next}
+          $|exit status: \{serving.stop()}
+        ),
+        content=(
+          #|Admin API changes answered 200: 5000 of 5000
+          #|requests on their own connections: HTTP/1.1 200 OK, HTTP/1.1 200 OK, HTTP/1.1 200 OK
+          #|the next request on the first connection held up: true
+          #|smock's own lines dropped: true
+          #|the next request once stdout's writes fail: HTTP/1.1 200 OK
+          #|exit status: 0
+        ),
+      )
+    })
+  })
+}
+
+///|
 async test "a request the codec rejects, an Admin API call, a probe and a scrape write no Transaction recorded line" {
   with_definitions(mockoon_mocks(), dir => {
     with_certificates(certs => {
