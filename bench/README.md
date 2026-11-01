@@ -46,6 +46,7 @@ a schedule.
 - [HTTP/2 cases](#http2-cases)
 - [Scenarios in the benchmark](#scenarios-in-the-benchmark)
 - [CRUD Stubs in the benchmark](#crud-stubs-in-the-benchmark)
+- [The mockoon log format in the benchmark](#the-mockoon-log-format-in-the-benchmark)
 - [Targets](#targets)
 - [What a run does](#what-a-run-does)
 - [What a run writes](#what-a-run-writes)
@@ -72,7 +73,9 @@ python3 bench/bench.py run --plan bench/plan-autopilot.json            # the pro
 python3 bench/bench.py run --plan bench/plan-autopilot.json --profiles autopilot-burst-min   # one profile
 python3 bench/bench.py run --plan bench/plan-autopilot.json --definitions bench/definitions-scenarios   # with Scenario Stubs
 python3 bench/bench.py run --plan bench/plan-autopilot.json --definitions bench/definitions-crud   # with CRUD Stubs, sent their own mix
+python3 bench/bench.py run --plan bench/plan-autopilot.json --log-format mockoon   # smock in the mockoon log format, its stdout read through a pipe
 python3 bench/bench.py run --rate 500 --ramp 1 --duration 3 --tail 1 --settle 1 --cooldown 0   # a check of the setup, about 2 minutes
+python3 bench/bench.py run --rate 500 --ramp 1 --duration 3 --tail 1 --settle 1 --cooldown 0 --log-format mockoon   # the same check in the mockoon log format
 python3 bench/bench.py check-targets bench/results/<date>-<time>   # an earlier run against the targets as they are now
 python3 -m unittest discover -s bench -v # the harness's own tests, about 5 minutes
 ```
@@ -271,6 +274,70 @@ definition set and the request mix as conditions that differ. Each run
 checks the targets. On GKE, a variant with the `crud` option serves it,
 and the load generator sends that variant its mix
 ([Comparing smock binaries on one node](#comparing-smock-binaries-on-one-node)).
+
+## The mockoon log format in the benchmark
+
+`--log-format mockoon` runs smock in the `mockoon` log format
+([Run](../README.md#run)), so that a run measures what the format costs:
+smock writes a `Transaction recorded` line to stdout for each request,
+and waits for each write to finish. `--log-format json`, the default,
+runs smock as runs before the option did: with no `--log-format`, and
+its stdout discarded.
+
+- **Reading stdout.** The run reads smock's stdout through a pipe, as a
+  container runtime does, from a thread that reads as soon as smock
+  writes, up to 64 KiB at a time, on the load generator's CPUs. It finds
+  the `listening` lines there. It keeps every line but the `Transaction
+  recorded` ones in the step's log, with smock's stderr, and counts those
+  without keeping them, so that a run at tens of thousands of requests a
+  second writes no gigabytes.
+- **Recorded.** `conditions.json` records smock's arguments, with
+  `--log-format mockoon`, and `bench/compare.py` names the log format
+  among the conditions that differ: `log format (json → mockoon)`. A run
+  that names no log format, from before the option or on GKE, ran in
+  `json`.
+- **Checked.** Each step puts the count of `Transaction recorded` lines
+  against the requests smock answered, as `smock_requests_total` counts
+  them once the load has ended. The count is final once smock has
+  stopped. Both cover smock's whole life in the step, so the requests of
+  the idle connections count too. `summary.md` shows the count in a
+  *Transaction lines* column, with the requests where they differ. A step
+  whose count differs is a failure: `summary.md` names it, and the run
+  exits with 1 once it has written everything. A step whose smock did not
+  answer the scrape is not checked.
+- **Targets.** They are checked as in any run, but for the `mockoon`
+  format they are for reference only, and `summary.md` says so: the
+  format is measured against a run in `json`, below.
+
+### In the merge checklist
+
+Before an integration branch is merged into `main`, the
+[checklist](../docs/merging-into-main.md) runs the full
+`bench/plan-autopilot.json` in both formats, on the same machine:
+
+1. **The mode off against main.** The pre-merge run in `json` is compared
+   with main's last pre-merge run, by the usual rule
+   ([Comparing runs](#comparing-runs)), as for any merge. It must pass:
+   with the mode off, smock costs what main costs.
+2. **The mode on against the mode off.** Right after it, the same plan
+   with `--log-format mockoon`, with the same binary, is compared with the
+   mode-off run by the same rule:
+
+   ```sh
+   python3 bench/bench.py run --plan bench/plan-autopilot.json --log-format mockoon --out bench/results/premerge-local-<date>-mockoon
+   python3 bench/compare.py bench/results/premerge-local-<date> bench/results/premerge-local-<date>-mockoon
+   ```
+
+   Its first lines should name the log format as the only condition that
+   differs. The mode on **stalls** when this comparison fails by the rule
+   at a step that counts: a regression, failed requests, a smock that was
+   not ready, or a step the mode-on run did not measure, at or below the
+   target rate. Then the numbers go to the maintainer before the merge,
+   who decides what to do: request lines are written by an async write
+   that their own request awaits, so a stall shows there. The targets the
+   mode-on run missed fail the comparison's exit status too, but they are
+   for reference only and do not count as a stall. A step whose `Transaction recorded` lines differ from the
+   requests answered is a bug to fix before the merge.
 
 ## Targets
 
@@ -542,19 +609,27 @@ architecture the targets file has no set for.
   during the load, and the idle connections still open at its end. Then
   the idle RSS under each profile, with peak memory and OOM kills, and
   each target with its id, its architecture, profile and case, its
-  verdict, what was measured and why when that is not plain. `format`
-  numbers the layout.
+  verdict, what was measured and why when that is not plain. In the
+  `mockoon` log format, each step whose smock got ready also has
+  `transaction_lines`: the `Transaction recorded` lines smock wrote,
+  `count`, the requests it answered, `requests_answered`, and whether they
+  are `equal`, the last two null when smock did not answer the scrape after
+  the load
+  ([The mockoon log format in the benchmark](#the-mockoon-log-format-in-the-benchmark)).
+  `format` numbers the layout.
 - `summary.md`: the same for people, a section for each profile. Its
   *Targets* section says which architecture's targets it checked. Each
   step shows how long smock waited for a CPU in its measured window
   (*CPU wait*; for the whole load in a GKE run) and what other tasks used
   of smock's CPUs in the same window (*Other tasks*, in percent of their
   time), and says *disturbed* after the case's name when they disturbed
-  it.
+  it. In the `mockoon` log format, each step also shows its
+  *Transaction lines*.
 - `raw/<profile>/<case>/` (`<case>@<rate>` for a ladder's steps):
   `latency.json`, a histogram of the latencies from the scheduled send
   times in microseconds to three significant digits; `rss.json`, smock's
-  RSS over time; smock's log; and oha's own report for each kind of
+  RSS over time; smock's log (in the `mockoon` format, its stdout too, but
+  the `Transaction recorded` lines); and oha's own report for each kind of
   request. `raw/<profile>/idle-rss.json` has the RSS samples of the idle
   measurement.
 
@@ -632,7 +707,8 @@ The line above the table says which steps count.
   as `chart-default/p99`.
 - From each run's `conditions.json`, it names the runs (smock's version and
   commit, the machine, the plan) and lists the conditions besides smock
-  that differ, such as the architecture, the CPU model, the plan or oha.
+  that differ, such as the architecture, the CPU model, the plan, oha or
+  smock's log format.
   The plan differs when what it runs differs: the comparison takes the
   hash of the plan without its `about`, so that a change to the
   description alone is no difference. A run from before runs recorded

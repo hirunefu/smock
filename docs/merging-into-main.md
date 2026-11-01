@@ -88,6 +88,22 @@ pre-merge run compares with them.
   profile with other programs closed before looking for the cause in
   smock. A run from before runs recorded other tasks, such as the
   pre-merge run of 0.3.0, has no record of them, and the report says so.
+- [ ] **Run the local Autopilot plan with the `mockoon` log format**, right
+  after, with the same binary, and compare it with the run above
+  ([In the merge checklist](../bench/README.md#in-the-merge-checklist)):
+
+  ```sh
+  python3 bench/bench.py run --plan bench/plan-autopilot.json --log-format mockoon --out bench/results/premerge-local-<date>-mockoon
+  python3 bench/compare.py bench/results/premerge-local-<date> bench/results/premerge-local-<date>-mockoon
+  ```
+
+  The mode on stalls when the comparison fails by the rule at a step
+  that counts. Then take the numbers to the maintainer before the merge,
+  who decides what to do: request lines are written by an async write
+  that their own request awaits, so a stall shows there. Its missed
+  targets are for reference only. The run itself exits with 1 when a
+  step's `Transaction recorded` lines differ from the requests smock
+  answered: a bug to fix before the merge.
 - [ ] **Run the benchmark on GKE Autopilot** with `scripts/gke-bench.sh`
   ([On GKE Autopilot](../bench/README.md#on-gke-autopilot)). It needs gcloud
   logged in (`gcloud auth login`), docker, kubectl, python3, setsid, curl,

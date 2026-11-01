@@ -170,11 +170,10 @@ fn Journal::entry(
   response_index~ : Int32?,
   variables_written~ : ReadOnlyArray[String],
   data_written~ : ReadOnlyArray[String],
-  data_error~ : DataError?,
+  content_error~ : ContentError?,
   crud~ : CrudCall?,
   near_miss~ : NearMiss?,
   plan~ : ResponsePlan,
-  template_error~ : TemplateError?,
   digest~ : String,
   now~ : Int64,
 ) -> JournalEntry {
@@ -194,6 +193,14 @@ fn Journal::entry(
     NoMock => None
   }
   let via_default = resolution is ViaDefault(_)
+  let template_error = match content_error {
+    Some({ failure: Template(error), .. }) => Some(error)
+    _ => None
+  }
+  let data_error = match content_error {
+    Some({ failure: Data(error), .. }) => Some(error)
+    _ => None
+  }
   let status = match plan.fault {
     Some(Close | Reset) => None
     _ => Some(plan.status)

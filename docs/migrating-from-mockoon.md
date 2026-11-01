@@ -48,6 +48,10 @@ every part of an environment that has a counterpart:
 - [Behaviour that differs](#behaviour-that-differs)
 - [Checking the migration](#checking-the-migration)
 - [Running it where Mockoon ran](#running-it-where-mockoon-ran)
+- [Logs](#logs)
+  - [Turning it on](#turning-it-on)
+  - [Mockoon's lines in smock](#mockoons-lines-in-smock)
+  - [How the lines differ](#how-the-lines-differ)
 - [Mapping reference](#mapping-reference)
   - [Environments and routes](#environments-and-routes)
   - [Rules](#rules)
@@ -64,7 +68,9 @@ covers part of the need, the item says what.
   real service and never records traffic: every answer comes from a
   Stub, and a request that no Stub matches gets a 404. Before switching,
   find the paths that clients reached through the proxy: the Mockoon CLI
-  logs each request with `"requestProxied":true` or `false`.
+  logs each request with `"requestProxied":true` or `false`. smock's
+  `mockoon` log format writes `"requestProxied":false` on every request
+  ([Logs](#logs)).
 - **Some features of data buckets and CRUD routes.** A data bucket
   becomes a [Data bucket](definition-files.md#data-buckets), and a CRUD
   route a [CRUD Stub](definition-files.md#crud-stubs), as
@@ -1611,8 +1617,10 @@ with the example or with small environments made to test them:
     `{{dateFormat '0000-06-01' 'yyyy-MM-dd'}}` gives `0001-06-01`. smock
     writes the calendar year, `0000` and `00`, as its RFC 3339 times do,
     so `${dateFormat('0000-06-01', 'yyyy-MM-dd')}` gives `0000-06-01`.
-- **Logs.** The Mockoon CLI logs every request. smock logs none, and
-  records them in the Journal instead.
+- **Logs.** The Mockoon CLI logs every request. By default smock logs
+  none, and records them in the Journal instead. Its `mockoon` log
+  format writes the Mockoon CLI's lines, with the differences that
+  [Logs](#logs) lists.
 
 ## Checking the migration
 
@@ -1800,6 +1808,152 @@ version in place of `<version>` below.
   no registry, so tag it `smock:dev` in place of `"$IMAGE"`, and run it
   as above with `smock:dev` in place of `ghcr.io/hirunefu/smock:<version>`.
 
+## Logs
+
+The Mockoon CLI writes one JSON object per line to stdout: a
+`Transaction recorded` line for each request, and lines when it starts,
+stops or fails to serve. By default, smock writes none of those. Its
+`json` log format writes smock's own entries to stderr, in smock's
+shape, and no line per request: the Journal records the requests
+instead. Log pipelines, dashboards, alerts and readiness checks built
+on Mockoon's lines need the `mockoon` log format, which writes them to
+stdout. What this section says of Mockoon was checked against Mockoon
+v9.10.0's source and a local Mockoon CLI trial's log on 2026-10-31.
+smock's tests compare its lines with that log.
+
+### Turning it on
+
+Set `--log-format mockoon`, or `SMOCK_LOG_FORMAT=mockoon`. smock 0.3.0
+and earlier have only `json`, and refuse `mockoon` with a usage error.
+
+- **The binary.** As in
+  [Running it where Mockoon ran](#running-it-where-mockoon-ran), with
+  the flag:
+
+  ```sh
+  SMOCK_ADMIN_TOKEN=change-me bin/smock serve --dir defs --log-format mockoon
+  ```
+
+- **Docker.** Add `-e SMOCK_LOG_FORMAT=mockoon`:
+
+  ```sh
+  docker run --rm --read-only -e SMOCK_ADMIN_TOKEN -e SMOCK_LOG_FORMAT=mockoon -p 3000:8080 -p 9090:9090 \
+    -v "$PWD/defs:/defs:ro" ghcr.io/hirunefu/smock:<version> serve --dir /defs
+  ```
+
+- **The Helm chart.** Set it in the chart's `env`: add
+  `--set env.SMOCK_LOG_FORMAT=mockoon` to `helm upgrade --install`, or
+  `env: { SMOCK_LOG_FORMAT: mockoon }` to a values file
+  ([charts/smock/README.md](../charts/smock/README.md#logs)).
+  `kubectl logs` then shows the lines.
+
+With the example, `GET /api/v1/users` and `GET /api/v1/users/`, then
+SIGTERM, give these Mockoon lines, among smock's own:
+
+```text
+{"app":"smock","environmentName":"users-api","level":"info","message":"Server started on port 8080","timestamp":"2026-10-31T15:38:32.992Z"}
+{"app":"smock","environmentName":"users-api","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/api/v1/users","requestProxied":false,"responseStatus":200,"timestamp":"2026-10-31T15:38:34.785Z"}
+{"app":"smock","environmentName":"users-api","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/api/v1/users/","requestProxied":false,"responseStatus":404,"timestamp":"2026-10-31T15:38:34.789Z"}
+{"app":"smock","environmentName":"users-api","level":"info","message":"Server stopped","timestamp":"2026-10-31T15:38:37.980Z"}
+```
+
+smock's own lines, such as `listening`, `definitions reloaded` and
+`drain ended`, share stdout, in the same envelope: `app`, `level`,
+`message` and `timestamp`, with their own fields beside them, keys
+sorted. To keep only Mockoon's lines, filter on the four messages:
+
+```sh
+SMOCK_ADMIN_TOKEN=change-me bin/smock serve --dir defs --log-format mockoon |
+  jq --unbuffered -c 'select(.message | test("^(Transaction recorded|Server stopped)$|^(Server started on port|Error while serving the content:) "))'
+```
+
+The four Mockoon lines and the envelope of every line are a stable
+contract: smock changes them only in a breaking change, which the
+CHANGELOG lists under Changed and the release notes call out
+([Run](../README.md#run)).
+
+### Mockoon's lines in smock
+
+| Mockoon line | In smock's `mockoon` format |
+|---|---|
+| `Server started on port %d` | Written once per Mock, with the plain port, once every listener is open. |
+| `Admin API token (auto-generated): …` (warn) | None: smock never generates a token. |
+| `Server stopped` | Written once per Mock, when the drain after SIGTERM ends. |
+| `Port %d is already in use`, `Port %d is invalid or access is denied`, the hostname errors, `Certificate file not found`, `An unknown server error occurred: %s` | None: smock writes its own `cannot listen` or `cannot load the TLS certificate` line, then exits with status 1, where Mockoon exits with 2. |
+| `Error while trying to parse request body …` | None: smock never fails a request on its body; a body that does not parse fails the conditions that read it. |
+| `Error while serving the content: %s` | Written when a Stub's template cannot be rendered or its data write cannot be applied, just before the request's `Transaction recorded` line, also with the Journal off. |
+| `Error while serving the file content: %s` | None: smock reads body files when it loads the definitions. |
+| `Header parsing error: %s` | None: a templated header that fails is a template failure, so it gives `Error while serving the content`. |
+| `Invalid route path: %s` | None: an invalid path is a load error. |
+| `An error occurred while trying to proxy to %s`, and the callback and WebSocket lines | None: smock has no proxy, callbacks or WebSockets. |
+| `Transaction recorded` | Written once for each request a Mock handles, when it ends, without `transaction`, which only `--log-transaction` adds. |
+
+`--log-transaction`, `GET /mockoon-admin/logs` and
+`/mockoon-admin/events` have no counterpart in the lines. The Journal
+keeps each request whole, with the Stub that answered and its status:
+query it with `POST /v1/journal/query`, and list the requests no Stub
+answered with `GET /v1/journal/unmatched`
+([The Journal](../README.md#the-journal)).
+
+### How the lines differ
+
+- **`app` is `"smock"`** on every line, Mockoon's lines included, so a
+  filter on `app == "mockoon-server"` needs changing, for example to
+  the four messages above. During the switch, `app` tells the two
+  servers' lines apart.
+- **No `environmentUUID`**, since Mocks have no UUIDs.
+  `environmentName` is the Mock's name, which may differ from the
+  environment's: a Mock's name is best short and without spaces
+  ([Environments and routes](#environments-and-routes)). Update queries
+  on `environmentUUID`, and on an environment's name that the Mock does
+  not keep.
+- **Requests the HTTP/1.1 codec rejects get no line**: the 400, 413,
+  431, 501 and 505 that smock sends before any Mock sees the request.
+  Mockoon logs the 413 of a body over its limit; smock's 413 for a body
+  over `--body-limit` shows only in `smock_requests_total`, with
+  `mock=""`.
+- **Connection Faults** have no status, so a request that a reset or a
+  close Fault ends logs `"fault":"reset"` or `"fault":"close"` and no
+  `responseStatus`. A `partial` Fault logs the status it wrote.
+- **`requestPath`** is the path as the client sent it, without the
+  query. Mockoon's URL parsing rewrites some paths: it logs `/a/../b`
+  as `/b`, and the URL Standard, which that parsing follows, also
+  rewrites a path that starts with `//`. smock keeps them as sent, as
+  its conditions read them.
+- **A template failure answers 500**, where Mockoon keeps the status
+  already set, 200 in the trial, so the request's `Transaction recorded`
+  line has `responseStatus` 500. Its error line carries smock's own
+  message after `Error while serving the content: `, the `message` of
+  the 500's body, such as
+  `uppercase(): argument 1 must be a string, a number or a boolean, not an array`
+  where Mockoon wrote `text.toUpperCase is not a function`. `routePath`
+  is the Stub's path as the Definition file writes it, with its leading
+  `/`, where Mockoon writes the route's endpoint without it; a Stub with
+  no path condition has none. `routeUUID` is the Stub ID. A data write
+  that fails gives the same line.
+- **`Server started on port <port>`** comes once per Mock, with the
+  plain port that every Mock shares, once the plain and TLS listeners
+  are open, and never again on a reload, which keeps serving. Mockoon
+  restarts on a `--watch` reload and writes it again. There is no token
+  warning.
+- **`Server stopped`** comes only after SIGTERM's drain, right after
+  `drain ended`, and names a Mock that a reload added, which has no
+  started line. SIGINT ends smock at once, without it; Mockoon writes
+  it on SIGINT. A reload writes no stop and start pair.
+- **Fatal errors** are smock's own lines, such as `invalid definitions`
+  and `cannot listen`, in the same envelope on stdout, then smock exits
+  with status 1. Mockoon writes its error line and a plain-text one,
+  then exits with 2.
+- **No log file**, in either format, and nothing like
+  `--disable-log-to-file`: smock writes only to stdout and stderr.
+  Mockoon's Docker image already starts the CLI with
+  `--disable-log-to-file`.
+- **smock's own lines share the stream.** Filter on the four messages,
+  as above, to keep only Mockoon's.
+- **No fields dropped.** Mockoon leaves `app` and `environment…` out of
+  a line whose message holds a printf token, such as `%s` in a template
+  error. smock keeps every field.
+
 ## Mapping reference
 
 These tables map each part of a Mockoon environment that has a
@@ -1820,7 +1974,7 @@ counterpart, and name those that have none.
 | `cors: true` | An `OPTIONS` Stub, declared last, with the three `Access-Control-Allow-*` headers, replaced and extended by the environment headers. |
 | `cors: false` | No `OPTIONS` Stub. |
 | `tlsOptions` | Nothing to set: smock also serves HTTPS, on port 8443 (`--tls-port`), with a self-signed certificate for `localhost` and every Host unless `--tls-cert-file` and `--tls-key-file` give a PEM certificate and key (convert a PFX file with `openssl pkcs12`). Client certificates are not checked. |
-| `proxyMode` and the other `proxy…` fields | No counterpart; the Mockoon CLI logs the requests it proxied with `"requestProxied":true`. |
+| `proxyMode` and the other `proxy…` fields | No counterpart; the Mockoon CLI logs the requests it proxied with `"requestProxied":true`, which smock's `mockoon` log format never writes ([Logs](#logs)). |
 | `data` (data buckets) | The top-level `data` of a Definition file: a [Data bucket](definition-files.md#data-buckets) for each, whose `mock` is the environment's Mock ([The CRUD route](#latency-cors-and-the-crud-route)). |
 | A bucket's `name` | `name`: 1 to 128 ASCII letters, digits, `_` and `-`, which templates and Stubs use exactly. Mockoon's helpers also find a bucket by its `id`, or by any part of its name, in any case ([Data buckets](#data-buckets)). |
 | A bucket's `id`, `uuid` | Dropped: smock names a bucket by its `name`. |
@@ -1963,7 +2117,9 @@ write a fixed value. Leaving the member out changes the body's shape.
 | `--disable-routes` | Remove the Stubs, or move them out of the definitions directory. |
 | `--faker-seed` | `--seed`, or `fault.seed` on a Stub. |
 | `--max-request-body-size` | `--body-limit`, 10 MiB by default. |
-| `--log-transaction` and the logs | The Journal: `POST /v1/journal/query` and `GET /v1/journal/unmatched`. |
+| The CLI's log lines | `--log-format mockoon` (`SMOCK_LOG_FORMAT=mockoon`), on stdout ([Logs](#logs)). |
+| `--log-transaction` and the transaction logs, `/mockoon-admin/logs` and `/mockoon-admin/events` | The Journal: `POST /v1/journal/query` and `GET /v1/journal/unmatched`. |
+| `--disable-log-to-file` | Nothing needed: smock writes no log file. |
 | The admin API, under `/mockoon-admin` | The Admin API, on its own port, 9090 by default. Mockoon 9.9.0's admin API needs a bearer token too: `--admin-api-token` sets it, or Mockoon logs the one it generates at startup. |
 | `PURGE /mockoon-admin/state` | `POST /v1/reset` with `{"scope":"all"}`, which clears the Ephemeral Stubs, the Journal, every Scenario state, every Variable and every copy of a Data bucket, so that sequences, request counts, global variables and data buckets start over. |
 | `PURGE /mockoon-admin/data-buckets` | `POST /v1/reset`, which drops the copies of Data buckets in its scope, with the rest of the scope's state, or a `DELETE` on `/v1/mocks/{mock}/data/{bucket}` for each bucket of the calling Session ([Data buckets](#data-buckets)). |

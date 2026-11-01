@@ -13,8 +13,10 @@ write; they need nothing else.
 usage: python3 -m unittest discover -s bench -v
 """
 
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import platform
@@ -1883,6 +1885,196 @@ class CheckTargets(unittest.TestCase):
             status, stdout, stderr = check_targets_command(results, "--targets", path)
             self.assertEqual((status, stdout), (2, ""), stderr)
             self.assertIn(expected, stderr)
+
+
+class LogFormatOption(unittest.TestCase):
+    """`bench.py run --log-format` names the log format smock runs with:
+    `json`, smock's default, unless it says `mockoon`."""
+
+    def test_the_log_format_is_json_unless_the_option_says_mockoon(self):
+        self.assertEqual(harness.arguments(["run"]).log_format, "json")
+        self.assertEqual(harness.arguments(["run", "--log-format", "json"]).log_format, "json")
+        self.assertEqual(harness.arguments(["run", "--log-format", "mockoon"]).log_format, "mockoon")
+        for wrong in (["--log-format", "text"], ["--log-format"]):
+            with self.subTest(wrong=wrong), self.assertRaises(SystemExit) as stopped, \
+                    contextlib.redirect_stderr(io.StringIO()) as stderr:
+                harness.arguments(["run", *wrong])
+            self.assertEqual(stopped.exception.code, 2)
+            self.assertIn("--log-format", stderr.getvalue())
+
+
+# Lines smock writes, as it wrote them: in the json format, on stderr; in
+# the mockoon format, on stdout, a request's Transaction recorded line among
+# them.
+JSON_LISTENING = ('{"time":"2026-10-31T15:16:00.822Z","level":"info","msg":"listening","listener":"plain",'
+                  '"address":"0.0.0.0:39519"}\n')
+MOCKOON_LISTENING = ('{"address":"0.0.0.0:42163","app":"smock","level":"info","listener":"tls","message":"listening",'
+                     '"timestamp":"2026-10-31T15:14:44.828Z"}\n')
+MOCKOON_DRAIN = '{"app":"smock","level":"info","message":"drain started","timeoutMs":20000,"timestamp":"2026-10-31T15:14:48.780Z"}\n'
+TRANSACTION = ('{"app":"smock","environmentName":"payments","level":"info","message":"Transaction recorded",'
+               '"requestMethod":"GET","requestPath":"/nope","requestProxied":false,"responseStatus":404,'
+               '"timestamp":"2026-10-31T15:14:46.310Z"}\n')
+
+
+class ListeningLines(unittest.TestCase):
+    """smock says where each listener listens in a `listening` line: with
+    `msg` in the json format, and with `message`, its keys sorted, in the
+    mockoon format. The run finds the ports in either."""
+
+    def test_a_listening_line_of_either_format_gives_its_listener_and_port(self):
+        self.assertEqual(harness.listening(JSON_LISTENING), ("plain", 39519))
+        self.assertEqual(harness.listening(MOCKOON_LISTENING), ("tls", 42163))
+
+    def test_any_other_line_gives_nothing(self):
+        for line in (TRANSACTION, MOCKOON_DRAIN, "smock: unknown option --nope\n", "[1]\n", '"listening"\n',
+                     '{"msg":"listening","listener":"plain"}\n', '{"message":"listening","address":"0.0.0.0:1"}\n',
+                     ""):
+            with self.subTest(line=line):
+                self.assertIsNone(harness.listening(line))
+
+
+# An error line whose message quotes a Transaction recorded line's key and
+# value, escaped as JSON escapes them.
+MOCKOON_ERROR = ('{"app":"smock","environmentName":"payments","level":"error","message":"Error while serving the '
+                 'content: \\"message\\":\\"Transaction recorded\\"","routePath":"/t","routeUUID":"t",'
+                 '"timestamp":"2026-10-31T15:14:46.310Z"}\n')
+
+
+class MockoonStdout(unittest.TestCase):
+    """In the mockoon format, the run reads smock's stdout as it comes, in
+    chunks that may cut a line anywhere. It counts the Transaction recorded
+    lines without keeping them, and keeps every other line, in order."""
+
+    def read(self, text, size):
+        """What reading `text` in chunks of `size` bytes, to its end, counts
+        and keeps."""
+        kept = []
+        lines = harness.MockoonStdout(kept.append)
+        data = text.encode()
+        for start in range(0, len(data), size):
+            lines.feed(data[start:start + size])
+        lines.end()
+        return lines.transactions, kept
+
+    def test_transaction_recorded_lines_are_counted_and_the_others_kept_in_order(self):
+        text = MOCKOON_LISTENING + TRANSACTION + TRANSACTION + MOCKOON_ERROR + TRANSACTION + MOCKOON_DRAIN
+        for size in (1, 7, len(TRANSACTION), len(text)):
+            with self.subTest(size=size):
+                self.assertEqual(self.read(text, size), (3, [MOCKOON_LISTENING, MOCKOON_ERROR, MOCKOON_DRAIN]))
+        self.assertEqual(self.read(TRANSACTION * 1000, 65536), (1000, []))
+        self.assertEqual(self.read("", 1), (0, []))
+
+    def test_a_last_line_without_its_newline_still_counts_when_stdout_ends(self):
+        self.assertEqual(self.read(TRANSACTION + TRANSACTION.rstrip("\n"), 5), (2, []))
+        self.assertEqual(self.read(TRANSACTION + MOCKOON_DRAIN.rstrip("\n"), 5), (1, [MOCKOON_DRAIN.rstrip("\n")]))
+
+
+class TransactionLinesCheck(unittest.TestCase):
+    """In the mockoon format, each step checks that smock wrote a
+    Transaction recorded line for each request it answered, as
+    smock_requests_total counts them once the load has ended. A count that
+    differs is a failure: the summary names the step, and the run exits
+    with 1."""
+
+    def test_the_count_is_checked_against_the_requests_smock_answered(self):
+        answered = scrape(requests=(6000, 3999, 1))
+        self.assertEqual(harness.transaction_lines(10000, answered),
+                         {"count": 10000, "requests_answered": 10000, "equal": True})
+        self.assertEqual(harness.transaction_lines(9998, answered),
+                         {"count": 9998, "requests_answered": 10000, "equal": False})
+        self.assertEqual(harness.transaction_lines(10001, answered),
+                         {"count": 10001, "requests_answered": 10000, "equal": False})
+        # Before its first request, smock_requests_total has no series.
+        self.assertEqual(harness.transaction_lines(0, scrape(requests=())),
+                         {"count": 0, "requests_answered": 0, "equal": True})
+        # A smock that did not answer the scrape cannot be checked.
+        self.assertEqual(harness.transaction_lines(10000, None),
+                         {"count": 10000, "requests_answered": None, "equal": None})
+
+    def test_a_count_that_differs_is_a_failure_the_summary_names(self):
+        def shown_step(rate):
+            step = step_measured(rate=rate)
+            step.update(latency_from_release_ms={"p50": 0.3, "p90": 0.5, "p99": 1.0, "p99_9": 1.5, "max": 3.0},
+                        rss_kib={"first": 16000, "last": 17000, "max": 17000}, other_tasks=None, smock_cpu=None)
+            return step
+
+        def counted(rate, lines):
+            return {**shown_step(rate), "transaction_lines": lines}
+
+        oom_killed = {**shown_step(4000), "smock_ready": False}
+        summary = summary_of(steps=[
+            counted(500, {"count": 10000, "requests_answered": 10000, "equal": True}),
+            counted(1000, {"count": 19998, "requests_answered": 20000, "equal": False}),
+            counted(2000, {"count": 40000, "requests_answered": None, "equal": None}),
+            oom_killed])
+        self.assertEqual(harness.transaction_line_failures(summary), [
+            "in http-keep-alive@small@1000, smock wrote 19998 Transaction recorded lines for the 20000 requests it "
+            "answered"])
+        conditions = summary_conditions()
+        conditions["smock"]["args"] = ["serve", "--port", "0", "--log-format", "mockoon"]
+        text = harness.summary_markdown(summary, conditions)
+        rows = markdown_table(markdown_sections(text)["small: CPU limit 250m, memory limit 512Mi"])
+        self.assertEqual([row["Transaction lines"] for row in rows],
+                         ["10000", "19998 for 20000 requests", "40000 for - requests", "-"])
+        self.assertIn("**Log format mockoon:**", text)
+        self.assertIn("**Transaction lines differ** from the requests smock answered: in http-keep-alive@small@1000, "
+                      "smock wrote 19998 Transaction recorded lines for the 20000 requests it answered.", text)
+        # In the json format, there is nothing to count.
+        text = harness.summary_markdown(summary_of(steps=[shown_step(500)]), summary_conditions())
+        self.assertNotIn("Transaction", text)
+        self.assertNotIn("Log format", text)
+
+
+class LogFormatOfARun(unittest.TestCase):
+    """A run's conditions record smock's arguments, which name the log
+    format it ran with."""
+
+    def test_the_log_format_is_the_one_smocks_arguments_name_or_else_json(self):
+        def conditions(args):
+            return {"smock": {"version": "0.3.0"} if args is None else {"version": "0.3.0", "args": args}}
+
+        self.assertEqual(harness.log_format(conditions(["serve", "--port", "0", "--log-format", "mockoon"])),
+                         "mockoon")
+        self.assertEqual(harness.log_format(conditions(["serve", "--log-format", "json", "--port", "0"])), "json")
+        # A run before the option, and a GKE run, record no such argument.
+        self.assertEqual(harness.log_format(conditions(["serve", "--port", "0"])), "json")
+        self.assertEqual(harness.log_format(conditions(None)), "json")
+
+
+class MockoonLogFormat(unittest.TestCase):
+    """With `--log-format mockoon`, smock runs in the mockoon format. The
+    run reads its stdout through a pipe as it comes, finds the listening
+    lines there, keeps every line but the Transaction recorded ones in the
+    step's log, and counts those."""
+
+    def test_a_run_counts_a_line_for_each_request_smock_answered_and_keeps_the_others(self):
+        out = bench(self, "--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "200", "--log-format",
+                    "mockoon", *SHORT)
+        self.assertEqual(read(out, "conditions.json")["smock"]["args"][-2:], ["--log-format", "mockoon"])
+        result = case(out, "http-keep-alive@1")
+        lines = result["transaction_lines"]
+        # No request came before the load: each request of the load got its
+        # line, the ramp's and the tail's too.
+        self.assertEqual(lines, {"count": result["smock_cpu"]["requests"],
+                                 "requests_answered": result["smock_cpu"]["requests"], "equal": True})
+        self.assertGreater(lines["count"], result["requests"]["ok"])
+        for log in (out / "raw/1/http-keep-alive/smock.log", out / "raw/1/idle-smock.log"):
+            with self.subTest(log=log.name):
+                kept = log.read_text().splitlines()
+                self.assertEqual({harness.listening(line) and harness.listening(line)[0] for line in kept},
+                                 {None, "admin", "plain", "tls"})
+                messages = [json.loads(line)["message"] for line in kept]
+                self.assertNotIn("Transaction recorded", messages)
+                # Lines smock writes as it stops are kept too.
+                self.assertIn("drain ended", messages)
+        rows = markdown_table(markdown_sections((out / "summary.md").read_text())["1: CPU limit 1, no memory limit"])
+        self.assertEqual([row["Transaction lines"] for row in rows], [str(lines["count"])])
+
+    def test_a_run_in_the_json_format_leaves_smocks_arguments_and_stdout_as_they_were(self):
+        out = bench(self, "--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "200", *SHORT)
+        self.assertNotIn("--log-format", read(out, "conditions.json")["smock"]["args"])
+        self.assertNotIn("transaction_lines", case(out, "http-keep-alive@1"))
+        self.assertNotIn("Transaction", (out / "summary.md").read_text())
 
 
 if __name__ == "__main__":

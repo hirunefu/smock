@@ -640,6 +640,11 @@ check env "other smock settings are set as SMOCK_<NAME> variables, numbers writt
   'env("SMOCK_IDLE_TIMEOUT_MS").value == "120000" and env("SMOCK_SEED").value == "9007199254740991"
    and env("SMOCK_BODY_LIMIT").value == "10485760"'
 check env "each variable is set once" 'envs | length == (unique | length)'
+# The chart's README sets the mockoon log format this way: through env,
+# with no value of the chart's own.
+render env-log-format --values "$tmp/values-token.yaml" --set env.SMOCK_LOG_FORMAT=mockoon
+check env-log-format "the mockoon log format, set in env, is SMOCK_LOG_FORMAT on smock's container, once" \
+  'env("SMOCK_LOG_FORMAT").value == "mockoon" and ([envs[] | select(. == "SMOCK_LOG_FORMAT")] | length == 1)'
 refuse env-name "a variable that is not a smock setting" \
   'env: "HTTP_PROXY" is not a smock setting: its name must be SMOCK_ and the setting' \
   --values "$tmp/values-token.yaml" --set env.HTTP_PROXY=x

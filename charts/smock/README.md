@@ -406,10 +406,41 @@ Kubernetes does not kill a draining Pod.
 
 ## Logs
 
-smock writes its logs to stderr, one JSON object per line: JSON is its only
-log format, so a log collector can parse every entry. Only a usage error,
-such as an invalid value in `env`, is plain text: smock writes it before
-any log entry and exits with status 2.
+smock logs one JSON object per line, so a log collector can parse every
+entry, in one of two formats:
+
+- `json`, the default, writes smock's own entries to stderr, with `time`,
+  `level` and `msg`. It logs no requests.
+- `mockoon` writes every line to stdout, in the Mockoon CLI's shape:
+  `app` (always `"smock"`), `level`, `message` and `timestamp`, keys
+  sorted. It adds the Mockoon CLI's lines: a `Transaction recorded` line
+  for each request a Mock handles, `Error while serving the content: …`
+  when a Stub's template or data write fails, and
+  `Server started on port <port>` and `Server stopped` for each Mock.
+
+The chart has no value of its own for the format. Set it in `env`:
+
+```yaml
+env:
+  SMOCK_LOG_FORMAT: mockoon
+```
+
+or with `--set env.SMOCK_LOG_FORMAT=mockoon`. Kubernetes collects both
+streams, so `kubectl logs` and a log collector read either format with
+no other change. In the `mockoon` format each line is written whole and
+at once, and the container runtime reads stdout all the time. A reader
+that stops reading holds up only the connections whose requests have a
+line to write, and smock's own lines beyond 1,024 waiting are dropped and
+counted in `smock_log_lines_dropped_total`. The `mockoon` format costs
+CPU: on an M1 laptop smock spent about 8 to 11 µs more on each request
+than in `json`, 40% to 90% more, so a Pod that comes close to its CPU
+limit in `json` needs a higher one in `mockoon`. The
+[migration guide](https://github.com/hirunefu/smock/blob/main/docs/migrating-from-mockoon.md#logs)
+lists the lines and how they differ from Mockoon's.
+
+Only a usage error, such as an invalid value in `env`, is plain text:
+smock writes it to stderr, before any log entry, in either format, and
+exits with status 2.
 
 ## Other settings
 

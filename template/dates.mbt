@@ -388,11 +388,11 @@ priv struct Civil {
 fn civil(ms : Int64) -> Civil {
   let days = @log.floor_div(ms, day_ms)
   let of_day = (ms - days * day_ms).to_int()
-  let (year, month, day) = @log.civil_from_days(days)
+  let date = @log.civil_from_days(days)
   {
-    year: year.to_int(),
-    month: month.to_int(),
-    day: day.to_int(),
+    year: date.year.to_int(),
+    month: date.month.to_int(),
+    day: date.day.to_int(),
     // 1970-01-01 was a Thursday.
     weekday: (days - @log.floor_div(days, 7L) * 7L + 4L).to_int() % 7,
     hour: of_day / 3_600_000,

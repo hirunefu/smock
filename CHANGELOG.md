@@ -10,28 +10,6 @@ of each GitHub release include its section
 
 ### Added
 
-- Dependabot proposes, once a week, the updates of the GitHub Actions and
-  of the image's distroless base, so that the base's glibc and OpenSSL
-  fixes reach the next release's image.
-  [docs/releasing.md](docs/releasing.md#dependency-updates) says what it
-  does not cover, such as the MoonBit toolchain and modules.
-- The Helm chart `oci://ghcr.io/hirunefu/charts/smock` is signed with
-  cosign, without a key, as the image is: the signature's certificate names
-  the release workflow at the release's tag. The release workflow verifies
-  the signature before it publishes the release. See
-  [Verify the Helm chart](README.md#verify-the-helm-chart).
-- The image's SBOM lists the MoonBit native runtime, mimalloc and simdutf,
-  which come with the MoonBit toolchain and are linked into smock, with the
-  licences that NOTICE gives them. The runtime has the toolchain's version,
-  mimalloc the one NOTICE gives, and simdutf none (`NOASSERTION`), since the
-  toolchain does not record it. CI fails when the SBOM and NOTICE disagree.
-- A write timeout, `--write-timeout-ms` (`SMOCK_WRITE_TIMEOUT_MS`), 30000 by
-  default: smock closes a connection when a write to it makes no progress
-  for that long, as when the client stops reading. Before, such a client
-  kept its connection, and the response smock held for it, open for good.
-  A client that reads slowly but steadily still gets the whole response,
-  and delays do not count. It is not logged, like the read and idle
-  timeouts. See [Run](README.md#run).
 - HTTP/2, beside HTTP/1.1, on the plain and TLS ports, served by the same
   Mocks and Stubs. See [docs/http2.md](docs/http2.md).
   - **h2c on the plain port.** A connection that starts with the HTTP/2
@@ -158,6 +136,65 @@ of each GitHub release include its section
   `encode_response` writes for a field name or value. They join
   `is_token`, `is_field_value` and `is_host_value`, which were public
   already.
+
+### Changed
+
+- A client that offers both `h2` and `http/1.1` by ALPN, as most HTTPS
+  clients do, now gets HTTP/2 on the TLS port instead of HTTP/1.1: ALPN
+  offers `h2`, then `http/1.1`, where it offered `http/1.1` alone. A client
+  that offers only `h2`, such as oha with `--http2`, now completes the
+  handshake instead of failing it. A client that offers only `http/1.1`, or
+  no ALPN, still gets HTTP/1.1. `--tls-http2 off` restores the old
+  behaviour.
+- The HTTP/2 preface on the plain port now starts HTTP/2, instead of
+  getting 505. The Journal's `version` and the Admin API's
+  `RecordedRequest.version` can be `HTTP/2`.
+- The help texts of `smock_requests_total`,
+  `smock_request_duration_seconds` and `smock_unmatched_requests_total`
+  speak of a request the protocol layer rejects, and name HTTP/2's
+  statuses beside HTTP/1.1's: 400, 413 and 431 on its stream.
+- The help texts of `--header-size-limit` and `--read-timeout-ms` give
+  their meaning over HTTP/2. A header list is counted as RFC 7541 counts
+  it, each field with 32 octets more, and a larger one gets 431 on its
+  stream, while a header block over twice the limit closes the
+  connection. So a head that fits over HTTP/1.1 can get 431 over HTTP/2
+  ([Header lists](docs/http2.md#header-lists)). A request that does not
+  arrive in time resets its stream instead of closing the connection.
+- The Definition-file Schema's description of a connection Fault's `kind`
+  gives its HTTP/2 form beside its HTTP/1.1 one: RST_STREAM on the
+  request's stream for `reset`, half the response then RST_STREAM for
+  `partial`, and GOAWAY then the close for `close`. The format is
+  unchanged. See [Faults](docs/http2.md#faults).
+- `scripts/verify-image.sh` also requires moonhttp, and every other module
+  that NOTICE names, in each SBOM. It reads NOTICE, so check an image with
+  the script and NOTICE of the image's own tag.
+
+## [0.4.0] - 2026-11-01
+
+### Added
+
+- Dependabot proposes, once a week, the updates of the GitHub Actions and
+  of the image's distroless base, so that the base's glibc and OpenSSL
+  fixes reach the next release's image.
+  [docs/releasing.md](docs/releasing.md#dependency-updates) says what it
+  does not cover, such as the MoonBit toolchain and modules.
+- The Helm chart `oci://ghcr.io/hirunefu/charts/smock` is signed with
+  cosign, without a key, as the image is: the signature's certificate names
+  the release workflow at the release's tag. The release workflow verifies
+  the signature before it publishes the release. See
+  [Verify the Helm chart](README.md#verify-the-helm-chart).
+- The image's SBOM lists the MoonBit native runtime, mimalloc and simdutf,
+  which come with the MoonBit toolchain and are linked into smock, with the
+  licences that NOTICE gives them. The runtime has the toolchain's version,
+  mimalloc the one NOTICE gives, and simdutf none (`NOASSERTION`), since the
+  toolchain does not record it. CI fails when the SBOM and NOTICE disagree.
+- A write timeout, `--write-timeout-ms` (`SMOCK_WRITE_TIMEOUT_MS`), 30000 by
+  default: smock closes a connection when a write to it makes no progress
+  for that long, as when the client stops reading. Before, such a client
+  kept its connection, and the response smock held for it, open for good.
+  A client that reads slowly but steadily still gets the whole response,
+  and delays do not count. It is not logged, like the read and idle
+  timeouts. See [Run](README.md#run).
 - A `json` condition can match the last element of an array with
   `{ "$last": <condition> }`. It holds when the value is an array with at
   least one element, and its last element meets the condition, so a Stub
@@ -270,16 +307,52 @@ of each GitHub release include its section
   sample's body asks for, the JSON body or a stream's events, each event
   with its wait, with the ids and the waits the seed fixes. See
   [LLM responses](docs/definition-files.md#llm-responses).
+- `--log-format mockoon` (`SMOCK_LOG_FORMAT=mockoon`) writes the Mockoon
+  CLI's log lines to stdout, so that log pipelines, dashboards, alerts and
+  readiness checks built on them keep working after a move from the
+  Mockoon CLI. Four of its lines come with Mockoon's messages and keys.
+  `Server started on port <port>`, with the plain port, comes once per
+  Mock when every listener is open. A `Transaction recorded` line comes
+  for each request a Mock handles, once its last byte is written: a Stub
+  matched, no Stub matched, or no Mock answered. It names the Mock
+  (`environmentName`, left out when no Mock answered), the method as sent,
+  the path without its query (`requestPath`, an absolute-form target cut
+  to its path), `requestProxied` (always false) and the status, or
+  `fault` (`"reset"` or `"close"`) in place of the status when a
+  connection Fault sent none; a `partial` Fault logs the status it wrote.
+  A delayed response logs after its delay, a Server-Sent Event stream once,
+  when it ends, and a request whose client goes away, whose write times
+  out or that the drain cuts, when it ends, with its planned status.
+  `Error while serving the content: <message>`, at level `error`, comes
+  just before it when the Stub's template cannot be rendered or its data
+  write cannot be applied, with the Stub's path as written (`routePath`,
+  left out for a Stub with no path condition) and its ID (`routeUUID`),
+  also with the Journal off and when a connection Fault replaces the 500.
+  `Server stopped` comes once per Mock when the drain after SIGTERM ends.
+  A reload writes no stop and start pair, and requests the HTTP/1.1 codec
+  rejects, Admin API calls, probes and scrapes get no line. Every other
+  line smock writes goes to stdout too, fatal startup errors included,
+  keeping its message and fields, so stderr carries only usage errors.
+  Every line has the same envelope: `app` (always `"smock"`), `level`,
+  `message` and `timestamp`, with the line's own fields beside them and
+  the keys sorted at every depth, as Mockoon sorts them. Each line is
+  written whole and at once, also to a pipe, and a line that cannot be
+  written is dropped. A reader of stdout that stops reading holds up only
+  the connections whose requests have a line to write; smock's own lines
+  then wait in a queue of up to 1,024, and the new metric
+  `smock_log_lines_dropped_total` counts those dropped beyond it. The
+  format costs CPU: on an M1 laptop smock spent about 8 to 11 µs more on
+  each request than in `json`, 40% to 90% more, so size the CPU limit
+  for it. The four lines and the envelope are a stable contract: a change to them is
+  a breaking change, listed under Changed. `json` stays the default, on
+  stderr, and serving a request in it adds one test of a value fixed at
+  startup. [Logs](docs/migrating-from-mockoon.md#logs) in the Mockoon
+  migration guide shows the setting for the binary, Docker and the Helm
+  chart, and lists every line and how it differs from Mockoon's. See also
+  [Run](README.md#run).
 
 ### Changed
 
-- A client that offers both `h2` and `http/1.1` by ALPN, as most HTTPS
-  clients do, now gets HTTP/2 on the TLS port instead of HTTP/1.1: ALPN
-  offers `h2`, then `http/1.1`, where it offered `http/1.1` alone. A client
-  that offers only `h2`, such as oha with `--http2`, now completes the
-  handshake instead of failing it. A client that offers only `http/1.1`, or
-  no ALPN, still gets HTTP/1.1. `--tls-http2 off` restores the old
-  behaviour.
 - `scripts/verify-image.sh` requires the runtime, mimalloc and simdutf in
   each SBOM, so it refuses the images of 0.3.0 and earlier. Check one of
   those with the script from its own tag, such as
@@ -294,28 +367,9 @@ of each GitHub release include its section
   from v0.10.14+7d59c7ec9, which `smock --version`, the startup log entry,
   `smock_build_info` and the Admin API status operation name. NOTICE
   follows its core library. mimalloc is still 2.1.7.
-- The HTTP/2 preface on the plain port now starts HTTP/2, instead of
-  getting 505. The Journal's `version` and the Admin API's
-  `RecordedRequest.version` can be `HTTP/2`.
-- The help texts of `smock_requests_total`,
-  `smock_request_duration_seconds` and `smock_unmatched_requests_total`
-  speak of a request the protocol layer rejects, and name HTTP/2's
-  statuses beside HTTP/1.1's: 400, 413 and 431 on its stream.
-- The help texts of `--header-size-limit` and `--read-timeout-ms` give
-  their meaning over HTTP/2. A header list is counted as RFC 7541 counts
-  it, each field with 32 octets more, and a larger one gets 431 on its
-  stream, while a header block over twice the limit closes the
-  connection. So a head that fits over HTTP/1.1 can get 431 over HTTP/2
-  ([Header lists](docs/http2.md#header-lists)). A request that does not
-  arrive in time resets its stream instead of closing the connection.
-- The Definition-file Schema's description of a connection Fault's `kind`
-  gives its HTTP/2 form beside its HTTP/1.1 one: RST_STREAM on the
-  request's stream for `reset`, half the response then RST_STREAM for
-  `partial`, and GOAWAY then the close for `close`. The format is
-  unchanged. See [Faults](docs/http2.md#faults).
-- `scripts/verify-image.sh` also requires moonhttp, and every other module
-  that NOTICE names, in each SBOM. It reads NOTICE, so check an image with
-  the script and NOTICE of the image's own tag.
+- With the new `mockoon` log format, an unknown `--log-format` value is a
+  usage error that ends "must be json or mockoon", and the help text reads
+  "The log format: json or mockoon."
 
 ### Fixed
 
@@ -728,7 +782,8 @@ of each GitHub release include its section
 
 - The first public release.
 
-[Unreleased]: https://github.com/hirunefu/smock/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/hirunefu/smock/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/hirunefu/smock/releases/tag/v0.4.0
 [0.3.0]: https://github.com/hirunefu/smock/releases/tag/v0.3.0
 [0.2.0]: https://github.com/hirunefu/smock/releases/tag/v0.2.0
 [0.1.0]: https://github.com/hirunefu/smock/releases/tag/v0.1.0
