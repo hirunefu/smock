@@ -111,3 +111,63 @@ async test "h2c: a delayed response logs after its delay, while a fast stream on
     })
   })
 }
+
+///|
+async test "h2c: a reset Fault (RST_STREAM) or a close Fault (GOAWAY) logs fault and no responseStatus, and a partial Fault the status it wrote, in place and after a delay, as the Journal records them" {
+  with_definitions(fault_definitions(), dir => {
+    let env = { "SMOCK_LOG_FORMAT": "mockoon" }
+    let _ = with_smock(["--dir", dir, "--port", "0"], env~, smock => {
+      let out = []
+      let batches = [
+        ["/reset", "/partial", "/fast"],
+        ["/late-partial", "/late-ticks", "/late-reset"],
+        ["/close"],
+        ["/late-close"],
+      ]
+      for paths in batches {
+        let client = smock.h2c()
+        defer client.close()
+        let streams = []
+        for path in paths {
+          streams.push(client.send("GET", path))
+        }
+        for i, stream in streams {
+          let response = client.response(stream)
+          out.push("\{paths[i]}: \{response.status}, \{response.ended}")
+        }
+      }
+      let lines = smock.transaction_lines(8)
+      out.push(masked_lines(lines))
+      out.push(smock.journal_endings())
+      inspect(
+        out.join("\n"),
+        content=(
+          #|/reset: 0, reset INTERNAL_ERROR
+          #|/partial: 200, reset INTERNAL_ERROR
+          #|/fast: 200, end
+          #|/late-partial: 200, reset INTERNAL_ERROR
+          #|/late-ticks: 200, reset INTERNAL_ERROR
+          #|/late-reset: 0, reset INTERNAL_ERROR
+          #|/close: 0, closed
+          #|/late-close: 0, closed
+          #|{"app":"smock","environmentName":"m","fault":"reset","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/reset","requestProxied":false,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/partial","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/fast","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/late-partial","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/late-ticks","requestProxied":false,"responseStatus":200,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","fault":"reset","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/late-reset","requestProxied":false,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","fault":"close","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/close","requestProxied":false,"timestamp":"<timestamp>"}
+          #|{"app":"smock","environmentName":"m","fault":"close","level":"info","message":"Transaction recorded","requestMethod":"GET","requestPath":"/late-close","requestProxied":false,"timestamp":"<timestamp>"}
+          #|GET /reset: fault reset
+          #|GET /partial: 200
+          #|GET /fast: 200
+          #|GET /late-partial: 200
+          #|GET /late-ticks: 200
+          #|GET /late-reset: fault reset
+          #|GET /close: fault close
+          #|GET /late-close: fault close
+        ),
+      )
+    })
+  })
+}
