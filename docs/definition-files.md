@@ -1486,6 +1486,11 @@ A stream travels as the events of an `events` response do:
 - To an HTTP/1.1 client the stream is sent with chunked framing, so the
   connection carries the next request. An HTTP/1.0 client gets it
   unframed, and smock closes the connection to end it.
+- Over HTTP/2, the stream is an HTTP/2 stream of its own, sent as any
+  event stream is: the HEADERS carry no `content-length`, each event goes
+  out as DATA, and the DATA of the last event ends the HTTP/2 stream. A
+  client that resets it ends the stream at once
+  ([HTTP/2](http2.md#server-sent-events)).
 - A reply to `HEAD`, or with status 204 or 304, is the status and the
   headers alone, for the stream as for the JSON reply.
 - smock plans the whole JSON body, or every event, before it applies
