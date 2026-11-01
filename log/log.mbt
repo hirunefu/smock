@@ -175,20 +175,41 @@ fn write_padded(out : StringBuilder, n : Int64, width : Int32) -> Unit {
     out.write_string(digits)
     return
   }
-  // The number of digits, and the place value of the first.
-  let mut count = 1
+  for _ in decimal_length(n)..<width {
+    out.write_char('0')
+  }
+  write_decimal(out, n)
+}
+
+///|
+/// Writes `n` in decimal to `out`, with no string for its digits unless it
+/// is negative.
+fn write_decimal(out : StringBuilder, n : Int64) -> Unit {
+  if n < 0L {
+    out.write_string(n.to_string())
+    return
+  }
+  // The place value of the first digit.
   let mut unit = 1L
   while n / unit >= 10L {
-    count += 1
     unit *= 10L
-  }
-  for _ in count..<width {
-    out.write_char('0')
   }
   while unit > 0L {
     out.write_char((0x30 + (n / unit % 10L).to_int()).unsafe_to_char())
     unit /= 10L
   }
+}
+
+///|
+/// The number of decimal digits of `n`, which is not negative.
+fn decimal_length(n : Int64) -> Int32 {
+  let mut count = 1
+  let mut rest = n
+  while rest >= 10L {
+    count += 1
+    rest /= 10L
+  }
+  count
 }
 
 ///|

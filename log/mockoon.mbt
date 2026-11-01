@@ -32,7 +32,7 @@ pub fn started_line(prefix : String, port~ : Int32, at~ : Int64) -> String {
   let out = StringBuilder(size_hint=prefix.length() + 96)
   out.write_string(prefix)
   out.write_string("\"level\":\"info\",\"message\":\"Server started on port ")
-  write_padded(out, port.to_int64(), 1)
+  write_decimal(out, port.to_int64())
   out.write_string("\",\"timestamp\":\"")
   write_time(out, at)
   out.write_string("\"}")
@@ -106,7 +106,7 @@ pub fn transaction_line(
   out.write_string(",\"requestProxied\":false,")
   if ended is Status(status) {
     out.write_string("\"responseStatus\":")
-    write_padded(out, status.to_int64(), 1)
+    write_decimal(out, status.to_int64())
     out.write_char(',')
   }
   out.write_string("\"timestamp\":\"")
