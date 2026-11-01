@@ -99,6 +99,14 @@ fn FrameReader::next(self : FrameReader) -> Split {
 }
 
 ///|
+/// Whether octets of the preface have come and it is still to be split
+/// off: once `next` needs more, the reader then holds part of it, and the
+/// rest is still to come.
+fn FrameReader::preface_begun(self : FrameReader) -> Bool {
+  self.preface && self.end > self.start
+}
+
+///|
 /// Lowers each SETTINGS_HEADER_TABLE_SIZE over `encoding_table_size`, read
 /// as unsigned, to `encoding_table_size`, in the SETTINGS frame at the start
 /// of what the reader holds, whose payload is `length` octets, before the

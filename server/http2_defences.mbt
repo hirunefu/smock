@@ -18,6 +18,14 @@ let no_work_bound : Int32 = 100
 let no_work_window_ms : Int64 = 1000
 
 ///|
+/// The most PINGs that the HEADERS and DATA frames smock has sent can let
+/// pass uncounted at once (`H2Writer::ping_credit`): as many as
+/// `no_work_bound`. So a client that saves them up during a long response,
+/// then sends nothing but PINGs, is cut once it has sent about twice the
+/// bound in one second.
+let ping_credit_bound : Int32 = no_work_bound
+
+///|
 /// What an HTTP/2 connection counts of its client's frames that do no
 /// work. Its memory is bounded however long the connection lives: the times
 /// of the last `no_work_bound` of them.
@@ -66,10 +74,12 @@ fn NoWorkFrames::count(self : NoWorkFrames, at : Int64) -> Bool {
 ///
 /// - a SETTINGS frame that is not an acknowledgement, and an
 ///   acknowledgement that smock is not owed;
-/// - a PING that asks for an acknowledgement, when smock has sent no
-///   HEADERS or DATA since the client's last PING. gRPC counts PINGs so,
-///   so that a client that sends one after each DATA frame it receives, to
-///   estimate its bandwidth, does no harm while answers stream to it;
+/// - a PING that asks for an acknowledgement, beyond one for each HEADERS
+///   or DATA frame smock has sent, of which at most `ping_credit_bound` are
+///   saved up (`H2Writer::ping_credit`). So a client that sends one after
+///   each DATA frame it receives, to estimate its bandwidth, does no harm
+///   while answers stream to it, however many frames come between its
+///   PINGs;
 /// - a PING acknowledgement that answers no PING smock sent;
 /// - a PRIORITY frame, since smock ignores priority signals;
 /// - a DATA frame that carries no data, padded or not, and ends no stream;
@@ -104,8 +114,6 @@ fn H2Connection::no_work(
       None
     }
   } else if ftype == @http2.frame_rst_stream {
-    // Spec F's exception goes here: a client reset of a gRPC call that smock
-    // ended with DEADLINE_EXCEEDED does not count, once per stream.
     if self.closed(head.stream_id) {
       Some("RST_STREAM on a closed stream")
     } else {
@@ -138,8 +146,8 @@ fn H2Connection::no_work(
       } else {
         Some("PING acknowledgement")
       }
-    } else if self.writer.responded {
-      self.writer.responded = false
+    } else if self.writer.ping_credit > 0 {
+      self.writer.ping_credit -= 1
       None
     } else {
       Some("PING")
@@ -236,8 +244,7 @@ fn H2Connection::refused_at_open(
     return false
   }
   if !self.settings_acked &&
-    self.streams.open_count() >=
-    self.ports.settings.http2_max_concurrent_streams {
+    self.streams.open_count() >= self.max_concurrent_streams {
     return false
   }
   self.reset_early(frame)

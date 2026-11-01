@@ -275,6 +275,107 @@ async test "h2c: a client that sends a PING after each DATA frame it receives is
 }
 
 ///|
+/// The body of `GET /pinged`: 200,000 octets, more than three times the
+/// windows a client starts with (65,535 octets each).
+let pinged_body : String = numbered(25_000)
+
+///|
+/// Mock `m`, for `localhost`, with a Stub that answers `GET /pinged` with
+/// `pinged_body`.
+fn pinged_definitions() -> Array[(String, String)] {
+  [
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m", "hosts": ["localhost"] }],
+        #|  "stubs": [
+        #|    { "id": "pinged", "mock": "m", "request": { "path": "/pinged" },
+        #|      "response": { "status": 200, "bodyFile": "pinged.txt" } } ] }
+      ),
+    ),
+    ("files/pinged.txt", pinged_body),
+  ]
+}
+
+///|
+async test "h2c: with the default windows, a client that sends a PING after each DATA frame it receives is not cut, though several DATA frames come between its PINGs, since each HEADERS or DATA frame smock sends lets one PING pass" {
+  with_definitions(pinged_definitions(), dir => {
+    let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      // When each PING went out.
+      let sent_at = []
+      let shown = []
+      let requests = 15
+      let mut whole = 0
+      for i in 0..<requests {
+        let stream = 2 * i + 1
+        raw.send([raw.get(stream, "/pinged")])
+        let mut octets = 0
+        // The octets of the stream since the client last widened the
+        // windows: it widens both once the stream's window is used up, so
+        // that up to four DATA frames come between its grants.
+        let mut used = 0
+        let ended = for ;; {
+          guard raw.read_frame() is Some(frame) else {
+            shown.push("closed")
+            break false
+          }
+          match frame {
+            Data(stream_id~, data~, end_stream~, ..) if stream_id == stream => {
+              octets += data.length()
+              used += data.length()
+              sent_at.push(@async.now())
+              raw.send([ping])
+              if end_stream {
+                // What the stream used of the connection window, given
+                // back for the next stream.
+                raw.send([WindowUpdate(stream_id=0, increment=used)])
+                break true
+              }
+              if used == 65535 {
+                raw.send([
+                  WindowUpdate(stream_id=0, increment=used),
+                  WindowUpdate(stream_id=stream, increment=used),
+                ])
+                used = 0
+              }
+            }
+            Ping(ack=true, ..) | Headers(..) | Settings(..) => ()
+            _ => shown.push(raw.render_frame(frame))
+          }
+        }
+        guard ended else { break }
+        if octets == pinged_body.length() {
+          whole += 1
+        }
+      }
+      // Whether 101 PINGs went out within one second.
+      let mut fast = false
+      for i = 0; i + 100 < sent_at.length(); i = i + 1 {
+        if sent_at[i + 100] - sent_at[i] < 1000 {
+          fast = true
+        }
+      }
+      inspect(
+        [
+          ..shown,
+          "responses in full: \{whole} of \{requests}",
+          // How many DATA frames carry a body depends on how the slow
+          // write splits it, so the count is not shown.
+          "a PING after each DATA frame, over 100 within one second: \{fast}",
+        ].join("\n"),
+        content=(
+          #|responses in full: 15 of 15
+          #|a PING after each DATA frame, over 100 within one second: true
+        ),
+      )
+    })
+    inspect(defence_entries(stopped.logs), content="")
+  })
+}
+
+///|
 async test "h2c: floods of PRIORITY frames, frames of unknown types, PING acknowledgements and SETTINGS acknowledgements past those smock is owed each get GOAWAY ENHANCE_YOUR_CALM and one log line, and a fresh connection is served" {
   with_definitions([("faults.json", faults)], dir => {
     let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {

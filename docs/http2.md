@@ -584,11 +584,12 @@ have in progress at once. It is 100 by default, and can be from 1 to 1000.
   are ignored.
 
 Each stream in progress can hold a request body of up to `--body-limit`.
-So the request bodies one connection holds at once can reach the
-concurrent-streams limit times the body limit: 100 × 10 MiB with the
-defaults, against 10 MiB for an HTTP/1.1 connection. For a small Pod, lower
-either flag, such as `--http2-max-concurrent-streams 10` or a smaller
-`--body-limit`.
+So the request bodies one connection holds in memory at once can reach
+the concurrent-streams limit times the body limit: 100 × 10 MiB, about
+1 GiB, with the defaults, against 10 MiB for an HTTP/1.1 connection. Flow
+control does not bound it, since smock hands back the window of each DATA
+frame as soon as the frame arrives. For a small Pod, lower either flag,
+such as `--http2-max-concurrent-streams 10` or a smaller `--body-limit`.
 
 ### The output bound
 
@@ -710,10 +711,11 @@ connection.
   block that has begun holds it off. A new stream restarts it, and it runs
   again from the response that ends the last stream in progress. Past it,
   the connection gets GOAWAY `NO_ERROR` and closes. It also bounds the wait
-  for a connection's first octet, as over HTTP/1.1. On the plain port, the
-  rest of the preface has the read timeout from that octet. On the TLS
-  port, where ALPN has already chosen HTTP/2, the idle timeout bounds the
-  whole preface.
+  for a connection's first octet, as over HTTP/1.1. From that octet, the
+  rest of the preface has the read timeout instead, on either port, and
+  the idle timeout runs again once the preface is whole. On the TLS port,
+  a preface that does not arrive in time gets GOAWAY `NO_ERROR`, after
+  smock's SETTINGS, and the connection closes.
 - `--write-timeout-ms` closes a connection that takes nothing of what smock
   writes for that long, without GOAWAY, as over HTTP/1.1. It also runs
   while a response body waits for the client to widen a flow-control
@@ -803,12 +805,12 @@ These frames count:
 
 - SETTINGS frames (`SETTINGS`). An acknowledgement counts only beyond the
   one smock is owed for its own SETTINGS (`SETTINGS acknowledgement`).
-- PING frames (`PING`), each only when smock has sent no HEADERS or DATA
-  since the client's last PING. gRPC counts PINGs this way, so a client
-  that sends a PING for each DATA frame it receives, to estimate its
-  bandwidth, is not cut while responses stream to it. A PING
-  acknowledgement counts when it answers no PING that smock sent
-  (`PING acknowledgement`).
+- PING frames (`PING`), beyond one for each HEADERS or DATA frame smock
+  has sent on the connection. smock saves up at most 100 of these. So a
+  client that sends a PING for each DATA frame it receives, to estimate
+  its bandwidth, is not cut while responses stream to it, however many
+  frames come between its PINGs. A PING acknowledgement counts when it
+  answers no PING that smock sent (`PING acknowledgement`).
 - PRIORITY frames (`PRIORITY`): smock ignores priority signals.
 - DATA frames that carry no data, padded or not, and do not end their
   stream (`empty DATA`).

@@ -82,7 +82,9 @@ fn header_list_bound(limit : Int32) -> Int32 {
 /// when smock already drains. On the plain port, `read` starts with the
 /// connection preface, which told the connection apart from HTTP/1.1; on
 /// the TLS port, where ALPN did, it is empty, and the `Conn` checks the
-/// preface as it comes (a wrong one gets GOAWAY PROTOCOL_ERROR).
+/// preface as it comes (a wrong one gets GOAWAY PROTOCOL_ERROR). There, as
+/// on the plain port, the rest of the preface has the read timeout from its
+/// first octet (`H2Connection::expire`).
 ///
 /// One task reads, a frame at a time, hands each frame to the connection's
 /// `Conn`, and handles the events it produced, in order; before it reads
@@ -146,9 +148,14 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       watchdog,
       idle_timeout,
       read_timeout: self.settings.read_timeout_ms.to_int64(),
+      max_concurrent_streams: self.settings.http2_max_concurrent_streams,
+      header_size_limit: self.settings.header_size_limit,
+      header_count_limit: self.settings.header_count_limit,
+      body_limit: self.settings.body_limit,
       now,
       read_at: now,
       idle_deadline: now + idle_timeout,
+      preface_deadline: forever,
       header_at: now,
       header_stream: 0,
       became_idle: false,
@@ -200,7 +207,8 @@ priv struct H2Connection {
   /// `--header-size-limit` or with more fields than `--header-count-limit`.
   /// It gets that status once it is known whether that frame ended the
   /// stream: on its `End` event, or else once the frame's events are all
-  /// taken. One frame brings at most one such stream.
+  /// taken. One frame brings at most one such stream. Both are set
+  /// together (`will_refuse`).
   mut refused : Int32
   /// The status `refused` gets.
   mut refused_status : Int32
@@ -243,17 +251,29 @@ priv struct H2Connection {
   watchdog : Watchdog
   idle_timeout : Int64
   read_timeout : Int64
+  /// The limits of the connection's streams: `--http2-max-concurrent-streams`,
+  /// and those each request is held to, `--header-size-limit`,
+  /// `--header-count-limit` and `--body-limit`.
+  max_concurrent_streams : Int32
+  header_size_limit : Int32
+  header_count_limit : Int32
+  body_limit : Int32
   /// The time, as `@async.now()` gives it, read again after each wait of
   /// the reader: for reading or for writing.
   mut now : Int64
   /// When the last read returned, or the reader last had the output written
-  /// past the output bound (`H2Writer::hold`): when the frames it hands
-  /// from then on arrived.
+  /// down to the output bound (`H2Writer::write_down_to`): when the frames
+  /// it hands from then on arrived.
   mut read_at : Int64
   /// While the connection is idle, when it times out: from when it opens,
   /// and from when what was queued is written after the last stream in
   /// progress ends. `forever` from when a stream begins.
   mut idle_deadline : Int64
+  /// While part of the client's connection preface has come and the rest
+  /// has not, as on the TLS port it can, when the read timeout ends the
+  /// connection: the read timeout after the read that brought its first
+  /// octets. `forever` before them, and once the preface is whole.
+  mut preface_deadline : Int64
   /// When the last field block began: the read that brought its HEADERS.
   mut header_at : Int64
   /// The stream of the last field block.
@@ -286,7 +306,7 @@ priv struct H2Connection {
 /// ends. A frame larger than smock advertises, or a connection error the
 /// `Conn` raises, ends it with GOAWAY. Before each frame, the output queued
 /// and not yet written is held to the output bound
-/// (`H2Writer::passes_bound`, `hold`).
+/// (`H2Writer::passes_bound`, `write_down_to`).
 async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
   self : H2Connection,
   stream : S,
@@ -296,7 +316,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
     // What the frames before queued is written first, past the output
     // bound. The frames handed after such a wait arrive when it ends.
     if self.writer.passes_bound() {
-      self.writer.hold(out)
+      self.writer.write_down_to(out, output_bound)
       self.now = @async.now()
       self.read_at = self.now
     }
@@ -308,7 +328,14 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
       return
     }
     let octets = match self.reader.next() {
-      Preface(preface) => preface
+      Preface(preface) => {
+        // The idle timeout runs again from the read that made the preface
+        // whole, as on the plain port, where the loop starts after it.
+        self.preface_deadline = forever
+        self.idle_deadline = self.read_at + self.idle_timeout
+        self.watchdog.read_by(self.idle_deadline, self.now)
+        preface
+      }
       Frame(head, frame) => {
         if !self.judge(head, frame) {
           // The GOAWAY the judge queued goes out first.
@@ -325,6 +352,12 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
         return
       }
       NeedMore => {
+        // The first octets of a preface that is not whole: the rest has
+        // the read timeout from them.
+        if self.preface_deadline == forever && self.reader.preface_begun() {
+          self.preface_deadline = self.read_at + self.read_timeout
+          self.watchdog.read_by(self.preface_deadline, self.now)
+        }
         if !self.read_more(stream, out) {
           return
         }
@@ -443,8 +476,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         // moonhttp refuses a stream past the limit before it reports one,
         // since smock advertised the limit; this holds the bound whatever
         // a version of moonhttp enforces.
-        if self.streams.open_count() >
-          self.ports.settings.http2_max_concurrent_streams {
+        if self.streams.open_count() > self.max_concurrent_streams {
           self.reset(stream, @http2.error_refused_stream)
           // Once the client knows the limit, the refusal counts toward the
           // bound on Rapid Reset, as moonhttp's does (`refused_at_open`).
@@ -454,9 +486,8 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           continue
         }
         // Counted as received, before the fields are mapped.
-        if is_list_over(fields, self.ports.settings.header_size_limit) {
-          self.refused = stream
-          self.refused_status = 431
+        if is_list_over(fields, self.header_size_limit) {
+          self.will_refuse(stream, 431)
           continue
         }
         let request = H2Request::new(
@@ -464,20 +495,17 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           deadline=self.header_at + self.read_timeout,
         )
         // Cookies are joined by now, so they count as one field.
-        if request.headers.length() > self.ports.settings.header_count_limit {
-          self.refused = stream
-          self.refused_status = 431
+        if request.headers.length() > self.header_count_limit {
+          self.will_refuse(stream, 431)
           continue
         }
         if request.is_malformed() {
-          self.refused = stream
-          self.refused_status = 400
+          self.will_refuse(stream, 400)
           continue
         }
         // Refused before any of the body is read, as on HTTP/1.1.
-        if request.declared > self.ports.settings.body_limit.to_int64() {
-          self.refused = stream
-          self.refused_status = 413
+        if request.declared > self.body_limit.to_int64() {
+          self.will_refuse(stream, 413)
           continue
         }
         if request.continues {
@@ -497,10 +525,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         // CONNECT's has once its HEADERS arrived, is discarded.
         if self.requests.get(stream) is Some(request) {
           // A body that passes the limit is refused before it is kept.
-          if data.length() > self.ports.settings.body_limit - request.received() {
+          if data.length() > self.body_limit - request.received() {
             self.requests.remove(stream)
-            self.refused = stream
-            self.refused_status = 413
+            self.will_refuse(stream, 413)
           } else {
             request.receive(data)
           }
@@ -533,10 +560,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
       // frames.
       Reset(stream~, remote~, ..) => {
         // Reset before smock finished its response: the defence against
-        // Rapid Reset and MadeYouReset counts it, below. Spec F's exception
-        // goes here: a client reset of a gRPC call that its deadline is
-        // about to end does not count, once per stream. A call that smock
-        // has ended with DEADLINE_EXCEEDED is finished already.
+        // Rapid Reset and MadeYouReset counts it, below.
         let early = self.streams.unfinished(stream)
         // smock's own resets give no event, so one not from the client is
         // moonhttp's.
@@ -601,26 +625,20 @@ fn H2Connection::stop_waiting(self : H2Connection, stream : Int32) -> Unit {
 
 ///|
 /// For the task of `stream`, before it queues more of its response: has
-/// what was queued before written, and waits until it is, writing it itself
-/// unless another task is writing. So a stream's task queues no more DATA
-/// until what it queued is written, and never adds to output that has not
-/// gone out. Returns false once the stream no longer waits, reset while the
-/// task waited or wrote: the task then ends, and writes nothing more.
-async fn[S : @io.Writer + ReadOutput] H2Connection::drained(
+/// what was queued before written to `out`, and waits until it is, writing
+/// it itself unless another task is writing (`H2Writer::write_down_to`).
+/// So a stream's task queues no more DATA until what it queued is written,
+/// and never adds to output that has not gone out. Returns false once the
+/// stream no longer waits, reset while the task waited or wrote: the task
+/// then ends, and writes nothing more.
+async fn[S : @io.Writer + ReadOutput] H2Connection::output_written(
   self : H2Connection,
   stream : Int32,
   out : WatchedStream[S],
 ) -> Bool {
   self.writer.take()
-  while self.writer.unwritten() > 0 {
-    if self.writer.busy {
-      self.writer.done.wait()
-    } else {
-      let _ = self.writer.write_for(out, stream)
-    }
-    guard self.waiting.contains(stream) else { return false }
-  }
-  true
+  self.writer.write_down_to(out, 0, stream~)
+  self.waiting.contains(stream)
 }
 
 ///|
@@ -721,6 +739,11 @@ async fn[S : @io.Reader] H2Connection::discard(
 ///   open no stream, such as PING, SETTINGS and WINDOW_UPDATE, do not
 ///   restart it, and a field block that has begun holds it off. Past it,
 ///   the connection gets GOAWAY with NO_ERROR and closes.
+/// - The read timeout of the preface runs from the read that brought its
+///   first octets, while the rest is still to come, as it can on the TLS
+///   port, and holds off the idle timeout, which runs again once the
+///   preface is whole. Past it, the connection gets GOAWAY with NO_ERROR
+///   and closes.
 /// - The write timeout of the slow writes runs while they wait for the
 ///   client to widen a window (`watch_windows`). Past it for the
 ///   connection window, the connection closes with no GOAWAY, as for a
@@ -746,7 +769,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
     self.watchdog.time_out_writing(now)
     return forever
   }
-  if self.idle_until() <= now || self.block_deadline() <= now {
+  if self.idle_until() <= now ||
+    self.block_deadline() <= now ||
+    self.preface_deadline <= now {
     self.go_away(out)
     return forever
   }
@@ -790,9 +815,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
 
 ///|
 /// The earliest deadline of the connection: the idle deadline, that of
-/// each request in progress, that of a field block still open, those of
-/// the slow writes that wait for window, and that of the drain's final
-/// GOAWAY.
+/// each request in progress, that of a field block still open, that of a
+/// preface that is not whole, those of the slow writes that wait for
+/// window, and that of the drain's final GOAWAY.
 fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   let mut next = self.idle_until()
   for _, request in self.requests {
@@ -803,6 +828,9 @@ fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   let block = self.block_deadline()
   if block < next {
     next = block
+  }
+  if self.preface_deadline < next {
+    next = self.preface_deadline
   }
   if self.window_deadline < next {
     next = self.window_deadline
@@ -820,10 +848,10 @@ fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
 
 ///|
 /// When the idle timeout ends the connection: its idle deadline, unless a
-/// field block has begun, which holds it off, as the first byte of a
-/// request does over HTTP/1.1; `forever` then.
+/// field block or the preface has begun and is not whole, which holds it
+/// off, as the first byte of a request does over HTTP/1.1; `forever` then.
 fn H2Connection::idle_until(self : H2Connection) -> Int64 {
-  if self.streams.in_block {
+  if self.streams.in_block || self.preface_deadline < forever {
     forever
   } else {
     self.idle_deadline
@@ -1081,7 +1109,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
     @async.sleep(outcome.plan.delay_ms)
     // What was queued before goes out first, so that the response keeps
     // within the output bound.
-    let mut finished = self.drained(stream, out)
+    let mut finished = self.output_written(stream, out)
+    // Whether the task sent the rest of a partial Fault's response, which
+    // a reset then ends.
+    let mut reset = false
     if finished {
       // From here on the response ends the stream, and commits the entry.
       entry = None
@@ -1110,9 +1141,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
                   out,
                   partial~,
                 )
-                if finished && partial {
-                  self.reset_after(stream, None)
-                }
+                reset = partial
               }
             }
             Bytes(body) => {
@@ -1134,22 +1163,40 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
                   out,
                   end=!partial,
                 )
-                if finished && partial {
-                  self.reset_after(stream, None)
-                }
+                reset = partial
               }
             }
           }
       }
     }
-    self.waiting.remove(stream)
-    // A reset that came first leaves nothing of the task's to write.
-    if finished {
-      let _ = self.writer.write(out)
-    }
-    self.answered(out)
+    self.end_task(stream, out, finished~, reset~)
   })
   self.waiting[stream] = task
+}
+
+///|
+/// Ends the task of `stream`, which writes to `out`. When `finished` is
+/// true, the task has queued the stream's response in full, and with
+/// `reset` RST_STREAM INTERNAL_ERROR follows it, as after the rest of a
+/// partial Fault's response (`reset_after`); what it queued is then
+/// written. When `finished` is false, a reset of the stream or the end of
+/// the connection came first, and left nothing of the task's to write.
+/// Either way the stream waits no more (`answered`).
+async fn[S : @io.Writer + ReadOutput] H2Connection::end_task(
+  self : H2Connection,
+  stream : Int32,
+  out : WatchedStream[S],
+  finished~ : Bool,
+  reset~ : Bool = false,
+) -> Unit {
+  if finished && reset {
+    self.reset_after(stream, None)
+  }
+  self.waiting.remove(stream)
+  if finished {
+    let _ = self.writer.write(out)
+  }
+  self.answered(out)
 }
 
 ///|
@@ -1236,25 +1283,8 @@ fn H2Connection::queue(
     date=ports.dates.at(now),
     connect~,
   )
-  if sent.length() == 0 && partial {
-    self.conn.headers(stream, fields) catch {
-      _ => {
-        self.reset_after(stream, entry)
-        return sent
-      }
-    }
-    self.reset_after(stream, entry)
-    return sent
-  }
   if sent.length() == 0 {
-    ports.commit(entry)
-    self.conn.headers(stream, fields, end=true) catch {
-      _ => {
-        self.reset_after(stream, None)
-        return sent
-      }
-    }
-    self.streams.ended_by_smock(stream)
+    self.headers_only(stream, fields, entry, partial~)
     return sent
   }
   self.conn.headers(stream, fields) catch {
@@ -1293,6 +1323,52 @@ fn H2Connection::queue(
   }
   self.streams.ended_by_smock(stream)
   sent[0:0]
+}
+
+///|
+/// Queues on `stream` the HEADERS `fields` of a response that sends no DATA,
+/// and commits the Journal entry `entry`: the HEADERS end the stream, with
+/// `entry` committed just before. With `partial`, as for a partial Fault,
+/// they do not: RST_STREAM INTERNAL_ERROR ends the stream instead, at once,
+/// with `entry` committed just before (`reset_after`). HEADERS the `Conn`
+/// refuses get that reset too. It runs where the response is queued, so the
+/// reset leaves the stream's task be.
+fn H2Connection::headers_only(
+  self : H2Connection,
+  stream : Int32,
+  fields : Array[@header.Header],
+  entry : @engine.JournalEntry?,
+  partial~ : Bool,
+) -> Unit {
+  if partial {
+    // HEADERS the `Conn` refuses get the same reset.
+    self.conn.headers(stream, fields) catch {
+      _ => ()
+    }
+    self.reset_after(stream, entry)
+    return
+  }
+  self.ports.commit(entry)
+  self.conn.headers(stream, fields, end=true) catch {
+    _ => {
+      self.reset_after(stream, None)
+      return
+    }
+  }
+  self.streams.ended_by_smock(stream)
+}
+
+///|
+/// The request on `stream` is refused with `status` once it is known
+/// whether the frame being handled ended the stream (`refused`): on its
+/// `End` event, or else once the frame's events are all taken.
+fn H2Connection::will_refuse(
+  self : H2Connection,
+  stream : Int32,
+  status : Int32,
+) -> Unit {
+  self.refused = stream
+  self.refused_status = status
 }
 
 ///|

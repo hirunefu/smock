@@ -51,11 +51,11 @@ fn response_fields(
 ///|
 /// Whether a response with `status`, to a CONNECT when `connect` is true,
 /// has content: one with status 1xx, 204 or 304 has none, so it has neither
-/// `content-length` nor DATA, as on HTTP/1.1 (RFC 9110, sections 8.6, 15.2,
-/// 15.3.5 and 15.4.5). Nor has a 2xx to a CONNECT, after which the stream
+/// `content-length` nor DATA, as on HTTP/1.1 (`@http1.has_content`; RFC
+/// 9110, section 8.6). Nor has a 2xx to a CONNECT, after which the stream
 /// would carry a tunnel (RFC 9110, section 9.3.6), which smock never opens.
 fn has_content(status : Int32, connect~ : Bool = false) -> Bool {
-  !(status is (100..<=199 | 204 | 304) || (connect && status is (200..<=299)))
+  @http1.has_content(status) && !(connect && status is (200..<=299))
 }
 
 ///|
@@ -82,10 +82,10 @@ fn is_connection_specific(name : Bytes) -> Bool {
 fn trimmed(value : String) -> String {
   let mut start = 0
   let mut end = value.length()
-  while start < end && is_space_or_tab(value[start]) {
+  while start < end && @http1.is_space_or_tab(value[start]) {
     start += 1
   }
-  while end > start && is_space_or_tab(value[end - 1]) {
+  while end > start && @http1.is_space_or_tab(value[end - 1]) {
     end -= 1
   }
   if start == 0 && end == value.length() {
@@ -93,12 +93,6 @@ fn trimmed(value : String) -> String {
   } else {
     value.view(start_offset=start, end_offset=end).to_owned()
   }
-}
-
-///|
-/// Whether the code unit `c` is a space or a tab.
-fn is_space_or_tab(c : UInt16) -> Bool {
-  c == ' ' || c == '\t'
 }
 
 ///|

@@ -222,16 +222,21 @@ impl @io.Writer for TlsStream with fn write_once(self, data, offset~, len~) {
 }
 
 ///|
+/// From now on, a read leaves the records OpenSSL writes for the client to
+/// the connection's writer (`after_read`).
 impl ReadOutput for TlsStream with fn hold_read_output(self) {
   self.holds_read_output = true
 }
 
 ///|
+/// Whether a read has left records that nothing has sent since.
 impl ReadOutput for TlsStream with fn has_read_output(self) {
   self.read_output_left
 }
 
 ///|
+/// Sends what OpenSSL holds for the client, the records reads left among
+/// it, with the write timeout of `watchdog`.
 impl ReadOutput for TlsStream with fn write_read_output(self, watchdog) {
   watchdog.writing(@async.now())
   self.flush()

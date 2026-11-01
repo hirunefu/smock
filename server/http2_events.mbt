@@ -57,15 +57,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_events(
       out,
       partial~,
     )
-    if finished && partial {
-      self.reset_after(stream, None)
-    }
-    self.waiting.remove(stream)
-    // A reset that came first leaves nothing of the task's to write.
-    if finished {
-      let _ = self.writer.write(out)
-    }
-    self.answered(out)
+    self.end_task(stream, out, finished~, reset=partial)
   })
   self.waiting[stream] = task
 }
@@ -113,24 +105,7 @@ fn H2Connection::open_events(
   )
   let sent = if partial { count / 2 } else { count }
   if head || sent == 0 || !has_content(plan.status, connect~) {
-    if partial {
-      self.conn.headers(stream, fields) catch {
-        _ => {
-          self.reset_after(stream, entry)
-          return false
-        }
-      }
-      self.reset_after(stream, entry)
-      return false
-    }
-    ports.commit(entry)
-    self.conn.headers(stream, fields, end=true) catch {
-      _ => {
-        self.reset_after(stream, None)
-        return false
-      }
-    }
-    self.streams.ended_by_smock(stream)
+    self.headers_only(stream, fields, entry, partial~)
     return false
   }
   self.conn.headers(stream, fields) catch {
@@ -175,7 +150,7 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::send_events(
   defer ports.commit(entry)
   // The HEADERS, queued before the task began, go out before the first
   // event's delay.
-  guard self.drained(stream, out) else { return false }
+  guard self.output_written(stream, out) else { return false }
   let count = if partial { events.length() / 2 } else { events.length() }
   let last = count - 1
   for i in 0..<count {
@@ -197,7 +172,7 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::send_events(
     if i == last {
       return true
     }
-    guard self.drained(stream, out) else { return false }
+    guard self.output_written(stream, out) else { return false }
   }
   true
 }

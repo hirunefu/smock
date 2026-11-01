@@ -63,6 +63,85 @@ async test "the TLS port never looks for the preface: on a connection that negot
 }
 
 ///|
+async test "h2 on the TLS port: part of the preface, then a stall, gets GOAWAY NO_ERROR at the read timeout, which runs from the first octet, long before the idle timeout, as on the plain port" {
+  with_certificates(certs => {
+    let _ = with_smock(
+      [
+        "--port",
+        "0",
+        "--read-timeout-ms",
+        "300",
+        "--idle-timeout-ms",
+        "10000",
+        ..certs.args(),
+      ],
+      smock => {
+        let raw = smock.raw_h2(tls=true, preface=false)
+        defer raw.close()
+        let since = @async.now()
+        raw.send_bytes(@http2.preface[0:8].to_owned())
+        let frames = raw.frames_until(since, is_goaway)
+        let elapsed = frames.end_ms
+        inspect(
+          [
+            ..frames.shown,
+            "after at least 300 ms: \{elapsed >= 300}, long before the idle timeout: \{elapsed < 5000}",
+          ].join("\n"),
+          content=(
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+            #|GOAWAY last=0 NO_ERROR
+            #|after at least 300 ms: true, long before the idle timeout: true
+          ),
+        )
+      },
+    )
+  })
+}
+
+///|
+async test "h2 on the TLS port: a preface that has begun holds off the idle timeout, so the rest of it may come within the read timeout, and a request after it is answered" {
+  with_definitions([("m.json", delays)], dir => {
+    with_certificates(certs => {
+      let _ = with_smock(
+        [
+          "--dir",
+          dir,
+          "--port",
+          "0",
+          "--read-timeout-ms",
+          "3000",
+          "--idle-timeout-ms",
+          "300",
+          ..certs.args(),
+        ],
+        smock => {
+          let raw = smock.raw_h2(tls=true, preface=false)
+          defer raw.close()
+          let since = @async.now()
+          raw.send_bytes(@http2.preface[0:8].to_owned())
+          // Past the idle timeout, within the read timeout.
+          @async.sleep(700)
+          raw.send_bytes(@http2.preface[8:].to_owned())
+          raw.send([Settings(params=[], ack=false), raw.get(1, "/fast")])
+          let frames = raw.frames_until_stream_ends(1)
+          let elapsed = @async.now() - since
+          inspect(
+            "\{frames}\nanswered past the idle timeout: \{elapsed >= 700}",
+            content=(
+              #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+              #|SETTINGS ACK
+              #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+              #|DATA 1 END_STREAM 4 octets
+              #|answered past the idle timeout: true
+            ),
+          )
+        },
+      )
+    })
+  })
+}
+
+///|
 async test "h2 on the TLS port: requests on one connection are answered, a delayed stream does not hold a fast one, and each is in the Journal as HTTP/2" {
   with_definitions([("m.json", delays)], dir => {
     with_certificates(certs => {

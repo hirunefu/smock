@@ -122,6 +122,7 @@ async fn TlsClient::read_all(self : TlsClient) -> Bytes {
 }
 
 ///|
+/// Closes the TCP connection at once, with no close_notify.
 fn TlsClient::close(self : TlsClient) -> Unit {
   self.tcp.close()
 }
@@ -135,6 +136,7 @@ enum Wire {
 }
 
 ///|
+/// Sends `data`: as it is over TCP, encrypted over TLS.
 async fn Wire::write(self : Wire, data : BytesView) -> Unit {
   match self {
     Cleartext(tcp) => tcp.write(data)
@@ -153,6 +155,7 @@ async fn Wire::read(self : Wire, buf : FixedArray[Byte]) -> Int32 {
 }
 
 ///|
+/// Closes the connection at once, sending nothing more.
 fn Wire::close(self : Wire) -> Unit {
   match self {
     Cleartext(tcp) => tcp.close()
@@ -243,6 +246,7 @@ async fn H2Client::over(wire : Wire) -> H2Client {
 }
 
 ///|
+/// Closes the connection at once, with no GOAWAY.
 fn H2Client::close(self : H2Client) -> Unit {
   self.wire.close()
 }
@@ -524,11 +528,13 @@ struct RawH2 {
 ///|
 /// Opens a connection to smock's plain port, or with `tls` to its TLS port,
 /// offering `h2` alone by ALPN, and sends the preface and, unless
-/// `settings` is false, an empty SETTINGS frame.
+/// `settings` is false, an empty SETTINGS frame. With `preface` false, it
+/// sends neither, so that a test can send the preface itself.
 async fn Smock::raw_h2(
   self : Smock,
   settings~ : Bool = true,
   tls~ : Bool = false,
+  preface~ : Bool = true,
 ) -> RawH2 {
   let wire = if tls {
     let tls = self.tls(alpn=["h2"])
@@ -549,6 +555,9 @@ async fn Smock::raw_h2(
     buf: FixedArray::make(16 * 1024, b'\x00'),
     received: b"",
   }
+  if !preface {
+    return raw
+  }
   wire.write(@http2.preface)
   if settings {
     raw.send([Settings(params=[], ack=false)])
@@ -557,6 +566,7 @@ async fn Smock::raw_h2(
 }
 
 ///|
+/// Closes the connection at once, with no GOAWAY.
 fn RawH2::close(self : RawH2) -> Unit {
   self.wire.close()
 }
