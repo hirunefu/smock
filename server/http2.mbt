@@ -250,8 +250,8 @@ priv struct H2Connection {
   /// the reader: for reading or for writing.
   mut now : Int64
   /// When the last read returned, or the reader last had the output written
-  /// past the output bound (`H2Writer::hold`): when the frames it hands
-  /// from then on arrived.
+  /// down to the output bound (`H2Writer::write_down_to`): when the frames
+  /// it hands from then on arrived.
   mut read_at : Int64
   /// While the connection is idle, when it times out: from when it opens,
   /// and from when what was queued is written after the last stream in
@@ -294,7 +294,7 @@ priv struct H2Connection {
 /// ends. A frame larger than smock advertises, or a connection error the
 /// `Conn` raises, ends it with GOAWAY. Before each frame, the output queued
 /// and not yet written is held to the output bound
-/// (`H2Writer::passes_bound`, `hold`).
+/// (`H2Writer::passes_bound`, `write_down_to`).
 async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
   self : H2Connection,
   stream : S,
@@ -304,7 +304,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
     // What the frames before queued is written first, past the output
     // bound. The frames handed after such a wait arrive when it ends.
     if self.writer.passes_bound() {
-      self.writer.hold(out)
+      self.writer.write_down_to(out, output_bound)
       self.now = @async.now()
       self.read_at = self.now
     }
@@ -622,26 +622,20 @@ fn H2Connection::stop_waiting(self : H2Connection, stream : Int32) -> Unit {
 
 ///|
 /// For the task of `stream`, before it queues more of its response: has
-/// what was queued before written, and waits until it is, writing it itself
-/// unless another task is writing. So a stream's task queues no more DATA
-/// until what it queued is written, and never adds to output that has not
-/// gone out. Returns false once the stream no longer waits, reset while the
-/// task waited or wrote: the task then ends, and writes nothing more.
-async fn[S : @io.Writer + ReadOutput] H2Connection::drained(
+/// what was queued before written to `out`, and waits until it is, writing
+/// it itself unless another task is writing (`H2Writer::write_down_to`).
+/// So a stream's task queues no more DATA until what it queued is written,
+/// and never adds to output that has not gone out. Returns false once the
+/// stream no longer waits, reset while the task waited or wrote: the task
+/// then ends, and writes nothing more.
+async fn[S : @io.Writer + ReadOutput] H2Connection::output_written(
   self : H2Connection,
   stream : Int32,
   out : WatchedStream[S],
 ) -> Bool {
   self.writer.take()
-  while self.writer.unwritten() > 0 {
-    if self.writer.busy {
-      self.writer.done.wait()
-    } else {
-      let _ = self.writer.write_for(out, stream)
-    }
-    guard self.waiting.contains(stream) else { return false }
-  }
-  true
+  self.writer.write_down_to(out, 0, stream~)
+  self.waiting.contains(stream)
 }
 
 ///|
@@ -1112,7 +1106,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
     @async.sleep(outcome.plan.delay_ms)
     // What was queued before goes out first, so that the response keeps
     // within the output bound.
-    let mut finished = self.drained(stream, out)
+    let mut finished = self.output_written(stream, out)
     // Whether the task sent the rest of a partial Fault's response, which
     // a reset then ends.
     let mut reset = false

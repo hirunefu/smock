@@ -247,10 +247,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
 /// Fault sends, with `entry` `None` (`send_events`), or the rest of the
 /// half of a body that a partial Fault sends, which the caller then resets.
 ///
-/// Each time, once what was queued before is written (`drained`), it sends
-/// what the windows allow, but no more than the output bound leaves for one
-/// DATA frame (`H2Writer::frame_room`), and has the writer write it to
-/// `out` before it sends more. So a client that does not read holds no more
+/// Each time, once what was queued before is written (`output_written`), it
+/// sends what the windows allow, but no more than the output bound leaves
+/// for one DATA frame (`H2Writer::frame_room`), and has the writer write it
+/// to `out` before it sends more. So a client that does not read holds no more
 /// of the body than that. When the windows allow nothing, it waits until
 /// the client widens the stream's window, the connection's, or every
 /// stream's with SETTINGS (`widened`). So a client that grants window a few
@@ -291,7 +291,7 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::trickle(
   for ;; {
     // What was queued before, the task's own DATA included, goes out
     // before it queues more; the windows may widen meanwhile.
-    guard self.drained(stream, out) else { return false }
+    guard self.output_written(stream, out) else { return false }
     let window = self.room(stream, own=claim)
     let bound = self.writer.frame_room()
     let room = if window < bound { window } else { bound }

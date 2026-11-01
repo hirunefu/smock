@@ -150,7 +150,7 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::send_events(
   defer ports.commit(entry)
   // The HEADERS, queued before the task began, go out before the first
   // event's delay.
-  guard self.drained(stream, out) else { return false }
+  guard self.output_written(stream, out) else { return false }
   let count = if partial { events.length() / 2 } else { events.length() }
   let last = count - 1
   for i in 0..<count {
@@ -172,7 +172,7 @@ async fn[S : @io.Writer + ReadOutput] H2Connection::send_events(
     if i == last {
       return true
     }
-    guard self.drained(stream, out) else { return false }
+    guard self.output_written(stream, out) else { return false }
   }
   true
 }

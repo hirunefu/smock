@@ -60,8 +60,8 @@ impl ReadOutput for @socket.Tcp with fn write_read_output(_, _) {
 /// TLS port the output its reads left too (`ReadOutput`). Each task that
 /// queues something then asks the writer to write it: the connection's
 /// reader before each read, and before it hands the `Conn` a frame while
-/// the output passes the output bound (`passes_bound`, `hold`), and a
-/// stream's task once its response is queued. Only one task writes at a
+/// the output passes the output bound (`passes_bound`, `write_down_to`),
+/// and a stream's task once its response is queued. Only one task writes at a
 /// time; while it does, a task that asks leaves what it queued to it, and
 /// it writes that too before it stops. So no task ever waits to write the
 /// socket while another does, which moonbitlang/async does not allow (it
@@ -201,28 +201,34 @@ async fn[S : @io.Writer + ReadOutput] H2Writer::write(
 ///|
 /// Takes what the `Conn` has queued since, and returns whether the output
 /// not yet written passes `output_bound`. The reader asks before it hands
-/// the `Conn` each frame, and then has it written (`hold`), so that a
-/// client that does not read the replies and responses smock queues makes
-/// it stop reading. Within the bound, as almost always, nothing waits.
+/// the `Conn` each frame, and then has it written (`write_down_to`), so
+/// that a client that does not read the replies and responses smock queues
+/// makes it stop reading. Within the bound, as almost always, nothing waits.
 fn H2Writer::passes_bound(self : H2Writer) -> Bool {
   self.take()
   self.unwritten() > output_bound
 }
 
 ///|
-/// While the output not yet written passes `output_bound`, has it written
-/// before the reader goes on: the reader writes it itself, or, while a
-/// stream's task writes, waits until that task stops, having written it
-/// too.
-async fn[S : @io.Writer + ReadOutput] H2Writer::hold(
+/// While the output taken and not yet written passes `bound` octets, has it
+/// written to `out` before the caller goes on: the caller writes it itself,
+/// as the task of `stream` (`write_for`), or as the reader with 0, or,
+/// while another task writes, waits until that task stops, having written
+/// it too. The reader has the output brought down to `output_bound` before
+/// it hands the `Conn` another frame, once it passes it (`passes_bound`),
+/// and a stream's task has it all written before it queues more
+/// (`H2Connection::output_written`).
+async fn[S : @io.Writer + ReadOutput] H2Writer::write_down_to(
   self : H2Writer,
   out : WatchedStream[S],
+  bound : Int64,
+  stream~ : Int32 = 0,
 ) -> Unit {
-  while self.unwritten() > output_bound {
+  while self.unwritten() > bound {
     if self.busy {
       self.done.wait()
     } else {
-      let _ = self.write(out)
+      let _ = self.write_for(out, stream)
     }
   }
 }
@@ -283,7 +289,8 @@ async fn[S : @io.Writer + ReadOutput] write_queued(
 /// Writes as `write` does, for the task of `stream`, which a reset of the
 /// stream cancels, except while it writes here (`writes_for`): cut off
 /// then, it would leave a frame half written, and the connection broken.
-/// The task ends itself once the write is done instead.
+/// The task ends itself once the write is done instead. With `stream` 0,
+/// for the reader, which no reset cancels, it writes as `write` does.
 async fn[S : @io.Writer + ReadOutput] H2Writer::write_for(
   self : H2Writer,
   out : WatchedStream[S],
