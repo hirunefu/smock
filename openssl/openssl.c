@@ -7,6 +7,7 @@
 // free the OpenSSL objects when MoonBit drops the last reference.
 
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -104,6 +105,20 @@ static void smock_alpn_free(void *parent, void *pointer, CRYPTO_EX_DATA *data,
 // The ex_data index of a context's smock_alpn, or -1 if not registered yet.
 static int smock_alpn_index = -1;
 
+// The ex_data index where a client connection keeps the last alert its peer
+// sent, or -1 if not registered yet.
+static int smock_alert_index = -1;
+
+// The info callback of client connections: keeps the last alert the peer
+// sent as OpenSSL passes it, its level in the high octet and its
+// description in the low one, so never 0 (smock_openssl_ssl_alert).
+static void smock_keep_alert(const SSL *ssl, int where, int value) {
+  if ((where & SSL_CB_READ_ALERT) == SSL_CB_READ_ALERT &&
+      smock_alert_index >= 0) {
+    SSL_set_ex_data((SSL *)ssl, smock_alert_index, (void *)(intptr_t)value);
+  }
+}
+
 // A context for TLS 1.2 and 1.3. `server` is 1 for a server and 0 for a
 // client. Its `ctx` is NULL when OpenSSL could not create it.
 MOONBIT_FFI_EXPORT smock_ctx *smock_openssl_ctx_new(int32_t server) {
@@ -128,6 +143,11 @@ MOONBIT_FFI_EXPORT smock_ctx *smock_openssl_ctx_new(int32_t server) {
       SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
     } else {
       SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+      // A client keeps the last alert its peer sent; a server keeps none.
+      if (smock_alert_index < 0) {
+        smock_alert_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+      }
+      SSL_CTX_set_info_callback(ctx, smock_keep_alert);
     }
   }
   return self;
@@ -544,6 +564,18 @@ MOONBIT_FFI_EXPORT moonbit_bytes_t smock_openssl_ssl_alpn(smock_ssl *self) {
     memcpy(out, protocol, length);
   }
   return out;
+}
+
+// The description of the last alert the peer of a client connection sent,
+// such as 120 for no_application_protocol (RFC 8446, section 6), or -1 when
+// it sent none. Only the e2e tests and the bindings' tests ask (see
+// client.mbt).
+MOONBIT_FFI_EXPORT int32_t smock_openssl_ssl_alert(smock_ssl *self) {
+  if (smock_alert_index < 0) {
+    return -1;
+  }
+  intptr_t value = (intptr_t)SSL_get_ex_data(self->ssl, smock_alert_index);
+  return value == 0 ? -1 : (int32_t)(value & 0xff);
 }
 
 // ---------------------------------------------------------------------------

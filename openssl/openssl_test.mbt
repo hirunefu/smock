@@ -227,6 +227,38 @@ test "ALPN: a server accepting http/1.1 picks it from h2 and http/1.1, serves a 
 }
 
 ///|
+test "a client that a server refuses by ALPN learns the alert the server sent by its code, 120 for no_application_protocol, whatever text OpenSSL has for it" {
+  let alert = (client : @openssl.Connection) => {
+    match client.alert_received() {
+      Some(code) => "\{code}"
+      None => "none"
+    }
+  }
+  let server = server_config(@testcerts.rsa_chain, @testcerts.rsa_key).accept()
+  let client = client(alpn=["h2"])
+  let before = alert(client)
+  ignore(client.handshake())
+  server.receive(client.take_output())
+  let server_result = try server.handshake() catch {
+    @openssl.Failed(_) => "refused"
+    err => describe(err)
+  } noraise {
+    _ => "handshake done"
+  }
+  client.receive(server.take_output())
+  let client_result = try client.handshake() catch {
+    @openssl.Failed(_) => "failed"
+    err => describe(err)
+  } noraise {
+    _ => "handshake done"
+  }
+  inspect(
+    "alert received before: \{before}; server \{server_result}; client \{client_result}, alert received: \{alert(client)}",
+    content="alert received before: none; server refused; client failed, alert received: 120",
+  )
+}
+
+///|
 test "ALPN skips h2 over a TLS 1.2 suite that RFC 9113 prohibits, anything but ECDHE or DHE with an AEAD cipher, and not over TLS 1.3" {
   let accepting = (chain : String, key : String) => {
     @openssl.ServerConfig(

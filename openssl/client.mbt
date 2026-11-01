@@ -28,6 +28,10 @@ extern "C" fn ssl_alpn_ffi(ssl : Ssl) -> Bytes = "smock_openssl_ssl_alpn"
 extern "C" fn ssl_update_keys_ffi(ssl : Ssl) -> Bool = "smock_openssl_ssl_update_keys"
 
 ///|
+#borrow(ssl)
+extern "C" fn ssl_alert_ffi(ssl : Ssl) -> Int32 = "smock_openssl_ssl_alert"
+
+///|
 /// What a TLS client trusts and offers.
 pub struct ClientConfig {
   priv ctx : Ctx
@@ -91,6 +95,19 @@ pub fn Connection::alpn_protocol(self : Connection) -> String? {
     None
   } else {
     Some(@utf8.decode_lossy(protocol))
+  }
+}
+
+///|
+/// The description of the last alert the server sent this client side,
+/// such as 120 for no_application_protocol (RFC 8446, section 6), if it
+/// sent one. A test whose handshake failed asks it to learn which alert
+/// failed it by the protocol's own code: OpenSSL's text for an alert
+/// differs between versions, and some have none.
+pub fn Connection::alert_received(self : Connection) -> Int32? {
+  match ssl_alert_ffi(self.ssl) {
+    -1 => None
+    alert => Some(alert)
   }
 }
 
