@@ -77,6 +77,14 @@ of each GitHub release include its section
     PING, then a second GOAWAY that names the last stream smock received:
     the streams up to it finish, and the client sends the others again on
     a new connection.
+  - **Logs.** In the `mockoon` log format, each HTTP/2 request a Mock
+    handles gets its `Transaction recorded` line, with `:method` and
+    `:path`, after its `Error while serving the content: …` line when its
+    Stub's content failed, as over HTTP/1.1. The line comes once the
+    stream's response has ended: its last frame, its RST_STREAM or GOAWAY,
+    a client's reset, or the end of the connection. A stream that never
+    reaches a Mock, such as one refused with 431 or `REFUSED_STREAM`, gets
+    none. See [Logs](docs/http2.md#logs).
 - HTTP/2 comes from moonbitstack/moonhttp 0.14.0 (Apache-2.0), pinned to
   that exact version: CI fails when the build resolves another one
   ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)). moonhttp and

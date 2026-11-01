@@ -1886,7 +1886,7 @@ CHANGELOG lists under Changed and the release notes call out
 | `Header parsing error: %s` | None: a templated header that fails is a template failure, so it gives `Error while serving the content`. |
 | `Invalid route path: %s` | None: an invalid path is a load error. |
 | `An error occurred while trying to proxy to %s`, and the callback and WebSocket lines | None: smock has no proxy, callbacks or WebSockets. |
-| `Transaction recorded` | Written once for each request a Mock handles, when it ends, without `transaction`, which only `--log-transaction` adds. |
+| `Transaction recorded` | Written once for each request a Mock handles, over HTTP/1.1 and HTTP/2 alike, when it ends, without `transaction`, which only `--log-transaction` adds. |
 
 `--log-transaction`, `GET /mockoon-admin/logs` and
 `/mockoon-admin/events` have no counterpart in the lines. The Journal
@@ -1911,7 +1911,9 @@ answered with `GET /v1/journal/unmatched`
   431, 501 and 505 that smock sends before any Mock sees the request.
   Mockoon logs the 413 of a body over its limit; smock's 413 for a body
   over `--body-limit` shows only in `smock_requests_total`, with
-  `mock=""`.
+  `mock=""`. Over HTTP/2, a stream that never reaches a Mock gets none
+  either: one that gets 400, 413 or 431, or is refused or reset before
+  its request has arrived ([Logs](http2.md#logs)).
 - **Connection Faults** have no status, so a request that a reset or a
   close Fault ends logs `"fault":"reset"` or `"fault":"close"` and no
   `responseStatus`. A `partial` Fault logs the status it wrote.

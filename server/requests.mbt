@@ -11,10 +11,14 @@
 //    otherwise;
 // 3. `MockPorts::done`: once the response is written, or the request ended
 //    without it, the entry's timing is filled in, and the request is counted
-//    in the request metrics with its `mock` and `stub` labels.
+//    in the request metrics with its `mock` and `stub` labels;
+// 4. in the mockoon log format, its Transaction recorded line, built by the
+//    one holder of the Mockoon-equivalent lines (`MockoonLines`), once the
+//    loop is done with the request: by `PendingLine` over HTTP/1.1, and by
+//    `H2Lines` over HTTP/2.
 //
-// A request the protocol layer rejects never reaches the engine, and is
-// counted with `MockPorts::rejected` instead. The HTTP/1.1 loop
+// A request the protocol layer rejects never reaches the engine, gets no
+// line, and is counted with `MockPorts::rejected` instead. The HTTP/1.1 loop
 // (`MockPorts::serve`) takes these steps for each request, and the HTTP/2
 // loop (`H2Connection::respond`) for each stream's. They are plain
 // calls that allocate nothing of their own, so that a response written at

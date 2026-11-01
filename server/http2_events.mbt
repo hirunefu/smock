@@ -15,8 +15,9 @@
 /// its HEADERS are queued at once, while the event is handled, and its
 /// events go out from a task of its own, which writes to `out`
 /// (`send_events`). A response with no body is its HEADERS alone, and needs
-/// no task (`open_events`): it has ended in place (`ended_in_place`). With a partial Fault, the task sends half the events,
-/// then resets the stream with RST_STREAM INTERNAL_ERROR (`reset_after`).
+/// no task (`open_events`): it has ended in place (`ended_in_place`). With
+/// a partial Fault, the task sends half the events, then resets the stream
+/// with RST_STREAM INTERNAL_ERROR (`reset_after`).
 ///
 /// The task ends with its stream, as the task of a delay does
 /// (`H2Connection::wait`): when its last event is queued and written, when

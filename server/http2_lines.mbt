@@ -22,7 +22,8 @@
 //   connection, or a write that timed out, included.
 //
 // The json format writes no line: the connection holds no `H2Lines`, and
-// each request costs a test of that where it is counted.
+// the request path only tests that, where a request is counted, and where a
+// task of a stream begins, ends or is cancelled.
 
 ///|
 /// The request of an HTTP/2 stream that reached the engine, whose
@@ -70,33 +71,6 @@ async fn H2Lines::write_ended(self : H2Lines) -> Unit {
 }
 
 ///|
-/// The response to the request on a stream, which the engine decided
-/// `outcome` for, has been queued in place, while an event was handled, in
-/// full or as far as a Fault lets it go: the request is counted, and in the
-/// mockoon log format its line waits for the reader to write it, once what
-/// is queued is written (`write_ended`).
-fn H2Connection::ended_in_place(
-  self : H2Connection,
-  request : H2Request,
-  outcome : @engine.Outcome,
-) -> Unit {
-  self.ports.done(outcome, self.last_read)
-  if self.lines is Some(lines) {
-    lines.ended.push({ meth: request.meth, target: request.target, outcome, })
-  }
-}
-
-///|
-/// In the mockoon log format, writes the lines of the streams whose
-/// responses have ended, once their last frames are written: when another
-/// task is writing to `out`, it waits until that task has written them.
-async fn H2Connection::write_ended(self : H2Connection) -> Unit {
-  guard self.lines is Some(lines) && lines.ended.length() > 0 else { return }
-  self.writer.wait()
-  lines.write_ended()
-}
-
-///|
 /// Writes the line of `stream`, whose response waited in a task of its own,
 /// and returns once it is out. The task writes it as it ends, unless a
 /// reset or the end of the connection cut it short first.
@@ -104,26 +78,6 @@ async fn H2Lines::write_waiting(self : H2Lines, stream : Int32) -> Unit {
   guard self.waiting.get(stream) is Some(line) else { return }
   self.waiting.remove(stream)
   self.lines.transaction(meth=line.meth, target=line.target, line.outcome)
-}
-
-///|
-/// The response to the request on `stream`, which the engine decided
-/// `outcome` for, is to wait in a task of its own: in the mockoon log
-/// format, its line waits until the task ends (`end_task`). It is set
-/// before the task is spawned, which may run at once.
-fn H2Connection::will_wait(
-  self : H2Connection,
-  stream : Int32,
-  request : H2Request,
-  outcome : @engine.Outcome,
-) -> Unit {
-  if self.lines is Some(lines) {
-    lines.waiting[stream] = {
-      meth: request.meth,
-      target: request.target,
-      outcome,
-    }
-  }
 }
 
 ///|
@@ -148,4 +102,52 @@ async fn H2Lines::write_rest(self : H2Lines) -> Unit {
   }
   self.waiting.clear()
   self.write_ended()
+}
+
+///|
+/// The response to the request on a stream, which the engine decided
+/// `outcome` for, has been queued in place, while an event was handled, in
+/// full or as far as a Fault lets it go: the request is counted, and in the
+/// mockoon log format its line waits for the reader to write it, once what
+/// is queued is written (`write_ended`).
+fn H2Connection::ended_in_place(
+  self : H2Connection,
+  request : H2Request,
+  outcome : @engine.Outcome,
+) -> Unit {
+  self.ports.done(outcome, self.last_read)
+  if self.lines is Some(lines) {
+    lines.ended.push({ meth: request.meth, target: request.target, outcome, })
+  }
+}
+
+///|
+/// The response to the request on `stream`, which the engine decided
+/// `outcome` for, is to wait in a task of its own: in the mockoon log
+/// format, its line waits until the task ends (`end_task`). It is set
+/// before the task is spawned, which may run at once.
+fn H2Connection::will_wait(
+  self : H2Connection,
+  stream : Int32,
+  request : H2Request,
+  outcome : @engine.Outcome,
+) -> Unit {
+  if self.lines is Some(lines) {
+    lines.waiting[stream] = {
+      meth: request.meth,
+      target: request.target,
+      outcome,
+    }
+  }
+}
+
+///|
+/// In the mockoon log format, writes the lines of the streams whose
+/// responses have ended, once their last frames are written: while another
+/// task is writing what the connection queued, it waits until that task
+/// has written them.
+async fn H2Connection::write_ended(self : H2Connection) -> Unit {
+  guard self.lines is Some(lines) && lines.ended.length() > 0 else { return }
+  self.writer.wait()
+  lines.write_ended()
 }

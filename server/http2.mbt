@@ -33,7 +33,10 @@
 // - the deadlines of the connection and of its streams, with the write
 //   timeout of the bodies that wait for the client's windows, which the
 //   connection's one watchdog keeps (`H2Connection::expire`);
-// - the drain on SIGTERM, with its two GOAWAYs (`H2Connection::start_drain`).
+// - the drain on SIGTERM, with its two GOAWAYs (`H2Connection::start_drain`);
+// - in the mockoon log format, the Transaction recorded line of each stream
+//   that reached the engine, once its response has ended (`H2Lines`,
+//   http2_lines.mbt).
 
 ///|
 /// The settings smock advertises on every HTTP/2 connection of a process
@@ -100,6 +103,12 @@ fn header_list_bound(limit : Int32) -> Int32 {
 /// the header limits, which gets 431 instead, or whose request HTTP/1.1's
 /// rules refuse, which gets 400, or whose body is over `--body-limit`,
 /// which gets 413.
+///
+/// In the mockoon log format, each stream whose request reached the engine
+/// gets its Transaction recorded line once its response has ended, written
+/// by the task that ran it, and those still to write when the connection
+/// ends once every task of the connection has (`H2Lines`). A stream that
+/// never reached the engine gets none.
 async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
   self : MockPorts,
   stream : S,
@@ -624,7 +633,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
 /// whether it waits for its delay, for a window or for its next event. A
 /// task that is writing part of its body is not cut off in the middle of a
 /// frame: it ends once that write is done, when it finds its stream no
-/// longer waiting (`trickle`).
+/// longer waiting (`trickle`). In the mockoon log format, the line of a
+/// stream whose task is cancelled is left to the next task that writes what
+/// the connection queued (`H2Lines::cut`); one that ends itself writes its
+/// own.
 fn H2Connection::stop_waiting(self : H2Connection, stream : Int32) -> Unit {
   if self.waiting.get(stream) is Some(task) {
     self.waiting.remove(stream)
@@ -675,13 +687,14 @@ fn H2Connection::idle(self : H2Connection) -> Bool {
 }
 
 ///|
-/// Writes what the `Conn` queued, then reads more from `stream`, and
-/// returns whether the connection goes on: not once the client has closed
-/// it, nor after a GOAWAY with NO_ERROR, once what the client sends after
-/// it has been read and discarded (`discard`). After the final GOAWAY of a
-/// drain, that close begins as soon as no stream is in progress. The read
-/// has no deadline of its own: the connection's watchdog keeps them all
-/// (`expire`).
+/// Writes what the `Conn` queued, and in the mockoon log format the lines
+/// of the streams whose responses have ended (`write_ended`), then reads
+/// more from `stream`, and returns whether the connection goes on: not once
+/// the client has closed it, nor after a GOAWAY with NO_ERROR, once what
+/// the client sends after it has been read and discarded (`discard`). After
+/// the final GOAWAY of a drain, that close begins as soon as no stream is
+/// in progress. The read has no deadline of its own: the connection's
+/// watchdog keeps them all (`expire`).
 async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::read_more(
   self : H2Connection,
   stream : S,
@@ -745,13 +758,14 @@ async fn[S : @io.Reader] H2Connection::discard(
 }
 
 ///|
-/// Called by the connection's watchdog at `now`, when the earliest
-/// deadline it was given has come, or one before it that no longer
-/// counts; returns the next, or one that has passed to end the
-/// connection. What it queues, RST_STREAM frames or a GOAWAY, is written
-/// to `out` by a task that writes it and ends, so that the watchdog never
-/// waits on the client itself. While smock closes the connection after a
-/// GOAWAY, the time it closes is the only deadline.
+/// Called by the connection's watchdog at `now`, when the earliest deadline
+/// it was given has come, or one before it that no longer counts; returns
+/// the next, or one that has passed to end the connection. What it queues,
+/// RST_STREAM frames or a GOAWAY, is written to `out` by a task that writes
+/// it, and in the mockoon log format the lines of the streams whose
+/// responses it ended, then ends, so that the watchdog never waits on the
+/// client itself. While smock closes the connection after a GOAWAY, the
+/// time it closes is the only deadline.
 ///
 /// - The read timeout of each stream runs from the read that brought the
 ///   first frame of its request to its end. Past it, smock resets the
@@ -910,8 +924,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::go_away(
 
 ///|
 /// Closes the connection, after the GOAWAY with NO_ERROR the `Conn` has
-/// queued, once the client has read it. A task writes it to `out`; from
-/// then on, smock reads and discards what the client sends (`discard`),
+/// queued, once the client has read it. A task writes it to `out`, and in
+/// the mockoon log format the lines of the streams whose responses it
+/// ended; from then on, smock reads and discards what the client sends
+/// (`discard`),
 /// until the client closes the connection, or for `closing_ms` at most
 /// after the GOAWAY is written. Closing a socket with unread input makes
 /// the kernel send a reset, which can discard the GOAWAY before the client
@@ -1101,9 +1117,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
 ///|
 /// Answers `stream`, whose request, `request`, the engine decided `outcome`
 /// for, and was a HEAD when `head` is true, or a CONNECT when `connect` is
-/// true, in a task of its own: once the plan's delay is over, the task queues the
-/// response, or carries out the plan's connection Fault, and writes it to
-/// `out`, while the connection's other streams are answered meanwhile.
+/// true, in a task of its own: once the plan's delay is over, the task
+/// queues the response, or carries out the plan's connection Fault, and
+/// writes it to `out`, while the connection's other streams are answered
+/// meanwhile.
 ///
 /// The task ends with its stream, however the stream ends: when its
 /// response is queued and written, when a reset cancels it
@@ -1208,7 +1225,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
 /// partial Fault's response (`reset_after`); what it queued is then
 /// written. When `finished` is false, a reset of the stream or the end of
 /// the connection came first, and left nothing of the task's to write.
-/// Either way the stream waits no more (`answered`).
+/// Either way the stream waits no more (`answered`), and in the mockoon log
+/// format the task then writes the stream's line, once what it queued is
+/// written (`H2Lines::write_waiting`).
 async fn[S : @io.Writer + ReadOutput] H2Connection::end_task(
   self : H2Connection,
   stream : Int32,

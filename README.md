@@ -80,7 +80,7 @@ stdout instead, in the Mockoon CLI's envelope: `app` (always `"smock"`),
 and the keys sorted at every depth. smock then also writes the Mockoon
 CLI's lines: `Server started on port <port>`, with the plain port, for
 each Mock once every listener is open; a `Transaction recorded` line for
-each request a Mock handles, after an
+each request a Mock handles, over HTTP/1.1 and HTTP/2 alike, after an
 `Error while serving the content: …` line when the Stub's template or
 data write failed; and `Server stopped` for each Mock when the drain
 ends. It writes nothing to stderr but usage errors. Each line is written
@@ -88,7 +88,11 @@ whole, by one write, also to a pipe, and no buffer holds it back.
 Container runtimes read stdout all the time. A request's lines are
 written before its connection takes its next request, so a reader of
 stdout that stops reading holds up each connection with a line to
-write, while every other connection goes on.
+write, while every other connection goes on. Over HTTP/2, the lines of
+the streams answered at once are written before the connection reads
+again, and a stream whose response waited, for a delay, its events or
+the client's windows, writes its own as it ends
+([Logs](docs/http2.md#logs)).
 smock's own lines then wait in a queue of up to 1,024 lines: one beyond
 it is dropped and counted in `smock_log_lines_dropped_total`.
 The `mockoon` format costs CPU. In the benchmark on an M1 laptop, smock
@@ -180,7 +184,12 @@ alone, from the first frame of its request: a stream whose request is
 late gets RST_STREAM `CANCEL`, and the connection's other streams go on.
 The idle timeout applies to a connection with no stream in progress, and
 sends GOAWAY before the connection closes. See
-[Limits and timeouts](docs/http2.md#limits-and-timeouts).
+[Limits and timeouts](docs/http2.md#limits-and-timeouts). A stream that
+gets 400, 413 or 431, or is reset because its request is late, never
+reaches a Mock, so it gets no `Transaction recorded` line in the
+`mockoon` format. Nor does a stream refused past
+`--http2-max-concurrent-streams`, or one the client resets before its
+request has arrived.
 
 The write timeout runs while a write waits on the client to take its
 bytes, on every port and for every write: a response, whole or in part,
@@ -460,8 +469,8 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   Definition files. A request is counted once its response is written; the
   Admin API, probes and `/metrics` are not counted. Only the `mockoon` log
   format logs requests: a `Transaction recorded` line for each request
-  counted here, except those the codec rejects. The `json` format logs
-  none.
+  counted here, except those the protocol layer rejects. The `json` format
+  logs none.
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query

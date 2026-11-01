@@ -26,6 +26,7 @@ limits, timeouts and defences.
 - [Server-Sent Events](#server-sent-events)
 - [Faults](#faults)
 - [The Journal](#the-journal)
+- [Logs](#logs)
 - [Limits and timeouts](#limits-and-timeouts)
   - [The output bound](#the-output-bound)
   - [Request bodies](#request-bodies)
@@ -563,6 +564,45 @@ an HTTP/1.1 request and an HTTP/2 request for the same call read alike,
 and Journal queries, verification and the unmatched requests count both.
 The request metrics count HTTP/2 requests with the same `mock` and `stub`
 labels as HTTP/1.1 ones.
+
+## Logs
+
+In the `mockoon` log format ([Run](../README.md#run)), each HTTP/2 request
+a Mock handles gets a `Transaction recorded` line, as an HTTP/1.1 request
+does. Its `requestMethod` is `:method`, and its `requestPath` is `:path`
+up to the `?`, or `:authority` for a CONNECT. The line comes once the
+stream's response has ended, with the time then:
+
+- A response sent at once logs once its last frame is written, before
+  smock reads more from the connection.
+- A response that waits, for a delay, for the client's windows or for its
+  events, logs once its last frame is written: after the delay, or after
+  the last event. It holds up no other stream's line.
+- A `reset` Fault logs `"fault":"reset"` and a `close` Fault
+  `"fault":"close"`, with no `responseStatus`, once the RST_STREAM or the
+  GOAWAY is written. A `partial` Fault logs its status.
+- A stream whose response waits when the client resets it, or when a
+  `close` Fault on another stream ends the connection, logs its planned
+  status at once, as the Journal records it.
+- The write timeout: a stream it resets logs when the RST_STREAM is
+  written, and the streams of a connection it closes log when the
+  connection ends, each with its planned status.
+- The streams of a connection that ends while they wait, as when the
+  client closes it, or the drain timeout cuts it, log when it ends, before
+  `drain ended`.
+
+A stream that never reaches a Mock gets no line, as a request the HTTP/1.1
+codec rejects gets none: one that gets 400, 413 or 431, one refused past
+`--http2-max-concurrent-streams`, one reset because its request is late,
+one the client resets before its request has arrived, and one above the
+final GOAWAY of a drain. When a Stub's template or data write fails, the
+`Error while serving the content: …` line comes just before its stream's
+line. A defence's line ([Defences](#defences)) is one of smock's own, in
+the same envelope.
+
+A reader of stdout that stops reading holds up a connection with a line to
+write: its reader, before it reads again, and the task of a stream whose
+response waited, as it ends. Other connections go on.
 
 ## Limits and timeouts
 

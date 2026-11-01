@@ -172,8 +172,9 @@ fn MockoonLines::serving_error(
 }
 
 ///|
-/// The engine's outcome for the request of one connection whose Transaction
-/// recorded line is still to be written, with the lines it goes to. The
+/// The engine's outcome for the request of one HTTP/1.1 connection whose
+/// Transaction recorded line is still to be written, with the lines it goes
+/// to. An HTTP/2 connection's streams have `H2Lines` instead. The
 /// request path sets it where it counts the request, after the response's
 /// last byte, without waiting, and the line is written once the request
 /// path is done with the request. So the request path waits for nothing
