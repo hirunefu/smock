@@ -553,7 +553,7 @@ async test "h2c: a stream reset while its task writes part of its body to a clie
         #|      "response": { "status": 200, "body": "hello" } } ] }
       ),
     ),
-    ("files/huge.txt", "x".repeat(9_000_000)),
+    ("files/huge.txt", String::make(9_000_000, 'x')),
   ]
   with_definitions(definitions, dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
