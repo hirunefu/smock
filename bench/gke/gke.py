@@ -1255,6 +1255,14 @@ def gke_markdown(results):
         elif state == "running" and not smock["ready"]:
             notes.append(f"smock was running but not ready under {name} at the profile's end: it had stopped "
                          "answering its readiness probe, though nothing had killed it.")
+        elif smock and "state" in smock and smock["restarts"] == 0 and state != "running":
+            # Any other state with no restarts leaves the OOM kills
+            # unmeasured too (profile_results): `waiting`, as when the
+            # kubelet could not create the container again, or none, as for
+            # a Pod that kept no container status.
+            what = f"was {state} ({harness.shown(smock['state_reason'])})" if state else "had no state"
+            notes.append(f"smock's container {what} under {name} at the profile's end, with no restarts: its OOM "
+                         "kills are not measured.")
     if notes:
         lines += ["", *notes]
     return "\n".join(lines) + "\n"

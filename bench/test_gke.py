@@ -1203,6 +1203,28 @@ class Summary(Helper):
         self.assertIn("smock's container had ended under small at the profile's end (OOMKilled), and had not "
                       "restarted: its OOM kills are not measured.", (out / "summary.md").read_text())
 
+    def test_a_smock_container_neither_running_nor_ended_with_no_restarts_measures_no_oom_kills_and_says_so(self):
+        # Waiting, as when the kubelet could not create the container again
+        # after a first exit, so its restarts were still 0; or with no state,
+        # as for a Pod that kept no container status.
+        for state, state_reason, said in (("waiting", "CreateContainerError", "was waiting (CreateContainerError)"),
+                                          (None, None, "had no state")):
+            with self.subTest(state=state):
+                out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                                   pods(ready=False, state=state, state_reason=state_reason))
+                summary = json.loads((out / "summary.json").read_text())
+                self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {None})
+                self.assertIn(f"smock's container {said} under small at the profile's end, with no restarts: its "
+                              "OOM kills are not measured.", (out / "summary.md").read_text())
+        # A run from before the state was kept: its restarts decide, and
+        # summary.md says nothing of a state.
+        info = pods()
+        del info["smock"][0]["state"], info["smock"][0]["state_reason"]
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], info)
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {0})
+        self.assertNotIn("smock's container", (out / "summary.md").read_text())
+
     def test_a_smock_running_but_not_ready_at_the_profiles_end_is_said_and_was_not_killed(self):
         out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
                            pods(ready=False))
