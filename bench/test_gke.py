@@ -1233,6 +1233,18 @@ class Summary(Helper):
         self.assertIn("smock was running but not ready under small at the profile's end: it had stopped answering "
                       "its readiness probe, though nothing had killed it.", (out / "summary.md").read_text())
 
+    def test_a_smock_container_that_ended_again_after_restarting_had_not_restarted_since(self):
+        # Killed a third time, before the kubelet had restarted it again.
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                           pods(restarts=2, reason="OOMKilled", ready=False, state="terminated",
+                                state_reason="OOMKilled"))
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {None})
+        markdown = (out / "summary.md").read_text()
+        self.assertIn("smock restarted 2 times under small (last: OOMKilled)", markdown)
+        self.assertIn("smock's container had ended under small at the profile's end (OOMKilled), and had not "
+                      "restarted since: its OOM kills are not measured.", markdown)
+
     def test_a_smock_restarted_and_not_ready_yet_at_the_profiles_end_is_not_said_to_be_unkilled(self):
         # Killed for memory late in the profile: the kubelet restarts a first
         # exit at once, and the new container had not passed its readiness
