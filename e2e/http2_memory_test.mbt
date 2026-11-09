@@ -2,7 +2,9 @@
 // while it is open, about what an HTTP/1.1 connection holds over the same
 // transport, and once it has closed, nothing. A connection that kept its
 // memory after it closed would make smock's RSS grow with every connection
-// a client opens, until a memory limit kills it.
+// a client opens, until a memory limit kills it. The fields a client sends
+// with every request are decoded once per connection, as over HTTP/1.1, so
+// the Journal entries of its requests share them.
 
 ///|
 /// Opens `count` HTTP/2 connections to smock with `open`, one after
@@ -123,6 +125,59 @@ async test "h2: an open connection costs smock at most 128 KiB, its TLS included
           ),
         )
       })
+    })
+  })
+}
+
+///|
+/// The fields of a request as a browser or an SDK sends them, about 700
+/// octets: the same with every request.
+let usual_fields : Array[(String, String)] = [
+  ("user-agent", "storefront/3.8.1 okhttp/4.12.0"),
+  ("accept", "application/json"),
+  ("accept-encoding", "gzip, deflate"),
+  ("accept-language", "en-GB,en;q=0.9"),
+  (
+    "authorization", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdG9yZWZyb250IiwiYXVkIjoiY2F0YWxvZyIsImV4cCI6MTkyNDk5MjAwMH0.bm90LWEtcmVhbC1zaWduYXR1cmUtYmVuY2htYXJrLW9ubHk",
+  ),
+  ("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+  ("tracestate", "congo=t61rcWkgMzE"),
+  ("baggage", "tenant=acme-eu,smock-session=memory,deployment=perf"),
+  ("x-request-id", "0f8fad5b-d9cb-469f-a165-70867728950e"),
+]
+
+///|
+/// Sends `count` requests for `/small` with `usual_fields` on `client`, one
+/// after another.
+async fn H2Client::ask_usual(self : H2Client, count : Int32) -> Unit {
+  for _ in 0..<count {
+    let response = self.request(
+      "GET",
+      "/small",
+      authority="localhost",
+      headers=usual_fields,
+    )
+    if response.status != 200 {
+      fail("a request got \{response.brief()}")
+    }
+  }
+}
+
+///|
+async test "h2c: the Journal entries of requests that send the same fields again share them: 2,000 requests with about 700 octets of fields add at most 1 KiB each to smock's RSS" {
+  with_definitions(output_definitions(), dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      client.ask_usual(500)
+      let warm = resident_set(smock.pid)
+      client.ask_usual(2000)
+      let after = resident_set(smock.pid)
+      let each = (after - warm) / 1024.0 / 2000.0
+      inspect(
+        "at most 1 KiB each: \{each <= 1.0}",
+        content="at most 1 KiB each: true",
+      )
     })
   })
 }
