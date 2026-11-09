@@ -782,10 +782,11 @@ X86_NODE = {**NODE, "instance_type": "ek-standard-8", "arch": "amd64", "zone": "
             "machine_family": "ek", "compute_class": None, "boot_disk": "pd-balanced"}
 
 
-def pods(restarts=0, reason=None, node=NODE, generator_node=None, generator_cpu="4"):
+def pods(restarts=0, reason=None, node=NODE, generator_node=None, generator_cpu="4", ready=True, state="running",
+         state_reason=None):
     """What gke.py pod-info keeps of the profile's Pods and their nodes."""
-    return {"smock": [{"name": "smock-small", "node": "node-a", "ready": True, "restarts": restarts,
-                       "last_termination": reason}],
+    return {"smock": [{"name": "smock-small", "node": "node-a", "ready": ready, "restarts": restarts,
+                       "last_termination": reason, "state": state, "state_reason": state_reason}],
             "generator": [{"name": "generator-small-1", "node": "node-b", "phase": "Succeeded", "reason": None,
                            "cpu_request": generator_cpu}],
             "nodes": {"node-a": node, "node-b": generator_node or node}}
@@ -957,7 +958,8 @@ class Summary(Helper):
             "it back included, and its node's steal time; its RSS at the step's start and end, the larger as its max; "
             "and the most memory its container had used by the step's end (memory.peak), since smock started under "
             "the profile, earlier steps included. Idle RSS is read once smock has been ready for the settle time, "
-            "before any load. OOM kills come from smock's restarts at the profile's end."))
+            "before any load. OOM kills come from smock's restarts and its container's state at the profile's "
+            "end."))
 
     def test_the_conditions_record_a_hash_of_the_plan_that_leaves_out_its_description(self):
         lines = [START, generator_step(500), generator_step(1000), {"kind": "done"}]
@@ -1188,6 +1190,26 @@ class Summary(Helper):
         verdict = next(target for target in summary["targets"] if target["id"] == "small/http-keep-alive/oom_kills")
         self.assertEqual(verdict["verdict"], "not measured")
         self.assertIn("smock restarted 1 time under small (last: OOMKilled)", (out / "summary.md").read_text())
+
+    def test_a_smock_container_that_ended_and_had_not_restarted_measures_no_oom_kills_and_the_summary_says_so(self):
+        # Killed for memory late in the profile: the kubelet had not
+        # restarted it yet, so its restarts were still 0.
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                           pods(ready=False, state="terminated", state_reason="OOMKilled"))
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {None})
+        verdict = next(target for target in summary["targets"] if target["id"] == "small/http-keep-alive/oom_kills")
+        self.assertEqual(verdict["verdict"], "not measured")
+        self.assertIn("smock's container had ended under small at the profile's end (OOMKilled), and had not "
+                      "restarted: its OOM kills are not measured.", (out / "summary.md").read_text())
+
+    def test_a_smock_running_but_not_ready_at_the_profiles_end_is_said_and_was_not_killed(self):
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                           pods(ready=False))
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {0})
+        self.assertIn("smock was running but not ready under small at the profile's end: it had stopped answering "
+                      "its readiness probe, though nothing had killed it.", (out / "summary.md").read_text())
 
     def test_smocks_restarts_read_before_the_profiles_end_measure_no_oom_kills(self):
         # The run stopped during the load generator's Job, and kept smock's
@@ -2640,6 +2662,7 @@ class PodInfo(Helper):
              "spec": {"nodeName": "node-a", "containers": [{"image": image}]},
              "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}],
                         "containerStatuses": [{"image": image, "imageID": image, "restartCount": 2,
+                                               "state": {"running": {"startedAt": "2026-10-14T03:40:00Z"}},
                                                "lastState": {"terminated": {"reason": "OOMKilled"}}}]}},
             {"metadata": {"name": "generator-small-1", "labels": {"app": "smock-bench-generator"}},
              "spec": {"nodeName": "node-b", "containers": [{"image": image, "resources": {
@@ -2666,7 +2689,8 @@ class PodInfo(Helper):
         self.assertNotIn("a-private-project-123", stdout)
         info = json.loads(stdout)
         self.assertEqual(info["smock"], [{"name": "smock-bench-1", "node": "node-a", "ready": True, "restarts": 2,
-                                          "last_termination": "OOMKilled"}])
+                                          "last_termination": "OOMKilled", "state": "running",
+                                          "state_reason": None}])
         self.assertEqual(info["generator"], [{"name": "generator-small-1", "node": "node-b", "phase": "Failed",
                                               "reason": "DeadlineExceeded", "cpu_request": "6"}])
         self.assertEqual(info["nodes"], {"node-a": NODE})
@@ -2674,7 +2698,44 @@ class PodInfo(Helper):
         status, stdout, stderr = helper("pod-info", "--without-restarts", directory / "pods.json",
                                         directory / "nodes.json")
         self.assertEqual(status, 0, stderr)
-        self.assertEqual(json.loads(stdout), {**info, "smock": [{**info["smock"][0], "restarts": None}]})
+        self.assertEqual(json.loads(stdout), {**info, "smock": [{**info["smock"][0], "restarts": None,
+                                                                 "state": None}]})
+
+    def test_the_state_of_smocks_container_is_kept_whether_it_runs_waits_or_has_ended(self):
+        # An OOM kill the kubelet has not yet restarted the container after,
+        # so that its restarts are still 0; a container that waits to
+        # restart after its second; and one that runs but is not ready.
+        directory = self.directory()
+
+        def smock_pod(name, ready, restarts, state, last=None):
+            return {"metadata": {"name": name, "labels": {"app": "smock-bench"}},
+                    "spec": {"nodeName": "node-a", "containers": [{"name": "smock"}]},
+                    "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": ready}],
+                               "containerStatuses": [{"name": "smock", "restartCount": restarts, "state": state,
+                                                      "lastState": last or {}}]}}
+
+        (directory / "pods.json").write_text(json.dumps({"items": [
+            smock_pod("smock-a", "False", 0,
+                      {"terminated": {"reason": "OOMKilled", "exitCode": 137, "finishedAt": "2026-11-01T05:08:50Z"}}),
+            smock_pod("smock-b", "False", 2, {"waiting": {"reason": "CrashLoopBackOff"}},
+                      {"terminated": {"reason": "OOMKilled", "exitCode": 137}}),
+            smock_pod("smock-c", "False", 0, {"running": {"startedAt": "2026-11-01T04:56:27Z"}})]}))
+        (directory / "nodes.json").write_text(json.dumps({"items": []}))
+        status, stdout, stderr = helper("pod-info", directory / "pods.json", directory / "nodes.json")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(json.loads(stdout)["smock"], [
+            {"name": "smock-a", "node": "node-a", "ready": False, "restarts": 0, "last_termination": None,
+             "state": "terminated", "state_reason": "OOMKilled"},
+            {"name": "smock-b", "node": "node-a", "ready": False, "restarts": 2, "last_termination": "OOMKilled",
+             "state": "waiting", "state_reason": "CrashLoopBackOff"},
+            {"name": "smock-c", "node": "node-a", "ready": False, "restarts": 0, "last_termination": None,
+             "state": "running", "state_reason": None}])
+        # Read before the profile's end, it says nothing of the end.
+        status, stdout, stderr = helper("pod-info", "--without-restarts", directory / "pods.json",
+                                        directory / "nodes.json")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual({(pod["restarts"], pod["state"], pod["state_reason"]) for pod in json.loads(stdout)["smock"]},
+                         {(None, None, None)})
 
     def test_each_smock_pods_variant_and_the_resources_its_smock_container_was_admitted_with_are_kept(self):
         # As Autopilot admitted them, which may differ from what the
@@ -2700,11 +2761,11 @@ class PodInfo(Helper):
         self.assertEqual(status, 0, stderr)
         self.assertEqual(json.loads(stdout)["smock"], [
             {"name": "smock-autopilot-min-r1", "node": "node-a", "ready": True, "restarts": 0,
-             "last_termination": None, "variant": "r1",
+             "last_termination": None, "state": None, "state_reason": None, "variant": "r1",
              "resources": {"requests": {"cpu": "250m", "memory": "512Mi", "ephemeral-storage": "64Mi"},
                            "limits": {"cpu": "250m", "memory": "512Mi", "ephemeral-storage": "64Mi"}}},
             {"name": "smock-autopilot-min-r2", "node": "node-a", "ready": True, "restarts": 1,
-             "last_termination": None, "variant": "r2",
+             "last_termination": None, "state": None, "state_reason": None, "variant": "r2",
              "resources": {"requests": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "64Mi"},
                            "limits": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "64Mi"}}}])
 

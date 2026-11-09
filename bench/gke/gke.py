@@ -807,9 +807,14 @@ def pod_info(pod_list, node_list, restarts=True):
     """What a run keeps of its Pods and of the nodes they ran on: where and
     how they ran, the load generator's CPU request, and nothing that names
     the project, such as image references or provider IDs. smock's
-    restarts are None (unknown) unless `restarts`: the OOM kills of a
-    profile come from them, so only those read at the profile's end count,
-    and a run that stops before then keeps what it read earlier. A smock
+    restarts, and the state of its container, `running`, `waiting` or
+    `terminated`, with the reason Kubernetes gives for it (`state_reason`,
+    such as CrashLoopBackOff or OOMKilled), are None (unknown) unless
+    `restarts`: the OOM kills of a profile come from them, so only those
+    read at the profile's end count, and a run that stops before then keeps
+    what it read earlier. A container killed for memory counts among the
+    restarts only once the kubelet has restarted it: until then, its state
+    is `terminated` and its restarts unchanged. A smock
     Pod of a variant also keeps its variant and the requests and limits
     its container named smock was admitted with (None without such a
     container), which Autopilot may have changed; any other smock Pod keeps
@@ -822,11 +827,14 @@ def pod_info(pod_list, node_list, restarts=True):
             statuses = status.get("containerStatuses") or [{}]
             container = next((container for container in statuses if container.get("name") == "smock"), statuses[0])
             terminated = container.get("lastState", {}).get("terminated") or {}
+            state = next(iter(container.get("state") or {}), None) if restarts else None
             entry = {"name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
                      "ready": any(condition["type"] == "Ready" and condition["status"] == "True"
                                   for condition in status.get("conditions", [])),
                      "restarts": container.get("restartCount", 0) if restarts else None,
-                     "last_termination": terminated.get("reason")}
+                     "last_termination": terminated.get("reason"),
+                     "state": state,
+                     "state_reason": state and (container["state"][state] or {}).get("reason")}
             if labels.get("variant"):
                 spec = next((container for container in pod["spec"].get("containers", [])
                              if container.get("name") == "smock"), None)
@@ -1144,11 +1152,14 @@ def profile_results(out, plan, profile, cases, arch):
     results = [line["result"] for line in lines if line["kind"] == "step"]
     idle = [line["idle"] for line in lines if line["kind"] == "idle-rss"]
     # smock's container restarts after an OOM kill: with none at the
-    # profile's end, the kernel never killed it; with some, which step they
-    # came in is unknown, and so is whether there were any when the run
-    # did not read them at the end (None).
+    # profile's end, and the container running then, the kernel never
+    # killed it; with some, which step they came in is unknown, and so is
+    # whether there were any when the run did not read them at the end
+    # (None), or when the container had ended and not restarted yet. A run
+    # from before the state was kept has none, and its restarts decide.
     smock = pods["smock"]
-    oom_kills = 0 if len(smock) == 1 and smock[0]["restarts"] == 0 else None
+    oom_kills = (0 if len(smock) == 1 and smock[0]["restarts"] == 0 and smock[0].get("state", "running") == "running"
+                 else None)
     for result in [*results, *idle]:
         result["memory"]["oom_kills"] = oom_kills
     planned = [spec["id"] for spec in steps(plan, profile, cases)]
@@ -1230,6 +1241,15 @@ def gke_markdown(results):
             notes.append(f"smock restarted {smock['restarts']} {times} under {name} "
                          f"(last: {smock['last_termination']}): which steps its OOM kills came in is unknown, "
                          "so they are not measured.")
+        # As read at the profile's end, as its restarts are.
+        state = smock and smock.get("state")
+        if state == "terminated":
+            notes.append(f"smock's container had ended under {name} at the profile's end "
+                         f"({harness.shown(smock['state_reason'])}), and had not restarted: its OOM kills are not "
+                         "measured.")
+        elif state == "running" and not smock["ready"]:
+            notes.append(f"smock was running but not ready under {name} at the profile's end: it had stopped "
+                         "answering its readiness probe, though nothing had killed it.")
     if notes:
         lines += ["", *notes]
     return "\n".join(lines) + "\n"
@@ -1331,7 +1351,8 @@ def command_summarize(args):
                  "and end, the larger as its max; and the most "
                  "memory its container had used by the step's end (memory.peak), since smock started under the "
                  "profile, earlier steps included. Idle RSS is read once smock has been ready for the settle "
-                 "time, before any load. OOM kills come from smock's restarts at the profile's end." +
+                 "time, before any load. OOM kills come from smock's restarts and its container's state at the "
+                 "profile's end." +
                  ("" if first_second else " The load generator did not scrape smock a second into each step.")),
         # The node type, as before the nodes' CPUs were recorded, so that
         # comparing with such a run shows no other machine: each node's CPU
