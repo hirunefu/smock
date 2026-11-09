@@ -41,12 +41,68 @@ priv struct H2Request {
 }
 
 ///|
+/// The fields of the requests of one HTTP/2 connection, decoded as
+/// `header_text` decodes them. moonhttp gives a field that the client sends
+/// again from its HPACK table the very octets it gave the time before, and
+/// a field sent again as a literal has the same octets, so such a field
+/// keeps its decoded name and value: a field a client sends with every
+/// request is decoded once per connection, as over HTTP/1.1
+/// (`DecodedHeaders`), and the Journal entries of its requests share it.
+priv struct DecodedFields {
+  /// The fields decoded last, by their place in their field section.
+  fields : Array[@header.Header]
+  /// Each of them, decoded.
+  decoded : Array[(String, String)]
+}
+
+///|
+fn DecodedFields::new() -> DecodedFields {
+  { fields: [], decoded: [], }
+}
+
+///|
+/// The name and value of `field`, the field at `place` in its field
+/// section, decoded. Every field of a section is taken, in order, from
+/// place 0.
+fn DecodedFields::field(
+  self : DecodedFields,
+  place : Int32,
+  field : @header.Header,
+) -> (String, String) {
+  if place < self.fields.length() {
+    let last = self.fields[place]
+    if same_octets(last.name, field.name) &&
+      same_octets(last.value, field.value) {
+      return self.decoded[place]
+    }
+  }
+  let decoded = (header_text(field.name), header_text(field.value))
+  if place < self.fields.length() {
+    self.fields[place] = field
+    self.decoded[place] = decoded
+  } else {
+    self.fields.push(field)
+    self.decoded.push(decoded)
+  }
+  decoded
+}
+
+///|
+/// Whether `a` and `b` hold the same octets: at once when they are the very
+/// same, as a field from moonhttp's HPACK table is.
+fn same_octets(a : Bytes, b : Bytes) -> Bool {
+  physical_equal(a, b) || a == b
+}
+
+///|
 /// A request that begins with the field section `fields`, as moonhttp
 /// decoded and checked it: the pseudo-header fields first, then the regular
-/// fields, in order, and that must have arrived by `deadline`. `:scheme` is
-/// not passed on. A CONNECT's target is its `:authority`.
+/// fields, in order, and that must have arrived by `deadline`. Each field is
+/// decoded with `decoded`, the connection's. `:scheme` is not passed on. A
+/// CONNECT's target is its `:authority`.
 fn H2Request::new(
   fields : Array[@header.Header],
+  decoded : DecodedFields,
   deadline~ : Int64,
 ) -> H2Request {
   let mut meth = ""
@@ -59,21 +115,23 @@ fn H2Request::new(
   let mut cookies : StringBuilder? = None
   let mut declared = -1L
   let mut expects = false
-  for field in fields {
+  for place in 0..<fields.length() {
+    let field = fields[place]
     let name = field.name
+    let text = decoded.field(place, field)
+    let value = text.1
     if name.length() > 0 && name[0] == b':' {
       if name == b":method" {
-        meth = header_text(field.value)
+        meth = value
       } else if name == b":path" {
-        target = header_text(field.value)
+        target = value
       } else if name == b":authority" {
-        authority = Some(header_text(field.value))
+        authority = Some(value)
       }
     } else if name == b"cookie" {
-      let value = header_text(field.value)
       if cookie < 0 {
         cookie = headers.length()
-        headers.push(("cookie", value))
+        headers.push(text)
       } else {
         let joined = match cookies {
           Some(joined) => joined
@@ -88,7 +146,6 @@ fn H2Request::new(
         joined.write_string(value)
       }
     } else {
-      let value = header_text(field.value)
       if name == b"content-length" {
         let length = declared_length(field.value)
         if length > declared {
@@ -97,7 +154,7 @@ fn H2Request::new(
       } else if name == b"expect" && @http1.expects_continue(value) {
         expects = true
       }
-      headers.push((header_text(name), value))
+      headers.push(text)
     }
   }
   if cookies is Some(joined) {

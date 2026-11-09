@@ -141,6 +141,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       reader: FrameReader::new(read),
       writer: H2Writer::new(conn),
       requests: Map([]),
+      decoded: DecodedFields::new(),
       streams: StreamRecord::new(),
       no_work_frames: NoWorkFrames::new(),
       settings_acked: false,
@@ -186,6 +187,15 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       group.add_defer(() => @async.protect_from_cancel(() => lines.write_rest()))
     }
     watchdog.expired = Some(now => h2.expire(now, out))
+    // The watchdog holds this closure, which holds the connection, which
+    // holds the watchdog: a cycle that reference counting never frees, so
+    // the connection, its `Conn` and its byte stream, TLS buffers included,
+    // would outlive it. Unset when the loop's task ends, which ends the
+    // group's other tasks, the watchdog's sleeper among them, so that
+    // nothing calls it after.
+    defer {
+      watchdog.expired = None
+    }
     watchdog.read_by(h2.idle_deadline, now)
     // Unset before the loop's task ends, so never once the task group can
     // take no more tasks.
@@ -212,6 +222,8 @@ priv struct H2Connection {
   /// The requests in progress, by stream: begun, and neither ended nor
   /// reset by the client.
   requests : Map[Int32, H2Request]
+  /// The fields of the connection's requests, decoded.
+  decoded : DecodedFields
   /// The client's streams: the highest ID seen, the streams open, and the
   /// streams this side reset.
   streams : StreamRecord
@@ -514,6 +526,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         }
         let request = H2Request::new(
           fields,
+          self.decoded,
           deadline=self.header_at + self.read_timeout,
         )
         // Cookies are joined by now, so they count as one field.

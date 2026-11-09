@@ -937,11 +937,13 @@ that run's linux/amd64 build and tests passed.
 It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
 otherwise: `raw/<profile>/generator.log`, the load generator's lines;
 `raw/<profile>/pods.json`, the nodes the Pods ran on (with each one's
-boot disk type, `boot_disk`), smock's restarts and the load generator's
+boot disk type, `boot_disk`), smock's restarts, whether it was ready, the
+state of its container (`running`, `waiting` or `terminated`, with the
+reason Kubernetes gives, such as `OOMKilled`) and the load generator's
 CPU request, kept as soon as each Pod has a node, with smock's restarts
-unknown (null), and again at the profile's end, with them (a run that
-stops before then, or cannot read them then, leaves them unknown, and
-smock's OOM kills under the profile unmeasured);
+and its container's state unknown (null), and again at the profile's end,
+with them (a run that stops before then, or cannot read them then, leaves
+them unknown, and smock's OOM kills under the profile unmeasured);
 `raw/<profile>/smock-node-cpu.log`, what smock's init container printed
 of the CPU of its node, kept once smock has started;
 `raw/<profile>/smock.log`, smock's log (and the log of its container
@@ -995,7 +997,11 @@ the larger as its max; and the most memory its container had used by the
 step's end (`memory.peak`), since smock started under the profile, so
 earlier steps count too. A smock without those metrics leaves them, idle
 RSS and the targets on them unmeasured. OOM kills come from smock's
-restarts at the profile's end. Nothing it writes names the account or
+restarts and its container's state at the profile's end: a container
+that has ended and not restarted yet, as the kubelet leaves one for a
+while after an OOM kill, leaves them unmeasured, and `summary.md` says
+so; it also says when smock was running but not ready then, as when it
+stops answering without being killed. Nothing it writes names the account or
 the project, and what it prints shows the project as `$GKE_BENCH_PROJECT`
 and gcloud's account as `<account>`.
 
