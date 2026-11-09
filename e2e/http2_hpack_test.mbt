@@ -288,9 +288,29 @@ async test "h2c: an HPACK bomb, a block that names a large table entry over and 
       let frames = []
       for i, case in streams {
         let (label, fields) = case
-        let block = raw.block(fields)
+        // The entry 16,000 times is made from the entry once: it is in both
+        // tables by then, so each further time is the same index of one
+        // octet. Encoding and counting 16,000 copies of its 3,900 octets
+        // would take the event loop, which every test in the package shares,
+        // for a third of a second without a pause, and hold up the tests
+        // that time what smock sends.
+        let (block, size) = if fields.length() > 1000 {
+          let once = raw.block([..hello, bomb])
+          let block = @buffer.Buffer()
+          block.write_bytes(once)
+          for _ in 1..<(fields.length() - hello.length()) {
+            block.write_byte(once[once.length() - 1])
+          }
+          (
+            block.to_bytes(),
+            list_size(hello) +
+            (fields.length() - hello.length()) * list_size([bomb]),
+          )
+        } else {
+          (raw.block(fields), list_size(fields))
+        }
         out.push(
-          "Stream \{2 * i + 1}, \{label}: a block of \{block.length()} octets, a list of \{list_size(fields)}",
+          "Stream \{2 * i + 1}, \{label}: a block of \{block.length()} octets, a list of \{size}",
         )
         frames.push(headers_frame(2 * i + 1, block))
       }
