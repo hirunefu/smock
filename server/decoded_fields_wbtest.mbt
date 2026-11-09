@@ -25,7 +25,8 @@ test "an HTTP/2 connection's fields decode as each request's would alone, fields
   // again from its HPACK table has the very octets of the time before, and
   // one sent again as a literal new octets. The same fields again, both
   // ways; one value changed; a field added; fields in another order; fewer
-  // fields; two cookie fields, joined; and values that are not UTF-8.
+  // fields; two cookie fields, joined; values that are not UTF-8; and a
+  // field's name changed, its value not.
   let meth = literal(":method", b"GET")
   let scheme = literal(":scheme", b"http")
   let path = literal(":path", b"/a")
@@ -52,6 +53,7 @@ test "an HTTP/2 connection's fields decode as each request's would alone, fields
     [..pseudo, literal("cookie", b"a=1"), accept, literal("cookie", b"b=2")],
     [..pseudo, literal("x-raw", b"\xff\xfe")],
     [..pseudo, literal("x-raw", b"\xff\xfe")],
+    [..pseudo, literal("x-other", b"\xff\xfe")],
   ]
   let decoded = DecodedFields::new()
   let out = []
@@ -93,6 +95,7 @@ test "an HTTP/2 connection's fields decode as each request's would alone, fields
       #|same as alone, 1 shared: GET /a a.example cookie=a=1; b=2 accept=*/*
       #|same as alone, 0 shared: GET /a a.example x-raw=��
       #|same as alone, 1 shared: GET /a a.example x-raw=��
+      #|same as alone, 0 shared: GET /a a.example x-other=��
     ),
   )
 }
