@@ -1245,10 +1245,11 @@ class Summary(Helper):
         self.assertIn("smock's container had ended under small at the profile's end (OOMKilled), and had not "
                       "restarted since: its OOM kills are not measured.", markdown)
 
-    def test_a_smock_restarted_and_not_ready_yet_at_the_profiles_end_is_not_said_to_be_unkilled(self):
-        # Killed for memory late in the profile: the kubelet restarts a first
-        # exit at once, and the new container had not passed its readiness
-        # probe yet.
+    def test_a_smock_restarted_and_not_ready_at_the_profiles_end_is_not_said_to_be_unkilled(self):
+        # Killed for memory late in the profile, and the new container had
+        # not passed its readiness probe yet; or killed earlier, ready again
+        # for later steps, and failing its probe at the end. pods.json keeps
+        # no start time, so both read the same, and the note fits both.
         out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
                            pods(restarts=1, reason="OOMKilled", ready=False))
         summary = json.loads((out / "summary.json").read_text())
@@ -1256,8 +1257,9 @@ class Summary(Helper):
         markdown = (out / "summary.md").read_text()
         self.assertIn("smock restarted 1 time under small (last: OOMKilled)", markdown)
         self.assertNotIn("nothing had killed it", markdown)
-        self.assertIn("smock was running but not ready under small at the profile's end: it had not answered its "
-                      "readiness probe since its last restart.", markdown)
+        self.assertNotIn("since its last restart", markdown)
+        self.assertIn("smock was running but not ready under small at the profile's end, after restarting: it was "
+                      "not answering its readiness probe then.", markdown)
 
     def test_smocks_restarts_read_before_the_profiles_end_measure_no_oom_kills(self):
         # The run stopped during the load generator's Job, and kept smock's

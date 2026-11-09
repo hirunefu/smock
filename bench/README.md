@@ -1004,9 +1004,10 @@ kill shows as `terminated` for a second or so, then among the restarts.
 After a later exit, it may back off first, and the container shows as
 `waiting` (CrashLoopBackOff) meanwhile. Restarts, or any state but
 running, leave the OOM kills unmeasured, and `summary.md` says why. It
-also says when smock was running but not ready then: since its last
-restart, or, with none, as when it stops answering without being
-killed. Nothing it writes names the account or
+also says when smock was running but not ready then. With no restarts,
+it had stopped answering without being killed. With some, `pods.json`
+cannot tell whether it had answered since its last restart. Nothing it
+writes names the account or
 the project, and what it prints shows the project as `$GKE_BENCH_PROJECT`
 and gcloud's account as `<account>`.
 

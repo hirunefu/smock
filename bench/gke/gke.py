@@ -1254,9 +1254,11 @@ def gke_markdown(results):
                          "are not measured.")
         elif state == "running" and not smock["ready"] and smock["restarts"]:
             # As for a few seconds after the kubelet restarts it, which it
-            # does at once after a first exit.
-            notes.append(f"smock was running but not ready under {name} at the profile's end: it had not "
-                         "answered its readiness probe since its last restart.")
+            # does at once after a first exit; or ready again after an
+            # earlier restart and failing its probe at the end. pods.json
+            # keeps no start time to tell which.
+            notes.append(f"smock was running but not ready under {name} at the profile's end, after restarting: "
+                         "it was not answering its readiness probe then.")
         elif state == "running" and not smock["ready"]:
             notes.append(f"smock was running but not ready under {name} at the profile's end: it had stopped "
                          "answering its readiness probe, though nothing had killed it.")
