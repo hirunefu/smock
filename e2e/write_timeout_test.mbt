@@ -40,13 +40,24 @@ let big_defs : String = {
 }
 
 ///|
+/// The text of the large body file: `big_line` over and over, `big_size`
+/// bytes in all. It is built once, as the test process starts, and by
+/// doubling, a few copies of memory in all: `String::repeat` appends one
+/// line at a time, which took 50 to 140 ms on each call, in which no other
+/// test of the package ran.
+let big_text : String = {
+  let mut text = big_line
+  while text.length() < big_size {
+    text = text + text[:big_size - text.length()].to_owned()
+  }
+  text
+}
+
+///|
 /// The definitions directory of Mock `big`: its Definition file and its
 /// large body file.
 fn big_files() -> Array[(String, String)] {
-  [
-    ("big.json", big_defs),
-    ("files/big.txt", big_line.repeat(big_size / big_line.length())),
-  ]
+  [("big.json", big_defs), ("files/big.txt", big_text)]
 }
 
 ///|
