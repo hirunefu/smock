@@ -94,23 +94,13 @@ fn DecodedFields::field(
 /// `--header-size-limit` bounds, rather than the last field each place
 /// ever held.
 fn DecodedFields::keep(self : DecodedFields, count : Int32) -> Unit {
-  if count < self.fields.length() {
-    // A truncated array still holds the elements past its length, until
-    // they are overwritten.
-    self.fields.truncate(count)
-    self.fields.release_unused(placeholder=no_field)
-    self.decoded.truncate(count)
-    self.decoded.release_unused(placeholder=no_text)
-  }
+  drop_past(self.fields, count, placeholder=no_field)
+  drop_past(self.decoded, count, placeholder=no_text)
 }
 
 ///|
 /// What the places past the fields kept hold: nothing.
 let no_field : @header.Header = { name: b"", value: b"", }
-
-///|
-/// What the places past the decoded fields kept hold: nothing.
-let no_text : (String, String) = ("", "")
 
 ///|
 /// Whether `a` and `b` hold the same octets: at once when they are the very

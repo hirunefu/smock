@@ -911,7 +911,7 @@ fn to_engine_request(
 /// so such a field keeps its decoded value: a field a client sends with
 /// every request is decoded once per connection.
 priv struct DecodedHeaders {
-  /// The fields decoded last, by their place in their request.
+  /// The fields of the request decoded last, by their place in it.
   fields : Array[@http1.Header]
   /// Each of them, decoded.
   decoded : Array[(String, String)]
@@ -946,8 +946,39 @@ fn DecodedHeaders::of(
     }
     out.push(field)
   }
+  self.keep(headers.length())
   out
 }
+
+///|
+/// Keeps the header fields of the request decoded last, of `count` fields,
+/// and lets go of those past them, which a longer request before left:
+/// the connection holds one request's fields at most, which
+/// `--header-size-limit` bounds, rather than the last field each place
+/// ever held.
+fn DecodedHeaders::keep(self : DecodedHeaders, count : Int32) -> Unit {
+  drop_past(self.fields, count, placeholder=no_header)
+  drop_past(self.decoded, count, placeholder=no_text)
+}
+
+///|
+/// Drops the elements of `array` past its first `count`. A truncated array
+/// still holds them in its buffer until they are overwritten, so they are
+/// overwritten with `placeholder`.
+fn[T] drop_past(array : Array[T], count : Int32, placeholder~ : T) -> Unit {
+  if count < array.length() {
+    array.truncate(count)
+    array.release_unused(placeholder~)
+  }
+}
+
+///|
+/// What the places past the header fields kept hold: nothing.
+let no_header : @http1.Header = { name: "", value: b"", }
+
+///|
+/// What the places past the decoded fields kept hold: nothing.
+let no_text : (String, String) = ("", "")
 
 ///|
 /// The header fields of `request`, with their values decoded as
