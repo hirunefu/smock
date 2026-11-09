@@ -813,8 +813,10 @@ def pod_info(pod_list, node_list, restarts=True):
     `restarts`: the OOM kills of a profile come from them, so only those
     read at the profile's end count, and a run that stops before then keeps
     what it read earlier. A container killed for memory counts among the
-    restarts only once the kubelet has restarted it: until then, its state
-    is `terminated` and its restarts unchanged. A smock
+    restarts only once the kubelet has restarted it. The kubelet restarts a
+    first exit at once, so its state reads `terminated` for a second or so;
+    after a later exit it may back off first, and the state reads `waiting`
+    (CrashLoopBackOff) meanwhile. A smock
     Pod of a variant also keeps its variant and the requests and limits
     its container named smock was admitted with (None without such a
     container), which Autopilot may have changed; any other smock Pod keeps
@@ -1155,8 +1157,9 @@ def profile_results(out, plan, profile, cases, arch):
     # profile's end, and the container running then, the kernel never
     # killed it; with some, which step they came in is unknown, and so is
     # whether there were any when the run did not read them at the end
-    # (None), or when the container had ended and not restarted yet. A run
-    # from before the state was kept has none, and its restarts decide.
+    # (None), or when the container was not running then: ended and not
+    # restarted yet, waiting to restart, or with no state. A run from
+    # before the state was kept has none, and its restarts decide.
     smock = pods["smock"]
     oom_kills = (0 if len(smock) == 1 and smock[0]["restarts"] == 0 and smock[0].get("state", "running") == "running"
                  else None)

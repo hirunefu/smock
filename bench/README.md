@@ -997,11 +997,16 @@ the larger as its max; and the most memory its container had used by the
 step's end (`memory.peak`), since smock started under the profile, so
 earlier steps count too. A smock without those metrics leaves them, idle
 RSS and the targets on them unmeasured. OOM kills come from smock's
-restarts and its container's state at the profile's end: a container
-that has ended and not restarted yet, as the kubelet leaves one for a
-while after an OOM kill, leaves them unmeasured, and `summary.md` says
-so; it also says when smock was running but not ready then, as when it
-stops answering without being killed. Nothing it writes names the account or
+restarts and its container's state at the profile's end. They count as 0
+only when the container was running then and had never restarted. The
+kubelet restarts a container at once after its first exit, so an OOM
+kill shows as `terminated` for a second or so, then among the restarts.
+After a later exit, it may back off first, and the container shows as
+`waiting` (CrashLoopBackOff) meanwhile. Restarts, or any state but
+running, leave the OOM kills unmeasured, and `summary.md` says why. It
+also says when smock was running but not ready then: since its last
+restart, or, with none, as when it stops answering without being
+killed. Nothing it writes names the account or
 the project, and what it prints shows the project as `$GKE_BENCH_PROJECT`
 and gcloud's account as `<account>`.
 
