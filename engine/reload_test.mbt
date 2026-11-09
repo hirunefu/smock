@@ -211,6 +211,28 @@ test "a reload swaps in a valid new set: later requests get its responses, and s
 }
 
 ///|
+test "a reload takes the digest its caller computed, so the set is hashed once" {
+  let h = harness([("users.json", users_with_body_file)], body_files=[
+    ("users/1.json", alice),
+  ])
+  let set : @definitions.DefinitionSet = {
+    files: [("users.json", @utf8.encode(users_with_body_file))],
+    body_files: [("users/1.json", b"{\"id\":1,\"name\":\"Bob\"}")],
+  }
+  let result = h.engine.reload(set, digest=set.digest(), at=reload_time)
+  inspect(
+    "\{@debug.to_string(result.result)}: \{result.new_digest == set.digest()}",
+    content="Swapped: true",
+  )
+  // The digest given is the one served: the set is not hashed again.
+  let result = h.engine.reload(set, digest="0123456789ab", at=reload_time)
+  inspect(
+    "\{@debug.to_string(result.result)}: \{h.engine.status().digest}",
+    content="Swapped: 0123456789ab",
+  )
+}
+
+///|
 test "before the first reload, status shows no last reload" {
   let h = harness([("users.json", users_with_body_file)], body_files=[
     ("users/1.json", alice),

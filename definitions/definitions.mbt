@@ -1111,10 +1111,15 @@ pub fn normalize_host(host : String) -> String {
 /// `--template-env` lists them, with the values the caller read: by
 /// default, none. A template that reads another name is a problem. The
 /// values are not part of the digest.
+///
+/// `digest` is the set's digest, as `DefinitionSet::digest` gives it, when
+/// the caller has computed it already, such as a step at a time; without
+/// it, a valid set's digest is computed here.
 pub fn load(
   set : DefinitionSet,
   read_problems~ : Array[Diagnostic] = [],
   env~ : @template.Env = @template.no_env,
+  digest? : String,
 ) -> Result[Snapshot, Array[Diagnostic]] {
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
@@ -1131,7 +1136,10 @@ pub fn load(
   if read_problems.length() > 0 || reader.diagnostics.length() > 0 {
     return Err([..read_problems, ..reader.diagnostics])
   }
-  let digest = set.digest()
+  let digest = match digest {
+    Some(digest) => digest
+    None => set.digest()
+  }
   if reader.mocks.length() == 0 {
     return Ok({
       mocks: ReadOnlyArray::from_array([
