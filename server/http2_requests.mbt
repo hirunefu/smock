@@ -49,7 +49,7 @@ priv struct H2Request {
 /// request is decoded once per connection, as over HTTP/1.1
 /// (`DecodedHeaders`), and the Journal entries of its requests share it.
 priv struct DecodedFields {
-  /// The fields decoded last, by their place in their field section.
+  /// The fields of the field section decoded last, by their place in it.
   fields : Array[@header.Header]
   /// Each of them, decoded.
   decoded : Array[(String, String)]
@@ -88,6 +88,31 @@ fn DecodedFields::field(
 }
 
 ///|
+/// Keeps the fields of the field section decoded last, of `count` fields,
+/// and lets go of those past them, which a longer section before left:
+/// the connection holds one section's fields at most, which
+/// `--header-size-limit` bounds, rather than the last field each place
+/// ever held.
+fn DecodedFields::keep(self : DecodedFields, count : Int32) -> Unit {
+  if count < self.fields.length() {
+    // A truncated array still holds the elements past its length, until
+    // they are overwritten.
+    self.fields.truncate(count)
+    self.fields.release_unused(placeholder=no_field)
+    self.decoded.truncate(count)
+    self.decoded.release_unused(placeholder=no_text)
+  }
+}
+
+///|
+/// What the places past the fields kept hold: nothing.
+let no_field : @header.Header = { name: b"", value: b"", }
+
+///|
+/// What the places past the decoded fields kept hold: nothing.
+let no_text : (String, String) = ("", "")
+
+///|
 /// Whether `a` and `b` hold the same octets: at once when they are the very
 /// same, as a field from moonhttp's HPACK table is.
 fn same_octets(a : Bytes, b : Bytes) -> Bool {
@@ -98,8 +123,9 @@ fn same_octets(a : Bytes, b : Bytes) -> Bool {
 /// A request that begins with the field section `fields`, as moonhttp
 /// decoded and checked it: the pseudo-header fields first, then the regular
 /// fields, in order, and that must have arrived by `deadline`. Each field is
-/// decoded with `decoded`, the connection's. `:scheme` is not passed on. A
-/// CONNECT's target is its `:authority`.
+/// decoded with `decoded`, the connection's, which then keeps `fields`
+/// alone. `:scheme` is not passed on. A CONNECT's target is its
+/// `:authority`.
 fn H2Request::new(
   fields : Array[@header.Header],
   decoded : DecodedFields,
@@ -157,6 +183,7 @@ fn H2Request::new(
       headers.push(text)
     }
   }
+  decoded.keep(fields.length())
   if cookies is Some(joined) {
     headers[cookie] = ("cookie", joined.to_string())
   }
