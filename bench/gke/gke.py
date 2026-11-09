@@ -1247,6 +1247,11 @@ def gke_markdown(results):
             notes.append(f"smock's container had ended under {name} at the profile's end "
                          f"({harness.shown(smock['state_reason'])}), and had not restarted: its OOM kills are not "
                          "measured.")
+        elif state == "running" and not smock["ready"] and smock["restarts"]:
+            # As for a few seconds after the kubelet restarts it, which it
+            # does at once after a first exit.
+            notes.append(f"smock was running but not ready under {name} at the profile's end: it had not "
+                         "answered its readiness probe since its last restart.")
         elif state == "running" and not smock["ready"]:
             notes.append(f"smock was running but not ready under {name} at the profile's end: it had stopped "
                          "answering its readiness probe, though nothing had killed it.")
