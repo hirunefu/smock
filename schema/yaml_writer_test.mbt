@@ -1,6 +1,11 @@
 // The YAML writer over real Definition files: every fixture of the
 // Definition-file Schema, written as YAML, reads back as the same tree. The
 // smock/yaml module tests the writer on its own, but reads no files.
+//
+// It runs in a package of its own, in a process of its own, rather than in
+// e2e: it needs no smock, and over the two fixtures of 1 MiB it computes for
+// up to a second without an await, which in e2e held the event loop that the
+// package's tests share and made timing tests fail.
 
 ///|
 /// The fixture directories, relative to the module root.

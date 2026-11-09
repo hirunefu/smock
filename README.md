@@ -1205,6 +1205,9 @@ Packages of `smock/smock`:
   times it writes, which the Admin API and the CLI also read.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
 - `e2e`: tests that run the `smock` binary as a black box (native).
+- `schema`: a test over every Definition-file fixture in
+  `schema/v1/fixtures/` that needs no `smock` binary: each, written as YAML
+  by `smock/yaml`, reads back as the same tree (native).
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
