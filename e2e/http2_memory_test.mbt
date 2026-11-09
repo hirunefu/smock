@@ -44,6 +44,18 @@ struct ConnectionMemory {
 }
 
 ///|
+/// `true` when `kib` is at most `bound`, else `false` with `kib` to one
+/// decimal, so that a snapshot reads the same while a bound holds, and
+/// shows what was measured once it breaks.
+fn at_most(kib : Double, bound : Double) -> String {
+  if kib <= bound {
+    "true"
+  } else {
+    "false (\{(kib * 10.0).round() / 10.0} KiB)"
+  }
+}
+
+///|
 /// How long the tests wait for smock to end connections their clients
 /// closed, before they read its RSS, in milliseconds.
 let closing_wait_ms : Int32 = 300
@@ -92,8 +104,8 @@ async test "h2c: an open connection costs smock at most 48 KiB, and a closed one
       )
       inspect(
         [
-          "open: at most 48 KiB each: \{memory.open <= 48.0}",
-          "closed: at most 5 KiB each: \{memory.closed <= 5.0}",
+          "open: at most 48 KiB each: \{at_most(memory.open, 48.0)}",
+          "closed: at most 5 KiB each: \{at_most(memory.closed, 5.0)}",
         ].join("\n"),
         content=(
           #|open: at most 48 KiB each: true
@@ -116,8 +128,8 @@ async test "h2: an open connection costs smock at most 128 KiB, its TLS included
         )
         inspect(
           [
-            "open: at most 128 KiB each: \{memory.open <= 128.0}",
-            "closed: at most 5 KiB each: \{memory.closed <= 5.0}",
+            "open: at most 128 KiB each: \{at_most(memory.open, 128.0)}",
+            "closed: at most 5 KiB each: \{at_most(memory.closed, 5.0)}",
           ].join("\n"),
           content=(
             #|open: at most 128 KiB each: true
@@ -175,9 +187,21 @@ async test "h2c: the Journal entries of requests that send the same fields again
       let after = resident_set(smock.pid)
       let each = (after - warm) / 1024.0 / 2000.0
       inspect(
-        "at most 1 KiB each: \{each <= 1.0}",
+        "at most 1 KiB each: \{at_most(each, 1.0)}",
         content="at most 1 KiB each: true",
       )
     })
   })
+}
+
+///|
+test "a memory bound kept reads true, and a broken one shows what was measured" {
+  inspect(
+    [at_most(4.96, 5.0), at_most(5.0, 5.0), at_most(129.38, 128.0)].join("\n"),
+    content=(
+      #|true
+      #|true
+      #|false (129.4 KiB)
+    ),
+  )
 }

@@ -80,11 +80,12 @@ fn header_list_bound(limit : Int32) -> Int32 {
 ///|
 /// Serves one HTTP/2 connection, `stream`, whose client has sent the octets
 /// `read` so far, and returns whether `stream` can still be written to: not
-/// after a write timed out. `connection` holds what starts its drain while
-/// it is served (`H2Connection::start_drain`), and the drain starts at once
-/// when smock already drains. On the plain port, `read` starts with the
-/// connection preface, which told the connection apart from HTTP/1.1; on
-/// the TLS port, where ALPN did, it is empty, and the `Conn` checks the
+/// after a write timed out, nor when its task was cancelled before it
+/// began, which serves nothing. `connection` holds what starts its drain
+/// while it is served (`H2Connection::start_drain`), and the drain starts
+/// at once when smock already drains. On the plain port, `read` starts with
+/// the connection preface, which told the connection apart from HTTP/1.1;
+/// on the TLS port, where ALPN did, it is empty, and the `Conn` checks the
 /// preface as it comes (a wrong one gets GOAWAY PROTOCOL_ERROR). There, as
 /// on the plain port, the rest of the preface has the read timeout from its
 /// first octet (`H2Connection::expire`).
@@ -121,6 +122,15 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
   // A drain does not close it as an idle connection: it drains itself,
   // from when its loop starts.
   connection.idle = false
+  // The drain or a cut can cancel this task just as the TLS handshake or
+  // the preface check ends, and with_timeout_opt and with_task_group still
+  // return normally once their work is done. A task group entered by a
+  // cancelled task is cancelled before its body runs, and `add_defer`
+  // below aborts the process on such a group. With no wait between this
+  // check and the body, a cancel after it finds the group running.
+  if @async.is_being_cancelled() {
+    return false
+  }
   let mut writable = true
   @async.with_task_group(group => {
     let watchdog = Watchdog::new(

@@ -279,8 +279,8 @@ def restarts(pod):
 def pod_list():
     """The namespace's Pods, as kubectl get pods -o json lists them: smock's
     Pods as applied, each on its node of `pod_nodes` (node-a unless
-    configured; none, Pending, for null), and one Pod for each Job, from its
-    template."""
+    configured; none, Pending, for null), its container running there, and
+    one Pod for each Job, from its template."""
     items = []
     for item in objects().values():
         if item["kind"] == "Pod":
@@ -290,6 +290,8 @@ def pod_list():
                 "phase": "Running" if node else "Pending", "podIP": "10.20.0.7",
                 "conditions": [{"type": "Ready", "status": "True" if node else "False"}],
                 "containerStatuses": [{"name": "smock", "ready": True, "restartCount": restarts(name),
+                                       **({"state": {"running": {"startedAt": "2026-10-14T09:00:05Z"}}}
+                                          if node else {}),
                                        "lastState": {"terminated": {"reason": "OOMKilled", "exitCode": 137}}
                                        if restarts(name) else {}}]}})
         elif item["kind"] == "Job":
@@ -1025,6 +1027,11 @@ class Run(Script):
         self.assertEqual([case["rate"] for case in summary["cases"]], [500, 1000])
         self.assertTrue((self.out / "summary.md").exists())
         self.assertTrue((self.out / "raw" / "small" / "pods.json").exists())
+        # smock's container was running at the profile's end and had not
+        # restarted: the kernel killed it for memory in no step.
+        self.assertEqual({entry["memory"]["oom_kills"] for entry in [*summary["cases"], *summary["idle_rss"]]},
+                         {0})
+        self.assertNotIn("smock's container", (self.out / "summary.md").read_text())
         # Deleted, and checked.
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
         self.assertIn("nothing is left", output)

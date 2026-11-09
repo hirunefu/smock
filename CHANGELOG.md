@@ -177,6 +177,14 @@ of each GitHub release include its section
   that NOTICE names, in each SBOM. It reads NOTICE, so check an image with
   the script and NOTICE of the image's own tag.
 
+### Fixed
+
+- An HTTP/1.1 connection no longer holds on to the header fields of its
+  earlier, longer requests. A client that sent long requests and then
+  short ones on one connection could leave smock holding about 5 MB of
+  their fields and decoded text until the connection closed. A
+  connection now holds its last request's fields at most.
+
 ## [0.4.0] - 2026-11-01
 
 ### Added

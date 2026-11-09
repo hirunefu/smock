@@ -1203,6 +1203,28 @@ class Summary(Helper):
         self.assertIn("smock's container had ended under small at the profile's end (OOMKilled), and had not "
                       "restarted: its OOM kills are not measured.", (out / "summary.md").read_text())
 
+    def test_a_smock_container_neither_running_nor_ended_with_no_restarts_measures_no_oom_kills_and_says_so(self):
+        # Waiting, as when the kubelet could not create the container again
+        # after a first exit, so its restarts were still 0; or with no state,
+        # as for a Pod that kept no container status.
+        for state, state_reason, said in (("waiting", "CreateContainerError", "was waiting (CreateContainerError)"),
+                                          (None, None, "had no state")):
+            with self.subTest(state=state):
+                out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                                   pods(ready=False, state=state, state_reason=state_reason))
+                summary = json.loads((out / "summary.json").read_text())
+                self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {None})
+                self.assertIn(f"smock's container {said} under small at the profile's end, with no restarts: its "
+                              "OOM kills are not measured.", (out / "summary.md").read_text())
+        # A run from before the state was kept: its restarts decide, and
+        # summary.md says nothing of a state.
+        info = pods()
+        del info["smock"][0]["state"], info["smock"][0]["state_reason"]
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], info)
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {0})
+        self.assertNotIn("smock's container", (out / "summary.md").read_text())
+
     def test_a_smock_running_but_not_ready_at_the_profiles_end_is_said_and_was_not_killed(self):
         out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
                            pods(ready=False))
@@ -1210,6 +1232,46 @@ class Summary(Helper):
         self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {0})
         self.assertIn("smock was running but not ready under small at the profile's end: it had stopped answering "
                       "its readiness probe, though nothing had killed it.", (out / "summary.md").read_text())
+
+    def test_a_smock_container_that_ended_again_after_restarting_had_not_restarted_since(self):
+        # Killed a third time, before the kubelet had restarted it again.
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                           pods(restarts=2, reason="OOMKilled", ready=False, state="terminated",
+                                state_reason="OOMKilled"))
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {None})
+        markdown = (out / "summary.md").read_text()
+        self.assertIn("smock restarted 2 times under small (last: OOMKilled, before that: OOMKilled)", markdown)
+        self.assertIn("smock's container had ended under small at the profile's end (OOMKilled), and had not "
+                      "restarted since: its OOM kills are not measured.", markdown)
+
+    def test_a_smock_container_that_ended_again_names_its_last_end_and_the_one_before(self):
+        # Until the kubelet restarts it, the ending of the container is its
+        # state, and its last state the ending of the one before.
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                           pods(restarts=1, reason="Error", ready=False, state="terminated", state_reason="OOMKilled"))
+        markdown = (out / "summary.md").read_text()
+        self.assertNotIn("(last: Error)", markdown)
+        self.assertIn("smock restarted 1 time under small (last: OOMKilled, before that: Error): which steps its OOM "
+                      "kills came in is unknown, so they are not measured.", markdown)
+        self.assertIn("smock's container had ended under small at the profile's end (OOMKilled), and had not "
+                      "restarted since: its OOM kills are not measured.", markdown)
+
+    def test_a_smock_restarted_and_not_ready_at_the_profiles_end_is_not_said_to_be_unkilled(self):
+        # Killed for memory late in the profile, and the new container had
+        # not passed its readiness probe yet; or killed earlier, ready again
+        # for later steps, and failing its probe at the end. pods.json keeps
+        # no start time, so both read the same, and the note fits both.
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                           pods(restarts=1, reason="OOMKilled", ready=False))
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {None})
+        markdown = (out / "summary.md").read_text()
+        self.assertIn("smock restarted 1 time under small (last: OOMKilled)", markdown)
+        self.assertNotIn("nothing had killed it", markdown)
+        self.assertNotIn("since its last restart", markdown)
+        self.assertIn("smock was running but not ready under small at the profile's end, after restarting: it was "
+                      "not answering its readiness probe then.", markdown)
 
     def test_smocks_restarts_read_before_the_profiles_end_measure_no_oom_kills(self):
         # The run stopped during the load generator's Job, and kept smock's

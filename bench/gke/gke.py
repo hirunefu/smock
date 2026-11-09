@@ -813,8 +813,10 @@ def pod_info(pod_list, node_list, restarts=True):
     `restarts`: the OOM kills of a profile come from them, so only those
     read at the profile's end count, and a run that stops before then keeps
     what it read earlier. A container killed for memory counts among the
-    restarts only once the kubelet has restarted it: until then, its state
-    is `terminated` and its restarts unchanged. A smock
+    restarts only once the kubelet has restarted it. The kubelet restarts a
+    first exit at once, so its state reads `terminated` for a second or so;
+    after a later exit it may back off first, and the state reads `waiting`
+    (CrashLoopBackOff) meanwhile. A smock
     Pod of a variant also keeps its variant and the requests and limits
     its container named smock was admitted with (None without such a
     container), which Autopilot may have changed; any other smock Pod keeps
@@ -1155,8 +1157,9 @@ def profile_results(out, plan, profile, cases, arch):
     # profile's end, and the container running then, the kernel never
     # killed it; with some, which step they came in is unknown, and so is
     # whether there were any when the run did not read them at the end
-    # (None), or when the container had ended and not restarted yet. A run
-    # from before the state was kept has none, and its restarts decide.
+    # (None), or when the container was not running then: ended and not
+    # restarted yet, waiting to restart, or with no state. A run from
+    # before the state was kept has none, and its restarts decide.
     smock = pods["smock"]
     oom_kills = (0 if len(smock) == 1 and smock[0]["restarts"] == 0 and smock[0].get("state", "running") == "running"
                  else None)
@@ -1238,18 +1241,39 @@ def gke_markdown(results):
                          "profile's end: its OOM kills are not measured.")
         elif smock and smock["restarts"]:
             times = "time" if smock["restarts"] == 1 else "times"
+            last = f"last: {smock['last_termination']}"
+            if smock.get("state") == "terminated":
+                # Until the kubelet restarts it, the container's ending is
+                # its state, and its last state the ending before.
+                last = f"last: {harness.shown(smock['state_reason'])}, before that: {smock['last_termination']}"
             notes.append(f"smock restarted {smock['restarts']} {times} under {name} "
-                         f"(last: {smock['last_termination']}): which steps its OOM kills came in is unknown, "
-                         "so they are not measured.")
+                         f"({last}): which steps its OOM kills came in is unknown, so they are not measured.")
         # As read at the profile's end, as its restarts are.
         state = smock and smock.get("state")
         if state == "terminated":
+            # With restarts, the note above says it had restarted: not since.
+            since = " since" if smock["restarts"] else ""
             notes.append(f"smock's container had ended under {name} at the profile's end "
-                         f"({harness.shown(smock['state_reason'])}), and had not restarted: its OOM kills are not "
-                         "measured.")
+                         f"({harness.shown(smock['state_reason'])}), and had not restarted{since}: its OOM kills "
+                         "are not measured.")
+        elif state == "running" and not smock["ready"] and smock["restarts"]:
+            # As for a few seconds after the kubelet restarts it, which it
+            # does at once after a first exit; or ready again after an
+            # earlier restart and failing its probe at the end. pods.json
+            # keeps no start time to tell which.
+            notes.append(f"smock was running but not ready under {name} at the profile's end, after restarting: "
+                         "it was not answering its readiness probe then.")
         elif state == "running" and not smock["ready"]:
             notes.append(f"smock was running but not ready under {name} at the profile's end: it had stopped "
                          "answering its readiness probe, though nothing had killed it.")
+        elif smock and "state" in smock and smock["restarts"] == 0 and state != "running":
+            # Any other state with no restarts leaves the OOM kills
+            # unmeasured too (profile_results): `waiting`, as when the
+            # kubelet could not create the container again, or none, as for
+            # a Pod that kept no container status.
+            what = f"was {state} ({harness.shown(smock['state_reason'])})" if state else "had no state"
+            notes.append(f"smock's container {what} under {name} at the profile's end, with no restarts: its OOM "
+                         "kills are not measured.")
     if notes:
         lines += ["", *notes]
     return "\n".join(lines) + "\n"
