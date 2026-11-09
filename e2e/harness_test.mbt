@@ -1,6 +1,8 @@
 // The Seam 2 harness: it runs the smock binary as a black box. Each test
 // gets its own temporary definitions directory and its own ports (smock
-// binds port 0 and logs the port it got), so tests run in parallel.
+// binds port 0 and logs the port it got), so tests run in parallel. They
+// share one event loop, so a test computes for no more than about 20 ms
+// between awaits: see "Build and test" in README.md.
 
 ///|
 /// The binary under test: the native debug build of `cmd/smock`. Tests run

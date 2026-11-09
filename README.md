@@ -1396,6 +1396,19 @@ user manager with the `memory` controller delegated to it (see
 [Run it on your machine](bench/README.md#run-it-on-your-machine)). Where a
 scope cannot get the limit, it prints why it skipped and passes.
 
+`moon` runs the async tests of a package in one process, on one event
+loop, ten at a time. A test that computes without an await holds up the
+timers and reads of every other test running then: in `e2e`, one that
+computed for half a second made the timing tests beside it fail. So an e2e
+test computes for no more than about 20 ms between awaits, and even ten
+such tests in a row delay a timer less than the timing tests allow. Build a
+large input once, in a top-level `let`, which runs as the test process
+starts, and cheaply: with `String::make`, `Bytes::make` or by doubling, not
+with `String::repeat`, which appends one piece at a time. The harness
+writes a large file 1 MiB at a time. A check that must compute for longer,
+and needs no `smock`, goes in a package of its own, whose tests get a
+process of their own, as `schema` does.
+
 `SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that a
 native build, such as `scripts/build-release.sh`, records in the binary.
 
