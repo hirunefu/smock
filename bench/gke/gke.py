@@ -1241,9 +1241,13 @@ def gke_markdown(results):
                          "profile's end: its OOM kills are not measured.")
         elif smock and smock["restarts"]:
             times = "time" if smock["restarts"] == 1 else "times"
+            last = f"last: {smock['last_termination']}"
+            if smock.get("state") == "terminated":
+                # Until the kubelet restarts it, the container's ending is
+                # its state, and its last state the ending before.
+                last = f"last: {harness.shown(smock['state_reason'])}, before that: {smock['last_termination']}"
             notes.append(f"smock restarted {smock['restarts']} {times} under {name} "
-                         f"(last: {smock['last_termination']}): which steps its OOM kills came in is unknown, "
-                         "so they are not measured.")
+                         f"({last}): which steps its OOM kills came in is unknown, so they are not measured.")
         # As read at the profile's end, as its restarts are.
         state = smock and smock.get("state")
         if state == "terminated":

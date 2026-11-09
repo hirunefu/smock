@@ -1241,7 +1241,19 @@ class Summary(Helper):
         summary = json.loads((out / "summary.json").read_text())
         self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {None})
         markdown = (out / "summary.md").read_text()
-        self.assertIn("smock restarted 2 times under small (last: OOMKilled)", markdown)
+        self.assertIn("smock restarted 2 times under small (last: OOMKilled, before that: OOMKilled)", markdown)
+        self.assertIn("smock's container had ended under small at the profile's end (OOMKilled), and had not "
+                      "restarted since: its OOM kills are not measured.", markdown)
+
+    def test_a_smock_container_that_ended_again_names_its_last_end_and_the_one_before(self):
+        # Until the kubelet restarts it, the ending of the container is its
+        # state, and its last state the ending of the one before.
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                           pods(restarts=1, reason="Error", ready=False, state="terminated", state_reason="OOMKilled"))
+        markdown = (out / "summary.md").read_text()
+        self.assertNotIn("(last: Error)", markdown)
+        self.assertIn("smock restarted 1 time under small (last: OOMKilled, before that: Error): which steps its OOM "
+                      "kills came in is unknown, so they are not measured.", markdown)
         self.assertIn("smock's container had ended under small at the profile's end (OOMKilled), and had not "
                       "restarted since: its OOM kills are not measured.", markdown)
 
