@@ -186,6 +186,15 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       group.add_defer(() => @async.protect_from_cancel(() => lines.write_rest()))
     }
     watchdog.expired = Some(now => h2.expire(now, out))
+    // The watchdog holds this closure, which holds the connection, which
+    // holds the watchdog: a cycle that reference counting never frees, so
+    // the connection, its `Conn` and its byte stream, TLS buffers included,
+    // would outlive it. Unset when the loop's task ends, which ends the
+    // group's other tasks, the watchdog's sleeper among them, so that
+    // nothing calls it after.
+    defer {
+      watchdog.expired = None
+    }
     watchdog.read_by(h2.idle_deadline, now)
     // Unset before the loop's task ends, so never once the task group can
     // take no more tasks.
