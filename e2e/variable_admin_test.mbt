@@ -114,7 +114,7 @@ async test "Admin API errors on Variables: an unknown Mock, a name that is not a
       let user = "/v1/mocks/shop/variables/user"
       let long = "x".repeat(129)
       // A string 1 byte above 1 MiB of compact JSON.
-      let above = "\"\{"a".repeat(1024 * 1024 - 1)}\""
+      let above = "\"\{String::make(1024 * 1024 - 1, 'a')}\""
       let calls : Array[(String, String, String?, String?)] = [
         ("GET", "/v1/mocks/orders/variables", None, None),
         ("PUT", "/v1/mocks/orders/variables/user", None, Some("1")),
