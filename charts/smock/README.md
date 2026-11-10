@@ -1,8 +1,8 @@
 # smock Helm chart
 
 Installs [smock](https://github.com/hirunefu/smock), a mock server for
-HTTP/1.1, HTTPS and Server-Sent Events, as a Deployment with a traffic
-Service and an admin Service. Its Definition files come from a ConfigMap by
+HTTP/1.1, HTTP/2, HTTPS and Server-Sent Events, as a Deployment with a
+traffic Service and an admin Service. Its Definition files come from a ConfigMap by
 default, or from a Git repository through a git-sync sidecar, or from an OCI
 image mounted as a volume. The Pods meet the Restricted Pod Security
 Standard in every delivery mode.
@@ -199,6 +199,26 @@ port has a Service of its own, so that each can get its own network policy:
 callers reach the Mocks, and only tests and monitoring reach the Admin API
 and `/metrics`. The startup, readiness and liveness probes call `/startupz`,
 `/readyz` and `/livez` on the admin port, which need no token.
+
+No port has an `appProtocol` by default. The plain port serves both
+HTTP/1.1 and h2c (HTTP/2 without TLS), so no single value describes it. Some
+gateways and load balancers read a Service port's `appProtocol` to choose
+the protocol they speak to the Pods. For them, `service.appProtocol.plain`
+and `service.appProtocol.tls` set it on the traffic Service's plain and TLS
+ports. For a gateway that speaks h2c to smock, set `kubernetes.io/h2c` on
+the plain port:
+
+```sh
+helm install smock oci://ghcr.io/hirunefu/charts/smock --version <version> \
+  --namespace mocks \
+  --set adminAuth.tokenSecret.name=smock-admin-token \
+  --set service.appProtocol.plain=kubernetes.io/h2c
+```
+
+For the TLS port, use the value your gateway documents. The admin Service,
+the container ports and the probes stay as they are. smock's
+[HTTP/2 guide](https://github.com/hirunefu/smock/blob/main/docs/http2.md#kubernetes-and-load-balancers)
+says how a load balancer that ends TLS speaks h2c to the plain port.
 
 ## Security
 
@@ -412,9 +432,13 @@ at once, and the container runtime reads stdout all the time. A reader
 that stops reading holds up only the connections whose requests have a
 line to write, and smock's own lines beyond 1,024 waiting are dropped and
 counted in `smock_log_lines_dropped_total`. The `mockoon` format costs
-CPU: on an M1 laptop smock spent about 8 to 11 µs more on each request
-than in `json`, 40% to 90% more, so a Pod that comes close to its CPU
-limit in `json` needs a higher one in `mockoon`. The
+CPU: on an M1 laptop smock spent about 8 to 11 µs more on each HTTP/1.1
+request than in `json`, 40% to 90% more, and about 7 to 10 µs more on
+each HTTP/2 request, 20% to 50% more, so a Pod that comes close to its
+CPU limit in `json` needs a higher one in `mockoon`. Under 1 CPU, HTTP/2
+over TLS at 30,000 requests/s used 88% of the CPU in `mockoon` against
+64% in `json`, and its latency rose past the targets in one of two runs.
+The
 [migration guide](https://github.com/hirunefu/smock/blob/main/docs/migrating-from-mockoon.md#logs)
 lists the lines and how they differ from Mockoon's.
 
@@ -480,6 +504,8 @@ among them, and names the value to use instead.
 | `service.plainPort` | `80` | The traffic Service's plain port. |
 | `service.tlsPort` | `443` | The traffic Service's TLS port. |
 | `service.annotations` | `{}` | Annotations of the traffic Service. |
+| `service.appProtocol.plain` | `""` | The `appProtocol` of the traffic Service's plain port, such as `kubernetes.io/h2c` for a gateway that speaks h2c to smock. Empty: none. |
+| `service.appProtocol.tls` | `""` | The `appProtocol` of the traffic Service's TLS port. Empty: none. |
 | `adminService.type` | `"ClusterIP"` | The admin Service type. |
 | `adminService.port` | `9090` | The admin Service's port. |
 | `adminService.annotations` | `{}` | Annotations of the admin Service. |

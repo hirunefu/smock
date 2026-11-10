@@ -285,13 +285,25 @@ def plan_profiles(plan, names=None):
 
 
 def plan_cases(plan, names=None):
-    """The cases of the plan to run, all of them by default. Only the
-    harness on one machine can hold idle connections."""
+    """The cases of the plan to run: by default all of them but those that
+    run only on one machine (local_only), such as h2c-multiplexed. The
+    plan's cases must be ones the harness can run, and only the harness on
+    one machine can hold idle connections."""
     for name in names or []:
         if name not in [case["name"] for case in plan["cases"]]:
             raise GkeError(f"the plan has no case {name}")
-    cases = [case for case in plan["cases"] if names is None or case["name"] in names]
+    for case in plan["cases"]:
+        problem = harness.case_problem(case)
+        if problem:
+            raise GkeError(problem)
+    if names is None:
+        cases = [case for case in plan["cases"] if not case.get("local_only")]
+    else:
+        cases = [case for case in plan["cases"] if case["name"] in names]
     for case in cases:
+        if case.get("local_only"):
+            raise GkeError(f"case {case['name']} runs only on one machine (local_only), which keeps the GKE run's "
+                           "time down: leave it out of --cases")
         if case.get("idle_connections"):
             raise GkeError(f"case {case['name']} holds idle connections, which the GKE run cannot: "
                            "leave it out with --cases")
@@ -795,9 +807,16 @@ def pod_info(pod_list, node_list, restarts=True):
     """What a run keeps of its Pods and of the nodes they ran on: where and
     how they ran, the load generator's CPU request, and nothing that names
     the project, such as image references or provider IDs. smock's
-    restarts are None (unknown) unless `restarts`: the OOM kills of a
-    profile come from them, so only those read at the profile's end count,
-    and a run that stops before then keeps what it read earlier. A smock
+    restarts, and the state of its container, `running`, `waiting` or
+    `terminated`, with the reason Kubernetes gives for it (`state_reason`,
+    such as CrashLoopBackOff or OOMKilled), are None (unknown) unless
+    `restarts`: the OOM kills of a profile come from them, so only those
+    read at the profile's end count, and a run that stops before then keeps
+    what it read earlier. A container killed for memory counts among the
+    restarts only once the kubelet has restarted it. The kubelet restarts a
+    first exit at once, so its state reads `terminated` for a second or so;
+    after a later exit it may back off first, and the state reads `waiting`
+    (CrashLoopBackOff) meanwhile. A smock
     Pod of a variant also keeps its variant and the requests and limits
     its container named smock was admitted with (None without such a
     container), which Autopilot may have changed; any other smock Pod keeps
@@ -810,11 +829,14 @@ def pod_info(pod_list, node_list, restarts=True):
             statuses = status.get("containerStatuses") or [{}]
             container = next((container for container in statuses if container.get("name") == "smock"), statuses[0])
             terminated = container.get("lastState", {}).get("terminated") or {}
+            state = next(iter(container.get("state") or {}), None) if restarts else None
             entry = {"name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
                      "ready": any(condition["type"] == "Ready" and condition["status"] == "True"
                                   for condition in status.get("conditions", [])),
                      "restarts": container.get("restartCount", 0) if restarts else None,
-                     "last_termination": terminated.get("reason")}
+                     "last_termination": terminated.get("reason"),
+                     "state": state,
+                     "state_reason": state and (container["state"][state] or {}).get("reason")}
             if labels.get("variant"):
                 spec = next((container for container in pod["spec"].get("containers", [])
                              if container.get("name") == "smock"), None)
@@ -1132,11 +1154,15 @@ def profile_results(out, plan, profile, cases, arch):
     results = [line["result"] for line in lines if line["kind"] == "step"]
     idle = [line["idle"] for line in lines if line["kind"] == "idle-rss"]
     # smock's container restarts after an OOM kill: with none at the
-    # profile's end, the kernel never killed it; with some, which step they
-    # came in is unknown, and so is whether there were any when the run
-    # did not read them at the end (None).
+    # profile's end, and the container running then, the kernel never
+    # killed it; with some, which step they came in is unknown, and so is
+    # whether there were any when the run did not read them at the end
+    # (None), or when the container was not running then: ended and not
+    # restarted yet, waiting to restart, or with no state. A run from
+    # before the state was kept has none, and its restarts decide.
     smock = pods["smock"]
-    oom_kills = 0 if len(smock) == 1 and smock[0]["restarts"] == 0 else None
+    oom_kills = (0 if len(smock) == 1 and smock[0]["restarts"] == 0 and smock[0].get("state", "running") == "running"
+                 else None)
     for result in [*results, *idle]:
         result["memory"]["oom_kills"] = oom_kills
     planned = [spec["id"] for spec in steps(plan, profile, cases)]
@@ -1176,13 +1202,17 @@ def node_text(node):
 
 
 def traffic_check_text(check):
-    """What the traffic check found, for people: `-` when the load generator
-    did none."""
+    """What the traffic check found, for people, over HTTP/1.1 and then over
+    HTTP/2 where it checked that too: `-` when the load generator did
+    none."""
     if check is None:
         return "-"
     names = {"plain": "plain", "tls": "TLS"}
-    return ", ".join(f"{names[name]} HTTP {port['status']}" if port["answered"]
-                     else f"{names[name]} no answer ({port['error']})" for name, port in check["ports"].items())
+    found = [(name, "HTTP", port) for name, port in check["ports"].items()]
+    found += [(name, "HTTP/2", port) for name, port in check.get("http2", {}).items()]
+    return ", ".join(f"{names[name]} {version} {port['status']}" if port["answered"]
+                     else f"{names[name]} {'' if version == 'HTTP' else 'HTTP/2 '}no answer ({port['error']})"
+                     for name, version, port in found)
 
 
 def gke_markdown(results):
@@ -1211,9 +1241,39 @@ def gke_markdown(results):
                          "profile's end: its OOM kills are not measured.")
         elif smock and smock["restarts"]:
             times = "time" if smock["restarts"] == 1 else "times"
+            last = f"last: {smock['last_termination']}"
+            if smock.get("state") == "terminated":
+                # Until the kubelet restarts it, the container's ending is
+                # its state, and its last state the ending before.
+                last = f"last: {harness.shown(smock['state_reason'])}, before that: {smock['last_termination']}"
             notes.append(f"smock restarted {smock['restarts']} {times} under {name} "
-                         f"(last: {smock['last_termination']}): which steps its OOM kills came in is unknown, "
-                         "so they are not measured.")
+                         f"({last}): which steps its OOM kills came in is unknown, so they are not measured.")
+        # As read at the profile's end, as its restarts are.
+        state = smock and smock.get("state")
+        if state == "terminated":
+            # With restarts, the note above says it had restarted: not since.
+            since = " since" if smock["restarts"] else ""
+            notes.append(f"smock's container had ended under {name} at the profile's end "
+                         f"({harness.shown(smock['state_reason'])}), and had not restarted{since}: its OOM kills "
+                         "are not measured.")
+        elif state == "running" and not smock["ready"] and smock["restarts"]:
+            # As for a few seconds after the kubelet restarts it, which it
+            # does at once after a first exit; or ready again after an
+            # earlier restart and failing its probe at the end. pods.json
+            # keeps no start time to tell which.
+            notes.append(f"smock was running but not ready under {name} at the profile's end, after restarting: "
+                         "it was not answering its readiness probe then.")
+        elif state == "running" and not smock["ready"]:
+            notes.append(f"smock was running but not ready under {name} at the profile's end: it had stopped "
+                         "answering its readiness probe, though nothing had killed it.")
+        elif smock and "state" in smock and smock["restarts"] == 0 and state != "running":
+            # Any other state with no restarts leaves the OOM kills
+            # unmeasured too (profile_results): `waiting`, as when the
+            # kubelet could not create the container again, or none, as for
+            # a Pod that kept no container status.
+            what = f"was {state} ({harness.shown(smock['state_reason'])})" if state else "had no state"
+            notes.append(f"smock's container {what} under {name} at the profile's end, with no restarts: its OOM "
+                         "kills are not measured.")
     if notes:
         lines += ["", *notes]
     return "\n".join(lines) + "\n"
@@ -1315,7 +1375,8 @@ def command_summarize(args):
                  "and end, the larger as its max; and the most "
                  "memory its container had used by the step's end (memory.peak), since smock started under the "
                  "profile, earlier steps included. Idle RSS is read once smock has been ready for the settle "
-                 "time, before any load. OOM kills come from smock's restarts at the profile's end." +
+                 "time, before any load. OOM kills come from smock's restarts and its container's state at the "
+                 "profile's end." +
                  ("" if first_second else " The load generator did not scrape smock a second into each step.")),
         # The node type, as before the nodes' CPUs were recorded, so that
         # comparing with such a run shows no other machine: each node's CPU
@@ -1335,7 +1396,7 @@ def command_summarize(args):
         "profiles": profiles,
         "cases": [{key: spec[key] for key in (
             "id", "profile", "protocol", "connection", "cpu_limit", "memory_limit", "rate", "ramp_s",
-            "duration_s", "tail_s", "connections", "idle_connections")} for spec in planned],
+            "duration_s", "tail_s", "connections", "streams_per_connection", "idle_connections")} for spec in planned],
         "overrides": {},
     }
     harness.write_json(out / "summary.json", summary)
@@ -2388,7 +2449,7 @@ def main(argv):
     planning = commands.add_parser("plan", help="list the profiles a run runs: name, steps, the Job's deadline (s)")
     planning.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
     planning.add_argument("--profiles", help="only these profiles, comma-separated (default: every profile)")
-    planning.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
+    planning.add_argument("--cases", help="only these cases, comma-separated (default: every case but local_only ones)")
     add_counts(planning)
     planning.add_argument("--labels", help="the variants' labels, comma-separated, whose Pods and Services each "
                                            "profile must be able to name")
@@ -2396,7 +2457,8 @@ def main(argv):
     estimating = commands.add_parser("estimate", help="say how long a run takes and what it costs")
     estimating.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
     estimating.add_argument("--profiles", help="only these profiles, comma-separated (default: every profile)")
-    estimating.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
+    estimating.add_argument("--cases",
+                            help="only these cases, comma-separated (default: every case but local_only ones)")
     estimating.add_argument("--region", required=True, help="the region, such as us-central1")
     estimating.add_argument("--arch", required=True, choices=("arm64", "amd64"), help="the nodes' architecture")
     estimating.add_argument("--time-limit-s", type=int, required=True,
@@ -2406,7 +2468,8 @@ def main(argv):
     rendering = commands.add_parser("manifests", help="write the Kubernetes objects of one profile")
     rendering.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
     rendering.add_argument("--profile", required=True, help="the profile")
-    rendering.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
+    rendering.add_argument("--cases",
+                           help="only these cases, comma-separated (default: every case but local_only ones)")
     rendering.add_argument("--arch", required=True, choices=("arm64", "amd64"), help="the nodes' architecture")
     rendering.add_argument("--zone", help="the zone smock and the load generator run in (default: Autopilot "
                                           "chooses smock's, and the load generator follows it)")
@@ -2449,7 +2512,8 @@ def main(argv):
                              help="the targets to check, those of --arch (default: bench/targets.json)")
     summarizing.add_argument("--profiles",
                              help="the profiles the run ran, comma-separated (default: every profile)")
-    summarizing.add_argument("--cases", help="the cases the run ran, comma-separated (default: every case)")
+    summarizing.add_argument("--cases",
+                             help="the cases the run ran, comma-separated (default: every case but local_only ones)")
     summarizing.add_argument("--region", required=True)
     summarizing.add_argument("--zone", help="the zone the run pinned its Pods to, if it did")
     summarizing.add_argument("--arch", required=True, choices=("arm64", "amd64"),
@@ -2474,7 +2538,8 @@ def main(argv):
                                                     "for summarize; print each one's round, label and directory")
     splitting.add_argument("--plan", required=True, help="the plan the run ran")
     splitting.add_argument("--profiles", help="the profiles the run ran, comma-separated (default: every profile)")
-    splitting.add_argument("--cases", help="the cases the run ran, comma-separated (default: every case)")
+    splitting.add_argument("--cases",
+                           help="the cases the run ran, comma-separated (default: every case but local_only ones)")
     splitting.add_argument("--rounds", type=int,
                            help="the rounds the run planned, when the load generator may not have said so "
                                 "(default: as many as it says)")

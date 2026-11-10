@@ -75,7 +75,7 @@ async test "two Mocks get a Server started line each, right after the TLS port's
     inspect(
       out.join("\n"),
       content=(
-        #|{"address":"0.0.0.0:<TLS port>","app":"smock","level":"info","listener":"tls","message":"listening","timestamp":"<timestamp>"}
+        #|{"address":"0.0.0.0:<TLS port>","app":"smock","level":"info","listener":"tls","message":"listening","protocols":["h2","http/1.1"],"timestamp":"<timestamp>"}
         #|{"app":"smock","environmentName":"users","level":"info","message":"Server started on port <plain port>","timestamp":"<timestamp>"}
         #|{"app":"smock","environmentName":"orders","level":"info","message":"Server started on port <plain port>","timestamp":"<timestamp>"}
       ),

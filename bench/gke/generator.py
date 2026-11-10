@@ -17,7 +17,9 @@ smock's idle RSS and peak memory from smock's /metrics (an idle-rss line,
 in the layout of an entry of summary.json's idle_rss). Before the first
 step, it sends the first request of the mix once to each traffic port,
 plain and TLS, through the Service, until each answers or TRAFFIC_CHECK_S
-has passed (a traffic-check line). When one never answers, it runs no step
+has passed (a traffic-check line); and over HTTP/2 too, with oha, to each
+port that a step of the profile sends HTTP/2 to: h2c to the plain port,
+h2 to the TLS port. When one never answers, it runs no step
 of the profile. When a step gets no response at all, it checks the ports
 the same way again: an overloaded smock may answer none of a step's
 measured requests and still be there, and the profile goes on; when smock
@@ -65,7 +67,8 @@ Environment:
               that runs several smocks on one machine does
   ROUNDS      with VARIANTS, how many rounds to run (default: 1)
   PROFILE     the profile of the plan to run
-  CASES       the cases to run, comma-separated (default: every case of the plan)
+  CASES       the cases to run, comma-separated (default: every case of the plan
+              but those that run only on one machine, local_only)
   PLAN        the plan (default: plan.json in the directory of bench.py)
   PLAIN_PORT, TLS_PORT, ADMIN_PORT
               smock's ports (default: 80, 443 and 9090, its Service's)
@@ -167,15 +170,41 @@ def send_once(address, port, request, tls, timeout):
         connection.close()
 
 
-def check_port(address, port, request, tls, seconds):
-    """Whether smock answers `request` on one port: tried again until it
-    gets a response, any HTTP status, or `seconds` have passed."""
+def send_once_http2(oha, address, port, request, tls, timeout):
+    """Sends a request of the mix once to smock at `address` and `port` over
+    HTTP/2, with oha, the only tool of the load generator's image that
+    speaks it, as a step sends it: h2c by prior knowledge, or h2 over TLS.
+    Its HTTP status. Raises TimeoutError when it gets no response in time,
+    and OSError with what oha says when it gets none otherwise."""
+    command = [oha, "--no-tui", "--output-format", "json", "-n", "1", "-c", "1", "-t", f"{round(timeout * 1000)}ms",
+               "--disable-compression", *harness.oha_request("h2" if tls else "h2c", request, address, port)]
+    try:
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout + 10)
+        report = json.loads(result.stdout)
+    except subprocess.TimeoutExpired as failure:
+        raise TimeoutError() from failure
+    except ValueError as failure:
+        raise OSError(f"oha wrote no report: {result.stderr.strip() or f'exit status {result.returncode}'}") \
+            from failure
+    statuses = report.get("statusCodeDistribution") or {}
+    if statuses:
+        return int(next(iter(statuses)))
+    error = next(iter(report.get("errorDistribution") or {}), None)
+    if error == "timeout":
+        raise TimeoutError()
+    raise OSError(error or "no response")
+
+
+def check_port(address, port, request, tls, seconds, send=send_once):
+    """Whether smock answers `request` on one port, sent with `send` (over
+    HTTP/1.1 by default): tried again until it gets a response, any HTTP
+    status, or `seconds` have passed."""
     started = time.monotonic()
     deadline, attempts = started + seconds, 0
     while True:
         attempts += 1
         try:
-            status = send_once(address, port, request, tls, max(0.1, min(5.0, deadline - time.monotonic())))
+            status = send(address, port, request, tls, max(0.1, min(5.0, deadline - time.monotonic())))
             return {"port": port, "answered": True, "status": status, "attempts": attempts,
                     "seconds": round(time.monotonic() - started, 3), "error": None}
         except (OSError, http.client.HTTPException) as failure:
@@ -195,27 +224,45 @@ def resolve(target):
         return f"no address ({error})"
 
 
-def traffic_check(target, address, ports, request, seconds):
+def traffic_check(target, address, ports, request, seconds, oha=None, http2=()):
     """Whether both traffic ports, plain and TLS, answer `request` through
-    the Service at `address`, each within `seconds`, checked at the same
-    time. When one does not, it says what `target` resolves to then, which
-    may no longer be `address`."""
-    with concurrent.futures.ThreadPoolExecutor(2) as pool:
+    the Service at `address`, each within `seconds`, and the ports `http2`
+    names answer it over HTTP/2 too, sent with `oha` (h2c to the plain
+    port, h2 to the TLS port), all checked at the same time. When one does
+    not, it says what `target` resolves to then, which may no longer be
+    `address`."""
+    with concurrent.futures.ThreadPoolExecutor(2 + len(http2)) as pool:
         checks = {name: pool.submit(check_port, address, ports[name], request, name == "tls", seconds)
                   for name in ("plain", "tls")}
+        checks_http2 = {name: pool.submit(check_port, address, ports[name], request, name == "tls", seconds,
+                                          functools.partial(send_once_http2, oha))
+                        for name in http2}
         found = {name: check.result() for name, check in checks.items()}
-    ok = all(port["answered"] for port in found.values())
+        found_http2 = {name: check.result() for name, check in checks_http2.items()}
+    ok = all(port["answered"] for port in [*found.values(), *found_http2.values()])
     return {"ok": ok, "address": address, **({} if ok else {"resolves_now": resolve(target)}),
             "host": request["host"], "method": request["method"], "target": request["target"], "window_s": seconds,
-            "ports": found}
+            "ports": found, "http2": found_http2}
+
+
+def http2_ports(specs):
+    """The traffic ports that `specs` send HTTP/2 to, in the order plain,
+    TLS: those the traffic check also checks over HTTP/2. With no HTTP/2
+    step, none, so that a smock without HTTP/2 can run the others."""
+    sent = {harness.traffic_port(spec["protocol"]) for spec in specs if harness.over_http2(spec["protocol"])}
+    return [name for name in ("plain", "tls") if name in sent]
 
 
 def silent_ports_text(check):
-    """Which traffic ports did not answer, and why, for people; and what
-    smock's name resolves to when that is no longer the address checked."""
+    """Which traffic ports did not answer, and why, for people, over HTTP/2
+    named as such; and what smock's name resolves to when that is no
+    longer the address checked."""
     names = {"plain": "plain", "tls": "TLS"}
-    text = ", ".join(f"{names[name]} port {port['port']} ({port['error']})"
-                     for name, port in check["ports"].items() if not port["answered"])
+    silent = [f"{names[name]} port {port['port']} ({port['error']})"
+              for name, port in check["ports"].items() if not port["answered"]]
+    silent += [f"{names[name]} port {port['port']} over HTTP/2 ({port['error']})"
+               for name, port in check.get("http2", {}).items() if not port["answered"]]
+    text = ", ".join(silent)
     now = check.get("resolves_now")
     if now and now != check["address"]:
         text += f"; the address checked was {check['address']}, and smock's name now resolves to {now}"
@@ -337,7 +384,7 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics, first_second=True):
     can run without it, to see whether it costs smock CPU."""
     work = Path(tempfile.mkdtemp(prefix="step-"))
     run = SimpleNamespace(mix=mix, tmp=work)
-    port = ports["tls" if spec["protocol"] == "https" else "plain"]
+    port = ports[harness.traffic_port(spec["protocol"])]
     weights = [request["weight"] for request in mix]
     total_s = spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]
     metrics_before, scraped_before = scrape_metrics(), time.monotonic()
@@ -515,7 +562,7 @@ def main():
         # The traffic check, before the first run and after a run with no
         # response.
         variant.check_again = functools.partial(traffic_check, variant.target, variant.address, variant.ports,
-                                                variant.mix[0], check_s)
+                                                variant.mix[0], check_s, oha, http2_ports(specs))
         check = variant.check_again()
         emit({"kind": "traffic-check", "profile": profile_name, **tag(variant), **check})
         reason = None if check["ok"] else \

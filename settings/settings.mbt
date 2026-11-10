@@ -28,6 +28,10 @@ pub(all) struct ServeSettings {
   /// The certificate and key files of single Mocks, by Mock name: a
   /// handshake whose SNI is a Host of one of these Mocks gets its pair.
   tls_mock_certs : Map[String, TlsFiles]
+  /// Whether the TLS port offers HTTP/2 by ALPN, `h2` before `http/1.1`,
+  /// with every certificate. Off, it offers `http/1.1` alone. It does not
+  /// change the plain port.
+  tls_http2 : Bool
   /// The admin port, where the Admin API, the probes and the metrics are
   /// served. 0 asks the system for a free port.
   admin_port : Int32
@@ -51,12 +55,19 @@ pub(all) struct ServeSettings {
   /// lists them: each name once, in the order given.
   template_env : Array[String]
   /// The most bytes a request head may take: its request line and header
-  /// fields.
+  /// fields. Over HTTP/2, the most octets of a header list, counted as RFC
+  /// 7541, section 4.1, counts it; twice it is moonhttp's bound, which
+  /// smock advertises as SETTINGS_MAX_HEADER_LIST_SIZE.
   header_size_limit : Int32
-  /// The most header fields a request may have.
+  /// The most header fields a request may have. Over HTTP/2, they are the
+  /// regular fields, with several `cookie` fields counted as one.
   header_count_limit : Int32
   /// The longest request body, in bytes.
   body_limit : Int32
+  /// The most streams an HTTP/2 connection may have in progress at once,
+  /// from 1 to 1000: smock advertises it as SETTINGS_MAX_CONCURRENT_STREAMS
+  /// and refuses a stream past it.
+  http2_max_concurrent_streams : Int32
   /// How long, in milliseconds, a request may take to arrive, from its first
   /// byte to its last.
   read_timeout_ms : Int32
@@ -271,6 +282,11 @@ let serve_settings : Array[Setting] = [
     default: None,
   },
   {
+    name: "tls-http2",
+    about: "Whether the HTTPS port offers HTTP/2 by ALPN: on or off. On, it offers h2, then http/1.1, with every certificate; off, http/1.1 alone. The plain port serves h2c either way.",
+    default: Some("on"),
+  },
+  {
     name: "admin-port",
     about: "The Admin API port, separate from the plain and TLS ports. 0 picks a free port.",
     default: Some("9090"),
@@ -309,7 +325,7 @@ let serve_settings : Array[Setting] = [
   template_env_setting,
   {
     name: "header-size-limit",
-    about: "The most bytes a request head (request line and header fields) may take. Larger heads get 431.",
+    about: "The most bytes a request head (request line and header fields) may take. Larger heads get 431. Over HTTP/2, a header list is counted as RFC 7541 counts it, each field with 32 octets more, and a larger one gets 431 on its stream; a header block over twice the limit closes the connection.",
     default: Some("16384"),
   },
   {
@@ -323,8 +339,13 @@ let serve_settings : Array[Setting] = [
     default: Some("10485760"),
   },
   {
+    name: "http2-max-concurrent-streams",
+    about: "The most streams an HTTP/2 connection may have in progress at once, from 1 to \{max_http2_streams}. A stream past it is refused with REFUSED_STREAM.",
+    default: Some("100"),
+  },
+  {
     name: "read-timeout-ms",
-    about: "How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes.",
+    about: "How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes; over HTTP/2, a request that does not arrive in time resets its stream instead.",
     default: Some("30000"),
   },
   {
@@ -588,6 +609,7 @@ pub fn ServeSettings::from_matches(
       )
   }
   let tls_mock_certs = mock_certs_value(matches, "tls-mock-certs")
+  let tls_http2 = on_off_value(matches, "tls-http2")
   let admin_port = int_value(matches, "admin-port", min=0, max=65535)
   if admin_port != 0 && admin_port == port {
     raise invalid(
@@ -628,6 +650,7 @@ pub fn ServeSettings::from_matches(
     tls_port,
     tls,
     tls_mock_certs,
+    tls_http2,
     admin_port,
     admin_auth,
     admin_token_file,
@@ -650,6 +673,12 @@ pub fn ServeSettings::from_matches(
       max=max_size,
     ),
     body_limit: int_value(matches, "body-limit", min=0, max=max_size),
+    http2_max_concurrent_streams: int_value(
+      matches,
+      "http2-max-concurrent-streams",
+      min=1,
+      max=max_http2_streams,
+    ),
     read_timeout_ms: int_value(
       matches,
       "read-timeout-ms",
@@ -832,6 +861,11 @@ fn decimal(text : String, max_digits~ : Int32) -> UInt64? {
 ///|
 /// The largest size limit: 1 GiB. A request is held in memory whole.
 let max_size : Int32 = 1024 * 1024 * 1024
+
+///|
+/// The most concurrent streams an HTTP/2 connection can be allowed. Each
+/// may hold a request body of up to the body limit.
+let max_http2_streams : Int32 = 1000
 
 ///|
 /// The most replicas a deployment can declare.

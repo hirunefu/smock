@@ -30,9 +30,13 @@ async fn resident_set(pid : Int32) -> Double {
 
 ///|
 /// The directory of the cgroup v2 of process `pid`, from the `0::` line of
-/// /proc/<pid>/cgroup.
-async fn cgroup_of(pid : Int32) -> String {
-  for line in @fs.read_file("/proc/\{pid}/cgroup").text().split("\n") {
+/// /proc/<pid>/cgroup; without `pid`, of the test process itself.
+async fn cgroup_of(pid? : Int32) -> String {
+  let process = match pid {
+    Some(pid) => pid.to_string()
+    None => "self"
+  }
+  for line in @fs.read_file("/proc/\{process}/cgroup").text().split("\n") {
     if line.strip_prefix("0::") is Some(path) {
       return if path == "/" {
         "/sys/fs/cgroup"
@@ -41,7 +45,7 @@ async fn cgroup_of(pid : Int32) -> String {
       }
     }
   }
-  fail("process \{pid} is in no cgroup v2")
+  fail("process \{process} is in no cgroup v2")
 }
 
 ///|
@@ -65,6 +69,44 @@ async fn cgroup_memory_peak(dir : String) -> Double? {
   }
   Some(@string.parse_double(text.trim()))
 }
+
+///|
+/// Which counts a cgroup's files have, from its cpu.stat (`stat`) and its
+/// memory.peak (`peak`), without their values.
+fn cgroup_counts(stat : Map[String, Double], peak : Double?) -> Array[String] {
+  let counts = stat.keys().collect()
+  if peak is Some(_) {
+    counts.push("memory.peak")
+  }
+  counts
+}
+
+///|
+/// Waits until the files of the cgroup `dir` have the counts `counts`, as
+/// `cgroup_counts` gives them, for up to `within` milliseconds.
+async fn until_cgroup_counts(
+  dir : String,
+  counts : Array[String],
+  within~ : Int32,
+) -> Unit {
+  let _ = @async.with_timeout_opt(within, () => {
+    while cgroup_counts(cgroup_cpu_stat(dir), cgroup_memory_peak(dir)) != counts {
+      @async.sleep(10)
+    }
+  })
+}
+
+///|
+/// Keeps the two tests of the cgroup metrics from running at once. A
+/// systemd scope with a CPU quota, as the first starts, has systemd turn on
+/// the cpu controller of the scope's parent cgroup, and turn it off again
+/// shortly after the scope ends: that adds the CFS counts to the cpu.stat
+/// of every cgroup beside the scope, then takes them away. The test
+/// process's cgroup is one of those when it runs in a scope of its own, as
+/// under `systemd-run --user --scope`, and the second test's smock runs in
+/// it. So the first test holds this until the test process's cgroup has its
+/// counts back.
+let cgroup_tests : @async.Mutex = @async.Mutex()
 
 ///|
 /// Sends smock requests on one connection, 50 at a time, until `done`
@@ -341,6 +383,10 @@ fn cgroup_report(
 
 ///|
 async test "cgroup metrics: under a CPU quota and a memory limit, smock's cgroup's CPU usage, CFS periods, throttling and memory peak as its files have them when /metrics is scraped" {
+  cgroup_tests.acquire()
+  defer cgroup_tests.release()
+  let own = cgroup_of()
+  let own_counts = cgroup_counts(cgroup_cpu_stat(own), cgroup_memory_peak(own))
   if quota_scope_unavailable() is Some(reason) {
     println(
       "skipped \"cgroup metrics: under a CPU quota\" (e2e/process_metrics_test.mbt): it runs smock in a systemd user scope with a CPU quota, but \{reason}",
@@ -352,7 +398,7 @@ async test "cgroup metrics: under a CPU quota and a memory limit, smock's cgroup
     env=user_manager_env({}),
     under=quota_scope,
     smock => {
-      let dir = cgroup_of(smock.pid)
+      let dir = cgroup_of(pid=smock.pid)
       // Until the kernel has counted some CPU time for smock, and a CFS
       // period has ended since it started: the first one ends 100 ms
       // after smock first ran.
@@ -392,44 +438,70 @@ async test "cgroup metrics: under a CPU quota and a memory limit, smock's cgroup
       )
     },
   )
+  until_cgroup_counts(own, own_counts, within=2000)
 }
 
 ///|
 async test "cgroup metrics: in whatever cgroup smock runs, /metrics has a cgroup metric exactly when the cgroup's file has its count, as the file has it when /metrics is scraped" {
-  let _ = with_smock(["--port", "0"], smock => {
-    let dir = cgroup_of(smock.pid)
-    let stat = cgroup_cpu_stat(dir)
-    let peak = cgroup_memory_peak(dir)
-    let text = smock.admin("GET", "/metrics", token=None).body
-    let stat_after = cgroup_cpu_stat(dir)
-    let peak_after = cgroup_memory_peak(dir)
-    // Without the cpu controller, as in a cgroup with no CPU limit, the
-    // file has no CFS counts, and /metrics has none either; without the
-    // memory controller, no memory.peak.
-    let lines = cgroup_report(text, stat, stat_after, peak, peak_after)
-      .split("\n")
-      .map(line => {
-        match line.split_once(": ") {
-          Some((name, "as the file had it at the scrape: true"))
-          | Some((name, "neither in the file nor in /metrics")) => "\{name}: ok"
-          _ => line.to_owned()
-        }
-      })
-      .collect()
-    inspect(
-      lines.join("\n"),
-      content=(
-        #|smock_cgroup_cpu_usage_seconds_total (usage_usec): ok
-        #|smock_cgroup_cpu_periods_total (nr_periods): ok
-        #|smock_cgroup_cpu_throttled_periods_total (nr_throttled): ok
-        #|smock_cgroup_cpu_throttled_seconds_total (throttled_usec): ok
-        #|smock_cgroup_memory_peak_bytes (memory.peak): ok
-      ),
-    )
-    // cpu.stat always has the usage.
-    inspect(
-      metric_lines(text, "smock_cgroup_cpu_usage_seconds_total ").length(),
-      content="1",
-    )
-  })
+  // smock serves the cgroup metrics whose counts the files have when it
+  // starts (README.md), so the check holds of a smock whose cgroup had the
+  // same counts from before it started until after the scrape. Their
+  // controllers can still change in between, as when a scope with a CPU
+  // quota from outside the tests starts or ends beside the test process:
+  // the check is then made again with a new smock.
+  cgroup_tests.acquire()
+  defer cgroup_tests.release()
+  let dir = cgroup_of()
+  let mut checked = None
+  for tries = 0; checked is None && tries < 5; tries = tries + 1 {
+    if tries > 0 {
+      @async.sleep(500)
+    }
+    let counts = cgroup_counts(cgroup_cpu_stat(dir), cgroup_memory_peak(dir))
+    let _ = with_smock(["--port", "0"], smock => {
+      assert_eq(cgroup_of(pid=smock.pid), dir)
+      let stat = cgroup_cpu_stat(dir)
+      let peak = cgroup_memory_peak(dir)
+      let text = smock.admin("GET", "/metrics", token=None).body
+      let stat_after = cgroup_cpu_stat(dir)
+      let peak_after = cgroup_memory_peak(dir)
+      if cgroup_counts(stat, peak) == counts &&
+        cgroup_counts(stat_after, peak_after) == counts {
+        checked = Some(
+          (text, cgroup_report(text, stat, stat_after, peak, peak_after)),
+        )
+      }
+    })
+  }
+  guard checked is Some((text, report)) else {
+    fail("the counts of the cgroup's files changed while each of 5 smocks ran")
+  }
+  // Without the cpu controller, as in a cgroup with no CPU limit, the
+  // file has no CFS counts, and /metrics has none either; without the
+  // memory controller, no memory.peak.
+  let lines = report
+    .split("\n")
+    .map(line => {
+      match line.split_once(": ") {
+        Some((name, "as the file had it at the scrape: true"))
+        | Some((name, "neither in the file nor in /metrics")) => "\{name}: ok"
+        _ => line.to_owned()
+      }
+    })
+    .collect()
+  inspect(
+    lines.join("\n"),
+    content=(
+      #|smock_cgroup_cpu_usage_seconds_total (usage_usec): ok
+      #|smock_cgroup_cpu_periods_total (nr_periods): ok
+      #|smock_cgroup_cpu_throttled_periods_total (nr_throttled): ok
+      #|smock_cgroup_cpu_throttled_seconds_total (throttled_usec): ok
+      #|smock_cgroup_memory_peak_bytes (memory.peak): ok
+    ),
+  )
+  // cpu.stat always has the usage.
+  inspect(
+    metric_lines(text, "smock_cgroup_cpu_usage_seconds_total ").length(),
+    content="1",
+  )
 }

@@ -1,8 +1,8 @@
 # smock
 
-smock is a mock server for HTTP/1.1, HTTPS and Server-Sent Events. It stands in
-for the services a system depends on, on Kubernetes and on developers'
-machines. It is written in MoonBit ([ADR 0001](docs/adr/0001-moonbit-with-c-only-for-tls.md)).
+smock is a mock server for HTTP/1.1, HTTP/2, HTTPS and Server-Sent Events. It
+stands in for the services a system depends on, on Kubernetes and on
+developers' machines. It is written in MoonBit ([ADR 0001](docs/adr/0001-moonbit-with-c-only-for-tls.md)).
 The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
 [LLM responses](docs/definition-files.md#llm-responses) stand in for the
 OpenAI Chat Completions, OpenAI Responses and Anthropic Messages APIs in
@@ -16,6 +16,11 @@ reads it. The guides for people who use smock:
 - [docs/definition-files.md](docs/definition-files.md) describes the
   format of Definition files: how Stubs match requests, what they
   answer, templates, Variables, Data buckets, CRUD Stubs and Faults.
+- [docs/http2.md](docs/http2.md) says how clients reach smock over
+  HTTP/2, h2c on the plain port and h2 on the TLS port, from curl, Go, the
+  JVM, browsers and behind a load balancer. It says what a Stub and the
+  Journal see of an HTTP/2 request, and how smock bounds what one
+  connection can cost.
 - [docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
   document into a Definition file.
 - [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
@@ -57,6 +62,10 @@ SMOCK_ADMIN_TOKEN=change-me _build/native/debug/build/smock/smock/cmd/smock/smoc
 
 `smock serve` listens on the admin port, reads the Definition files in the
 definitions directory, then listens on the plain port and on the TLS port.
+Each port's `listening` log entry names the protocols it serves:
+`["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]` on the TLS
+port (`["http/1.1"]` with `--tls-http2 off`) and `["http/1.1"]` on the
+admin port.
 It watches the directory and swaps in the new definition set when the files
 change, ConfigMap updates included; an invalid set is reported and the
 current one keeps serving
@@ -71,7 +80,7 @@ stdout instead, in the Mockoon CLI's envelope: `app` (always `"smock"`),
 and the keys sorted at every depth. smock then also writes the Mockoon
 CLI's lines: `Server started on port <port>`, with the plain port, for
 each Mock once every listener is open; a `Transaction recorded` line for
-each request a Mock handles, after an
+each request a Mock handles, over HTTP/1.1 and HTTP/2 alike, after an
 `Error while serving the content: …` line when the Stub's template or
 data write failed; and `Server stopped` for each Mock when the drain
 ends. It writes nothing to stderr but usage errors. Each line is written
@@ -79,15 +88,24 @@ whole, by one write, also to a pipe, and no buffer holds it back.
 Container runtimes read stdout all the time. A request's lines are
 written before its connection takes its next request, so a reader of
 stdout that stops reading holds up each connection with a line to
-write, while every other connection goes on.
+write, while every other connection goes on. Over HTTP/2, the lines of
+the streams answered at once are written before the connection reads
+again, and a stream whose response waited, for a delay, its events or
+the client's windows, writes its own as it ends
+([Logs](docs/http2.md#logs)).
 smock's own lines then wait in a queue of up to 1,024 lines: one beyond
 it is dropped and counted in `smock_log_lines_dropped_total`.
 The `mockoon` format costs CPU. In the benchmark on an M1 laptop, smock
-spent about 8 to 11 µs more CPU on each request than in `json`, 40% to
-90% more, with the same latency at every rate up to the performance
-targets. Under a CPU limit it runs out sooner: the most it kept up with
-fell from 4,000 to 2,000 requests/s under 50m, and from 20,000 to 12,500
-under 250m, the next steps down in the benchmark.
+spent about 8 to 11 µs more CPU on each HTTP/1.1 request than in `json`,
+40% to 90% more, and about 7 to 10 µs more on each HTTP/2 request, 20%
+to 50% more. Up to the target rates, every step stayed within the
+performance targets but one: under 1 CPU, HTTP/2 over TLS at 30,000
+requests/s used 88% of the CPU rather than 64%, and in one of two runs
+its p99 rose to 14 ms and its p99.9 to 25 ms, past the targets. At
+20,000 it kept the latency of `json`. Under a CPU limit it runs out
+sooner: the most HTTP/1.1 kept up with fell from 4,000 to 2,000
+requests/s under 50m, and from 20,000 to 12,500 under 250m, the next
+steps down in the benchmark.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md#logs)
 lists the lines and how they differ from the Mockoon CLI's.
 
@@ -116,6 +134,7 @@ lists the settings:
 | `--tls-cert-file` | `SMOCK_TLS_CERT_FILE` | none: a generated self-signed certificate |
 | `--tls-key-file` | `SMOCK_TLS_KEY_FILE` | none: a generated self-signed certificate |
 | `--tls-mock-certs` | `SMOCK_TLS_MOCK_CERTS` | none: no Mock has a certificate of its own (see below) |
+| `--tls-http2` | `SMOCK_TLS_HTTP2` | `on`: ALPN on the TLS port offers `h2`, then `http/1.1`; `off` offers `http/1.1` alone ([h2 on the TLS port](docs/http2.md#h2-on-the-tls-port)) |
 | `--admin-port` | `SMOCK_ADMIN_PORT` | 9090 (0 picks a free port) |
 | `--admin-auth` | `SMOCK_ADMIN_AUTH` | `on`: the Admin API needs a bearer token; `off` for local use |
 | `--admin-token-file` | `SMOCK_ADMIN_TOKEN_FILE` | none: the token comes from `SMOCK_ADMIN_TOKEN` |
@@ -125,12 +144,13 @@ lists the settings:
 | `--log-format` | `SMOCK_LOG_FORMAT` | `json` by default (stderr, smock's own shape), or `mockoon` (stdout, the Mockoon CLI's shape, [for Mockoon users](docs/migrating-from-mockoon.md#logs)) |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--template-env` | `SMOCK_TEMPLATE_ENV` | none: templates read no environment variable; a comma-separated list of names lets them read those as `env.NAME`, with values read once at startup ([Environment variables](docs/definition-files.md#environment-variables)) |
-| `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
+| `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431; over HTTP/2, a larger header list, counted as RFC 7541 counts it, gets 431 on its stream, and a header block over twice the limit closes the connection ([Header lists](docs/http2.md#header-lists)) |
 | `--header-count-limit` | `SMOCK_HEADER_COUNT_LIMIT` | 100 header fields: more get 431 |
-| `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
-| `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte, or, when it was pipelined behind a response, of that response |
+| `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413; over HTTP/2, per stream, on that stream alone ([Request bodies](docs/http2.md#request-bodies)) |
+| `--http2-max-concurrent-streams` | `SMOCK_HTTP2_MAX_CONCURRENT_STREAMS` | 100, from 1 to 1000: the most streams an HTTP/2 connection may have in progress at once; a stream past it gets RST_STREAM `REFUSED_STREAM` ([Limits and timeouts](docs/http2.md#limits-and-timeouts)) |
+| `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte, or, when it was pipelined behind a response, of that response; over HTTP/2, a stream whose request is late gets RST_STREAM `CANCEL` alone ([Limits and timeouts](docs/http2.md#limits-and-timeouts)) |
 | `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
-| `--write-timeout-ms` | `SMOCK_WRITE_TIMEOUT_MS` | 30000: a connection closes when a write to it makes no progress for 30 s, as when the client stops reading |
+| `--write-timeout-ms` | `SMOCK_WRITE_TIMEOUT_MS` | 30000: a connection closes when a write to it makes no progress for 30 s, as when the client stops reading; over HTTP/2, also when a response waits that long for the client to widen the connection window, and a stream whose own window stays at zero that long gets RST_STREAM `CANCEL` alone ([Timeouts](docs/http2.md#timeouts)) |
 | `--drain-timeout-ms` | `SMOCK_DRAIN_TIMEOUT_MS` | 20000: how long smock drains after SIGTERM before it cuts what is still running |
 | `--seed` | `SMOCK_SEED` | none: smock picks the seed of its random generator, from 0 to 9007199254740991, and logs it ([Faults](docs/definition-files.md#seeds)) |
 | `--journal` | `SMOCK_JOURNAL` | `on`: requests are recorded in the [Journal](#the-journal); `off` records none |
@@ -146,23 +166,68 @@ format, and neither does a read or an idle timeout. A write timeout is not
 logged either, but in the `mockoon` format the request whose response it
 cut short still gets its `Transaction recorded` line.
 
-The write timeout runs only while a write waits on the client to take its
+Over HTTP/2, smock also bounds what a client can make one connection cost,
+such as a flood of PING, SETTINGS or CONTINUATION frames, or of streams
+reset as soon as they open (Rapid Reset). A connection that
+passes such a bound gets GOAWAY `ENHANCE_YOUR_CALM` and closes, and smock
+logs one line for it, at level `warn`, that names the pattern, such as
+`{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}`.
+No metric counts it. See [Defences](docs/http2.md#defences).
+
+Over HTTP/2, a body over `--body-limit` gets 413 on its stream alone, and
+the connection's other streams go on. When the client is still sending the
+body, RST_STREAM `NO_ERROR` follows the 413, to stop the upload. See
+[Request bodies](docs/http2.md#request-bodies). Since the limit applies to
+each stream, one HTTP/2 connection can hold request bodies of up to
+`--http2-max-concurrent-streams` × `--body-limit` in memory at once: about
+1 GiB with the defaults (100 × 10 MiB). For a small Pod, lower either flag
+([Limits and timeouts](docs/http2.md#limits-and-timeouts)).
+
+Over HTTP/2, a request over a header limit gets 431 on its stream alone,
+and the connection stays open. The read timeout applies to each stream
+alone, from the first frame of its request: a stream whose request is
+late gets RST_STREAM `CANCEL`, and the connection's other streams go on.
+The idle timeout applies to a connection with no stream in progress, and
+sends GOAWAY before the connection closes. See
+[Limits and timeouts](docs/http2.md#limits-and-timeouts). A stream that
+gets 400, 413 or 431, or is reset because its request is late, never
+reaches a Mock, so it gets no `Transaction recorded` line in the
+`mockoon` format. Nor does a stream refused past
+`--http2-max-concurrent-streams`, or one the client resets before its
+request has arrived.
+
+The write timeout runs while a write waits on the client to take its
 bytes, on every port and for every write: a response, whole or in part,
-each event of a stream, a `100 Continue`, a rejection and an Admin API
+each event of an event stream, a `100 Continue`, a rejection and an Admin API
 reply. It starts again each time the write goes on, so a client that reads
 slowly but steadily gets the whole response, however long it takes in all.
 A write goes on once the client has read enough to free room in the
 socket's send buffer: about a third of it, on Linux. On the TLS port, it
 goes on a whole TLS record, up to 16 KiB, at a time. smock's own waits,
-such as a delay or the time between the events of a stream, do not count.
+such as a delay or the time between the events of an event stream, do not
+count.
 smock sends no `close_notify` on a TLS connection the write timeout closes.
+
+Over HTTP/2, the write timeout also runs while a response body waits for
+the client to widen its flow-control windows. When the connection window
+stays at zero that long, the connection closes, without GOAWAY. When only
+a stream's own window does, that stream gets RST_STREAM `CANCEL`, and the
+connection's other streams go on. Each WINDOW_UPDATE for the window waited
+for, and each SETTINGS frame that raises the initial window of the
+streams, starts it again, so a client that widens its windows slowly but
+steadily gets the whole response. A client that stops reading makes smock
+stop reading too, once what smock has queued for the connection and not
+yet written passes 16 KiB, so the client cannot make it hold its
+responses. See [Timeouts](docs/http2.md#timeouts) and
+[The output bound](docs/http2.md#the-output-bound).
 
 Known limitation: after answering a request with 400, 413, 431, 501 or 505,
 smock closes the connection without reading the rest of the request. A
 client that is still sending it, such as a body over `--body-limit`, may
 then get a connection reset instead of the error response. smock would
 need to close only its sending side first (a half-close), which the async
-library it is built on does not offer yet.
+library it is built on does not offer yet. Over HTTP/2, such a response
+ends only its stream, so the connection stays open and the client gets it.
 
 On SIGTERM, smock drains instead of dropping requests, so that a rolling
 update does not fail the tests running against the old Pod. SIGINT and
@@ -170,13 +235,19 @@ SIGHUP do not drain: they end smock at once, cutting whatever is in
 flight, so that Ctrl-C stops a local smock promptly.
 
 - `/readyz` fails from the moment the signal arrives. The plain and TLS
-  listeners close, so new connections are refused, and idle keep-alive
-  connections close at once.
+  listeners close, so new connections are refused, and idle HTTP/1.1
+  keep-alive connections close at once.
 - Responses in progress finish with `Connection: close`, and their
   connections close after them. Server-Sent Event streams and pending
-  delays go on. A stream whose client has gone away counts too, until smock
-  next writes an event to it and notices, which an event's long delay can
-  put off until the drain timeout.
+  delays go on. Over HTTP/1.1, an event stream whose client has gone away
+  counts too, until smock next writes an event to it and notices, which an
+  event's long delay can put off until the drain timeout.
+- Each HTTP/2 connection, idle or not, gets GOAWAY, then a PING. Once the
+  client answers the PING, or a second later at most, a second GOAWAY names
+  the last stream smock received. The HTTP/2 streams up to it finish, as
+  above, and the client sends the others again on a new connection. Once
+  no HTTP/2 stream is in progress, the connection closes
+  ([The drain](docs/http2.md#the-drain)).
 - smock exits with status 0 as soon as nothing is in flight, and at the
   latest when the drain timeout (`--drain-timeout-ms`) expires: what is still
   running then is cut. Keep the Pod's `terminationGracePeriodSeconds` above
@@ -206,8 +277,15 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
   usable PEM, or a key that does not belong to the certificate stops
   `smock serve` with a log entry that says why, and exit status 1 (2 for a
   missing partner setting).
-- ALPN offers only `http/1.1`. TLS 1.2 and 1.3 are accepted.
-- The Host header chooses the Mock, as on the plain port; SNI does not.
+- ALPN offers `h2`, then `http/1.1`, for every certificate. A client that
+  offers `h2` gets HTTP/2, and one that offers only `http/1.1`, or no ALPN,
+  gets HTTP/1.1 ([h2 on the TLS port](docs/http2.md#h2-on-the-tls-port)).
+  `--tls-http2 off` offers `http/1.1` alone.
+  TLS 1.2 and 1.3 are accepted. Over TLS 1.2, `h2` is left out when the
+  suite is one HTTP/2 prohibits, such as a CBC suite
+  ([TLS 1.2](docs/http2.md#tls-12)).
+- The Host header, or `:authority` over HTTP/2, chooses the Mock, as on the
+  plain port; SNI does not.
 - The `listening` log entry of the TLS port names the certificate and key
   files.
 
@@ -243,7 +321,8 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
   Mock, gets the default certificate: `--tls-cert-file`, or without it the
   generated self-signed certificate (below).
 - SNI follows the Hosts of the definition set served, reloads included. It
-  only chooses the certificate: the Host header still chooses the Mock.
+  only chooses the certificate: the Host header, or `:authority` over
+  HTTP/2, still chooses the Mock.
   Definition files never refer to certificates.
 - A listed Mock that the Definition files do not declare is not an error,
   since Mocks come and go on reload: its certificate is chosen for nothing
@@ -386,16 +465,17 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   Ephemeral Stub by `stub="ephemeral"`, and a request that matched no Stub
   by `stub=""`. A request is labelled with the Mock that answered it, the
   Default Mock included, or `mock=""` when no Mock did. A request the
-  HTTP/1.1 codec rejects (400, 413, 431, 501 or 505, such as a malformed
-  head or a body over `--body-limit`) counts with `mock=""` and `stub=""`,
-  timed from the read that brought it; it is not an unmatched request, and
-  the Journal does not record it. Labels never carry a path, Host, method,
+  protocol layer rejects (HTTP/1.1: 400, 413, 431, 501 or 505, such as a
+  malformed head or a body over `--body-limit`; HTTP/2: 400, 413 or 431 on
+  its stream) counts with `mock=""` and `stub=""`, timed from the read that
+  brought it; it is not an unmatched request, and the Journal does not
+  record it. Labels never carry a path, Host, method,
   status or Session, so the number of series stays bounded by the
   Definition files. A request is counted once its response is written; the
   Admin API, probes and `/metrics` are not counted. Only the `mockoon` log
   format logs requests: a `Transaction recorded` line for each request
-  counted here, except those the codec rejects. The `json` format logs
-  none.
+  counted here, except those the protocol layer rejects. The `json` format
+  logs none.
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query
@@ -751,8 +831,9 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   its key, as `crud`; the status, or the connection Fault; when the
   request was received and how long the response took; and the digest of
   the definition set that answered. A request for a Host that no Mock
-  answers is recorded too, with no Mock; one the HTTP/1.1 codec rejects
-  (400, 413, 431, 501 or 505) is not.
+  answers is recorded too, with no Mock; one the protocol layer rejects
+  (HTTP/1.1: 400, 413, 431, 501 or 505; HTTP/2: 400, 413 or 431 on its
+  stream) is not.
 - A request is in the Journal as soon as its client has the whole
   response: smock records it just before it writes the response's last
   bytes, so a query made right after a call always finds it. A stream of
@@ -932,12 +1013,16 @@ attestation. It lists the packages of the distroless base and smock itself:
 the binary with the release's version, the commit and MoonBit toolchain it
 was built from, the MoonBit modules compiled into it, the MoonBit native
 runtime, mimalloc and simdutf, which come with the toolchain and are linked
-into it, and its dynamic link to the base's OpenSSL. The runtime, mimalloc
-and simdutf have the licences that [NOTICE](NOTICE) gives them. The runtime
-has the toolchain's version and mimalloc the one NOTICE gives; simdutf's is
-`NOASSERTION`, since the toolchain does not record it. To verify the SBOM
-of the linux/arm64 image and save it as `smock.spdx.json` (use `amd64` for
-linux/amd64):
+into it, and its dynamic link to the base's OpenSSL. It also lists the
+modules that the build resolves but compiles nothing from, such as
+moondate, mooncrypt and moonbase, which moonhttp imports: smock depends on
+them (`DEPENDS_ON`), but does not link them. Each module has the version
+the build resolves and the licence of its own module file. The runtime,
+mimalloc and simdutf have the licences that [NOTICE](NOTICE) gives them.
+The runtime has the toolchain's version and mimalloc the one NOTICE gives;
+simdutf's is `NOASSERTION`, since the toolchain does not record it. To
+verify the SBOM of the linux/arm64 image and save it as `smock.spdx.json`
+(use `amd64` for linux/amd64):
 
 ```sh
 digest=$(docker buildx imagetools inspect --raw ghcr.io/hirunefu/smock:<version> |
@@ -952,9 +1037,11 @@ The same `cosign verify` flags verify that architecture's signature with
 `"ghcr.io/hirunefu/smock@$digest"`. The GitHub release also has the SBOMs as
 files, `smock-<version>-linux-<arch>.spdx.json`.
 `scripts/verify-image.sh ghcr.io/hirunefu/smock:<version>` runs all of these
-checks. The SBOMs of 0.3.0 and earlier releases do not list the runtime,
-mimalloc and simdutf, so check an image of 0.3.0 or earlier with the script
-from its own tag, such as `git show v0.3.0:scripts/verify-image.sh`.
+checks. It expects every module that NOTICE names, so run it from a
+checkout of the image's own tag. The SBOMs of 0.3.0 and earlier releases do
+not list the runtime, mimalloc and simdutf, so check an image of 0.3.0 or
+earlier with the script from its own tag, such as
+`git show v0.3.0:scripts/verify-image.sh`.
 
 ### Verify the Helm chart
 
@@ -1072,7 +1159,10 @@ Packages of `smock/smock`:
 - `defdir`: reads the definitions directory and loads it, for
   `smock serve`, `smock check` and `smock render`, and takes the stamp of
   it that a poll compares (native).
-- `server`: the listeners, the connection loop and the Admin API (native).
+- `server`: the listeners, the HTTP/1.1 and HTTP/2 connection loops and
+  the Admin API (native). HTTP/2's framing, header compression and
+  connection state come from the `http2` package of moonbitstack/moonhttp
+  ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)).
   On the TLS port the same loop reads and writes through a TLS stream; on
   the admin port it answers the Admin API. It reloads rotated certificates,
   and reads the SNI name from the ClientHello before OpenSSL sees it, so that
@@ -1102,9 +1192,14 @@ Packages of `smock/smock`:
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
   carries them over the socket. It also generates self-signed certificates
-  in memory. Its C is `openssl/openssl.c`. The client side
-  (`openssl/client.mbt`) is there for the bindings' own tests, which run a
-  client and a server in memory under the sanitizers.
+  in memory. Its C is `openssl/openssl.c`. Its ALPN callback picks the
+  server's first protocol that the client offers, and leaves `h2` out over
+  a TLS 1.2 suite that HTTP/2 prohibits. The client side
+  (`openssl/client.mbt`) offers ALPN: the e2e tests speak HTTP/2 over the
+  TLS port with it, and the bindings' own tests run a client and a server
+  in memory under the sanitizers, some with the client held to TLS 1.2 and
+  chosen suites. That file also tells which protocol ALPN selected, which
+  `server` asks of each TLS connection.
 - `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
   leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
   `users.example.com` and `orders.example.com`, each leaf with its own fixed
@@ -1115,6 +1210,9 @@ Packages of `smock/smock`:
   times it writes, which the Admin API and the CLI also read.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
 - `e2e`: tests that run the `smock` binary as a black box (native).
+- `schema`: a test over every Definition-file fixture in
+  `schema/v1/fixtures/` that needs no `smock` binary: each, written as YAML
+  by `smock/yaml`, reads back as the same tree (native).
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
@@ -1144,12 +1242,19 @@ runs it when started by hand; `scripts/gke-bench.sh` runs it on GKE
 Autopilot before an integration branch is merged into `main` (see
 [Benchmark](#benchmark)).
 
+`scripts/h2spec/` holds the Definition file that CI serves to h2spec, the
+HTTP/2 conformance tool, and the lists of h2spec's cases that do not pass on
+the plain port and on the TLS port, each with its reason (see
+[Build and test](#build-and-test)).
+
 ## Toolchain
 
 The MoonBit toolchain version is pinned in `.moonbit-version`, and CI installs
 exactly that version, as does the release workflow; the release notes name
-it. A weekly CI job also builds and tests with the latest stable MoonBit and
-opens an issue when that fails.
+it. A weekly CI job also builds and tests with the latest stable MoonBit,
+the modules smock imports included, and opens an issue when that fails.
+moonbitstack/moonhttp is pinned to one exact version, and raised only on
+purpose ([Upgrading moonhttp](docs/releasing.md#upgrading-moonhttp)).
 
 ## Build and test
 
@@ -1160,17 +1265,23 @@ moon check --deny-warn --target all
 moon fmt --check
 moon bench -p smock/smock/engine --release   # match index lookups: 100 vs 10,000 Stubs
 scripts/check-no-io.sh         # no I/O in the protocol modules, the packages that decide a response and the OpenAPI converter
-scripts/check-no-c.sh          # the C boundary of ADR 0001
+scripts/check-no-c.sh          # the C boundary of ADR 0001, in smock and in the modules it resolves (after moon check; needs jq)
+scripts/check-moonhttp-pin.sh  # the build resolves the moonhttp that moon.mod names (needs jq)
+scripts/check-notice.sh        # NOTICE names the toolchain and every module the build resolves (needs jq)
+scripts/test-dependency-checks.sh    # the three checks above, on copies of the modules they read (after moon check; needs jq)
 scripts/test-openssl-asan.sh   # the OpenSSL bindings under AddressSanitizer and LeakSanitizer
 scripts/build-release.sh       # dist/smock
 dist/smock --version
 scripts/check-schema.sh dist/smock   # the JSON Schema and smock agree
 scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
+scripts/install-h2spec.sh      # the pinned h2spec, into ~/.local/bin
+scripts/check-h2spec.sh dist/smock   # h2spec's conformance cases against the plain and TLS ports (needs h2spec, python3 and jq)
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq and jq)
 scripts/test-release-notes.sh        # the release notes, with CHANGELOG.md's links at the release's tag
 scripts/test-sbom.sh                 # the SBOM scripts, and the check that the SBOM and NOTICE agree (needs jq)
+scripts/test-h2spec-verdict.sh       # how a run of h2spec is judged against its list of cases
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
 scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture, and the SDK job takes it (needs yq and jq)
 scripts/check-llm-sdks.sh dist/smock # the official LLM SDKs, pinned by hash, read smock's LLM responses (needs python3 and PyPI)
@@ -1215,10 +1326,43 @@ fails the test. Adding a fixture file under
 `schema/v1/fixtures/` adds it to the cross-check; the README there says
 which directory a fixture belongs in.
 
+`scripts/check-h2spec.sh` runs h2spec 2.6.0, the HTTP/2 conformance tool,
+against a smock binary: every case of its `generic`, `http2` and `hpack`
+sections, strict cases included, against the plain port, as h2c, and then
+against the TLS port, as h2 by ALPN, with the self-signed certificate,
+which h2spec does not verify. `scripts/check-h2spec.sh dist/smock tls` runs
+one port alone. It takes about 40 seconds. smock serves `scripts/h2spec/definitions`, where a Stub at
+`/`, the path h2spec requests, answers every method with 200 and a body of
+4 KiB; without a body, h2spec would skip its flow-control cases.
+`scripts/h2spec/plain.txt` and `scripts/h2spec/tls.txt` list the cases that
+do not pass on each port, each with its reason: a case that h2spec skips, a case left out,
+whose outcome does not count, or a case that fails until the issue named
+beside it is done. A case that fails or is skipped without being listed so
+fails the run, and so does a listed case that h2spec no longer has. The
+output lists every listed case with its outcome and reason, and names each
+listed case that passed, so that it can come off the list. h2spec checks
+RFC 7540 and RFC 7541 only; the e2e tests cover what RFC 9113 adds to the
+rules for header fields.
+
+h2spec publishes a Linux binary for amd64 only. `scripts/install-h2spec.sh`
+installs h2spec 2.6.0 into a directory, `~/.local/bin` unless one is given:
+on amd64, the release binary, checked against its SHA-256; on arm64, a
+build from h2spec's `v2.6.0` tag, checked against the tag's commit, with Go
+1.27.3, which it downloads, checks against its SHA-256 and removes again.
+The build needs `git` and downloads about 70 MB. `scripts/check-h2spec.sh`
+runs the h2spec it finds on `PATH`. On either architecture, then:
+
+```sh
+scripts/install-h2spec.sh
+scripts/build-release.sh
+scripts/check-h2spec.sh dist/smock
+```
+
 CI runs all of these but `moon bench` (`.github/workflows/ci.yml`). The
-tests on wasm-gc and the scripts from `scripts/check-release-workflow.sh`
-to `scripts/test-helm-chart.sh` run on linux/amd64; the rest run on
-linux/amd64 and linux/arm64 (`.github/workflows/build-test.yml`).
+tests on wasm-gc, h2spec and the scripts from
+`scripts/check-release-workflow.sh` to `scripts/test-helm-chart.sh` run on
+linux/amd64; the rest run on linux/amd64 and linux/arm64
+(`.github/workflows/build-test.yml`).
 The SDK job, `scripts/check-llm-sdks.sh`, runs after `build-test.yml`,
 with the release binary built there, and reads smock's
 [LLM responses](docs/definition-files.md#llm-responses) with the
@@ -1245,14 +1389,33 @@ its own temporary definitions directory and port 0 for each port, so they
 run in parallel (`e2e/harness_test.mbt`). They need `moon`, `moonc`, `git`,
 `kill`, `mkfifo` and `openssl` on `PATH`. The HTTPS tests use clients that
 trust only the root CA of `testcerts`, and the HTTP/1.1 tests run on both
-the plain and the TLS port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
-read it from the handshake with `openssl s_client` and then trust only it.
+the plain and the TLS port. The HTTP/2 tests use moonhttp's client side
+over TCP to the plain port, or over TLS to the TLS port through the OpenSSL
+bindings' client side, which offers ALPN (`e2e/http2_harness_test.mbt`).
+The tests of the generated certificate (`e2e/self_signed_test.mbt`) read it
+from the handshake with `openssl s_client` and then trust only it.
 The test of the Journal's byte bound under a memory limit
 (`e2e/journal_bound_test.mbt`) starts smock in a systemd user scope with
 `MemoryMax`, as the benchmark does, so it needs `systemd-run` and a systemd
 user manager with the `memory` controller delegated to it (see
 [Run it on your machine](bench/README.md#run-it-on-your-machine)). Where a
 scope cannot get the limit, it prints why it skipped and passes.
+
+`moon` runs the async tests of a package in one process, on one event
+loop, ten at a time. A test that computes without an await holds up the
+timers and reads of every other test running then: in `e2e`, one that
+computed for half a second made the timing tests beside it fail. So an e2e
+test computes for no more than about 20 ms between awaits, and even ten
+such tests in a row delay a timer less than the timing tests allow. A
+timing test takes the time it measures from before it sends the request:
+taken after an await, that time can come late, and what follows then looks
+early, which the timing tests do not allow. Build a large input once, in a
+top-level `let`, which runs as the test process starts, and cheaply: with
+`String::make`, `Bytes::make` or by doubling, not with `String::repeat`,
+which appends one piece at a time. The harness writes a large file 1 MiB
+at a time. A check that must compute for longer, and needs no `smock`,
+goes in a package of its own, whose tests get a process of their own, as
+`schema` does.
 
 `SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that a
 native build, such as `scripts/build-release.sh`, records in the binary.
@@ -1261,8 +1424,9 @@ native build, such as `scripts/build-release.sh`, records in the binary.
 
 `bench/` is the release benchmark. It measures smock's real request path,
 realistic requests matched against a definition set with many Stubs with
-the Journal on, at fixed arrival rates under the CPU and memory limits of
-small GKE Autopilot Pods, and checks the provisional performance targets.
+the Journal on, over HTTP/1.1 and HTTP/2, at fixed arrival rates under the
+CPU and memory limits of small GKE Autopilot Pods, and checks the
+provisional performance targets.
 [bench/README.md](bench/README.md) says how to run it on a machine, on GKE
 Autopilot and in CI, what a run writes and how to compare runs. The
 [chart's sizing table](charts/smock/README.md#sizing) has what it measured.

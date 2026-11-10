@@ -573,12 +573,14 @@ def measured_text(target):
 
 
 def same_target(target, other):
-    """Whether two runs' targets are one: the same id, at the same load,
-    for the same architecture when both name it (a summary written before
-    the targets were by architecture does not). Under one id, each
-    architecture may have its own rate and bounds."""
+    """Whether two runs' targets are one: the same metric under the same
+    profile, at the same load (case and rate), for the same architecture
+    when both name it (a summary written before the targets were by
+    architecture does not). Each architecture may have its own rate and
+    bounds. The ids are not compared: in a summary written before an entry
+    could name several cases, a target's id does not name its case."""
     def load(one):
-        return one["id"], one.get("case"), one.get("rate")
+        return one["profile"], one["metric"], one.get("case"), one.get("rate")
 
     architectures = target.get("architecture"), other.get("architecture")
     return load(target) == load(other) and (None in architectures or architectures[0] == architectures[1])

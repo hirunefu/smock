@@ -44,6 +44,12 @@ jobs:
 
       - run: moon version --all
 
+      # moon takes the version moon.mod gives an import as a minimum, so a
+      # module that needs a later moonhttp would raise it. This fails on any
+      # difference, which is what pins moonhttp exactly (ADR 0005).
+      - name: Check that the build resolves the moonhttp that moon.mod names
+        run: scripts/check-moonhttp-pin.sh
+
       - name: Check formatting
         if: inputs.toolchain == 'pinned'
         run: moon fmt --check
@@ -54,8 +60,21 @@ jobs:
       - name: Check that the protocol modules and the packages that decide a response do no I/O
         run: scripts/check-no-io.sh
 
-      - name: Check the C boundary (ADR 0001)
+      # It also scans the modules the build resolves outside moonbitlang,
+      # which moon check downloaded: moonhttp and the modules it imports, so
+      # that an upgrade brings no C (ADR 0005).
+      - name: Check the C boundary (ADR 0001), in smock and in its resolved modules
         run: scripts/check-no-c.sh
+
+      # NOTICE names every module the build resolves, of any owner and
+      # transitive ones included, at the version the build resolves, and
+      # says which of them smock compiles nothing from (ADR 0005). The
+      # release workflow runs the same check.
+      - name: Check that NOTICE names the toolchain and every module the build resolves
+        run: scripts/check-notice.sh
+
+      - name: Test the moonhttp pin check, the C check of the resolved modules and the NOTICE check
+        run: scripts/test-dependency-checks.sh
 
       - name: Test every module natively
         run: moon test --target native
@@ -79,6 +98,20 @@ jobs:
           "${GITHUB_SHA::12}"
           "moonc $(moonc -v | cut -d' ' -f1)"
 
+      # h2spec publishes a Linux binary for amd64 only, so it runs there.
+      # Every case of its generic, http2 and hpack sections runs against
+      # the plain port (h2c) and the TLS port (h2, by ALPN);
+      # scripts/h2spec/plain.txt and tls.txt list the cases that do not pass
+      # on each, with their reasons, and the log names a listed case that
+      # passes, so that it can come off.
+      - name: Install h2spec
+        if: matrix.arch == 'amd64'
+        run: scripts/install-h2spec.sh "$RUNNER_TEMP/bin"
+
+      - name: Run h2spec against the plain port (h2c) and the TLS port (h2)
+        if: matrix.arch == 'amd64'
+        run: scripts/check-h2spec.sh dist/smock plain tls
+
       # The release workflow builds and smoke-tests the image the same way.
       - name: Build the container image
         run: docker build --provenance=false --tag smock:ci .
@@ -98,15 +131,21 @@ jobs:
       # The release workflow makes the published image's SBOM the same way,
       # but only for a tag: this checks on every push that smock, its
       # MoonBit modules, and the runtime, mimalloc and simdutf of the
-      # toolchain get into it, the last three as NOTICE names them.
+      # toolchain get into it. The modules are every module the build
+      # resolves, moonhttp and the modules it imports among them; they and
+      # the last three must be as NOTICE names them.
       - name: Make the image's SBOM as the release workflow does
         env:
           SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
+          scripts/resolved-modules.sh --json >modules.json
           "$SYFT" scan docker:smock:ci --output spdx-json=sbom.spdx.json
-          scripts/add-smock-to-sbom.sh sbom.spdx.json "$SMOCK_VERSION" "$GITHUB_SHA"
-          jq -e --arg version "$SMOCK_VERSION" \
-            'any(.packages[]; .name == "smock" and .versionInfo == $version)' sbom.spdx.json
+          scripts/add-smock-to-sbom.sh sbom.spdx.json "$SMOCK_VERSION" "$GITHUB_SHA" modules.json
+          jq -e --arg version "$SMOCK_VERSION" --slurpfile modules modules.json '
+            [.packages[] | "\(.name)@\(.versionInfo)"] as $packages
+            | ($packages | index("smock@\($version)")) != null
+            and any(.packages[]; .name == "moonbitstack/moonhttp")
+            and ([$modules[0][] | "\(.name)@\(.version)"] - $packages) == []' sbom.spdx.json
           scripts/check-sbom-notice.sh sbom.spdx.json
 
       - name: Install helm, kubectl and kind

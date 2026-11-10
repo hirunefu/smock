@@ -874,3 +874,87 @@ async test "a symlink outside the definitions directory pointed at a file with t
     })
   })
 }
+
+///|
+/// The body file of the test of a reload of a large file: 16 MiB, which a
+/// debug build of smock takes about 400 ms to hash on an idle CPU.
+let large_body_file_bytes : Int32 = 16 * 1024 * 1024
+
+///|
+/// How long a request may take while a reload hashes the large body file.
+/// A debug build answers within about 10 ms, since it hashes 64 KiB between
+/// pauses. The tests of this package share one event loop, so a test that
+/// computes meanwhile delays the reply as it reaches this test, and this
+/// allows as much as the other timing tests do, such as `lateness` in
+/// sse_test.mbt. It stays under the 400 ms it takes to hash the file at
+/// once.
+let while_reloading_ms : Int64 = 250
+
+///|
+async test "while a reload hashes a large body file, requests on an open connection are answered at once, from the old set, then the new" {
+  with_definitions(
+    [
+      ("mocks.json", reload_mock),
+      ("ping.json", stub_file("ping", "/ping", "old")),
+    ],
+    dir => {
+      // Written once, before smock starts. Each reload reads and hashes it
+      // again, whichever file changed.
+      @fs.mkdir("\{dir}/files")
+      @fs.write_file(
+        "\{dir}/files/large.bin",
+        Bytes::make(large_body_file_bytes, b'x'),
+      )
+      let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+        let conn = smock.connect()
+        defer conn.close()
+        let before = smock.status()
+        write(dir, "ping.json", stub_file("ping", "/ping", "new"))
+        // One request at a time on the connection, from the change until
+        // the new set answers, so that one is waiting whenever smock is
+        // busy reloading.
+        let bodies = []
+        let mut slowest = 0L
+        let swapped = @async.with_timeout_opt(reload_patience_ms, () => {
+          for ;; {
+            let start = @async.now()
+            conn.write(raw_request("GET", "/ping", host="localhost"))
+            guard read_framed(conn) is Some((_, body)) else {
+              fail("the connection closed")
+            }
+            let took = @async.now() - start
+            if took > slowest {
+              slowest = took
+            }
+            let body = @utf8.decode(body)
+            if bodies.last() != Some(body) {
+              bodies.push(body)
+            }
+            if body == "new" {
+              break
+            }
+            @async.sleep(5)
+          }
+        })
+        let after = smock.status()
+        let in_time = if slowest <= while_reloading_ms {
+          "true"
+        } else {
+          "false: one took \{slowest} ms"
+        }
+        inspect(
+          (
+            $|swapped in time: \{swapped is Some(_)}; \{last_reload(after)}, digest changed: \{after.get("digest") != before.get("digest")}
+            $|bodies, in order: \{bodies.join(", ")}
+            $|every request answered within \{while_reloading_ms} ms: \{in_time}
+          ),
+          content=(
+            #|swapped in time: true; "swapped", digest changed: true
+            #|bodies, in order: old, new
+            #|every request answered within 250 ms: true
+          ),
+        )
+      })
+    },
+  )
+}

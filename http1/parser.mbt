@@ -376,7 +376,7 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
           scan = Broken
         }
       Target =>
-        if c > b' ' && c < b'\x7f' {
+        if is_visible_byte(c) {
           count += 1
         } else if c == b' ' && count > 0 {
           scan = Version
@@ -463,7 +463,7 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       while at + 8 <= stop && is_visible(bytes.unsafe_read_uint64_le(at)) {
         at += 8
       }
-      while at < stop && buf[at] > b' ' && buf[at] < b'\x7f' {
+      while at < stop && is_visible_byte(buf[at]) {
         at += 1
       }
       count += at - from
@@ -586,8 +586,15 @@ fn has_control(word : UInt64) -> Bool {
 }
 
 ///|
+/// Whether `c` is a visible ASCII character, 0x21 to 0x7e, as each byte of
+/// a request target is (`is_visible_ascii`).
+fn is_visible_byte(c : Byte) -> Bool {
+  c > b' ' && c < b'\x7f'
+}
+
+///|
 /// Whether each of the eight bytes of `word` is a visible ASCII character,
-/// 0x21 to 0x7e, as a request target is made of.
+/// as `is_visible_byte` says.
 fn is_visible(word : UInt64) -> Bool {
   let below = (word - ONES * 0x21) & word.lnot()
   // A byte of 0x7f or more sets its high bit in word + 1 or in word.
@@ -653,10 +660,8 @@ fn parse_head(
         }
       }
     } else if is_name(name, "expect") {
-      for expectation in list_elements(header.value) {
-        if expectation.to_lower() == "100-continue" {
-          expect_continue = true
-        }
+      if expects_continue(@utf8.decode_lossy(header.value)) {
+        expect_continue = true
       }
     }
   }
@@ -699,6 +704,78 @@ fn parse_head(
     version is Http11 &&
     !(framing is Length(0)),
   })
+}
+
+///|
+/// Whether the Expect field value `value` asks for `100 Continue`: one of
+/// the elements of its comma-separated list (RFC 9110, section 5.6.1),
+/// without the spaces and tabs around it, is `100-continue`, in any case
+/// (section 10.1.1). HTTP/2's `expect` field reads the same way.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.expects_continue("100-continue"), content="true")
+///   inspect(@http1.expects_continue("x, 100-Continue "), content="true")
+///   inspect(@http1.expects_continue("100-continue; x"), content="false")
+/// }
+/// ```
+pub fn expects_continue(value : StringView) -> Bool {
+  let length = value.length()
+  let mut start = 0
+  while start <= length {
+    let mut end = start
+    while end < length && value[end] != ',' {
+      end += 1
+    }
+    // The element from `start` to `end`, without the white space around
+    // it.
+    let mut first = start
+    let mut last = end
+    while first < last && is_space_or_tab(value[first]) {
+      first += 1
+    }
+    while last > first && is_space_or_tab(value[last - 1]) {
+      last -= 1
+    }
+    if last - first == 12 && is_100_continue(value, first) {
+      return true
+    }
+    start = end + 1
+  }
+  false
+}
+
+///|
+/// Whether the 12 code units of `value` from `at` spell `100-continue`, in
+/// any case.
+fn is_100_continue(value : StringView, at : Int32) -> Bool {
+  let expected = "100-continue"
+  for i in 0..<12 {
+    let c = value[at + i]
+    // An ASCII letter in upper case differs from its lower case in bit
+    // 0x20 alone.
+    let lower = if c >= 'A' && c <= 'Z' { c | 0x20 } else { c }
+    if lower != expected[i] {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// Whether the code unit `c` is a space or a tab: the white space allowed
+/// around a field value (RFC 9110, section 5.5), which HTTP/2 does not
+/// allow there.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.is_space_or_tab(' '), content="true")
+///   inspect(@http1.is_space_or_tab('\t'), content="true")
+///   inspect(@http1.is_space_or_tab('x'), content="false")
+/// }
+/// ```
+pub fn is_space_or_tab(c : UInt16) -> Bool {
+  c == ' ' || c == '\t'
 }
 
 ///|

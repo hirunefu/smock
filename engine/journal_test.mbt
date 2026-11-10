@@ -1317,3 +1317,65 @@ test "with the Journal off, for the Mock or globally, the state still moves: onl
     ),
   )
 }
+
+///|
+test "an entry of an HTTP/2 request shows its version, the Host its authority gives, and only the fields the client sent" {
+  let h = harness([("users.json", journal_users)])
+  let outcome = h.engine.handle(
+    {
+      meth: "GET",
+      target: "/users/1?x=y",
+      version: "HTTP/2",
+      headers: [("accept", "text/plain")],
+      body: b"",
+    },
+    authority="Users.Example.com:8443",
+    session=Some("test-a"),
+    now=h.now,
+    rand=h.rand,
+  )
+  guard outcome.journal is Some(entry) else { fail("no entry") }
+  h.engine.commit(entry)
+  entry.finish(at=h.now + 3)
+  let digest = h.engine.status().digest
+  json_inspect(h.query(Some("test-a")), content={
+    "entries": [
+      {
+        "seq": 1,
+        "receivedAt": "2026-10-12T14:30:05.123Z",
+        "durationMs": 3,
+        "session": "test-a",
+        "host": "users.example.com",
+        "mock": "users",
+        "viaDefault": false,
+        "digest": Json::string(digest),
+        "request": {
+          "method": "GET",
+          "target": "/users/1?x=y",
+          "version": "HTTP/2",
+          "headers": [{ "name": "accept", "value": "text/plain" }],
+          "body": {
+            "encoding": "utf-8",
+            "data": "",
+            "size": 0,
+            "truncated": false,
+          },
+        },
+        "stub": "get-user",
+        "stubSource": "file",
+        "scenario": Json::null(),
+        "responseIndex": Json::null(),
+        "crud": Json::null(),
+        "variablesWritten": [],
+        "dataWritten": [],
+        "dataError": Json::null(),
+        "nearMiss": Json::null(),
+        "status": 200,
+        "fault": Json::null(),
+        "templateError": Json::null(),
+      },
+    ],
+    "more": false,
+    "evicted": 0,
+  })
+}

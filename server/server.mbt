@@ -122,6 +122,7 @@ pub async fn serve(
   logger.info("listening", fields={
     "listener": "admin",
     "address": Json::string("0.0.0.0:\{admin_listener.addr.port()}"),
+    "protocols": ["http/1.1"],
   })
   // The runtime cancels the whole program on SIGTERM, the one cancellation
   // signal set above. The watcher below notices that and starts the drain,
@@ -183,10 +184,12 @@ async fn sleep_forever() -> Unit {
 ///
 /// The drain closes the plain and TLS listeners and the idle connections at
 /// once. The responses in progress go on, and end with
-/// `Connection: close`; Server-Sent Event streams and delays go on too. When
-/// none is left, or when the drain timeout expires and cuts those still
-/// open and they have ended, the drain ends. The admin port serves
-/// throughout, so the probes can be read during the drain.
+/// `Connection: close`; Server-Sent Event streams and delays go on too. Each
+/// HTTP/2 connection, idle or not, gets GOAWAY, and closes once its streams
+/// have ended (`H2Connection::start_drain`). When none is left, or when the
+/// drain timeout expires and cuts those still open and they have ended, the
+/// drain ends. The admin port serves throughout, so the probes can be read
+/// during the drain.
 ///
 /// In the mockoon log format, when `stdout` is given, the
 /// `Server started on port …` line of each Mock comes right after the TLS
@@ -279,10 +282,13 @@ async fn run(
     }
     // Without default certificate files, the TLS port presents a
     // self-signed certificate generated for the Hosts served, unless SNI
-    // chooses a Mock's own.
+    // chooses a Mock's own. Every certificate accepts the protocols
+    // --tls-http2 gives by ALPN.
+    let alpn = tls_alpn(settings.tls_http2)
     guard Certificates::load(
         settings.tls,
         settings.tls_mock_certs,
+        alpn~,
         engine~,
         logger~,
         metrics~,
@@ -298,13 +304,17 @@ async fn run(
       return 1
     }
     lifecycle.serving()
+    // Each port names the protocols it serves: the plain port HTTP/1.1, and
+    // HTTP/2 by prior knowledge; the TLS port those ALPN offers.
     logger.info("listening", fields={
       "listener": "plain",
       "address": Json::string("0.0.0.0:\{plain.addr.port()}"),
+      "protocols": ["http/1.1", "h2c"],
     })
     let tls_fields : Map[String, Json] = {
       "listener": "tls",
       "address": Json::string("0.0.0.0:\{tls_listener.addr.port()}"),
+      "protocols": Json::array(alpn.map(protocol => Json::string(protocol))),
     }
     if settings.tls is Some(files) {
       add_file_fields(tls_fields, files)
@@ -341,7 +351,7 @@ async fn run(
           defer plain.close()
           accept_loop(plain, conn => {
             connections.serve(group, conn, connection => {
-              let _ = ports.serve(conn, conn, connection)
+              let _ = ports.serve(conn, conn, connection, h2c=true)
             })
           })
         })
@@ -357,7 +367,13 @@ async fn run(
                 TlsStream::accept(conn, name => certificates.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
-              let writable = ports.serve(stream, conn, connection)
+              // ALPN chose the protocol: HTTP/2, whose loop reads the
+              // preface itself, or HTTP/1.1, which never looks for it.
+              let writable = if stream.is_http2() {
+                ports.serve_http2(stream, connection, b"")
+              } else {
+                ports.serve(stream, conn, connection, h2c=false)
+              }
               // A reset sends no close_notify: the RST alone ends the
               // connection. Nor does a connection whose client takes nothing
               // more, as after a write timed out: the write would wait.
@@ -379,7 +395,7 @@ async fn run(
     listening.wait() catch {
       _ => ()
     }
-    connections.close_idle()
+    connections.drain()
     let ended = @async.with_timeout_opt(settings.drain_timeout_ms, () => {
       connections.wait_all_ended()
     })
@@ -467,6 +483,16 @@ priv struct MockPorts {
 /// connection with an RST, nor after a write timed out, since the client
 /// takes nothing more.
 ///
+/// With `h2c`, as on the plain port, a connection that starts with the
+/// HTTP/2 connection preface is served as HTTP/2 (`MockPorts::serve_http2`),
+/// and any other over HTTP/1.1, as below. Without it, as on the TLS port
+/// for a connection that did not choose `h2` by ALPN, every connection is
+/// HTTP/1.1.
+///
+/// Each request takes the steps every request to the Mocks takes
+/// (`MockPorts::decide`, `commit` and `done`), and this loop writes its
+/// response over HTTP/1.1, between them.
+///
 /// The engine's plan for a request may hold back the response by a delay:
 /// the status line is written once the delay is over, and meanwhile other
 /// connections are served as usual. A connection Fault in the plan ends the
@@ -503,11 +529,12 @@ priv struct MockPorts {
 ///
 /// While smock drains, a response says `Connection: close`, and the
 /// connection closes after it.
-async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
+async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve(
   self : MockPorts,
   stream : S,
   tcp : @socket.Tcp,
   connection : Connection,
+  h2c~ : Bool,
 ) -> Bool {
   let was_reset = Ref(false)
   let headers = DecodedHeaders::new()
@@ -523,16 +550,12 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
     stopwatch : Stopwatch,
     now : Int64,
   ) -> Bool {
-    let engine_request = to_engine_request(request, headers.of(request))
-    let session = self.sessions.session_of(engine_request.headers)
-    let outcome = self.engine.handle(
-      engine_request,
-      session~,
+    let outcome = self.decide(
+      to_engine_request(request, headers.of(request)),
       now~,
-      rand=self.rand,
     )
     defer {
-      self.traffic.record(outcome, stopwatch.seconds())
+      self.done(outcome, stopwatch)
       if pending_line is Some(pending_line) {
         pending_line.outcome = Some(outcome)
       }
@@ -551,13 +574,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
         close~,
         date=self.dates.at(now),
       )
-      if outcome.journal is Some(entry) {
-        self.engine.commit(entry)
-      }
-      // Deferred after the count, so it runs before it.
-      defer (if outcome.journal is Some(entry) {
-        entry.finish(at=@async.now())
-      })
+      self.commit(outcome.journal)
       // Each write that returns has made progress, and gives the next
       // the whole write timeout from then.
       let watchdog = stream.watchdog
@@ -571,7 +588,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
           offset=written,
           len=response.length() - written,
         )
-        watchdog.stop()
+        watchdog.stop_writing()
         if written == response.length() {
           break
         }
@@ -580,20 +597,15 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       return @http1.keeps_open(request~, close~) &&
         !self.lifecycle.is_draining()
     }
+    // The entry is committed once, by whichever comes first: the
+    // response's last bytes, or the end of the request.
     let pending = Ref(outcome.journal)
     let commit = () => {
-      if pending.val is Some(entry) {
-        pending.val = None
-        self.engine.commit(entry)
-      }
+      self.commit(pending.val)
+      pending.val = None
     }
-    // Deferred after the count, so it runs before it.
-    defer {
-      commit()
-      if outcome.journal is Some(entry) {
-        entry.finish(at=@async.now())
-      }
-    }
+    // Deferred after the end of the steps, so it runs before it.
+    defer commit()
     if plan.delay_ms > 0 {
       @async.sleep(plan.delay_ms)
     }
@@ -634,7 +646,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
     status : Int32,
     stopwatch : Stopwatch,
   ) -> Unit {
-    defer self.traffic.record_rejected(stopwatch.seconds())
+    defer self.rejected(stopwatch)
     @io.Writer::write(
       stream,
       @http1.encode_response(
@@ -646,7 +658,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       ),
     )
   }
-  let writable = match pending_line {
+  let served = match pending_line {
     // Each request's line comes once `respond` is done with it, however it
     // ended, so that the json format's request path stays as it was.
     Some(pending_line) =>
@@ -654,6 +666,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
         stream,
         self.settings,
         connection~,
+        h2c~,
         respond=(stream, request, stopwatch, now) => {
           defer pending_line.write(request)
           respond(stream, request, stopwatch, now)
@@ -661,9 +674,19 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
         reject~,
       )
     None =>
-      serve_connection(stream, self.settings, connection~, respond~, reject~)
+      serve_connection(
+        stream,
+        self.settings,
+        connection~,
+        h2c~,
+        respond~,
+        reject~,
+      )
   }
-  writable && !was_reset.val
+  match served {
+    Http1(writable~) => writable && !was_reset.val
+    Http2(read) => self.serve_http2(stream, connection, read)
+  }
 }
 
 ///|
@@ -685,7 +708,8 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 /// It reads and writes only through `stream`, so the same loop serves any
 /// byte stream: a TCP connection, or a TLS session on top of one. It logs
 /// nothing per request: in the mockoon log format, `respond` does. Returns
-/// whether `stream` can still be written to: not after a write timed out.
+/// `Http1` with whether `stream` can still be written to: not after a write
+/// timed out.
 ///
 /// - `respond` writes the response to each request, or part of it, and
 ///   returns whether the connection stays open after it. It writes to
@@ -703,14 +727,22 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 ///   of the requests before them.
 /// - `connection`, when given, is kept told whether the connection is idle,
 ///   so that a drain can close it.
+/// - With `h2c`, the first octets are checked for the HTTP/2 connection
+///   preface first (`ConnectionLoop::read_preface`). A connection that
+///   starts with it is not served here: the loop returns `Http2` with the
+///   octets read so far, for the HTTP/2 loop to go on with. The idle timeout
+///   bounds the wait for the first octet, and the read timeout from it the
+///   rest of the preface, and of a request that turns out to be HTTP/1.1.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
   respond~ : async (WatchedStream[S], @http1.Request, Stopwatch, Int64) -> Bool,
   reject~ : async (WatchedStream[S], Int32, Stopwatch) -> Unit,
   connection? : Connection,
-) -> Bool {
+  h2c~ : Bool = false,
+) -> Served {
   let mut writable = true
+  let mut preface = None
   @async.with_task_group(group => {
     let now = @async.now()
     let watchdog = Watchdog::new(group, write_timeout=settings.write_timeout_ms)
@@ -736,6 +768,16 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
       read_deadline: None,
       read_since: now,
       last_read: Stopwatch::start(),
+    }
+    if h2c {
+      match state.read_preface(stream) {
+        Absent => ()
+        Present(read) => {
+          preface = Some(read)
+          return
+        }
+        Ended => return
+      }
     }
     for ;; {
       match state.parser.next() {
@@ -777,7 +819,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           // it this read and the connection.
           state.watchdog.reading(deadline, state.now)
           let n = @io.Reader::read(stream, state.buf)
-          state.watchdog.stop()
+          state.watchdog.stop_reading()
           if state.connection is Some(connection) {
             connection.idle = false
           }
@@ -798,7 +840,21 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   if connection is Some(connection) {
     connection.idle = false
   }
-  writable
+  match preface {
+    Some(read) => Http2(read)
+    None => Http1(writable~)
+  }
+}
+
+///|
+/// How a connection `serve_connection` served ended.
+priv enum Served {
+  /// Served over HTTP/1.1 to its end, with whether its stream can still be
+  /// written to.
+  Http1(writable~ : Bool)
+  /// Not served: it starts with the HTTP/2 connection preface. The octets
+  /// read so far, the preface first.
+  Http2(Bytes)
 }
 
 ///|
@@ -821,7 +877,8 @@ priv struct ConnectionLoop {
   mut read_deadline : Int64?
   /// When the bytes not yet parsed began to count against the read timeout:
   /// when they were read, or, for bytes read before a response, when it was
-  /// written, since nothing is read while a response is written.
+  /// written, since nothing is read while a response is written. The bytes
+  /// of the preface check (`read_preface`) count from the first of them.
   mut read_since : Int64
   /// Started at the last read, which brought the last byte of every request
   /// the parser holds complete.
@@ -854,7 +911,7 @@ fn to_engine_request(
 /// so such a field keeps its decoded value: a field a client sends with
 /// every request is decoded once per connection.
 priv struct DecodedHeaders {
-  /// The fields decoded last, by their place in their request.
+  /// The fields of the request decoded last, by their place in it.
   fields : Array[@http1.Header]
   /// Each of them, decoded.
   decoded : Array[(String, String)]
@@ -879,7 +936,7 @@ fn DecodedHeaders::of(
       out.push(self.decoded[i])
       continue
     }
-    let field = (header.name, @utf8.decode_lossy(header.value))
+    let field = (header.name, header_text(header.value))
     if i < self.fields.length() {
       self.fields[i] = header
       self.decoded[i] = field
@@ -889,14 +946,45 @@ fn DecodedHeaders::of(
     }
     out.push(field)
   }
+  self.keep(headers.length())
   out
 }
 
 ///|
-/// The header fields of `request`, with their values decoded as UTF-8 and
-/// invalid bytes replaced by U+FFFD.
+/// Keeps the header fields of the request decoded last, of `count` fields,
+/// and lets go of those past them, which a longer request before left:
+/// the connection holds one request's fields at most, which
+/// `--header-size-limit` bounds, rather than the last field each place
+/// ever held.
+fn DecodedHeaders::keep(self : DecodedHeaders, count : Int32) -> Unit {
+  drop_past(self.fields, count, placeholder=no_header)
+  drop_past(self.decoded, count, placeholder=no_text)
+}
+
+///|
+/// Drops the elements of `array` past its first `count`. A truncated array
+/// still holds them in its buffer until they are overwritten, so they are
+/// overwritten with `placeholder`.
+fn[T] drop_past(array : Array[T], count : Int32, placeholder~ : T) -> Unit {
+  if count < array.length() {
+    array.truncate(count)
+    array.release_unused(placeholder~)
+  }
+}
+
+///|
+/// What the places past the header fields kept hold: nothing.
+let no_header : @http1.Header = { name: "", value: b"", }
+
+///|
+/// What the places past the decoded fields kept hold: nothing.
+let no_text : (String, String) = ("", "")
+
+///|
+/// The header fields of `request`, with their values decoded as
+/// `header_text` decodes them.
 fn decoded_headers(request : @http1.Request) -> Array[(String, String)] {
-  request.headers.map(header => (header.name, @utf8.decode_lossy(header.value)))
+  request.headers.map(header => (header.name, header_text(header.value)))
 }
 
 ///|

@@ -1,46 +1,51 @@
 // The timeouts of a connection's waits on its client, kept by one
 // `Watchdog` per connection, which runs one sleeper task at a time. Nothing
 // here knows HTTP: the HTTP/1.1 connection loop (`serve_connection`) gives
-// the watchdog the deadline of each read, and its writes go through a
-// `WatchedStream`, which gives each write the write timeout.
-
-///|
-/// What a connection waits on its client for.
-priv enum Wait {
-  /// Nothing: smock handles a request, or waits on itself, as during a
-  /// delay or between the events of a stream.
-  Nothing
-  /// Bytes from the client.
-  Read
-  /// Room for bytes it writes: the client to read what it was sent.
-  Write
-}
+// the watchdog the deadline of each read, the HTTP/2 one
+// (`MockPorts::serve_http2`) the earliest deadline of its streams and of
+// the connection, with what to do when it comes, and the writes of both go
+// through a `WatchedStream`, which gives each write the write timeout.
 
 ///|
 /// The timeouts of one connection's waits on its client: each read has the
 /// deadline it is given, and each write the write timeout from when it
 /// starts to wait, which is when it starts and again after each progress.
+/// A read and a write may wait at once, as on an HTTP/2 connection, whose
+/// streams' tasks write while it reads; each keeps its own deadline.
+///
 /// Rather than each wait setting up a timer of its own, which costs a task
 /// group, a task and a timer per wait, the watchdog runs one task per
-/// connection, its sleeper, which sleeps until the deadline of the wait in
-/// progress and, when that wait is still in progress at its deadline, ends
-/// the connection's task group, which cancels it. A wait whose deadline is
-/// later than the sleeper's wake-up only moves the deadline, and the
-/// sleeper goes back to sleep until it when it wakes; only a wait whose
-/// deadline is earlier replaces the sleeper with a new one. A sleeper never
-/// sleeps longer than the write timeout, so that a write, whose deadline is
-/// that far away, never starts one: a response adds no task or timer. While
-/// nothing waits on the client, as during a delay, the sleeper never ends
-/// the group.
+/// connection, its sleeper, which sleeps until the earliest deadline of the
+/// waits in progress and, when a wait is still in progress at its deadline,
+/// ends the connection's task group, which cancels it. A wait whose
+/// deadline is later than the sleeper's wake-up only moves the deadline,
+/// and the sleeper goes back to sleep until it when it wakes; only a wait
+/// whose deadline is earlier replaces the sleeper with a new one. A sleeper
+/// never sleeps longer than the write timeout, so that a write, whose
+/// deadline is that far away, never starts one: a response adds no task or
+/// timer. While nothing waits on the client, as during a delay, the sleeper
+/// never ends the group.
+///
+/// A connection whose reads have deadlines that do not end it, as an
+/// HTTP/2 connection's streams have, gives the watchdog `expired`: the read
+/// deadline is then the earliest of the connection's own deadlines, kept
+/// whether or not a read waits, and when it comes, `expired` does what it
+/// calls for, such as resetting a stream, and gives the next. One that has
+/// passed already ends the group, as a read past its deadline does, and
+/// `expired` can end it as a write that timed out does
+/// (`time_out_writing`).
 priv struct Watchdog {
   /// The task group the connection is served in.
   group : @async.TaskGroup[Unit]
   /// The write timeout, in milliseconds.
   write_timeout : Int64
-  /// What the connection waits on its client for.
-  mut wait : Wait
-  /// When the wait in progress times out, in `@async.now()` milliseconds.
-  mut deadline : Int64
+  /// While a read waits for bytes from the client, when it times out, in
+  /// `@async.now()` milliseconds; `forever` while none waits. With
+  /// `expired`, the earliest of the connection's deadlines, or earlier.
+  mut read_deadline : Int64
+  /// While a write waits for room for its bytes, for the client to read
+  /// what it was sent, when it times out; `forever` while none waits.
+  mut write_deadline : Int64
   /// When the current sleeper wakes next: `forever` before the first.
   mut wakes_at : Int64
   /// The current sleeper, by its number: a sleeper that a newer one
@@ -49,6 +54,10 @@ priv struct Watchdog {
   /// Whether a write that timed out ended the group: the client then takes
   /// nothing more, and nothing more can be written to it.
   mut write_timed_out : Bool
+  /// When set, it is called with the time when the read deadline comes: it
+  /// does what that deadline calls for, in place of ending the group, and
+  /// returns the next read deadline.
+  mut expired : ((Int64) -> Int64)?
 }
 
 ///|
@@ -65,19 +74,31 @@ fn Watchdog::new(
   {
     group,
     write_timeout: write_timeout.to_int64(),
-    wait: Nothing,
-    deadline: 0L,
+    read_deadline: forever,
+    write_deadline: forever,
     wakes_at: forever,
     sleeper: None,
     write_timed_out: false,
+    expired: None,
   }
 }
 
 ///|
 /// A read starts waiting at `now`, as `@async.now()` gave it, until
-/// `deadline` at the latest.
+/// `deadline` at the latest. A read already waiting gets that deadline.
 fn Watchdog::reading(self : Watchdog, deadline : Int64, now : Int64) -> Unit {
-  self.start(Read, deadline, now)
+  self.read_deadline = deadline
+  self.start(now)
+}
+
+///|
+/// With `expired`, a deadline of the connection's has come into being, at
+/// `deadline`: the read deadline moves to it if it is earlier. `now` is the
+/// time, as `@async.now()` gave it.
+fn Watchdog::read_by(self : Watchdog, deadline : Int64, now : Int64) -> Unit {
+  if deadline < self.read_deadline {
+    self.reading(deadline, now)
+  }
 }
 
 ///|
@@ -85,27 +106,48 @@ fn Watchdog::reading(self : Watchdog, deadline : Int64, now : Int64) -> Unit {
 /// starts, or after it has made progress. It may wait until the write
 /// timeout after `now`.
 fn Watchdog::writing(self : Watchdog, now : Int64) -> Unit {
-  self.start(Write, now + self.write_timeout, now)
+  self.write_deadline = now + self.write_timeout
+  self.start(now)
 }
 
 ///|
-/// The read or the write has stopped waiting.
-fn Watchdog::stop(self : Watchdog) -> Unit {
-  self.wait = Nothing
+/// A wait of the connection's that counts as a write, though no write
+/// waits on the socket, has waited the write timeout by `now`, as an HTTP/2
+/// response body that waits for the client to widen its connection window:
+/// called from `expired`, it has the sleeper end the group as for a write
+/// that timed out, so that nothing more is written to the client.
+fn Watchdog::time_out_writing(self : Watchdog, now : Int64) -> Unit {
+  self.write_deadline = now
 }
 
 ///|
-/// `wait` starts at `now`, until `deadline` at the latest.
-fn Watchdog::start(
-  self : Watchdog,
-  wait : Wait,
-  deadline : Int64,
-  now : Int64,
-) -> Unit {
-  self.wait = wait
-  self.deadline = deadline
-  if deadline < self.wakes_at {
-    // The current sleeper would wake too late.
+/// The read has stopped waiting.
+fn Watchdog::stop_reading(self : Watchdog) -> Unit {
+  self.read_deadline = forever
+}
+
+///|
+/// The write has stopped waiting.
+fn Watchdog::stop_writing(self : Watchdog) -> Unit {
+  self.write_deadline = forever
+}
+
+///|
+/// When the first of the waits in progress times out: `forever` while
+/// none is in progress.
+fn Watchdog::deadline(self : Watchdog) -> Int64 {
+  if self.read_deadline < self.write_deadline {
+    self.read_deadline
+  } else {
+    self.write_deadline
+  }
+}
+
+///|
+/// A wait has started at `now`, or its deadline has moved: a new sleeper
+/// replaces the current one when that one would wake too late.
+fn Watchdog::start(self : Watchdog, now : Int64) -> Unit {
+  if self.deadline() < self.wakes_at {
     let number = match self.sleeper {
       Some((number, sleeper)) => {
         sleeper.cancel()
@@ -120,12 +162,14 @@ fn Watchdog::start(
 }
 
 ///|
-/// When a sleeper that goes to sleep at `now` wakes: at the deadline of the
-/// wait in progress, and at the latest the write timeout after `now`.
+/// When a sleeper that goes to sleep at `now` wakes: at the first deadline
+/// of the waits in progress, and at the latest the write timeout after
+/// `now`.
 fn Watchdog::wake_up(self : Watchdog, now : Int64) -> Int64 {
   let latest = now + self.write_timeout
-  if self.wait is (Read | Write) && self.deadline < latest {
-    self.deadline
+  let deadline = self.deadline()
+  if deadline < latest {
+    deadline
   } else {
     latest
   }
@@ -133,14 +177,18 @@ fn Watchdog::wake_up(self : Watchdog, now : Int64) -> Int64 {
 
 ///|
 /// The sleeper numbered `number`, until a newer one replaces it: it sleeps
-/// until its wake-up, then ends the group when the wait in progress is past
-/// its deadline, and otherwise sleeps again.
+/// until its wake-up, then ends the group when a wait in progress is past
+/// its deadline, and otherwise sleeps again. A read deadline that has come
+/// goes to `expired` first, when it is set, for the next.
 async fn Watchdog::run_sleeper(self : Watchdog, number : Int32) -> Unit {
   while self.sleeper is Some((current, _)) && current == number {
     let now = @async.now()
     if now >= self.wakes_at {
-      if self.wait is (Read | Write) && now >= self.deadline {
-        self.write_timed_out = self.wait is Write
+      if now >= self.read_deadline && self.expired is Some(expired) {
+        self.read_deadline = expired(now)
+      }
+      if now >= self.deadline() {
+        self.write_timed_out = now >= self.write_deadline
         self.group.return_immediately(())
         return
       }
@@ -177,6 +225,6 @@ impl[S : @io.Writer] @io.Writer for WatchedStream[S] with fn write_once(
 ) {
   self.watchdog.writing(@async.now())
   let n = @io.Writer::write_once(self.stream, data, offset~, len~)
-  self.watchdog.stop()
+  self.watchdog.stop_writing()
   n
 }

@@ -15,6 +15,10 @@ such as Mock, Stub and Session.
 - [definition-files.md](definition-files.md) describes the format of
   Definition files: how Stubs match requests, what they answer,
   templates, Variables, Data buckets, CRUD Stubs, Faults and reloading.
+- [http2.md](http2.md) says how clients reach smock over HTTP/2, h2c on
+  the plain port and h2 on the TLS port, from curl, Go, the JVM, browsers
+  and behind a load balancer. It says what a Stub and the Journal see of
+  an HTTP/2 request, and how smock bounds what one connection can cost.
 - [importing-openapi.md](importing-openapi.md) turns an OpenAPI document
   into a Definition file with `smock import-openapi`, and says what is
   generated and how to regenerate it.
@@ -72,6 +76,9 @@ such as Mock, Stub and Session.
     per Pod, and scales by adding Pods.
   - [ADR 0004](adr/0004-journal-byte-bound-follows-the-memory-limit.md)
     makes the Journal's default byte bound follow the memory limit.
+  - [ADR 0005](adr/0005-http2-comes-from-moonhttp.md) takes HTTP/2's
+    framing, HPACK and connection state from moonbitstack/moonhttp, a
+    MoonBit module with no I/O and no C.
 - [GLOSSARY.md](../GLOSSARY.md) defines the domain terms, and the words
   to avoid for each.
 - [`schema/v1/fixtures/README.md`](../schema/v1/fixtures/README.md) says

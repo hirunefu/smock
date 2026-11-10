@@ -104,7 +104,13 @@ mocks:
 
 - A request's Host is the authority of an absolute-form target, such as
   `GET http://orders.example.com/orders/1 HTTP/1.1`, or else its `Host`
-  header.
+  header. Over [HTTP/2](http2.md), it is `:authority`, or else the `host`
+  field. A request that sends both, naming different Hosts, gets 400
+  ([Requests smock refuses](http2.md#requests-smock-refuses)).
+- No `host` field is added for `:authority`: `header.host` and a `host`
+  header condition see only a `host` field the client sent. An HTTP/2
+  client that gives its Host by `:authority` alone sends none, so tell
+  Hosts apart with each Mock's `hosts`.
 - Hosts are exact names, with no wildcards. They are compared
   case-insensitively, without the port and without a trailing dot, so
   `Users.Example.com.:8080` is the Host `users.example.com`. An IPv6 address
@@ -116,8 +122,8 @@ mocks:
 - Each Host belongs to at most one Mock. The same Host repeated within one
   Mock is fine.
 
-A request whose Host no Mock lists, or that has none (HTTP/1.0 allows that),
-goes to the Default Mock:
+A request whose Host no Mock lists, or that has none (HTTP/1.0 and HTTP/2
+allow that), goes to the Default Mock:
 
 - the Mock marked `default: true`; at most one Mock may be marked;
 - otherwise the only Mock, when the definition set declares exactly one, so
@@ -486,7 +492,10 @@ that has no `debug` cookie with the value `1`.
 smock reads cookies from the `Cookie` header like this:
 
 - Every `Cookie` field of the request is read, so cookies that a client or
-  a proxy splits over several lines still match.
+  a proxy splits over several lines still match. Over
+  [HTTP/2](http2.md#what-a-stub-sees), a request's `cookie` fields are
+  first joined into one, so `header.cookie` and a `headers` condition on
+  `cookie` see the one line an HTTP/1.1 client sends.
 - Each field is split on `;`, and each part is trimmed of spaces and tabs.
 - The first `=` of a part separates the name from the value, so `a=b=c` is
   the cookie `a` with the value `b=c`. A part without `=` is skipped.
@@ -1042,6 +1051,12 @@ in block style or in quotes. smock sets `Content-Length` from the body;
 `Content-Length`, `Transfer-Encoding` and `Connection` cannot be given,
 nor can `Smock-Mock`, which smock adds when the Default Mock answers.
 
+Over HTTP/2, header names go out in lower case, and spaces and tabs around
+a value are trimmed. `Keep-Alive`, `Upgrade`, `Proxy-Connection` and `TE`
+are left out, since HTTP/2 forbids them in a response (RFC 9113, section
+8.2.2); over HTTP/1.1 they are sent as written. A 2xx to an HTTP/2 CONNECT
+has no `content-length` and no body. See [HTTP/2](http2.md#responses).
+
 smock sends a `Date` header with the current time on every final
 response, such as `Date: Thu, 22 Oct 2026 14:37:10 GMT`, and none on an
 interim `100 Continue`. A Stub may give its own `Date`,
@@ -1203,6 +1218,16 @@ data: line 2
   connection open but stops reading is cut by the
   [write timeout](../README.md#run): when the write of an event makes no
   progress for `--write-timeout-ms`, smock closes the connection.
+- Over HTTP/2, each event stream is an HTTP/2 stream of its own, so one
+  connection can carry several at once, and its other HTTP/2 streams are
+  answered meanwhile. The HEADERS carry `content-type: text/event-stream`
+  and no `content-length`. Each event goes out as DATA, split where the
+  client's frame size or flow-control windows require, and the DATA of the
+  last event ends the HTTP/2 stream. A response with no body is its HEADERS
+  alone. A client that resets the HTTP/2 stream ends the event stream at
+  once, without waiting for the next event, and its request is in the
+  Journal, as one whose client disconnects is
+  ([HTTP/2](http2.md#server-sent-events)).
 
 ### JSON bodies
 
@@ -1461,6 +1486,11 @@ A stream travels as the events of an `events` response do:
 - To an HTTP/1.1 client the stream is sent with chunked framing, so the
   connection carries the next request. An HTTP/1.0 client gets it
   unframed, and smock closes the connection to end it.
+- Over HTTP/2, the stream is an HTTP/2 stream of its own, sent as any
+  event stream is: the HEADERS carry no `content-length`, each event goes
+  out as DATA, and the DATA of the last event ends the HTTP/2 stream. A
+  client that resets it ends the stream at once
+  ([HTTP/2](http2.md#server-sent-events)).
 - A reply to `HEAD`, or with status 204 or 304, is the status and the
   headers alone, for the stream as for the JSON reply.
 - smock plans the whole JSON body, or every event, before it applies
@@ -5704,8 +5734,10 @@ seed:
 ### Delays
 
 A `delay` makes smock wait before it writes the status line. Meanwhile it
-keeps serving other connections. The delay is drawn from one distribution,
-in whole milliseconds:
+keeps serving other connections. Over HTTP/2, it waits before the stream's
+HEADERS and delays only that stream: the other streams of the connection
+are answered meanwhile ([HTTP/2](http2.md#streams-that-wait)). The delay is
+drawn from one distribution, in whole milliseconds:
 
 | Distribution | Delay |
 |---|---|
@@ -5734,7 +5766,7 @@ of getting its response:
   closes the connection. The client sees a response cut short. For a 206
   to a [Range request](#range-requests), the body is the range. For
   Server-Sent Events, the first half is the first half of the events,
-  rounded down, each after its delay, and the stream is not ended.
+  rounded down, each after its delay, and the event stream is not ended.
   - A response with no body bytes to halve, such as an empty body or a
     response to `HEAD`, would be whole that way. smock leaves out the empty
     line that ends its headers instead, so the client still sees it cut
@@ -5742,6 +5774,22 @@ of getting its response:
   - A stream of Server-Sent Events to an HTTP/1.0 client ends when the
     connection closes, so a client cannot tell a partial one from a whole
     stream with fewer events.
+
+Over HTTP/2, each kind takes its nearest form, so that it fails the request
+on its stream, or the connection for `close`
+([HTTP/2](http2.md#faults)):
+
+- `reset`: smock reads the whole request, body included, then resets its
+  stream alone, with RST_STREAM and the error code `INTERNAL_ERROR`. The
+  other streams of the connection go on.
+- `close`: smock sends GOAWAY with `NO_ERROR`, naming the highest stream
+  the client has opened, then closes the connection. Its other streams end
+  with it: smock sends nothing more on them.
+- `partial`: smock sends the HEADERS, with the `content-length` of the
+  whole body, and the first half of the body, or of the events, then
+  resets the stream with RST_STREAM `INTERNAL_ERROR`. A response with no
+  body to halve sends its HEADERS without ending the stream, then the
+  reset.
 
 `probability`, from 0 to 1, is the share of matched requests that fail;
 without it, every matched request fails. A Stub with both a delay and a
@@ -5836,7 +5884,10 @@ restart:
 - A reload reads and validates every file, builds a whole new definition
   set and swaps it in at once, so no request sees half of a change.
   Requests already being handled finish with the set they started with,
-  body-file bytes included.
+  body-file bytes included. Until the swap, requests are answered from the
+  current set, also while the digest of the new files is computed, however
+  large they are. Reading and validating the new files can still delay
+  requests for a moment, longer for larger files.
 - Ephemeral Stubs survive the swap. A Mock the new set no longer declares
   is gone: its Ephemeral Stubs are dropped, and its Hosts resolve like any
   unknown Host.

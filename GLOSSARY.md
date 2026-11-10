@@ -51,7 +51,7 @@ The real service a Mock impersonates. Forwarding the requests a Mock does not ma
 _Avoid_: Backend, origin, target
 
 **Fault**:
-A deliberate failure a Stub injects into its response, such as a delay drawn from a distribution or a reset connection.
+A deliberate failure a Stub injects into its response, such as a delay drawn from a distribution or a reset connection or stream.
 _Avoid_: Chaos, toxic, error injection
 
 **Plugin**:

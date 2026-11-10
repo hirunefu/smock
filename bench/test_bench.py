@@ -292,6 +292,7 @@ class Conditions(unittest.TestCase):
             "duration_s": 4,
             "tail_s": 2,
             "connections": connections,
+            "streams_per_connection": 1,
             "idle_connections": 0,
         }])
 
@@ -880,6 +881,112 @@ class Cases(unittest.TestCase):
         self.assertGreaterEqual(rss["samples"][-1][0], 3)
 
 
+def option_value(command, option):
+    """The value that follows `option` in a command line, or None when the
+    option is not there."""
+    return command[command.index(option) + 1] if option in command else None
+
+
+class Protocols(unittest.TestCase):
+    """A case's protocol says how oha sends its requests: `http` and `h2c`
+    to smock's plain port, `https` and `h2` over TLS to its TLS port, and
+    `h2c` and `h2` over HTTP/2, one request at a time on each connection
+    unless the case says how many streams each carries at once. Whether a
+    case uses TLS alone decides its port, the URL's scheme, oha's --insecure
+    and the port --connect-to redirects."""
+
+    REQUEST = {"name": "get-order", "method": "POST", "host": "orders.bench.internal", "target": "/orders?page=2",
+               "headers": [["Accept", "application/json"], ["baggage", "smock-session=bench-get-order"]],
+               "body": '{"id": 7}'}
+
+    def command(self, protocol, connection="keep-alive", streams=1):
+        """The oha command line of a step of a case over `protocol`, with
+        `streams` streams at once on each connection, sent to smock at
+        10.0.0.7, on the port of the protocol's kind."""
+        spec = {"protocol": protocol, "connection": connection, "streams_per_connection": streams, "ramp_s": 2,
+                "duration_s": 20, "tail_s": 3}
+        port = {"plain": "8080", "tls": "8443"}[harness.traffic_port(protocol)]
+        return harness.oha_command("oha", spec, self.REQUEST, "120.000000", 7, Path("/r/oha.json"),
+                                   Path("/r/oha.sqlite"), "10.0.0.7", port)
+
+    def test_tls_alone_decides_the_port_the_scheme_insecure_and_the_connect_to_port_and_http2_adds_http2_and_p(self):
+        shown = {}
+        for protocol in ("http", "https", "h2c", "h2"):
+            command = self.command(protocol)
+            shown[protocol] = {
+                "port": harness.traffic_port(protocol),
+                "url": command[-1],
+                "insecure": "--insecure" in command,
+                "connect_to": option_value(command, "--connect-to"),
+                "http2": "--http2" in command,
+                "p": option_value(command, "-p"),
+            }
+        self.assertEqual(shown, {
+            "http": {"port": "plain", "url": "http://orders.bench.internal/orders?page=2", "insecure": False,
+                     "connect_to": "orders.bench.internal:80:10.0.0.7:8080", "http2": False, "p": None},
+            "https": {"port": "tls", "url": "https://orders.bench.internal/orders?page=2", "insecure": True,
+                      "connect_to": "orders.bench.internal:443:10.0.0.7:8443", "http2": False, "p": None},
+            "h2c": {"port": "plain", "url": "http://orders.bench.internal/orders?page=2", "insecure": False,
+                    "connect_to": "orders.bench.internal:80:10.0.0.7:8080", "http2": True, "p": "1"},
+            "h2": {"port": "tls", "url": "https://orders.bench.internal/orders?page=2", "insecure": True,
+                   "connect_to": "orders.bench.internal:443:10.0.0.7:8443", "http2": True, "p": "1"},
+        })
+
+    def test_every_protocol_sends_the_request_of_the_mix_at_its_rate_over_its_connections(self):
+        for protocol in ("http", "https", "h2c", "h2"):
+            command = self.command(protocol)
+            self.assertEqual(command[:21], [
+                "oha", "--no-tui", "--output-format", "json", "-o", "/r/oha.json", "--db-url", "/r/oha.sqlite",
+                "-z", "25000ms", "-q", "120.000000", "--latency-correction", "-w", "-c", "7", "--worker-threads",
+                "1", "-t", "30s", "--disable-compression"], protocol)
+            self.assertEqual(option_value(command, "-m"), "POST", protocol)
+            self.assertEqual([command[i + 1] for i, arg in enumerate(command) if arg == "-H"],
+                             ["Accept: application/json", "baggage: smock-session=bench-get-order"], protocol)
+            self.assertEqual(option_value(command, "-d"), '{"id": 7}', protocol)
+            self.assertNotIn("--disable-keepalive", command, protocol)
+        # A new connection for each request, over HTTP/1.1.
+        for protocol in ("http", "https"):
+            self.assertIn("--disable-keepalive", self.command(protocol, "new-per-request"), protocol)
+
+    def test_a_multiplexed_case_sends_as_many_requests_at_once_on_each_connection_as_it_has_streams(self):
+        # oha's -p: it runs connections times streams requests at once, each
+        # connection carrying that many streams.
+        for protocol in ("h2c", "h2"):
+            command = self.command(protocol, streams=4)
+            self.assertIn("--http2", command, protocol)
+            self.assertEqual((option_value(command, "-c"), option_value(command, "-p"), command.count("-p")),
+                             ("7", "4", 1), protocol)
+
+    def test_an_unknown_protocol_a_new_connection_per_request_over_http2_or_streams_it_cannot_have_are_refused(self):
+        # oha's --disable-keepalive does not work with HTTP/2, and only
+        # HTTP/2 carries several requests on a connection at once. Nothing
+        # starts.
+        for change, problem in (({"protocol": "h3"}, "case http-keep-alive has the protocol h3, which the harness "
+                                                     "does not know: http, https, h2c or h2"),
+                                ({"protocol": "h2c", "connection": "new-per-request"},
+                                 "case http-keep-alive opens a new connection per request over HTTP/2 (h2c), which "
+                                 "oha cannot do: give it keep-alive connections"),
+                                ({"streams_per_connection": 4},
+                                 "case http-keep-alive has 4 streams per connection over HTTP/1.1 (http), where a "
+                                 "connection carries one request at a time: give it the protocol h2c or h2"),
+                                ({"protocol": "h2c", "streams_per_connection": 0},
+                                 "case http-keep-alive has 0 streams per connection: give it a whole number from 1"),
+                                ({"protocol": "h2c", "streams_per_connection": 2.5},
+                                 "case http-keep-alive has 2.5 streams per connection: give it a whole number "
+                                 "from 1")):
+            plan = read(BENCH, "plan.json")
+            plan["cases"] = [{**plan["cases"][0], **change}]
+            out = Path(tempfile.mkdtemp(prefix="smock-bench-test-"))
+            self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+            (out / "plan.json").write_text(json.dumps(plan))
+            result = subprocess.run([sys.executable, str(BENCH / "bench.py"), "run", "--smock", str(out / "no-smock"),
+                                     "--plan", str(out / "plan.json"), "--out", str(out / "results")],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn(f"bench: {harness.shown_path(out / 'plan.json')}: {problem}", result.stderr)
+            self.assertFalse((out / "results").exists())
+
+
 class IdleRss(unittest.TestCase):
     """Idle RSS is measured after startup with the benchmark's definitions,
     under the profiles the plan names for it: in bench/plan.json, a 1-CPU
@@ -1110,6 +1217,39 @@ class AutopilotProfiles(unittest.TestCase):
         for target in idle_targets:
             self.assertIn(target["verdict"], ("met", "missed"), target["id"])
 
+    def test_the_http2_cases_send_the_mix_over_h2c_and_over_h2_on_keep_alive_connections(self):
+        out = bench(self, "--plan", self.PLAN, "--cases", "h2c-keep-alive,h2-keep-alive,h2c-multiplexed", "--profiles",
+                    "chart-default", "--rate", "100", *SHORT)
+        cases = {c["case"]: c for c in read(out, "summary.json")["cases"]}
+        self.assertEqual({name: (c["protocol"], c["connection"], c["connections"], c["streams_per_connection"])
+                          for name, c in cases.items()}, {
+            "h2c-keep-alive": ("h2c", "keep-alive", 64, 1),
+            "h2-keep-alive": ("h2", "keep-alive", 64, 1),
+            "h2c-multiplexed": ("h2c", "keep-alive", 16, 4),
+        })
+        self.assertEqual({c["id"]: c["streams_per_connection"] for c in read(out, "conditions.json")["cases"]},
+                         {"h2c-keep-alive@chart-default": 1, "h2-keep-alive@chart-default": 1,
+                          "h2c-multiplexed@chart-default": 4})
+        # The 16 connections split by weight, at least one each, by largest
+        # remainder: 4.8, 1.6, 3.2, 0.8, 2.4, 0.8, 0.8, 1.12 and 0.48 give
+        # 15, and the last goes to the largest remainder, 0.8, which four
+        # requests tie at; in floating point, user-preferences's (5 x 16 /
+        # 100) is a hair above catalog-item's (30 x 16 / 100 less 4) and
+        # comes first of the other two.
+        self.assertEqual({kind["name"]: kind["connections"] for kind in cases["h2c-multiplexed"]["per_request"]}, {
+            "catalog-item": 4, "catalog-search": 1, "user-profile": 3, "user-preferences": 2, "create-order": 2,
+            "get-order": 1, "update-order-status": 1, "create-payment": 1, "legacy-payment": 1,
+        })
+        for name, result in cases.items():
+            # Every request got the status the mix expects, h2 over TLS
+            # included, which oha offers alone by ALPN.
+            self.assertEqual(result["errors"], 0, name)
+            self.assertEqual(result["requests"]["ok"], result["requests"]["scheduled"], name)
+            self.assertGreaterEqual(result["requests"]["ok"], 390, name)
+            # Over the load generator's few connections.
+            self.assertLess(result["tcp_passive_opens"], result["connections"] + result["requests"]["scheduled"] / 4,
+                            name)
+
     def test_each_case_climbs_a_ladder_scaled_to_the_cpu_limit_through_the_rate_of_each_profiles_targets(self):
         plan = read(BENCH, "plan-autopilot.json")
         profiles = {profile["name"]: profile for profile in plan["profiles"]}
@@ -1119,10 +1259,23 @@ class AutopilotProfiles(unittest.TestCase):
             "chart-default": ("1", "1Gi"),
         })
         cases = {c["name"]: c for c in plan["cases"]}
-        self.assertEqual({name: (c["protocol"], c["connection"]) for name, c in cases.items()}, {
-            "http-keep-alive": ("http", "keep-alive"),
-            "https-keep-alive": ("https", "keep-alive"),
+        self.assertEqual({name: (c["protocol"], c["connection"], c["connections"], c.get("streams_per_connection", 1),
+                                 c.get("local_only", False)) for name, c in cases.items()}, {
+            "http-keep-alive": ("http", "keep-alive", 64, 1, False),
+            "https-keep-alive": ("https", "keep-alive", 64, 1, False),
+            "h2c-keep-alive": ("h2c", "keep-alive", 64, 1, False),
+            "h2-keep-alive": ("h2", "keep-alive", 64, 1, False),
+            # About 64 requests at once, as in the others, but 4 at a time
+            # on each of 16 connections; only on one machine.
+            "h2c-multiplexed": ("h2c", "keep-alive", 16, 4, True),
         })
+        # The HTTP/2 cases differ from http-keep-alive in the protocol
+        # alone, and the multiplexed one in its connections, their streams
+        # and where it runs: its ladders included.
+        mine = ("name", "protocol", "connections", "streams_per_connection", "local_only")
+        for name in ("h2c-keep-alive", "h2-keep-alive", "h2c-multiplexed"):
+            self.assertEqual({key: value for key, value in cases[name].items() if key not in mine},
+                             {key: value for key, value in cases["http-keep-alive"].items() if key not in mine}, name)
         for case in cases.values():
             for name, rates in case["rates"].items():
                 self.assertEqual(rates, sorted(rates), (case["name"], name))
@@ -1138,13 +1291,16 @@ class AutopilotProfiles(unittest.TestCase):
             self.assertGreaterEqual(case["rates"]["autopilot-burst-min"][-1], 4000)
         # Each target of each architecture is measured by a full run: its
         # profile has its limits, and its case climbs through its rate
-        # under it.
+        # under it, for each case an entry names, the HTTP/2 ones included.
+        held = set()
         for target in [t for targets in harness.read_targets(BENCH / "targets.json").values() for t in targets]:
             profile = profiles[target["profile"]]
             self.assertEqual((profile["cpu_limit"], profile["memory_limit"]),
                              (target["cpu_limit"], target["memory_limit"]), target["id"])
             if target["rate"] is not None:
                 self.assertIn(target["rate"], cases[target["case"]]["rates"][target["profile"]], target["id"])
+                held.add(target["case"])
+        self.assertEqual(held, {"http-keep-alive", "h2c-keep-alive", "h2-keep-alive"})
 
     def test_the_plans_description_names_the_target_rates_of_each_architecture(self):
         # Such as "5,000 under 250m" for autopilot-min's target on arm64,
@@ -1204,16 +1360,17 @@ class Targets(unittest.TestCase):
         summary = read(out, "summary.json")
         targets = {t["id"]: t for t in summary["targets"]}
         self.assertEqual({i: t["verdict"] for i, t in targets.items()}, {
-            "small/p99": "met",
-            "small/p99_9": "missed",
-            "small/oom_kills": "met",
-            "small/peak_memory": "missed",
+            "small/http-keep-alive/p99": "met",
+            "small/http-keep-alive/p99_9": "missed",
+            "small/http-keep-alive/oom_kills": "met",
+            "small/http-keep-alive/peak_memory": "missed",
             "small/idle_rss": "met",
         })
         self.assertEqual({t["architecture"] for t in summary["targets"]}, {LOCAL_ARCHITECTURE})
         result = case(out, "http-keep-alive@small")
-        self.assertEqual(targets["small/p99"]["measured"], result["latency_ms"]["p99"])
-        self.assertEqual(targets["small/peak_memory"]["measured"], round(result["memory"]["peak_bytes"] / MiB, 2))
+        self.assertEqual(targets["small/http-keep-alive/p99"]["measured"], result["latency_ms"]["p99"])
+        self.assertEqual(targets["small/http-keep-alive/peak_memory"]["measured"],
+                         round(result["memory"]["peak_bytes"] / MiB, 2))
         self.assertEqual(targets["small/idle_rss"]["measured"], round(summary["idle_rss"][0]["rss_kib"] / 1024, 2))
         # summary.md says which architecture's targets it checked, and has
         # a row for each, with its profile, what it is and its verdict.
@@ -1252,15 +1409,20 @@ class TargetsFile(unittest.TestCase):
                                t["rate"], t["metric"], t["max"], t["unit"]) for t in targets[architecture]}
             expected = {}
             for profile, (cpu, memory, rate, p99, p99_9) in load.items():
-                at_load = (architecture, profile, cpu, memory, "http-keep-alive", rate)
-                expected |= {
-                    f"{profile}/p99": (*at_load, "p99", p99, "ms"),
-                    f"{profile}/p99_9": (*at_load, "p99_9", p99_9, "ms"),
-                    f"{profile}/peak_memory": (*at_load, "peak_memory", 32, "MiB"),
-                    f"{profile}/idle_rss": (architecture, profile, cpu, memory, None, None, "idle_rss", 20, "MiB"),
-                }
-                if profile == "autopilot-burst-min":
-                    expected[f"{profile}/oom_kills"] = (*at_load, "oom_kills", 0, "OOM kills")
+                # http-keep-alive's targets hold for its HTTP/2 twins too,
+                # h2 over TLS included, which https-keep-alive is not held
+                # to.
+                for name in KEEP_ALIVE_CASES:
+                    at_load = (architecture, profile, cpu, memory, name, rate)
+                    expected |= {
+                        f"{profile}/{name}/p99": (*at_load, "p99", p99, "ms"),
+                        f"{profile}/{name}/p99_9": (*at_load, "p99_9", p99_9, "ms"),
+                        f"{profile}/{name}/peak_memory": (*at_load, "peak_memory", 32, "MiB"),
+                    }
+                    if profile == "autopilot-burst-min":
+                        expected[f"{profile}/{name}/oom_kills"] = (*at_load, "oom_kills", 0, "OOM kills")
+                expected[f"{profile}/idle_rss"] = (architecture, profile, cpu, memory, None, None, "idle_rss", 20,
+                                                   "MiB")
             self.assertEqual(shown, expected, architecture)
 
     def test_each_set_says_where_it_comes_from_and_that_it_is_provisional(self):
@@ -1302,6 +1464,13 @@ class TargetsFile(unittest.TestCase):
 # 250m and 512Mi, http-keep-alive at 1,000 requests/s.
 SMALL = {"profile": "small", "cpu_limit": "250m", "memory_limit": "512Mi", "case": "http-keep-alive", "rate": 1000,
          "at_most": {"p99_ms": 3, "p99_9_ms": 10, "oom_kills": 0, "peak_memory_mib": 32, "idle_rss_mib": 20}}
+
+# The keep-alive cases of bench/plan-autopilot.json that the targets of
+# http-keep-alive hold for: it and its HTTP/2 twins.
+KEEP_ALIVE_CASES = ["http-keep-alive", "h2c-keep-alive", "h2-keep-alive"]
+
+# SMALL, naming the three keep-alive cases in place of http-keep-alive.
+SEVERAL = {**{key: value for key, value in SMALL.items() if key != "case"}, "cases": KEEP_ALIVE_CASES}
 
 
 def idle_measured(profile="small", cpu_limit="250m", memory_limit="512Mi", rss_kib=16 * 1024, oom_killed=False):
@@ -1359,12 +1528,13 @@ class TargetsByArchitecture(unittest.TestCase):
         targets = harness.read_targets(targets_file(self, architectures=self.FILE))
         for architecture, verdict, maximum in (("arm64", "missed", 3), ("amd64", "met", 100)):
             checked_targets = {t["id"]: t for t in harness.check_targets(targets, architecture, summary)}
-            self.assertEqual(set(checked_targets), {"small/p99", "small/p99_9", "small/oom_kills",
-                                                    "small/peak_memory", "small/idle_rss"}, architecture)
-            p99 = checked_targets["small/p99"]
+            self.assertEqual(set(checked_targets), {
+                "small/http-keep-alive/p99", "small/http-keep-alive/p99_9", "small/http-keep-alive/oom_kills",
+                "small/http-keep-alive/peak_memory", "small/idle_rss"}, architecture)
+            p99 = checked_targets["small/http-keep-alive/p99"]
             self.assertEqual((p99["architecture"], p99["max"], p99["verdict"], p99["measured"]),
                              (architecture, maximum, verdict, 50), architecture)
-            self.assertEqual(checked_targets["small/p99_9"]["verdict"], "met", architecture)
+            self.assertEqual(checked_targets["small/http-keep-alive/p99_9"]["verdict"], "met", architecture)
 
     def test_a_run_on_an_architecture_with_no_targets_measures_none_and_says_why(self):
         summary = summary_of(idle=[idle_measured()], steps=[step_measured(p99=1.0)])
@@ -1373,7 +1543,8 @@ class TargetsByArchitecture(unittest.TestCase):
         # Each target of each architecture, in the file's order.
         self.assertEqual([(t["architecture"], t["id"]) for t in checked_targets],
                          [(architecture, f"small/{metric}") for architecture in ("arm64", "amd64")
-                          for metric in ("p99", "p99_9", "oom_kills", "peak_memory", "idle_rss")])
+                          for metric in ("http-keep-alive/p99", "http-keep-alive/p99_9", "http-keep-alive/oom_kills",
+                                         "http-keep-alive/peak_memory", "idle_rss")])
         for target in checked_targets:
             self.assertEqual((target["verdict"], target["measured"]), ("not measured", None), target["id"])
             self.assertEqual(target["reason"],
@@ -1389,7 +1560,8 @@ class TargetVerdicts(unittest.TestCase):
         # no memory limit.
         verdicts = checked(self, SMALL, idle=[idle_measured(profile="1", cpu_limit="1", memory_limit=None)],
                            steps=[step_measured(profile="1", cpu_limit="1", memory_limit=None, rate=50000)])
-        self.assertEqual(set(verdicts), {"small/p99", "small/p99_9", "small/oom_kills", "small/peak_memory",
+        self.assertEqual(set(verdicts), {"small/http-keep-alive/p99", "small/http-keep-alive/p99_9",
+                                         "small/http-keep-alive/oom_kills", "small/http-keep-alive/peak_memory",
                                          "small/idle_rss"})
         for verdict, measured, reason in verdicts.values():
             self.assertEqual((verdict, measured), ("not measured", None))
@@ -1413,27 +1585,28 @@ class TargetVerdicts(unittest.TestCase):
         within = checked(self, SMALL, idle=[idle_measured(rss_kib=16 * 1024)],
                          steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20), *others])
         self.assertEqual(within, {
-            "small/p99": ("met", 1.9, None),
-            "small/p99_9": ("met", 2.1, None),
-            "small/oom_kills": ("met", 0, None),
-            "small/peak_memory": ("met", 20.0, None),
+            "small/http-keep-alive/p99": ("met", 1.9, None),
+            "small/http-keep-alive/p99_9": ("met", 2.1, None),
+            "small/http-keep-alive/oom_kills": ("met", 0, None),
+            "small/http-keep-alive/peak_memory": ("met", 20.0, None),
             "small/idle_rss": ("met", 16.0, None),
         })
         over = checked(self, SMALL, idle=[idle_measured(rss_kib=21 * 1024)],
                        steps=[step_measured(p99=3.5, p99_9=12, peak_mib=33), *others])
         self.assertEqual(over, {
-            "small/p99": ("missed", 3.5, None),
-            "small/p99_9": ("missed", 12, None),
-            "small/oom_kills": ("met", 0, None),
-            "small/peak_memory": ("missed", 33.0, None),
+            "small/http-keep-alive/p99": ("missed", 3.5, None),
+            "small/http-keep-alive/p99_9": ("missed", 12, None),
+            "small/http-keep-alive/oom_kills": ("met", 0, None),
+            "small/http-keep-alive/peak_memory": ("missed", 33.0, None),
             "small/idle_rss": ("missed", 21.0, None),
         })
 
     def test_an_oom_kill_misses_every_target_of_its_step_and_one_before_smock_was_ready_misses_idle_rss(self):
         verdicts = checked(self, SMALL, idle=[idle_measured(oom_killed=True)],
                            steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20, oom_kills=2)])
-        self.assertEqual(verdicts["small/oom_kills"], ("missed", 2, None))
-        for target_id in ("small/p99", "small/p99_9", "small/peak_memory"):
+        self.assertEqual(verdicts["small/http-keep-alive/oom_kills"], ("missed", 2, None))
+        for target_id in ("small/http-keep-alive/p99", "small/http-keep-alive/p99_9",
+                          "small/http-keep-alive/peak_memory"):
             verdict, measured, reason = verdicts[target_id]
             self.assertEqual(verdict, "missed", target_id)
             self.assertIn("OOM-killed in http-keep-alive@small@1000", reason)
@@ -1446,13 +1619,13 @@ class TargetVerdicts(unittest.TestCase):
         # its wait, but smock's memory under the load is still its own.
         verdicts = checked(self, SMALL, steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20, lag=(25, 26))],
                            idle=[idle_measured()])
-        for target_id, measured in (("small/p99", 1.9), ("small/p99_9", 2.1)):
+        for target_id, measured in (("small/http-keep-alive/p99", 1.9), ("small/http-keep-alive/p99_9", 2.1)):
             verdict, shown_measured, reason = verdicts[target_id]
             self.assertEqual((verdict, shown_measured), ("not measured", measured), target_id)
             self.assertIn("fell behind", reason)
             self.assertIn("p99.9 25 ms", reason)
-        self.assertEqual(verdicts["small/peak_memory"], ("met", 20.0, None))
-        self.assertEqual(verdicts["small/oom_kills"], ("met", 0, None))
+        self.assertEqual(verdicts["small/http-keep-alive/peak_memory"], ("met", 20.0, None))
+        self.assertEqual(verdicts["small/http-keep-alive/oom_kills"], ("met", 0, None))
 
     def test_failed_requests_miss_the_latency_targets_and_leave_memory_within_its_bound_not_measured(self):
         # 5,000 of the 20,000 requests got no response: smock did not carry
@@ -1460,20 +1633,20 @@ class TargetVerdicts(unittest.TestCase):
         # over it is a miss all the same.
         verdicts = checked(self, SMALL, idle=[idle_measured()],
                            steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20, errors=5000)])
-        for target_id in ("small/p99", "small/p99_9"):
+        for target_id in ("small/http-keep-alive/p99", "small/http-keep-alive/p99_9"):
             verdict, measured, reason = verdicts[target_id]
             self.assertEqual(verdict, "missed", target_id)
             self.assertIn("5000 of the 20000 requests got no expected response", reason)
-        for target_id in ("small/peak_memory", "small/oom_kills"):
+        for target_id in ("small/http-keep-alive/peak_memory", "small/http-keep-alive/oom_kills"):
             verdict, measured, reason = verdicts[target_id]
             self.assertEqual(verdict, "not measured", target_id)
             self.assertIn("5000 of the 20000 requests got no expected response", reason)
         over = checked(self, SMALL, steps=[step_measured(peak_mib=33, errors=5000)])
-        self.assertEqual(over["small/peak_memory"], ("missed", 33.0, None))
+        self.assertEqual(over["small/http-keep-alive/peak_memory"], ("missed", 33.0, None))
 
     def test_a_run_without_the_targets_rate_or_without_memory_peak_does_not_measure_them(self):
         ladder = checked(self, SMALL, steps=[step_measured(rate=500), step_measured(rate=2000)])
-        verdict, measured, reason = ladder["small/p99"]
+        verdict, measured, reason = ladder["small/http-keep-alive/p99"]
         self.assertEqual((verdict, measured), ("not measured", None))
         self.assertIn("http-keep-alive@small ran at 500 and 2000 requests/s, the target is at 1000", reason)
 
@@ -1481,17 +1654,97 @@ class TargetVerdicts(unittest.TestCase):
         old_kernel = step_measured(peak_mib=None)
         old_kernel["memory"]["oom_kills"] = None
         verdicts = checked(self, SMALL, steps=[old_kernel])
-        for target_id, file in (("small/peak_memory", "memory.peak"), ("small/oom_kills", "memory.events")):
+        for target_id, file in (("small/http-keep-alive/peak_memory", "memory.peak"),
+                                ("small/http-keep-alive/oom_kills", "memory.events")):
             verdict, measured, reason = verdicts[target_id]
             self.assertEqual((verdict, measured), ("not measured", None), target_id)
             self.assertIn(file, reason)
-        self.assertEqual(verdicts["small/p99"], ("met", 1.9, None))
+        self.assertEqual(verdicts["small/http-keep-alive/p99"], ("met", 1.9, None))
 
         # A window too short to hold a request has no latencies.
         empty = checked(self, SMALL, steps=[step_measured(p99=None, p99_9=None)])
-        verdict, measured, reason = empty["small/p99"]
+        verdict, measured, reason = empty["small/http-keep-alive/p99"]
         self.assertEqual((verdict, measured), ("not measured", None))
         self.assertIn("no latencies", reason)
+
+
+class TargetsForSeveralCases(unittest.TestCase):
+    """An entry of a targets file may name several cases (cases, in place of
+    case): each of its limits that holds at a load holds for each case, at
+    the entry's rate, as a target of its own, and idle RSS holds once, for
+    the profile."""
+
+    def test_each_load_limit_is_a_target_for_each_case_and_idle_rss_one_for_the_profile(self):
+        targets = harness.read_targets(targets_file(self, [SEVERAL]))["arm64"]
+        load = ("p99", "p99_9", "oom_kills", "peak_memory")
+        self.assertEqual([(t["id"], t["case"], t["rate"], t["metric"]) for t in targets],
+                         [(f"small/{name}/{metric}", name, 1000, metric) for name in KEEP_ALIVE_CASES
+                          for metric in load] + [("small/idle_rss", None, None, "idle_rss")])
+        about = {t["id"]: t["about"] for t in targets}
+        self.assertEqual(about["small/h2c-keep-alive/p99"], "p99 latency, h2c-keep-alive at 1,000 requests/s")
+        self.assertEqual(about["small/h2-keep-alive/peak_memory"], "peak memory, h2-keep-alive at 1,000 requests/s")
+        self.assertEqual(about["small/idle_rss"], "idle RSS after startup")
+        # One case, by case or alone in cases, gives the same targets: a
+        # load target's id names its case either way.
+        alone = {**SEVERAL, "cases": ["http-keep-alive"]}
+        self.assertEqual(harness.read_targets(targets_file(self, [alone])),
+                         harness.read_targets(targets_file(self, [SMALL])))
+
+    def test_each_case_is_checked_against_its_own_step_at_the_entrys_rate(self):
+        # h2c-keep-alive misses p99 and p99.9 where http-keep-alive meets
+        # them, and the run did not run h2-keep-alive. The steps at other
+        # rates are far worse, and do not count.
+        verdicts = checked(self, SEVERAL, idle=[idle_measured()], steps=[
+            step_measured(p99=1.9, p99_9=2.1, peak_mib=20),
+            step_measured(case_name="h2c-keep-alive", p99=3.5, p99_9=12, peak_mib=21),
+            step_measured(case_name="h2c-keep-alive", rate=2000, p99=50, p99_9=80, peak_mib=40)])
+        self.assertEqual({target_id: verdict[:2] for target_id, verdict in verdicts.items()}, {
+            "small/http-keep-alive/p99": ("met", 1.9),
+            "small/http-keep-alive/p99_9": ("met", 2.1),
+            "small/http-keep-alive/oom_kills": ("met", 0),
+            "small/http-keep-alive/peak_memory": ("met", 20.0),
+            "small/h2c-keep-alive/p99": ("missed", 3.5),
+            "small/h2c-keep-alive/p99_9": ("missed", 12),
+            "small/h2c-keep-alive/oom_kills": ("met", 0),
+            "small/h2c-keep-alive/peak_memory": ("met", 21.0),
+            "small/h2-keep-alive/p99": ("not measured", None),
+            "small/h2-keep-alive/p99_9": ("not measured", None),
+            "small/h2-keep-alive/oom_kills": ("not measured", None),
+            "small/h2-keep-alive/peak_memory": ("not measured", None),
+            "small/idle_rss": ("met", 16.0),
+        })
+        self.assertEqual(verdicts["small/h2-keep-alive/p99"][2], "the run did not run h2-keep-alive@small")
+        # An OOM kill misses the targets of its own case's step alone.
+        verdicts = checked(self, SEVERAL, steps=[step_measured(),
+                                                 step_measured(case_name="h2-keep-alive", oom_kills=1)])
+        self.assertEqual({target_id: verdict[0] for target_id, verdict in verdicts.items()
+                          if target_id.endswith("/p99")},
+                         {"small/http-keep-alive/p99": "met", "small/h2c-keep-alive/p99": "not measured",
+                          "small/h2-keep-alive/p99": "missed"})
+
+    def test_a_limit_is_refused_when_given_twice_for_one_case_and_not_for_two(self):
+        # Two entries under small, each with its own p99 for its own case:
+        # h2c-keep-alive may be held to 5 ms while http-keep-alive is held
+        # to 3.
+        h2c = {**SMALL, "case": "h2c-keep-alive", "at_most": {"p99_ms": 5}}
+        targets = harness.read_targets(targets_file(self, [SMALL, h2c]))["arm64"]
+        self.assertEqual({t["id"]: t["max"] for t in targets if t["metric"] == "p99"},
+                         {"small/http-keep-alive/p99": 3, "small/h2c-keep-alive/p99": 5})
+        for entries, expected in (
+                # h2c-keep-alive's p99, in an entry of its own and among
+                # the cases of another, or named twice in one entry.
+                ([SEVERAL, h2c], "arm64: small limits p99 for h2c-keep-alive twice"),
+                ([{**SEVERAL, "cases": ["h2c-keep-alive", "h2c-keep-alive"]}],
+                 "arm64: small limits p99 for h2c-keep-alive twice"),
+                # Idle RSS holds for the profile, whatever the cases.
+                ([SMALL, {**h2c, "at_most": {"idle_rss_mib": 20}}], "arm64: small limits idle_rss twice"),
+                ([{**SEVERAL, "case": "http-keep-alive"}], "arm64: small: give case or cases, not both"),
+                ([{**SEVERAL, "cases": []}], "arm64: small: cases must be a list of case names"),
+                ([{**SEVERAL, "cases": "h2c-keep-alive"}], "arm64: small: cases must be a list of case names"),
+                ([{**SEVERAL, "cases": ["h2c-keep-alive", 2]}], "arm64: small: cases must be a list of case names")):
+            with self.assertRaises(harness.BenchError) as raised:
+                harness.read_targets(targets_file(self, entries))
+            self.assertIn(expected, str(raised.exception), entries)
 
 
 def check_targets_command(*args):
@@ -1563,6 +1816,19 @@ class CheckTargets(unittest.TestCase):
         self.assertIn("| small (250m CPU, 512Mi) | p99 latency, http-keep-alive at 1,000 requests/s | 1.5 ms | 1.9 ms "
                       "| missed |", stdout)
         self.assertEqual(snapshot(out), before)
+
+    def test_a_miss_on_one_case_of_an_entry_that_names_several_is_shown_and_fails_the_check(self):
+        # h2-keep-alive's p99 of 3.4 ms misses the 3 ms that
+        # http-keep-alive's 1.9 ms meets.
+        out = self.results(steps=[step_measured(), step_measured(case_name="h2-keep-alive", p99=3.4)])
+        status, stdout, stderr = check_targets_command(out, "--targets", targets_file(self, [SEVERAL]))
+        self.assertEqual(status, 1, stderr)
+        verdicts = {row["Target"]: row["Verdict"] for row in markdown_table(stdout.splitlines())}
+        self.assertEqual(verdicts["p99 latency, http-keep-alive at 1,000 requests/s"], "met")
+        self.assertEqual(verdicts["p99 latency, h2-keep-alive at 1,000 requests/s"], "missed")
+        self.assertEqual(verdicts["p99 latency, h2c-keep-alive at 1,000 requests/s"],
+                         "not measured: the run did not run h2c-keep-alive@small")
+        self.assertEqual(len(verdicts), 13)
 
     def test_the_targets_of_the_architecture_the_run_ran_on_are_checked_and_none_for_another(self):
         # amd64's p99 is at most 1.5 ms, which the run's 1.9 ms misses;

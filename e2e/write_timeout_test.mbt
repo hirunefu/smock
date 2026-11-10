@@ -40,13 +40,24 @@ let big_defs : String = {
 }
 
 ///|
+/// The text of the large body file: `big_line` over and over, `big_size`
+/// bytes in all. It is built once, as the test process starts, and by
+/// doubling, a few copies of memory in all: `String::repeat` appends one
+/// line at a time, which took 50 to 140 ms on each call, in which no other
+/// test of the package ran.
+let big_text : String = {
+  let mut text = big_line
+  while text.length() < big_size {
+    text = text + text[:big_size - text.length()].to_owned()
+  }
+  text
+}
+
+///|
 /// The definitions directory of Mock `big`: its Definition file and its
 /// large body file.
 fn big_files() -> Array[(String, String)] {
-  [
-    ("big.json", big_defs),
-    ("files/big.txt", big_line.repeat(big_size / big_line.length())),
-  ]
+  [("big.json", big_defs), ("files/big.txt", big_text)]
 }
 
 ///|
@@ -140,10 +151,10 @@ async test "write timeout: an Admin API client that stops reading is closed too,
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"*","names":["localhost","127.0.0.1","::1"]}
-        #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*","protocols":["http/1.1","h2c"]}
+        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["h2","http/1.1"]}
         #|{"level":"info","msg":"drain started","timeoutMs":20000}
         #|{"level":"info","msg":"drain ended","connectionsCut":0}
       ),

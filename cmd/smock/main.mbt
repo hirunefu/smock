@@ -10,7 +10,7 @@ fn exit(code : Int32) -> Unit {
 async fn main {
   let cli = @argparse.Command(
     "smock",
-    about="A mock server for HTTP/1.1, HTTPS and Server-Sent Events.",
+    about="A mock server for HTTP/1.1, HTTP/2, HTTPS and Server-Sent Events.",
     version=@buildinfo.current().version_line(),
     arg_required_else_help=true,
     subcommands=[

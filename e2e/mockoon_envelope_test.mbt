@@ -68,9 +68,9 @@ async test "with SMOCK_LOG_FORMAT=mockoon, smock's own lines go to stdout in Moc
         out.join("\n"),
         content=(
           #|{"app":"smock","level":"info","message":"random seed","seed":42,"timestamp":"<timestamp>"}
-          #|{"address":"0.0.0.0:<admin port>","app":"smock","level":"info","listener":"admin","message":"listening","timestamp":"<timestamp>"}
-          #|{"address":"0.0.0.0:<plain port>","app":"smock","level":"info","listener":"plain","message":"listening","timestamp":"<timestamp>"}
-          #|{"address":"0.0.0.0:<TLS port>","app":"smock","certFile":"<certs>/rsa-chain.pem","keyFile":"<certs>/rsa-key.pem","level":"info","listener":"tls","message":"listening","timestamp":"<timestamp>"}
+          #|{"address":"0.0.0.0:<admin port>","app":"smock","level":"info","listener":"admin","message":"listening","protocols":["http/1.1"],"timestamp":"<timestamp>"}
+          #|{"address":"0.0.0.0:<plain port>","app":"smock","level":"info","listener":"plain","message":"listening","protocols":["http/1.1","h2c"],"timestamp":"<timestamp>"}
+          #|{"address":"0.0.0.0:<TLS port>","app":"smock","certFile":"<certs>/rsa-chain.pem","keyFile":"<certs>/rsa-key.pem","level":"info","listener":"tls","message":"listening","protocols":["h2","http/1.1"],"timestamp":"<timestamp>"}
           #|stderr: 0 lines
         ),
       )

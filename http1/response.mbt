@@ -239,6 +239,34 @@ fn write_utf8(out : FixedArray[Byte], at : Int32, s : String) -> Int32 {
 }
 
 ///|
+/// The octets `encode_response` writes for `text`, a field name or value:
+/// its UTF-8, with a surrogate that is not part of a pair written as the
+/// three bytes of its code unit. So another protocol, such as HTTP/2, can
+/// send a field with the same octets as an HTTP/1.1 response.
+///
+/// ```mbt check
+/// test {
+///   inspect(
+///     @http1.field_octets("caf\u{e9}"),
+///     content=(
+///       #|b"caf\xc3\xa9"
+///     ),
+///   )
+///   inspect(
+///     @http1.field_octets("\u{1f600}"),
+///     content=(
+///       #|b"\xf0\x9f\x98\x80"
+///     ),
+///   )
+/// }
+/// ```
+pub fn field_octets(text : String) -> Bytes {
+  let out = FixedArray::make(utf8_length(text), b'\x00')
+  let _ = write_utf8(out, 0, text)
+  out.unsafe_reinterpret_as_bytes()
+}
+
+///|
 /// Whether the connection stays open after the response that
 /// `encode_response` encodes with the same `request` and `close`: unless
 /// `close` is true or `request` does not keep it open
@@ -273,8 +301,18 @@ fn write_connection(
 
 ///|
 /// Whether a response with `status` has content: one with status 1xx, 204
-/// or 304 has none (RFC 9110, sections 15.2, 15.3.5 and 15.4.5).
-fn has_content(status : Int32) -> Bool {
+/// or 304 has none (RFC 9110, sections 15.2, 15.3.5 and 15.4.5), so it
+/// carries neither a body nor its length. HTTP/2 frames a response by the
+/// same rule.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.has_content(200), content="true")
+///   inspect(@http1.has_content(204), content="false")
+///   inspect(@http1.has_content(101), content="false")
+/// }
+/// ```
+pub fn has_content(status : Int32) -> Bool {
   !(status is (100..<=199 | 204 | 304))
 }
 
@@ -297,8 +335,17 @@ fn writes_body(status : Int32, request : Request?) -> Bool {
 /// }
 /// ```
 pub fn is_token(s : StringView) -> Bool {
-  !s.is_empty() &&
-  s.iter().all(c => c.is_ascii() && is_tchar(c.to_int().to_byte()))
+  if s.is_empty() {
+    return false
+  }
+  for i in 0..<s.length() {
+    // Each code unit of a character beyond ASCII is 0x80 or above.
+    let c = s[i]
+    if c >= 0x80 || !is_tchar(c.to_byte()) {
+      return false
+    }
+  }
+  true
 }
 
 ///|
@@ -314,7 +361,14 @@ pub fn is_token(s : StringView) -> Bool {
 /// }
 /// ```
 pub fn is_field_value(s : StringView) -> Bool {
-  s.iter().all(c => !c.is_ascii() || is_field_value_byte(c.to_int().to_byte()))
+  for i in 0..<s.length() {
+    // Each code unit of a character beyond ASCII is 0x80 or above.
+    let c = s[i]
+    if c < 0x80 && !is_field_value_byte(c.to_byte()) {
+      return false
+    }
+  }
+  true
 }
 
 ///|

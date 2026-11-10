@@ -1,6 +1,8 @@
 # Builds and tests with the latest stable MoonBit every week, so that upstream
-# breaking changes show up early (ADR 0001). A failure opens an issue, or
-# comments on the one already open. Run it by hand from the Actions tab to try it.
+# breaking changes show up early (ADR 0001). It builds the modules smock
+# imports with the rest, moonhttp among them (ADR 0005). A failure opens an
+# issue, or comments on the one already open. Run it by hand from the Actions
+# tab to try it.
 name: Latest MoonBit
 
 on:

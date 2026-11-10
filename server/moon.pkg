@@ -29,6 +29,8 @@ import {
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
+  "moonbitstack/moonhttp/header",
+  "moonbitstack/moonhttp/http2",
 }
 
 supported_targets = "native"

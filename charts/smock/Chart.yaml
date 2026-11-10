@@ -1,8 +1,9 @@
 apiVersion: v2
 name: smock
 description: >-
-  smock, a mock server for HTTP/1.1, HTTPS and Server-Sent Events, with its
-  Definition files from a ConfigMap, a Git repository or an OCI image.
+  smock, a mock server for HTTP/1.1, HTTP/2, HTTPS and Server-Sent Events,
+  with its Definition files from a ConfigMap, a Git repository or an OCI
+  image.
 type: application
 # The release workflow sets both to the release's version when it packages
 # the chart (scripts/package-helm-chart.sh), so a published chart runs the

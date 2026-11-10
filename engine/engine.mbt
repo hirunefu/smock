@@ -344,8 +344,10 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 ///|
 /// Reloads the definitions from `set`, read with the problems
 /// `read_problems`, at the time `at` (milliseconds since the Unix epoch).
-/// Templates read the environment variables the engine was created with.
-/// Every file is validated and a whole new snapshot is built:
+/// `digest` is the set's digest when the caller has computed it already,
+/// as `@definitions.load` takes it. Templates read the environment
+/// variables the engine was created with. Every file is validated and a
+/// whole new snapshot is built:
 ///
 /// - When it is valid and its digest differs from the served one, it
 ///   replaces the served snapshot at once, and each Stub with a seed gets a
@@ -367,6 +369,7 @@ pub fn Engine::reload(
   self : Engine,
   set : @definitions.DefinitionSet,
   read_problems~ : Array[@definitions.Diagnostic] = [],
+  digest? : String,
   at~ : Int64,
 ) -> ReloadResult {
   let old_snapshot = self.snapshot
@@ -374,7 +377,7 @@ pub fn Engine::reload(
   let mut scenario_states_reset = 0
   let mut data_buckets_reset = 0
   let (result, errors) : (ReloadOutcome, Array[@definitions.Diagnostic]) = match
-    @definitions.load(set, read_problems~, env=self.env) {
+    @definitions.load(set, read_problems~, env=self.env, digest?) {
     Ok(snapshot) if snapshot.digest == old_digest => (Unchanged, [])
     Ok(snapshot) => {
       self.snapshot = snapshot
@@ -417,6 +420,12 @@ pub fn Engine::reload(
 ///|
 /// Decides the response to `request`.
 ///
+/// - `authority`, when given, is the request's Host, ahead of the authority
+///   of an absolute-form target and of any `host` field, normalised as they
+///   are; an empty one names no Host. HTTP/2 gives its `:authority` this
+///   way, so that no `host` field is added to the request: the Journal
+///   lists only the fields the client sent, and header conditions see only
+///   a `host` field it sent. HTTP/1.1 never gives it.
 /// - `session` is the request's Session key, or `None` without a Session.
 /// - `now` is the time the request was received, in milliseconds since the
 ///   Unix epoch.
@@ -425,13 +434,14 @@ pub fn Engine::reload(
 pub fn Engine::handle(
   self : Engine,
   request : Request,
+  authority? : String,
   session~ : String?,
   now~ : Int64,
   rand~ : @prng.Generator,
 ) -> Outcome {
   // Every request comes here, so it is written with plain matches and
   // loops, which allocate no closures, iterators or tuples.
-  let host = host_of(request)
+  let host = host_of(request, authority)
   let by_host = match host {
     Some(host) => self.snapshot.mock_for_host(host)
     None => None
@@ -897,23 +907,28 @@ pub fn header_safe(text : String) -> String {
 }
 
 ///|
-/// The request's Host, normalised: the authority of an absolute-form
-/// target, or else the `Host` header field. A request has none without
-/// either, or when it is empty.
-fn host_of(request : Request) -> String? {
-  let raw = match authority_of(request.target) {
+/// The request's Host, normalised: `authority` when given, else the
+/// authority of an absolute-form target, or else the `Host` header field.
+/// A request has none without any of them, or when the one that gives it
+/// is empty.
+fn host_of(request : Request, authority : String?) -> String? {
+  let raw = match authority {
     Some(authority) => authority
-    None => {
-      let headers = request.headers
-      let mut host = ""
-      for i in 0..<headers.length() {
-        if is_name(headers[i].0, "host") {
-          host = headers[i].1
-          break
+    None =>
+      match authority_of(request.target) {
+        Some(authority) => authority
+        None => {
+          let headers = request.headers
+          let mut host = ""
+          for i in 0..<headers.length() {
+            if is_name(headers[i].0, "host") {
+              host = headers[i].1
+              break
+            }
+          }
+          host
         }
       }
-      host
-    }
   }
   match @definitions.normalize_host(raw) {
     "" => None

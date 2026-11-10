@@ -14,7 +14,7 @@ latency for each case, and checks the provisional performance targets.
 | `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
 | `bench/requests-crud.json` | The CRUD variant's own request mix, which a run sends it. `bench/gen_definitions.py` writes it from `bench/requests.json`. |
 | `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
-| `bench/plan-autopilot.json` | Another plan: smock under the CPU and memory limits of the smallest GKE Autopilot Pods and of the Helm chart's default, at ladders of rates. The targets hold under its profiles. |
+| `bench/plan-autopilot.json` | Another plan: smock under the CPU and memory limits of the smallest GKE Autopilot Pods and of the Helm chart's default, at ladders of rates, over HTTP/1.1 and HTTP/2. The targets hold under its profiles. |
 | `bench/plan-same-node.json` | The plan of a GKE run that compares smock binaries on one node: HTTP keep-alive at the lowest rates of `bench/plan-autopilot.json`'s ladders, and at half the lowest under 50m and 250m. |
 | `bench/targets.json` | The provisional targets, a set for each CPU architecture, the one place to change them, and the rule that calls a change between two runs a regression. |
 | `bench/compare.py` | Compares two runs: p99 and p99.9 at each step both ran, and the targets the newer one missed. |
@@ -25,10 +25,10 @@ The commands below run from the repository root.
 
 `e2e/bench_test.mbt` checks on every test run that each request of the mix
 reaches the Mock and the Stub it names, on the plain and on the TLS port,
-and lands in the Journal under its Session, that in the Scenario variant
-each request moves its Scenario, and that in the CRUD variant each request
-of its mix makes the CRUD operation it names. CI checks that
-`bench/definitions/`, `bench/definitions-scenarios/`,
+over HTTP/1.1 and over HTTP/2, and lands in the Journal under its Session,
+that in the Scenario variant each request moves its Scenario, and that in
+the CRUD variant each request of its mix makes the CRUD operation it
+names. CI checks that `bench/definitions/`, `bench/definitions-scenarios/`,
 `bench/definitions-crud/` and `bench/requests-crud.json` are what
 `bench/gen_definitions.py` writes.
 
@@ -43,6 +43,7 @@ a schedule.
 
 - [Run it on your machine](#run-it-on-your-machine)
 - [GKE Autopilot profiles](#gke-autopilot-profiles)
+- [HTTP/2 cases](#http2-cases)
 - [Scenarios in the benchmark](#scenarios-in-the-benchmark)
 - [CRUD Stubs in the benchmark](#crud-stubs-in-the-benchmark)
 - [The mockoon log format in the benchmark](#the-mockoon-log-format-in-the-benchmark)
@@ -68,7 +69,7 @@ Recent systemd delegates them by default; otherwise add a drop-in for
 scripts/build-release.sh                 # dist/smock, which the benchmark runs
 python3 bench/bench.py run               # the whole plan, about 20 minutes
 python3 bench/bench.py run --cases http-keep-alive --cpu-limits 1   # one case under one limit
-python3 bench/bench.py run --plan bench/plan-autopilot.json            # the profiles the targets hold under, about 20 minutes
+python3 bench/bench.py run --plan bench/plan-autopilot.json            # the profiles the targets hold under, about 54 minutes
 python3 bench/bench.py run --plan bench/plan-autopilot.json --profiles autopilot-burst-min   # one profile
 python3 bench/bench.py run --plan bench/plan-autopilot.json --definitions bench/definitions-scenarios   # with Scenario Stubs
 python3 bench/bench.py run --plan bench/plan-autopilot.json --definitions bench/definitions-crud   # with CRUD Stubs, sent their own mix
@@ -103,16 +104,19 @@ here: under 50m, smock may run 5 ms in every 100 ms. smock runs with its
 defaults, so if they do not fit a memory limit, the run shows OOM kills
 rather than hiding them; the Journal's byte bound follows the memory limit
 ([The Journal](../README.md#the-journal)): 13 MiB under 52Mi, 64 MiB under the others.
-Each profile measures idle RSS, then plain HTTP and TLS with keep-alive
+Each profile measures idle RSS, then plain HTTP, TLS, and HTTP/2 as h2c
+and over TLS, and h2c with several streams on each connection
+([HTTP/2 cases](#http2-cases)), all with keep-alive
 connections, each at a ladder of fixed rates from 2,500 to 80,000 requests
 a second per CPU (125 to 4,000 under 50m), 20 seconds a step. The top of
 each ladder is about where smock uses up its CPU over TLS. Every ladder
 has the rates of the amd64 [targets](#targets) (125, 1,250 and 10,000)
 and of the arm64 ones under 50m and 250m (250 and 5,000). Plain HTTP's
-ladder also has 30,000 a second per CPU, the rate of arm64's target under
-1 CPU, and 50,000 a second per CPU, by which smock had used up its CPU
-under each profile in the arm64 GKE probe those targets come from. A full
-run takes about 20 minutes; it prints its estimate before it starts.
+ladder, which the HTTP/2 cases share, also has 30,000 a second per CPU,
+the rate of arm64's target under 1 CPU, and 50,000 a second per CPU, by
+which smock had used up its CPU under each profile in the arm64 GKE probe
+those targets come from. A full run takes about 54 minutes; it prints its
+estimate before it starts.
 
 Before a full run:
 
@@ -134,6 +138,72 @@ Pod's, but the CPU is not the one GKE schedules the Pod on, and the load
 comes over loopback, not a Pod network. Absolute numbers differ from GKE's;
 compare profiles with each other, and runs on the same machine. The summary
 says so too.
+
+## HTTP/2 cases
+
+`bench/plan-autopilot.json` measures HTTP/2 beside HTTP/1.1, with three
+cases:
+
+| Case | Protocol | Port | How oha sends it |
+|---|---|---|---|
+| `h2c-keep-alive` | `h2c` | plain | HTTP/2 over plain TCP, by prior knowledge: no `Upgrade` |
+| `h2-keep-alive` | `h2` | TLS | HTTP/2 over TLS, offering only `h2` by ALPN |
+| `h2c-multiplexed` | `h2c` | plain | As `h2c-keep-alive`, but 4 requests at once on each of 16 connections ([The multiplexed case](#the-multiplexed-case)) |
+
+The first two are `http-keep-alive` but for the protocol: 64 keep-alive
+connections, one request at a time on each (oha's `-p 1`), the same
+request mix, and `http-keep-alive`'s ladders. oha 1.16.0, the pinned load
+generator, drives them with `--http2`. Whether a case uses TLS (protocol
+`https` or `h2`) decides its port, its URL's scheme, oha's `--insecure`,
+and the port that `--connect-to` redirects; `h2c` and `h2` also add
+`--http2 -p 1`, or `-p` with the case's `streams_per_connection`. A plan
+that names another protocol is refused before anything starts.
+
+`h2c-keep-alive` and `h2-keep-alive` are held to `http-keep-alive`'s
+[targets](#targets), at the same profile, rate and limits, h2 over TLS
+included. A miss on either is reported like any other
+([Targets for several cases](#targets-for-several-cases)).
+
+oha's `--disable-keepalive` does not work with HTTP/2. So only the
+keep-alive cases have HTTP/2 twins, and a plan whose HTTP/2 case opens a
+new connection for each request is refused too.
+
+`h2c-keep-alive` and `h2-keep-alive` make each run of the plan about 22
+minutes longer, on your machine and on GKE: 2 cases, 3 profiles and 8 rates, at
+about 27 seconds a step. The multiplexed case adds about 11 minutes more
+on your machine alone. A full run takes about 54 minutes on your machine
+and about 75 on GKE. On GKE, the load generator's traffic check also sends
+a request over HTTP/2 to each port a step sends HTTP/2 to
+([On GKE Autopilot](#on-gke-autopilot)).
+
+Runs from before these cases have no steps for them: `bench/compare.py`
+lists their steps as only in the newer run, and compares the HTTP/1.1
+cases as usual ([Comparing runs](#comparing-runs)).
+
+### The multiplexed case
+
+With `-p 1`, no connection carries two streams at once, so the first two
+cases never measure what HTTP/2 is for: one reader and one writer on a
+connection serving many streams. `h2c-multiplexed` does. It has 16
+keep-alive connections, which the requests of the mix share by weight as
+in the other cases, at least one each, and each connection carries 4
+requests at once (`"streams_per_connection": 4`, oha's `-p 4`). So about
+64 requests are in flight, as in the other cases. Its mix and ladders are
+`http-keep-alive`'s.
+
+- **No target.** No entry of `bench/targets.json` names it. `summary.md`
+  and `summary.json` report it like any other case, and
+  `bench/compare.py` compares it with an earlier run that has it, so a
+  regression at or below its profile's target rate still fails the
+  comparison. A run from before it only lists its steps.
+- **On your machine only.** The plan marks it `"local_only": true`. It
+  adds about 11 minutes to a local run: 3 profiles and 8 rates, at about
+  27 seconds a step. The GKE run leaves it out, so GKE time grows only by
+  `h2c-keep-alive` and `h2-keep-alive`. Naming it in the GKE run's `--cases` is
+  refused.
+- **HTTP/2 only.** A case with more than one stream per connection over
+  `http` or `https` is refused before anything starts, since HTTP/1.1
+  carries one request at a time on a connection.
 
 ## Scenarios in the benchmark
 
@@ -278,8 +348,10 @@ checks the set of the architecture it ran on: a run on a machine, the
 machine's (an M1 is arm64); a GKE run, its nodes' (`--arch`). A run on an
 architecture with no set reports every target as not measured, and says
 why; `check-targets` (below) refuses to pass it. Each target holds under a
-profile of `bench/plan-autopilot.json`, with plain HTTP over keep-alive
-connections at one rate:
+profile of `bench/plan-autopilot.json`, at one rate, for plain HTTP over
+keep-alive connections (`http-keep-alive`) and for its two
+[HTTP/2 twins](#http2-cases), `h2c-keep-alive` and `h2-keep-alive`
+([Targets for several cases](#targets-for-several-cases)):
 
 | Architecture | Profile | CPU and memory limits | Rate | p99 at most | p99.9 at most |
 |---|---|---|---|---|---|
@@ -320,7 +392,33 @@ peak memory at the target's rate (`memory.peak`) at most 32 MiB. Under
   twice it.
 
 The [chart's sizing table](../charts/smock/README.md#sizing) has the numbers
-of each.
+of each. Both sets come from plain HTTP alone: the first runs with the
+HTTP/2 cases are the first to check them over HTTP/2.
+
+### Targets for several cases
+
+An entry of `bench/targets.json` names the cases it holds for: `case` for
+one, or `cases`, a list, for several. Every entry names `http-keep-alive`,
+`h2c-keep-alive` and `h2-keep-alive`. Each of its latency, peak memory and
+OOM-kill limits is then a target of its own for each case, checked against
+that case's step at the entry's rate. Idle RSS holds before any load, so it
+is one target for the profile. A target's id says which it is:
+`<profile>/<case>/<metric>`, such as `chart-default/h2-keep-alive/p99`, or
+`<profile>/idle_rss`. The id is in `summary.json`, in the run's log and in
+`bench/compare.py`'s report.
+
+This holds h2 over TLS to targets set for plain HTTP/1.1, which HTTPS over
+HTTP/1.1 (`https-keep-alive`) is not held to. h2 may miss them. A miss on an
+HTTP/2 case is reported like any other, not hidden: `summary.md` shows it,
+`check-targets` and `bench/compare.py` exit with 1, and the
+[merge checklist](../docs/merging-into-main.md) asks for it to be resolved or
+recorded.
+
+A limit may be given once for each case under a profile. Two entries under
+one profile may each limit p99 for cases of their own, but a second p99 for
+a case is refused, and so is a second idle RSS. So is an entry that gives
+both `case` and `cases`. Changing a target, or the cases it holds for,
+remains a change to `bench/targets.json` alone.
 
 Latency counts from each request's scheduled send time, as the harness
 measures it, so it includes the load generator's floor: oha's timer has a
@@ -367,7 +465,12 @@ architecture the targets file has no set for.
   cases are plain HTTP and TLS with keep-alive connections, plain HTTP and
   TLS with a new connection per request, plain HTTP with 1000 idle
   connections held open during the load, and a 10-minute run under 1 CPU
-  that records RSS every second.
+  that records RSS every second. A case's protocol is `http`, `https`,
+  `h2c` or `h2` ([HTTP/2 cases](#http2-cases)). Over HTTP/2, a case may
+  carry several requests at once on each connection
+  (`streams_per_connection`, 1 by default), and a case marked `local_only`
+  runs on your machine but not on GKE
+  ([The multiplexed case](#the-multiplexed-case)).
 - **CPU limits and pinning.** smock runs in its own systemd scope with a
   CPU quota over the 100 ms period Kubernetes also uses, pinned to the
   fastest CPUs, as many as the largest CPU limit of the plan needs (two for
@@ -437,13 +540,14 @@ architecture the targets file has no set for.
   under one profile, by its name and its CPU and memory limits: a run that
   did not run that profile with those limits does not measure it. The
   latency, peak memory and OOM-kill targets hold at one load, one case at
-  one rate under the profile, and a run that did not run that step does
-  not measure them. An OOM kill misses every
-  target of its step. A latency target, counted from the scheduled send
-  times, is not measured when the load generator fell behind, and missed by
-  any error. Peak memory over its bound misses its target; within it, it is
-  not measured if requests failed, since smock did not carry the load. The
-  idle RSS target holds for the idle RSS under the profile.
+  one rate under the profile (an entry that names several cases has such
+  targets for each), and a run that did not run that step does not measure
+  them. An OOM kill misses every target of its step. A latency target,
+  counted from the scheduled send times, is not measured when the load
+  generator fell behind, and missed by any error. Peak memory over its
+  bound misses its target; within it, it is not measured if requests
+  failed, since smock did not carry the load. The idle RSS target holds for
+  the idle RSS under the profile.
 
 ## What a run writes
 
@@ -504,12 +608,13 @@ architecture the targets file has no set for.
   smock's RSS (first, last, max), the TCP connections the machine accepted
   during the load, and the idle connections still open at its end. Then
   the idle RSS under each profile, with peak memory and OOM kills, and
-  each target with its architecture and profile, its verdict, what was
-  measured and why when that is not plain. In the `mockoon` log format,
-  each step whose smock got ready also has `transaction_lines`: the
-  `Transaction recorded` lines smock wrote, `count`, the requests it
-  answered, `requests_answered`, and whether they are `equal`, the last
-  two null when smock did not answer the scrape after the load
+  each target with its id, its architecture, profile and case, its
+  verdict, what was measured and why when that is not plain. In the
+  `mockoon` log format, each step whose smock got ready also has
+  `transaction_lines`: the `Transaction recorded` lines smock wrote,
+  `count`, the requests it answered, `requests_answered`, and whether they
+  are `equal`, the last two null when smock did not answer the scrape after
+  the load
   ([The mockoon log format in the benchmark](#the-mockoon-log-format-in-the-benchmark)).
   `format` numbers the layout.
 - `summary.md`: the same for people, a section for each profile. Its
@@ -548,7 +653,8 @@ runs of the same smock can differ by more than 20%:
 - **Only steps at or below the target rate count.** The rate of a
   profile's entry in `bench/targets.json` for the newer run's architecture
   (for `autopilot-min`, 1,250 requests/s on amd64 and 5,000 on arm64; the
-  highest, if a profile has several) holds for every case of that profile.
+  highest, if a profile has several) holds for every case of that profile,
+  whichever cases the entry names.
   Above it smock may be past its capacity, and the latencies of a queue
   swing from run to run: those steps are listed under *For reference*, with
   the same columns, and never fail the comparison. A profile with no
@@ -570,7 +676,8 @@ The line above the table says which steps count.
 - Requests the newer run failed at a step the older one measured are a
   regression, and so is a smock that was not ready. Above the target rate
   they are listed for reference.
-- Steps only one run has are listed, not compared.
+- Steps only one run has are listed, not compared, such as the
+  [HTTP/2 cases](#http2-cases) against a run from before them.
 - A step other tasks disturbed in either run (see
   [What a run does](#what-a-run-does)) is named in its verdict, with what
   they used of smock's CPUs and, where both runs recorded it, how long
@@ -593,8 +700,11 @@ The line above the table says which steps count.
   behind, fails the comparison: nothing says how smock did there. Above
   the target rate it is listed and does not fail it.
 - It lists each target the newer run missed, with what it measured and
-  what the older run did for the same target (the same id at the same
-  load, for the same architecture), and the targets it did not measure.
+  what the older run did for the same target (the same limit under the
+  same profile, at the same case and rate, for the same architecture), and
+  the targets it did not measure. The ids are not compared: a run from
+  before an entry could name several cases has ids without the case, such
+  as `chart-default/p99`.
 - From each run's `conditions.json`, it names the runs (smock's version and
   commit, the machine, the plan) and lists the conditions besides smock
   that differ, such as the architecture, the CPU model, the plan, oha or
@@ -631,10 +741,12 @@ compare, such as for a summary of another `format`.
 
 `scripts/gke-bench.sh` runs `bench/plan-autopilot.json` on real GKE
 Autopilot: smock in a Pod with each profile's limits as its requests, the
-load from another node over the Pod network. It is part of the
+load from another node over the Pod network. It runs every case of the
+plan but `h2c-multiplexed`, which runs on your machine only
+([The multiplexed case](#the-multiplexed-case)). It is part of the
 [checklist before merging into main](../docs/merging-into-main.md), and costs
-money: about $0.22 to $0.26 a run on x86 nodes (us-central1 or
-asia-northeast1), and about $0.18 on Arm nodes in us-central1, at the
+money: about $0.40 to $0.48 a run on x86 nodes (us-central1 or
+asia-northeast1), and about $0.31 on Arm nodes in us-central1, at the
 on-demand prices of 2026-10-16, which it estimates before it makes
 anything. Both architectures' Pods run on Autopilot's container-optimized
 compute platform, Arm ones through the `autopilot-arm` compute class, and
@@ -644,7 +756,7 @@ the pricing page bills that platform's Pods at one rate for both.
 export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1
 scripts/gke-bench.sh --dry-run    # the checks, the estimate, and every command it would run; reads only
 scripts/gke-bench.sh              # the checks and the estimate; makes nothing
-scripts/gke-bench.sh --yes        # runs it, about 50 minutes
+scripts/gke-bench.sh --yes        # runs it, about 75 minutes
 ```
 
 It needs gcloud (logged in), docker, kubectl, python3, setsid, curl to
@@ -784,7 +896,11 @@ that run's linux/amd64 build and tests passed.
   smock has idled for the plan's settle time after it was ready, it reads
   smock's idle RSS from smock's `/metrics`. Before the first step it
   sends the first request of the mix to the plain and the TLS port there,
-  for up to 60 s each until it gets a response; after a step that got no
+  for up to 60 s each until it gets a response. It sends it over HTTP/2
+  too, with oha, the image's only tool, to each port that a step of the
+  profile sends HTTP/2 to: h2c to the plain port, h2 to the TLS port. A
+  profile with no HTTP/2 step checks nothing over HTTP/2, so a smock
+  without HTTP/2 can still run the HTTP/1.1 cases. After a step that got no
   response at all, it checks again, since an overloaded smock can answer
   none of a step's measured requests and still be there. When a port does
   not answer, it runs no further step of the profile: the summary marks
@@ -798,7 +914,7 @@ that run's linux/amd64 build and tests passed.
   SIGTERM, a closed terminal), it deletes the cluster and the repository;
   after a closed terminal it logs that to `after-hangup.log` in the results
   directory. A watchdog in its own session deletes them at the time limit
-  (`--time-limit` with its unit, 80m by default and at most 240m) even if
+  (`--time-limit` with its unit, 100m by default and at most 240m) even if
   the script was killed; nothing is made until the watchdog has started.
   At the end it lists the project's clusters, repositories, VM instances,
   disks, addresses and forwarding rules, and fails, naming them, if any is
@@ -821,11 +937,13 @@ that run's linux/amd64 build and tests passed.
 It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
 otherwise: `raw/<profile>/generator.log`, the load generator's lines;
 `raw/<profile>/pods.json`, the nodes the Pods ran on (with each one's
-boot disk type, `boot_disk`), smock's restarts and the load generator's
+boot disk type, `boot_disk`), smock's restarts, whether it was ready, the
+state of its container (`running`, `waiting` or `terminated`, with the
+reason Kubernetes gives, such as `OOMKilled`) and the load generator's
 CPU request, kept as soon as each Pod has a node, with smock's restarts
-unknown (null), and again at the profile's end, with them (a run that
-stops before then, or cannot read them then, leaves them unknown, and
-smock's OOM kills under the profile unmeasured);
+and its container's state unknown (null), and again at the profile's end,
+with them (a run that stops before then, or cannot read them then, leaves
+them unknown, and smock's OOM kills under the profile unmeasured);
 `raw/<profile>/smock-node-cpu.log`, what smock's init container printed
 of the CPU of its node, kept once smock has started;
 `raw/<profile>/smock.log`, smock's log (and the log of its container
@@ -879,7 +997,17 @@ the larger as its max; and the most memory its container had used by the
 step's end (`memory.peak`), since smock started under the profile, so
 earlier steps count too. A smock without those metrics leaves them, idle
 RSS and the targets on them unmeasured. OOM kills come from smock's
-restarts at the profile's end. Nothing it writes names the account or
+restarts and its container's state at the profile's end. They count as 0
+only when the container was running then and had never restarted. The
+kubelet restarts a container at once after its first exit, so an OOM
+kill shows as `terminated` for a second or so, then among the restarts.
+After a later exit, it may back off first, and the container shows as
+`waiting` (CrashLoopBackOff) meanwhile. Restarts, or any state but
+running, leave the OOM kills unmeasured, and `summary.md` says why. It
+also says when smock was running but not ready then. With no restarts,
+it had stopped answering without being killed. With some, `pods.json`
+cannot tell whether it had answered since its last restart. Nothing it
+writes names the account or
 the project, and what it prints shows the project as `$GKE_BENCH_PROJECT`
 and gcloud's account as `<account>`.
 
@@ -1048,7 +1176,10 @@ linux/arm64 when started by hand from the Actions tab, optionally for some
 cases or CPU limits only. It builds the release binary, installs oha, lets
 the runner's systemd user manager set CPU quotas, runs the harness's tests
 and then the whole of `bench/plan.json`, whose profiles have no memory
-limits, so it reports the [targets](#targets) as not measured. The output
+limits, so it reports the [targets](#targets) as not measured. Its `plan`
+and `profiles` inputs run another plan instead, or some of its profiles,
+such as `bench/plan-autopilot.json` and `chart-default` for the
+[HTTP/2 cases](#http2-cases) on both architectures. The output
 of each architecture is a workflow artifact, `benchmark-linux-amd64` and
 `benchmark-linux-arm64`, and the run's page shows the summaries. It never
 runs on a schedule, on pull requests or on pushes:

@@ -1100,8 +1100,35 @@ pub fn normalize_host(host : String) -> String {
 
 ///|
 /// Validates a definition set and builds its snapshot, or returns every
-/// problem found, in file-name order and then in the order they appear in
-/// each file.
+/// problem found, as `validate` and `ValidSet::snapshot` do.
+///
+/// `digest` is the set's digest, as `DefinitionSet::digest` gives it, when
+/// the caller has computed it already, such as a step at a time; without
+/// it, a valid set's digest is computed here.
+pub fn load(
+  set : DefinitionSet,
+  read_problems~ : Array[Diagnostic] = [],
+  env~ : @template.Env = @template.no_env,
+  digest? : String,
+) -> Result[Snapshot, Array[Diagnostic]] {
+  match validate(set, read_problems~, env~) {
+    Ok(valid) => {
+      let digest = match digest {
+        Some(digest) => digest
+        None => set.digest()
+      }
+      Ok(valid.snapshot(digest~))
+    }
+    Err(problems) => Err(problems)
+  }
+}
+
+///|
+/// Validates a definition set, or returns every problem found, in file-name
+/// order and then in the order they appear in each file. A valid set
+/// becomes a snapshot once its digest is known, with `ValidSet::snapshot`,
+/// so a caller that computes the digest itself, such as a step at a time,
+/// computes it only for a valid set.
 ///
 /// `read_problems` are the problems the caller had reading the set, such
 /// as a file that cannot be read. A set read with problems is invalid
@@ -1111,11 +1138,11 @@ pub fn normalize_host(host : String) -> String {
 /// `--template-env` lists them, with the values the caller read: by
 /// default, none. A template that reads another name is a problem. The
 /// values are not part of the digest.
-pub fn load(
+pub fn validate(
   set : DefinitionSet,
   read_problems~ : Array[Diagnostic] = [],
   env~ : @template.Env = @template.no_env,
-) -> Result[Snapshot, Array[Diagnostic]] {
+) -> Result[ValidSet, Array[Diagnostic]] {
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
   })
@@ -1131,9 +1158,24 @@ pub fn load(
   if read_problems.length() > 0 || reader.diagnostics.length() > 0 {
     return Err([..read_problems, ..reader.diagnostics])
   }
-  let digest = set.digest()
+  Ok({ reader, })
+}
+
+///|
+/// A definition set that `validate` found valid, not yet a snapshot.
+pub struct ValidSet {
+  /// What validating the set's files gathered: its Mocks, Stubs, Hosts and
+  /// Data buckets.
+  priv reader : Reader
+}
+
+///|
+/// The snapshot of the valid set, with the digest `digest`: the set's
+/// digest, as `DefinitionSet::digest` gives it.
+pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
+  let reader = self.reader
   if reader.mocks.length() == 0 {
-    return Ok({
+    return {
       mocks: ReadOnlyArray::from_array([
         {
           name: "default",
@@ -1152,7 +1194,7 @@ pub fn load(
       default_index: Some(0),
       stub_locations: Map([]),
       digest,
-    })
+    }
   }
   let mocks = reader.mocks.map(mock => {
     let stubs = ReadOnlyArray::from_array(
@@ -1194,13 +1236,13 @@ pub fn load(
     None if mocks.length() == 1 => Some(0)
     None => None
   }
-  Ok({
+  {
     mocks: ReadOnlyArray::from_array(mocks),
     host_index,
     default_index,
     stub_locations: reader.stub_locations,
     digest,
-  })
+  }
 }
 
 ///|
@@ -1344,8 +1386,43 @@ pub fn Stub::compare_priority(self : Stub, other : Stub) -> Int32 {
 ///
 /// Every part has its length, so two different sets never frame to the
 /// same bytes, and the order the files come in does not matter.
+///
+/// It takes every step of `DefinitionSet::digester` at once, so it takes
+/// time in proportion to the bytes of the files.
 pub fn DefinitionSet::digest(self : DefinitionSet) -> String {
-  let framed = @buffer.Buffer()
+  let digester = self.digester()
+  for ;; {
+    if digester.step(budget=@int.MAX_VALUE) is Some(digest) {
+      return digest
+    }
+  }
+}
+
+///|
+/// The definition set digest of one definition set, computed a step at a
+/// time: each step hashes a bounded number of bytes. A caller that serves
+/// requests meanwhile, such as a reload, can then let them be answered
+/// between steps, however large the files are.
+pub struct Digester {
+  /// The SHA-256 of what was hashed so far.
+  priv hasher : Sha256
+  /// What there is to hash, in order: for each file, the head of its frame
+  /// (its kind, its name and the length of its bytes), then its bytes,
+  /// which are hashed where they are, not copied.
+  priv pieces : Array[BytesView]
+  /// The piece being hashed, and how many of its bytes are hashed.
+  priv mut piece : Int32
+  priv mut offset : Int32
+  /// The digest, once every piece is hashed.
+  priv mut digest : String?
+}
+
+///|
+/// Starts computing the digest of the set, framed as `DefinitionSet::digest`
+/// describes, with nothing hashed yet. This only puts the files in order and
+/// builds the head of each frame.
+pub fn DefinitionSet::digester(self : DefinitionSet) -> Digester {
+  let pieces : Array[BytesView] = []
   for kind in [(b'D', self.files), (b'B', self.body_files)] {
     let entries = kind.1.map(file => (@utf8.encode(file.0), file.1))
     entries.sort_by((a, b) => {
@@ -1355,18 +1432,49 @@ pub fn DefinitionSet::digest(self : DefinitionSet) -> String {
       }
     })
     for entry in entries {
-      framed.write_byte(kind.0)
-      framed.write_uint64_be(entry.0.length().to_uint64())
-      framed.write_bytes(entry.0)
-      framed.write_uint64_be(entry.1.length().to_uint64())
-      framed.write_bytes(entry.1)
+      let head = @buffer.Buffer()
+      head.write_byte(kind.0)
+      head.write_uint64_be(entry.0.length().to_uint64())
+      head.write_bytes(entry.0)
+      head.write_uint64_be(entry.1.length().to_uint64())
+      pieces.push(head.to_bytes())
+      pieces.push(entry.1)
     }
   }
+  { hasher: Sha256::new(), pieces, piece: 0, offset: 0, digest: None, }
+}
+
+///|
+/// Hashes at most `budget` more bytes, at least one, and gives the digest
+/// once every byte is hashed, `None` until then. Once it has given the
+/// digest, it gives it again.
+pub fn Digester::step(self : Digester, budget~ : Int32) -> String? {
+  if self.digest is Some(_) {
+    return self.digest
+  }
+  let mut left = if budget < 1 { 1 } else { budget }
+  while self.piece < self.pieces.length() && left > 0 {
+    let piece = self.pieces[self.piece]
+    let rest = piece.length() - self.offset
+    let take = if rest < left { rest } else { left }
+    self.hasher.update(piece[self.offset:self.offset + take])
+    left -= take
+    if take == rest {
+      self.piece += 1
+      self.offset = 0
+    } else {
+      self.offset += take
+    }
+  }
+  if self.piece < self.pieces.length() {
+    return None
+  }
   let hex = StringBuilder()
-  for byte in sha256(framed.to_bytes())[:6] {
+  for byte in self.hasher.finish()[:6] {
     hex.write_string(byte.to_int().to_string(radix=16).pad_start(2, '0'))
   }
-  hex.to_string()
+  self.digest = Some(hex.to_string())
+  self.digest
 }
 
 ///|

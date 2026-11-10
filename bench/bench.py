@@ -954,6 +954,10 @@ class Run:
         for name in self.cases:
             if name not in names:
                 raise BenchError(f"no case {name} in {plan_name}")
+        for case in self.plan["cases"]:
+            problem = case_problem(case)
+            if problem:
+                raise BenchError(f"{plan_name}: {problem}")
         self.cooldown_s = override(args.cooldown, self.plan["cooldown_s"])
         self.settle_s = override(args.settle, self.plan["idle_rss"]["settle_s"])
         # Idle RSS is measured under the profiles the plan names for it,
@@ -1093,7 +1097,8 @@ class Run:
             "page_size": os.sysconf("SC_PAGE_SIZE"),
             "cases": [{key: spec[key] for key in (
                 "id", "profile", "protocol", "connection", "cpu_limit", "memory_limit", "rate", "ramp_s",
-                "duration_s", "tail_s", "connections", "idle_connections")} for spec in self.specs],
+                "duration_s", "tail_s", "connections", "streams_per_connection", "idle_connections")}
+                for spec in self.specs],
             "overrides": {name: value for name, value in (
                 ("rate", self.args.rate), ("ramp_s", self.args.ramp), ("duration_s", self.args.duration),
                 ("tail_s", self.args.tail), ("cooldown_s", self.args.cooldown),
@@ -1131,6 +1136,7 @@ def case_spec(run, case, profile, rate, ladder):
         "protocol": case["protocol"],
         "connection": case["connection"],
         "connections": case["connections"],
+        "streams_per_connection": case.get("streams_per_connection", 1),
         "idle_connections": case.get("idle_connections", 0),
         "rate": rate,
         "ramp_s": run.ramp_s,
@@ -1194,36 +1200,87 @@ def window(spec, rate):
     return math.ceil(spec["ramp_s"] * rate), math.ceil((spec["ramp_s"] + spec["duration_s"]) * rate)
 
 
+# The protocols a case may name, each with whether it goes over TLS and
+# whether over HTTP/2. oha speaks h2c by prior knowledge, and over TLS
+# offers only h2 by ALPN.
+PROTOCOLS = {"http": (False, False), "https": (True, False), "h2c": (False, True), "h2": (True, True)}
+
+
+def case_problem(case):
+    """Why the harness cannot run a case of a plan, or None: a protocol it
+    does not know; a new connection per request over HTTP/2, since oha's
+    --disable-keepalive does not work with HTTP/2; or streams per
+    connection that are not a whole number from 1, or more than one over
+    HTTP/1.1, which carries one request at a time on a connection."""
+    protocol = case["protocol"]
+    if protocol not in PROTOCOLS:
+        return (f"case {case['name']} has the protocol {protocol}, which the harness does not know: "
+                f"{', '.join(list(PROTOCOLS)[:-1])} or {list(PROTOCOLS)[-1]}")
+    if over_http2(protocol) and case["connection"] == "new-per-request":
+        return (f"case {case['name']} opens a new connection per request over HTTP/2 ({protocol}), which oha cannot "
+                "do: give it keep-alive connections")
+    streams = case.get("streams_per_connection", 1)
+    if type(streams) is not int or streams < 1:
+        return f"case {case['name']} has {streams} streams per connection: give it a whole number from 1"
+    if streams > 1 and not over_http2(protocol):
+        return (f"case {case['name']} has {streams} streams per connection over HTTP/1.1 ({protocol}), where a "
+                "connection carries one request at a time: give it the protocol h2c or h2")
+    return None
+
+
+def traffic_port(protocol):
+    """smock's traffic port that a case over `protocol` sends to: `tls` over
+    TLS, else `plain`."""
+    return "tls" if PROTOCOLS[protocol][0] else "plain"
+
+
+def over_http2(protocol):
+    """Whether a case over `protocol` sends HTTP/2."""
+    return PROTOCOLS[protocol][1]
+
+
+def oha_request(protocol, request, address, port, streams=1):
+    """oha's arguments that send one request of the mix over `protocol` to
+    smock at `address` and `port`: the port its URL implies, 443 over TLS
+    and 80 otherwise, redirected there; over HTTP/2, `streams` requests at
+    once on each connection (oha's -p), one by default; its method, headers
+    and body; over TLS, any certificate accepted; and its URL, last."""
+    tls, http2 = PROTOCOLS[protocol]
+    arguments = ["--connect-to", f"{request['host']}:{443 if tls else 80}:{address}:{port}"]
+    if http2:
+        arguments += ["--http2", "-p", str(streams)]
+    arguments += ["-m", request["method"]]
+    for name, value in request["headers"]:
+        arguments += ["-H", f"{name}: {value}"]
+    if request["body"] is not None:
+        arguments += ["-d", request["body"]]
+    if tls:
+        arguments.append("--insecure")
+    arguments.append(f"{'https' if tls else 'http'}://{request['host']}{request['target']}")
+    return arguments
+
+
 def oha_command(oha, spec, request, rate, connections, report, database, address, port):
     """The command line of the oha process that sends one request of the
     mix in a step, at `rate` (as request_rates gives it) over `connections`,
-    to smock at `address` and `port`, for the step's whole load. It writes
-    its report to `report` and each request's times to `database`."""
-    https = spec["protocol"] == "https"
+    each with the step's streams at once over HTTP/2, to smock at `address`
+    and `port`, for the step's whole load. It writes its report to `report`
+    and each request's times to `database`."""
     total_ms = round((spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]) * 1000)
     command = [
         oha, "--no-tui", "--output-format", "json", "-o", str(report), "--db-url", str(database),
         "-z", f"{total_ms}ms", "-q", rate, "--latency-correction", "-w",
         "-c", str(connections), "--worker-threads", "1", "-t", "30s", "--disable-compression",
-        "--connect-to", f"{request['host']}:{443 if https else 80}:{address}:{port}",
-        "-m", request["method"],
     ]
-    for name, value in request["headers"]:
-        command += ["-H", f"{name}: {value}"]
-    if request["body"] is not None:
-        command += ["-d", request["body"]]
-    if https:
-        command.append("--insecure")
     if spec["connection"] == "new-per-request":
         command.append("--disable-keepalive")
-    command.append(f"{'https' if https else 'http'}://{request['host']}{request['target']}")
-    return command
+    return command + oha_request(spec["protocol"], request, address, port, spec["streams_per_connection"])
 
 
 def start_load(run, smock, spec, raw):
     """Starts one oha process per request of the mix, and returns them with
     the rate each was given."""
-    port = smock.ports["tls" if spec["protocol"] == "https" else "plain"]
+    port = smock.ports[traffic_port(spec["protocol"])]
     weights = [request["weight"] for request in run.mix]
     load = []
     for (request, rate), connections in zip(request_rates(run, spec), split(spec["connections"], weights),
@@ -1803,11 +1860,13 @@ def read_targets(path):
 
 
 def architecture_targets(path, architecture, entries):
-    """The targets of one architecture of a targets file, one for each limit
-    of each profile's entry: its id (<profile>/<metric>), what it is for
-    people, the architecture, the profile with its limits, the case and the
-    rate of a target that holds at a load (None for one at idle), the
-    metric, the most it may be and its unit."""
+    """The targets of one architecture of a targets file: for each profile's
+    entry, one for each limit that holds at a load and each case the entry
+    names, case by case, then one for each limit at idle. Each has its id
+    (<profile>/<case>/<metric> at a load, <profile>/<metric> at idle),
+    what it is for people, the architecture, the profile with its limits,
+    the case and the rate of a target that holds at a load (None for one at
+    idle), the metric, the most it may be and its unit."""
     where = f"{path}: {architecture}"
     if not isinstance(entries, list) or not entries:
         raise BenchError(f"{where}: needs a list of profiles, each with the most smock may reach under it (at_most)")
@@ -1824,19 +1883,41 @@ def architecture_targets(path, architecture, entries):
                 raise BenchError(f"{where}: {name}: {key} cannot be checked; use one of {', '.join(TARGET_METRICS)}")
             if not isinstance(value, (int, float)) or value < 0:
                 raise BenchError(f"{where}: {name}: {key} must be a number, at least 0")
-            metric, unit, what, scope = TARGET_METRICS[key]
+        cases = entry_cases(where, name, entry)
+        load = [key for key in limits if TARGET_METRICS[key][3] == "load"]
+        if load and (cases is None or not isinstance(entry.get("rate"), (int, float))):
+            raise BenchError(f"{where}: {name}: {load[0]} holds at a load: give the case and the rate (or cases, a "
+                             "list of them, in place of case)")
+        # The limits at a load for each case in turn, then those at idle,
+        # each with the case it holds for.
+        held = [(key, case) for case in (cases if load else []) for key in load]
+        held += [(key, None) for key in limits if key not in load]
+        for key, case in held:
+            metric, unit, what, _ = TARGET_METRICS[key]
             target = {"id": f"{name}/{metric}", "about": what, "architecture": architecture, "profile": name,
                       "cpu_limit": entry["cpu_limit"], "memory_limit": entry.get("memory_limit"), "case": None,
-                      "rate": None, "metric": metric, "max": value, "unit": unit}
-            if scope == "load":
-                if not isinstance(entry.get("case"), str) or not isinstance(entry.get("rate"), (int, float)):
-                    raise BenchError(f"{where}: {name}: {key} holds at a load: give the case and the rate")
-                target.update(case=entry["case"], rate=entry["rate"],
-                              about=f"{what}, {entry['case']} at {entry['rate']:,} requests/s")
+                      "rate": None, "metric": metric, "max": limits[key], "unit": unit}
+            if case is not None:
+                target.update(id=f"{name}/{case}/{metric}", case=case, rate=entry["rate"],
+                              about=f"{what}, {case} at {entry['rate']:,} requests/s")
             if target["id"] in [other["id"] for other in targets]:
-                raise BenchError(f"{where}: {name} limits {metric} twice")
+                raise BenchError(f"{where}: {name} limits {metric}{'' if case is None else f' for {case}'} twice")
             targets.append(target)
     return targets
+
+
+def entry_cases(where, name, entry):
+    """The cases the load targets of a targets file's entry hold for: its
+    case, or each of its cases; None when it names none."""
+    if "cases" not in entry:
+        return [entry["case"]] if isinstance(entry.get("case"), str) else None
+    if "case" in entry:
+        raise BenchError(f"{where}: {name}: give case or cases, not both")
+    cases = entry["cases"]
+    if not isinstance(cases, list) or not cases or not all(isinstance(case, str) for case in cases):
+        raise BenchError(f"{where}: {name}: cases must be a list of case names, such as "
+                         '["http-keep-alive", "h2c-keep-alive"]')
+    return cases
 
 
 def check_targets(targets, architecture, summary):

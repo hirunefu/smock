@@ -279,8 +279,8 @@ def restarts(pod):
 def pod_list():
     """The namespace's Pods, as kubectl get pods -o json lists them: smock's
     Pods as applied, each on its node of `pod_nodes` (node-a unless
-    configured; none, Pending, for null), and one Pod for each Job, from its
-    template."""
+    configured; none, Pending, for null), its container running there, and
+    one Pod for each Job, from its template."""
     items = []
     for item in objects().values():
         if item["kind"] == "Pod":
@@ -290,6 +290,8 @@ def pod_list():
                 "phase": "Running" if node else "Pending", "podIP": "10.20.0.7",
                 "conditions": [{"type": "Ready", "status": "True" if node else "False"}],
                 "containerStatuses": [{"name": "smock", "ready": True, "restartCount": restarts(name),
+                                       **({"state": {"running": {"startedAt": "2026-10-14T09:00:05Z"}}}
+                                          if node else {}),
                                        "lastState": {"terminated": {"reason": "OOMKilled", "exitCode": 137}}
                                        if restarts(name) else {}}]}})
         elif item["kind"] == "Job":
@@ -791,6 +793,16 @@ class BeforeAnything(Script):
         self.assertIn("Nothing was made. To make these and run the benchmark, run it again with --yes.", output)
         self.assertEqual(self.changing_calls(), [])
 
+    def test_the_whole_autopilot_plan_fits_in_the_default_time_limit(self):
+        # Its four cases, the HTTP/2 ones included: about 74 minutes from
+        # the cluster's creation to its deletion, and the 10 minutes before
+        # the time limit that the estimate keeps.
+        status, output = self.run_script("--plan", BENCH / "plan-autopilot.json")
+        self.assertEqual(status, 0, output)
+        self.assertRegex(output, r"Expected: about \$0\.\d\d, the cluster existing for about 7\d minutes\.")
+        self.assertIn("if it ran until the time limit (100 minutes)", output)
+        self.assertEqual(self.changing_calls(), [])
+
     def test_a_time_limit_without_its_unit_or_past_four_hours_is_refused(self):
         # 4800 meant as seconds would be 80 hours as minutes.
         for limit, expected in (("4800", "with their unit"), ("241m", "at most 240m"), ("14401s", "at most 240m")):
@@ -1015,6 +1027,11 @@ class Run(Script):
         self.assertEqual([case["rate"] for case in summary["cases"]], [500, 1000])
         self.assertTrue((self.out / "summary.md").exists())
         self.assertTrue((self.out / "raw" / "small" / "pods.json").exists())
+        # smock's container was running at the profile's end and had not
+        # restarted: the kernel killed it for memory in no step.
+        self.assertEqual({entry["memory"]["oom_kills"] for entry in [*summary["cases"], *summary["idle_rss"]]},
+                         {0})
+        self.assertNotIn("smock's container", (self.out / "summary.md").read_text())
         # Deleted, and checked.
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
         self.assertIn("nothing is left", output)
@@ -1035,13 +1052,26 @@ class Run(Script):
             if "status" in " ".join(call["argv"]):
                 self.assertIn("--region=us-central1", call["argv"])
         self.assertTrue(self.made(["compute", "instances", "list"]))
-        # smock runs in a Pod that ends by itself by the time limit (80
+        # smock runs in a Pod that ends by itself by the time limit (100
         # minutes by default), as the load generator's Job does.
         [apply] = [call for call in self.made(["apply"]) if call["argv"][-1].endswith("smock.json")]
         [pod] = [item for item in apply["document"]["items"] if item["kind"] == "Pod"]
-        self.assertGreater(pod["spec"]["activeDeadlineSeconds"], 70 * 60)
-        self.assertLessEqual(pod["spec"]["activeDeadlineSeconds"], 80 * 60)
+        self.assertGreater(pod["spec"]["activeDeadlineSeconds"], 90 * 60)
+        self.assertLessEqual(pod["spec"]["activeDeadlineSeconds"], 100 * 60)
         self.assertEqual(self.made(["wait"])[0]["words"][1:], ["pod/smock-small"])
+
+    def test_the_load_generators_image_holds_oha_the_harness_the_mixes_and_the_plan_and_nothing_else(self):
+        # oha is the image's only tool: it sends every step's load, and the
+        # traffic check's HTTP/2 requests, h2c and h2; Python itself sends
+        # the check's HTTP/1.1 ones.
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        [_, generator] = self.made(["build"])
+        self.assertEqual(generator["context"], ["bench/bench.py", "bench/gke/generator.py", "bench/gke/gke.py",
+                                                "bench/plan.json", "bench/requests-crud.json", "bench/requests.json",
+                                                "oha"])
+        self.assertEqual(generator["copies"], [[["oha"], "/usr/local/bin/oha"], [["bench"], "/bench"]])
+        self.assertEqual(generator["missing"], [])
 
     def test_kubectl_uses_its_own_kubeconfig_with_an_access_token_deleted_at_the_end(self):
         status, output = self.run_script("--yes")

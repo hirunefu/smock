@@ -20,38 +20,95 @@ let sha256_k : FixedArray[UInt32] = [
 ///|
 /// The SHA-256 digest of `data`: 32 bytes.
 pub fn sha256(data : BytesView) -> Bytes {
-  let state : FixedArray[UInt32] = [
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-    0x5be0cd19,
-  ]
-  let w : FixedArray[UInt32] = FixedArray::make(64, 0)
-  let whole = data.length() / 64 * 64
+  let hasher = Sha256::new()
+  hasher.update(data)
+  hasher.finish()
+}
+
+///|
+/// A SHA-256 computation fed in pieces: `finish` gives the digest of every
+/// byte given to `update`, in order, as one message. So a large message can
+/// be hashed a piece at a time, without first copying it into one.
+priv struct Sha256 {
+  /// The hash state: eight 32-bit words.
+  state : FixedArray[UInt32]
+  /// The message schedule, reused for each block.
+  w : FixedArray[UInt32]
+  /// The bytes of a block not yet complete, the first `pending` of them.
+  block : FixedArray[Byte]
+  mut pending : Int32
+  /// How many bytes were given so far.
+  mut length : UInt64
+}
+
+///|
+/// Starts a SHA-256 computation with no bytes given.
+fn Sha256::new() -> Sha256 {
+  {
+    state: [
+      0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+      0x5be0cd19,
+    ],
+    w: FixedArray::make(64, 0),
+    block: FixedArray::make(64, 0),
+    pending: 0,
+    length: 0,
+  }
+}
+
+///|
+/// Hashes `data` after the bytes given before.
+fn Sha256::update(self : Sha256, data : BytesView) -> Unit {
+  self.length += data.length().to_uint64()
   let mut offset = 0
-  while offset < whole {
-    compress(state, w, data, offset)
+  // First complete the block in progress, if there is one.
+  if self.pending > 0 {
+    while self.pending < 64 && offset < data.length() {
+      self.block[self.pending] = data[offset]
+      self.pending += 1
+      offset += 1
+    }
+    if self.pending < 64 {
+      return
+    }
+    compress(self.state, self.w, Bytes::from_array(self.block[:]), 0)
+    self.pending = 0
+  }
+  // Then whole blocks straight from `data`, and keep the rest.
+  while offset + 64 <= data.length() {
+    compress(self.state, self.w, data, offset)
     offset += 64
   }
-  // The last block or two: the rest of the data, a 1 bit, zeros, and the
-  // length in bits as a 64-bit big-endian number.
-  let rest = data.length() - whole
-  let tail_length = if rest < 56 { 64 } else { 128 }
-  let bits = data.length().to_uint64() * 8
-  let tail = Bytes::makei(tail_length, i => {
-    if i < rest {
-      data[whole + i]
-    } else if i == rest {
-      b'\x80'
-    } else if i >= tail_length - 8 {
-      (bits >> (8 * (tail_length - 1 - i))).to_byte()
-    } else {
-      b'\x00'
-    }
-  })
-  compress(state, w, tail, 0)
-  if tail_length == 128 {
-    compress(state, w, tail, 64)
+  while offset < data.length() {
+    self.block[self.pending] = data[offset]
+    self.pending += 1
+    offset += 1
   }
-  Bytes::makei(32, i => (state[i / 4] >> (24 - 8 * (i % 4))).to_byte())
+}
+
+///|
+/// The digest of every byte given: 32 bytes. Hashes the padding: a 1 bit,
+/// zeros, and the length in bits as a 64-bit big-endian number, which ends
+/// the last block or two.
+fn Sha256::finish(self : Sha256) -> Bytes {
+  let bits = self.length * 8
+  let zeros = if self.pending < 56 {
+    55 - self.pending
+  } else {
+    119 - self.pending
+  }
+  self.update(
+    Bytes::makei(1 + zeros + 8, i => {
+      if i == 0 {
+        b'\x80'
+      } else if i <= zeros {
+        b'\x00'
+      } else {
+        (bits >> (8 * (zeros + 8 - i))).to_byte()
+      }
+    }),
+  )
+  Bytes::makei(32, i => (self.state[i / 4] >> (24 - 8 * (i % 4))).to_byte())
 }
 
 ///|

@@ -63,14 +63,16 @@ async test "over a real socket, the head and the opening chunk arrive at once, t
       let start = @async.now()
       ask_stream(conn, "/v1/chat/completions")
       let head = read_head(conn)
-      let head_at = @async.now()
       let out = [
-        "head \{head_arrival(head_at - start, 400)}:",
+        "head \{head_arrival(@async.now() - start, 400)}:",
         head.trim_end(chars="\n").to_owned(),
       ]
       // When each event is due, in milliseconds after the head: the
       // opening chunk at once, the pieces "Hi t", "here" and "!", then the
-      // closing chunk and [DONE] right after the last piece.
+      // closing chunk and [DONE] right after the last piece. The head goes
+      // out at once, so the waits count from the request too, and the time
+      // is taken from before it: a time taken after the head was read, an
+      // await later, could make an event look early.
       for due in [0, 400, 700, 1000, 1000, 1000] {
         let event = @async.with_timeout_opt(patience_ms, () => {
           conn.read_until("\n\n")
@@ -78,7 +80,7 @@ async test "over a real socket, the head and the opening chunk arrive at once, t
         guard event is Some(Some(event)) else {
           fail("the stream ended early:\n\{out.join("\n")}")
         }
-        let elapsed = @async.now() - head_at
+        let elapsed = @async.now() - start
         let when = if due == 0 {
           head_arrival(elapsed, 400)
         } else {
@@ -165,10 +167,10 @@ async test "a client that leaves mid-stream ends the stream at smock's next writ
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*","protocols":["http/1.1"]}
         #|{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"*","names":["localhost","127.0.0.1","::1"]}
-        #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*","protocols":["http/1.1","h2c"]}
+        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["h2","http/1.1"]}
         #|{"level":"info","msg":"drain started","timeoutMs":20000}
         #|{"level":"info","msg":"drain ended","connectionsCut":0}
       ),

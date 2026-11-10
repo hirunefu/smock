@@ -8,6 +8,197 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+### Added
+
+- HTTP/2, beside HTTP/1.1, on the plain and TLS ports, served by the same
+  Mocks and Stubs. See [docs/http2.md](docs/http2.md).
+  - **h2c on the plain port.** A connection that starts with the HTTP/2
+    preface, as `curl --http2-prior-knowledge` sends it, is served over
+    HTTP/2, and any other is HTTP/1.1, as before. `Upgrade: h2c` is not
+    accepted.
+  - **h2 on the TLS port.** A connection whose client chooses `h2` by ALPN
+    is served over HTTP/2, with any certificate: the certificate files,
+    the self-signed certificate or a Mock's own. Over TLS 1.2, ALPN leaves
+    `h2` out when the suite is one RFC 9113 prohibits, such as a CBC suite:
+    a client that also offers `http/1.1` gets HTTP/1.1, so a strict client
+    does not fail the connection. The admin port stays HTTP/1.1 only.
+  - **Requests.** Each stream is a request of its own, with the Host from
+    `:authority`, else from the `host` field, and its Session from its own
+    `baggage`. SNI still only chooses the certificate, so one connection
+    can carry streams for several Mock Hosts. Several `cookie` fields are
+    joined into one, so conditions see what an HTTP/1.1 client's one Cookie
+    line gives. A stream whose request HTTP/1.1 would refuse gets 400 on
+    that stream alone, and the connection's other streams go on. A CONNECT
+    reaches the Mocks as soon as its HEADERS arrive, with `:authority` as
+    its target, and smock opens no tunnel: a 2xx to it ends the stream
+    with no body.
+  - **Responses.** A Stub's response follows HTTP/2's rules: header names
+    in lower case, spaces and tabs around a value trimmed, and
+    `Keep-Alive`, `Upgrade`, `Proxy-Connection` and `TE` left out. HEAD,
+    204 and 304 are framed as over HTTP/1.1. A Stub's delay delays only
+    its own stream, while the connection's other streams are answered. A
+    body larger than the client's flow-control windows goes out as the
+    client widens them, so a client with small windows still gets all of
+    it.
+  - **Server-Sent Events.** An events Stub streams one event stream per
+    HTTP/2 stream, several at once on one connection: the DATA of its last
+    event ends the HTTP/2 stream, and a client that resets the HTTP/2
+    stream ends the event stream at once.
+  - **Faults.** A connection Fault takes its nearest HTTP/2 form: `reset`
+    resets its stream alone, `partial` sends half the body, or half the
+    events, then resets the HTTP/2 stream, and `close` sends GOAWAY and
+    closes the connection, with the same draws and seeds as over HTTP/1.1.
+  - **Limits and timeouts.** A header list over `--header-size-limit` or
+    `--header-count-limit` gets 431, and a body over `--body-limit` 413, on
+    that stream alone, while the connection's other streams go on.
+    `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1.
+    The read timeout applies to each stream alone, and resets only a
+    stream whose request is late, with `CANCEL`; an idle connection gets
+    GOAWAY before it closes. The write timeout closes a connection whose
+    connection window stays at zero, and resets with `CANCEL` a stream
+    whose own window does. A client that stops reading makes smock stop
+    reading too, once what smock has queued for the connection and not yet
+    written passes 16 KiB, and the write timeout then closes the
+    connection.
+  - **Defences.** A client that sends more than 100 frames that do no work
+    in one second, such as a flood of PING or SETTINGS frames, gets GOAWAY
+    `ENHANCE_YOUR_CALM`, and smock logs one line that names the pattern.
+    So does a header block over twice `--header-size-limit` as received,
+    such as a flood of CONTINUATION frames makes, and empty CONTINUATION
+    frames count among the frames that do no work. So does a client whose
+    streams end reset before smock has finished their responses, by the
+    client or by moonhttp for the client's frames, once more than 100 have
+    and they are more than half of its streams (Rapid Reset and
+    MadeYouReset); smock's own resets never count. The HPACK table smock
+    encodes responses with stays at 4,096 octets, however large a table
+    the client allows, and a header block that does not decode ends the
+    connection with GOAWAY `COMPRESSION_ERROR`.
+  - **The drain.** On SIGTERM, each HTTP/2 connection gets GOAWAY and a
+    PING, then a second GOAWAY that names the last stream smock received:
+    the streams up to it finish, and the client sends the others again on
+    a new connection.
+  - **Logs.** In the `mockoon` log format, each HTTP/2 request a Mock
+    handles gets its `Transaction recorded` line, with `:method` and
+    `:path`, after its `Error while serving the content: …` line when its
+    Stub's content failed, as over HTTP/1.1. The line comes once the
+    stream's response has ended: its last frame, its RST_STREAM or GOAWAY,
+    a client's reset, or the end of the connection. A stream that never
+    reaches a Mock, such as one refused with 431 or `REFUSED_STREAM`, gets
+    none. The format costs about 7 to 10 µs more on each HTTP/2 request
+    than `json` on an M1 laptop, 20% to 50% more: under 1 CPU, HTTP/2 over
+    TLS at 30,000 requests/s used 88% of the CPU rather than 64%, and its
+    latency rose past the performance targets in one of two runs. See
+    [Logs](docs/http2.md#logs).
+- HTTP/2 comes from moonbitstack/moonhttp 0.14.0 (Apache-2.0), pinned to
+  that exact version: CI fails when the build resolves another one
+  ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)). moonhttp and
+  the modules it imports are named in NOTICE and the image's SBOM. smock
+  is compiled from moonhttp and moonvar. The build also resolves moondate,
+  mooncrypt and moonbase, but compiles nothing from them, so NOTICE says
+  so and the SBOM gives them `DEPENDS_ON`, not `STATIC_LINK`. The SBOM
+  lists every module the build resolves, with the licence of its own
+  module file, and CI fails on every push when NOTICE leaves out such a
+  module or gives it another version.
+- `--http2-max-concurrent-streams` (`SMOCK_HTTP2_MAX_CONCURRENT_STREAMS`),
+  100 by default, from 1 to 1000: the most streams an HTTP/2 connection may
+  have in progress at once. smock advertises it in its SETTINGS and holds
+  the client to it from the first stream; a stream past it gets
+  RST_STREAM `REFUSED_STREAM` and never reaches the Mocks. With the body
+  limit, it bounds the request bodies one connection holds. See
+  [Limits and timeouts](docs/http2.md#limits-and-timeouts).
+- `--tls-http2` (`SMOCK_TLS_HTTP2`), `on` by default: `off` takes `h2` out
+  of the TLS port's ALPN, for every certificate, so that it offers
+  `http/1.1` alone, as before HTTP/2. The plain port still serves h2c. See
+  [Turning h2 off](docs/http2.md#turning-h2-off).
+- Each `listening` log entry names the protocols its port serves, as
+  `protocols`: `["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]`
+  on the TLS port (`["http/1.1"]` with `--tls-http2 off`) and
+  `["http/1.1"]` on the admin port.
+- The Helm chart's `service.appProtocol.plain` and `service.appProtocol.tls`
+  set the `appProtocol` of the traffic Service's plain and TLS ports, such
+  as `kubernetes.io/h2c` on the plain port for a gateway that speaks h2c to
+  smock. Both are empty by default, so no port has one: the plain port
+  serves both HTTP/1.1 and h2c. See
+  [Ports, Services and probes](charts/smock/README.md#ports-services-and-probes)
+  and [Kubernetes and load balancers](docs/http2.md#kubernetes-and-load-balancers).
+- The release benchmark measures HTTP/2: `bench/plan-autopilot.json` has
+  `h2c-keep-alive`, to the plain port, and `h2-keep-alive`, to the TLS
+  port, which are `http-keep-alive` over HTTP/2, sent by oha with
+  `--http2`, locally and on GKE. They make each run of the plan about 22
+  minutes longer, so `scripts/gke-bench.sh`'s default time limit is now 100
+  minutes. Both are held to `http-keep-alive`'s targets, h2 over TLS
+  included: an entry of `bench/targets.json` may name several cases
+  (`cases`), and a load target's id now names its case, such as
+  `chart-default/h2-keep-alive/p99`. A third case, `h2c-multiplexed`,
+  measures one connection serving many streams: 16 connections that each
+  carry 4 requests at once (oha's `-p 4`, a case's new
+  `streams_per_connection`). It has no target, runs only on your machine
+  (`local_only`), where it adds about 11 minutes, and the GKE run leaves it
+  out. The Benchmark workflow's new `plan` and `profiles` inputs run them
+  on GitHub's amd64 and arm64 runners. See
+  [HTTP/2 cases](bench/README.md#http2-cases).
+- The `smock/http1` module makes public the checks and encodings that its
+  parser and encoder use, so that another protocol, such as HTTP/2,
+  refuses what HTTP/1.1 refuses and sends the same octets:
+  `is_origin_or_asterisk_form`, for a path and query, or `*` for OPTIONS;
+  `is_authority_form`, for a host and a port, the target of a CONNECT;
+  `is_visible_ascii`, for characters from 0x21 to 0x7E alone;
+  `expects_continue`, which tells whether an Expect field value asks for
+  `100 Continue`, as its parser reads it; `has_content`, which tells
+  whether a response with a status has content; `is_space_or_tab`, for
+  the white space around a field value; and `field_octets`, the octets
+  `encode_response` writes for a field name or value. They join
+  `is_token`, `is_field_value` and `is_host_value`, which were public
+  already.
+
+### Changed
+
+- A client that offers both `h2` and `http/1.1` by ALPN, as most HTTPS
+  clients do, now gets HTTP/2 on the TLS port instead of HTTP/1.1: ALPN
+  offers `h2`, then `http/1.1`, where it offered `http/1.1` alone. A client
+  that offers only `h2`, such as oha with `--http2`, now completes the
+  handshake instead of failing it. A client that offers only `http/1.1`, or
+  no ALPN, still gets HTTP/1.1. `--tls-http2 off` restores the old
+  behaviour.
+- The HTTP/2 preface on the plain port now starts HTTP/2, instead of
+  getting 505. The Journal's `version` and the Admin API's
+  `RecordedRequest.version` can be `HTTP/2`.
+- The help texts of `smock_requests_total`,
+  `smock_request_duration_seconds` and `smock_unmatched_requests_total`
+  speak of a request the protocol layer rejects, and name HTTP/2's
+  statuses beside HTTP/1.1's: 400, 413 and 431 on its stream.
+- The help texts of `--header-size-limit` and `--read-timeout-ms` give
+  their meaning over HTTP/2. A header list is counted as RFC 7541 counts
+  it, each field with 32 octets more, and a larger one gets 431 on its
+  stream, while a header block over twice the limit closes the
+  connection. So a head that fits over HTTP/1.1 can get 431 over HTTP/2
+  ([Header lists](docs/http2.md#header-lists)). A request that does not
+  arrive in time resets its stream instead of closing the connection.
+- The Definition-file Schema's description of a connection Fault's `kind`
+  gives its HTTP/2 form beside its HTTP/1.1 one: RST_STREAM on the
+  request's stream for `reset`, half the response then RST_STREAM for
+  `partial`, and GOAWAY then the close for `close`. The format is
+  unchanged. See [Faults](docs/http2.md#faults).
+- `scripts/verify-image.sh` also requires moonhttp, and every other module
+  that NOTICE names, in each SBOM. It reads NOTICE, so check an image with
+  the script and NOTICE of the image's own tag.
+
+### Fixed
+
+- A reload of the Definition files no longer stops smock from answering
+  requests while it computes the definition set digest. smock hashed every
+  Definition file and body file at once, and twice per reload, so a reload
+  with a 16 MiB body file held every connection for about half a second,
+  and one with 64 MiB for about 2 s. It now hashes the files once, a step
+  at a time, and answers requests between the steps. At startup, the
+  admin port answers its probes meanwhile too. The digest is the same as
+  before.
+- An HTTP/1.1 connection no longer holds on to the header fields of its
+  earlier, longer requests. A client that sent long requests and then
+  short ones on one connection could leave smock holding about 5 MB of
+  their fields and decoded text until the connection closed. A
+  connection now holds its last request's fields at most.
+
 ## [0.4.0] - 2026-11-01
 
 ### Added

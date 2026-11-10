@@ -1,0 +1,14 @@
+# The cases of h2spec 2.6.0 that do not pass against smock's TLS port (h2,
+# by ALPN), each with its reason. scripts/check-h2spec.sh runs every case of
+# h2spec's three sections, and scripts/h2spec-verdict.py judges the run
+# against this list. A line gives the case, why it is listed, and the
+# reason:
+#
+#   skipped   h2spec skips the case.
+#   left-out  the case runs, but its outcome does not count.
+#   #<issue>  the case fails until that issue is done.
+#
+# A case that fails or is skipped without being listed so fails the run.
+# A listed case that passes is reported, so that it can come off. Before a
+# branch merges into main, no case waits for an issue here
+# (docs/merging-into-main.md).

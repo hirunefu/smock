@@ -2191,10 +2191,10 @@
           },
           "version": {
             "description": "The HTTP version.",
-            "enum": ["HTTP/1.0", "HTTP/1.1"]
+            "enum": ["HTTP/1.0", "HTTP/1.1", "HTTP/2"]
           },
           "headers": {
-            "description": "The header fields, in the order they were sent.",
+            "description": "The header fields, in the order they were sent. Over HTTP/2, the names are in lower case, as HTTP/2 sends them, the pseudo-header fields are not listed, and a request's `cookie` fields are joined into one, with `; `, at the place of the first.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Header"

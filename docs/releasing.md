@@ -109,17 +109,29 @@ built, when a tag that is not a pre-release has no section of its own. A
 pre-release tag, such as `v<version>-rc.1`, takes its own section if there
 is one, else the section of `<version>`, else `Unreleased`.
 
-When `.moonbit-version` or the imports in `moon.mod` changed since the
-last release, check that [NOTICE](../NOTICE) still names what the binary
-holds, with the right versions. The release workflow fails when NOTICE
-does not name the toolchain or a module of `moon.mod` with its version.
+[NOTICE](../NOTICE) names the toolchain and every MoonBit module the
+build resolves, of any owner and transitive ones included. CI, on every
+push, and the release workflow fail when NOTICE leaves out a module the
+build resolves or names one it does not, when it gives a module another
+version than the build resolves, or another licence or source than the
+module's own module file, or when it names another toolchain than
+`.moonbit-version` (`scripts/check-notice.sh`). The section of a module
+that the build resolves but compiles nothing from, such as moondate,
+mooncrypt and moonbase, which moonhttp imports, says "smock compiles
+nothing from it", and the check fails when that does not match the
+build. When `.moonbit-version` or the modules changed since the last
+release, check the rest by hand: the packages that each module's section
+names, and the copyright lines and NOTICE files it quotes.
+
 The runtime, mimalloc and simdutf come with the toolchain. The image's
-SBOM takes their licences and mimalloc's version from NOTICE, and CI fails
-when the SBOM and NOTICE disagree, or when NOTICE names another toolchain
-than `.moonbit-version` (`scripts/check-sbom-notice.sh`). Nothing reads
-mimalloc's version from the toolchain, so check it by hand after a
-toolchain update. mimalloc's `mi_version` returns it as one number, 217
-for 2.1.7, which this shows:
+SBOM takes their licences and mimalloc's version from NOTICE, and the
+modules from what the build resolves
+(`scripts/resolved-modules.sh --json`). CI fails when the SBOM and NOTICE
+disagree, on those parts or on a module's version, licence or link, or
+when NOTICE names another toolchain than `.moonbit-version`
+(`scripts/check-sbom-notice.sh`). Nothing reads mimalloc's version from
+the toolchain, so check it by hand after a toolchain update. mimalloc's
+`mi_version` returns it as one number, 217 for 2.1.7, which this shows:
 
 ```sh
 objdump -d --disassemble=mi_version ~/.moon/lib/libmoonbitrun.o
@@ -173,10 +185,13 @@ the same Schemas again.
 - **The MoonBit toolchain** in `.moonbit-version`. The weekly Latest
   MoonBit workflow (`.github/workflows/latest-toolchain.yml`) builds and
   tests with the latest stable toolchain, and opens an issue when that
-  fails. The maintainer moves the pin by hand.
+  fails. It builds the modules smock imports with the rest, moonhttp
+  among them, so a toolchain release that breaks moonhttp shows there
+  first. The maintainer moves the pin by hand.
 - **The MoonBit modules** imported in `moon.mod`. The maintainer moves
   them by hand, and checks NOTICE as
-  [Every release after](#every-release-after) says.
+  [Every release after](#every-release-after) says. moonhttp moves only
+  through its own gate: [Upgrading moonhttp](#upgrading-moonhttp).
 - **The cosign and syft versions**, which the workflows pass to the
   actions that install them: cosign's once, as `COSIGN_RELEASE` in
   `release.yml`'s `env`, which the image's and the chart's jobs both
@@ -206,3 +221,55 @@ the same Schemas again.
   that a raise brings to what an existing `llm` Stub sends ships in a
   minor release with a CHANGELOG line, as does a change made to follow a
   vendor's documented form.
+
+### Upgrading moonhttp
+
+smock's HTTP/2 comes from moonbitstack/moonhttp, which `moon.mod` imports
+at one exact version
+([ADR 0005](adr/0005-http2-comes-from-moonhttp.md)). moon takes the
+version that a module file gives an import as a minimum, and the build
+resolves the highest version that any module asks for. So any change that
+raises the moonhttp version the build resolves is an upgrade, even with
+`moon.mod` unchanged: a new or upgraded module that needs a later moonhttp
+raises it too. CI fails on every push where the version the build resolves
+differs from the one `moon.mod` names, and names both
+(`scripts/check-moonhttp-pin.sh`). `moon tree` shows which module asks for
+which version.
+
+moonhttp is raised only on purpose, on an integration branch of its own
+(`integration/<name>`): change its version in `moon.mod` there, with
+whatever the new version needs in smock. Before that branch merges into
+`main`, it needs:
+
+- **h2spec** against both traffic ports, with every case passing but
+  those its lists give a reason for, and none of them waiting for an
+  issue. CI runs it against both
+  ([Build and test](../README.md#build-and-test)).
+- **The e2e tests**, which CI runs. They check the limits and rules that
+  moonhttp enforces as well as smock's own, so an upgrade that drops one
+  fails them.
+- **The interop check by hand**, against a release build of the branch:
+  - curl, with h2c by prior knowledge and over TLS;
+  - Go, with h2c by prior knowledge and with its default transport over
+    TLS;
+  - the JVM, with OkHttp's h2c by prior knowledge, and Java's built-in
+    client over TLS and on the plain port, where it gets HTTP/1.1;
+  - a browser over TLS, with a certificate it trusts.
+
+  Each gets the Stub's response, over the protocol that the HTTP/2
+  guide's [Clients](http2.md#clients) table gives, and each Journal
+  entry's `version` says the same. The results, with each client's
+  version, go in the merge record.
+- **The pre-merge local and GKE benchmark runs**, compared with the
+  previous runs, as [Before merging into main](merging-into-main.md) says
+  for every integration branch.
+
+On that branch, as on every other, CI also checks that moonhttp and the
+modules it imports bring no C. `scripts/check-no-c.sh` scans every module
+the build resolves outside moonbitlang, at the version the build resolves,
+so a module that the upgrade adds is scanned too. It fails on a C source,
+an `extern "C"`, a native stub, a C compiler or link flag, or a prebuild
+script in any of them. CI also fails until NOTICE names each module the
+upgrade adds, and drops each one the build no longer resolves, with the
+versions the build resolves, as [Every release after](#every-release-after)
+says. The image's SBOM follows on its own.

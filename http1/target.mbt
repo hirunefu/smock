@@ -12,19 +12,107 @@
 /// absolute-URI, such as `a.example:80` with the scheme `a.example`.
 ///
 /// Only the form is checked. The characters of a path or a query are only
-/// checked to be visible ASCII, which the head scan does: clients send some
-/// that RFC 3986 leaves out, such as `|` and `^`.
+/// checked to be visible ASCII (`is_visible_ascii`), which the head scan
+/// does: clients send some that RFC 3986 leaves out, such as `|` and `^`.
 fn is_request_target(target : StringView, meth~ : StringView) -> Bool {
+  // Neither is authority-form: a registered name holds no `/`, and `*`
+  // has no port.
+  if target.has_prefix("/") || target == "*" {
+    return is_origin_or_asterisk_form(target, meth~)
+  }
   if target.contains_char('#') {
     return false
   }
-  let authority_form = is_host_and_port(target, port_required=true)
+  let authority_form = is_authority_form(target)
   if meth == "CONNECT" || authority_form {
     return meth == "CONNECT" && authority_form
   }
-  target.has_prefix("/") ||
-  (target == "*" && meth == "OPTIONS") ||
   has_scheme(target)
+}
+
+///|
+/// Whether `target` is a request target, for the method `meth`, in
+/// origin-form (`/users/1?x=y`), or is `*`, the asterisk-form, for OPTIONS
+/// (RFC 9112, sections 3.2.1 and 3.2.4). These are the forms of HTTP/2's
+/// `:path` (RFC 9113, section 8.3.1). A fragment (`#`) is part of neither,
+/// and CONNECT takes neither.
+///
+/// Only the form is checked, as by the parser: `is_visible_ascii` checks
+/// the characters.
+///
+/// ```mbt check
+/// test {
+///   inspect(
+///     @http1.is_origin_or_asterisk_form("/users/1?x=y", meth="GET"),
+///     content="true",
+///   )
+///   inspect(
+///     @http1.is_origin_or_asterisk_form("*", meth="OPTIONS"),
+///     content="true",
+///   )
+///   inspect(@http1.is_origin_or_asterisk_form("*", meth="GET"), content="false")
+///   inspect(
+///     @http1.is_origin_or_asterisk_form("http://a.example/", meth="GET"),
+///     content="false",
+///   )
+/// }
+/// ```
+pub fn is_origin_or_asterisk_form(
+  target : StringView,
+  meth~ : StringView,
+) -> Bool {
+  if target.has_prefix("/") {
+    meth != "CONNECT" && !target.contains_char('#')
+  } else {
+    target == "*" && meth == "OPTIONS"
+  }
+}
+
+///|
+/// Whether `target` is a request target in authority-form, `uri-host ":"
+/// port` (RFC 9112, section 3.2.3), where an IPv6 address is in brackets:
+/// the one form of a CONNECT's target, and the form of HTTP/2's
+/// `:authority` in a CONNECT (RFC 9113, section 8.5). The host and the port
+/// may be empty, as the parser allows; the port may not be left out.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.is_authority_form("a.example:443"), content="true")
+///   inspect(@http1.is_authority_form("[::1]:8080"), content="true")
+///   inspect(@http1.is_authority_form("a.example"), content="false")
+///   inspect(@http1.is_authority_form("a.example:https"), content="false")
+/// }
+/// ```
+pub fn is_authority_form(target : StringView) -> Bool {
+  is_host_and_port(target, port_required=true)
+}
+
+///|
+/// Whether `s` holds only visible ASCII characters, 0x21 to 0x7E: no space,
+/// no control character, no DEL and nothing beyond ASCII. The parser
+/// answers 400 to a request whose target holds any other byte, and HTTP/2's
+/// `:path` follows the same rule. Every visible character passes, even
+/// those RFC 3986 leaves out of a URI, such as `|` and `^`, since clients
+/// send them. An empty `s` passes; an empty target is in no form of a
+/// request target.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.is_visible_ascii("/users/1?q=a|b"), content="true")
+///   inspect(@http1.is_visible_ascii("/users 1"), content="false")
+///   inspect(@http1.is_visible_ascii("/users/\t1"), content="false")
+///   inspect(@http1.is_visible_ascii("/caf\u{e9}"), content="false")
+/// }
+/// ```
+pub fn is_visible_ascii(s : StringView) -> Bool {
+  for i in 0..<s.length() {
+    // Each code unit of a character beyond ASCII is 0x80 or above.
+    let c = s[i]
+    if c >= 0x80 || !is_visible_byte(c.to_byte()) {
+      return false
+    }
+  }
+  true
 }
 
 ///|

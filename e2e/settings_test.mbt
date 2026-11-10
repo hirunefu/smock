@@ -10,35 +10,37 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|Serve the Mocks and Stubs of a definitions directory.
       #|
       #|Options:
-      #|  -h, --help                                   Show help information.
-      #|  --dir <dir>                                  The definitions directory. Without it, smock serves one empty Default Mock. [env: SMOCK_DIR]
-      #|  --port <port>                                The plain HTTP port. 0 picks a free port. [env: SMOCK_PORT] [default: 8080]
-      #|  --tls-port <tls-port>                        The HTTPS port, separate from the plain port. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
-      #|  --tls-cert-file <tls-cert-file>              The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. Without it and --tls-key-file, smock generates a self-signed certificate in memory for localhost, 127.0.0.1, ::1 and every Mock Host. [env: SMOCK_TLS_CERT_FILE]
-      #|  --tls-key-file <tls-key-file>                The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
-      #|  --tls-mock-certs <tls-mock-certs>            Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {"users":{"certFile":"/certs/users/tls.crt","keyFile":"/certs/users/tls.key"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets the default certificate: --tls-cert-file, or without it the self-signed one. Empty by default. [env: SMOCK_TLS_MOCK_CERTS]
-      #|  --admin-port <admin-port>                    The Admin API port, separate from the plain and TLS ports. 0 picks a free port. [env: SMOCK_ADMIN_PORT] [default: 9090]
-      #|  --admin-auth <admin-auth>                    Whether the Admin API needs a bearer token: on or off. Turn it off only for local use. [env: SMOCK_ADMIN_AUTH] [default: on]
-      #|  --admin-token-file <admin-token-file>        A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN. [env: SMOCK_ADMIN_TOKEN_FILE]
-      #|  --replicas <replicas>                        How many replicas the deployment runs. Above 1, every Admin API response warns that state is per replica. [env: SMOCK_REPLICAS] [default: 1]
-      #|  --session-header <session-header>            The request header that carries the Session, as W3C Baggage, on requests and Admin API calls. [env: SMOCK_SESSION_HEADER] [default: baggage]
-      #|  --session-member <session-member>            The member of the Session header whose value is the Session key. [env: SMOCK_SESSION_MEMBER] [default: smock-session]
-      #|  --log-format <log-format>                    The log format: json or mockoon. [env: SMOCK_LOG_FORMAT] [default: json]
-      #|  --body-file-dir <body-file-dir>              The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
-      #|  --template-env <template-env>                The environment variables templates may read as env.NAME, separated by commas, such as REGION,API_BASE. Their values are read once, at startup. A listed value can show in responses, renderings and template error messages, so list only values that may be shown. A name is letters, digits and _, starting with a letter or _, and cannot start with SMOCK_. None by default. [env: SMOCK_TEMPLATE_ENV]
-      #|  --header-size-limit <header-size-limit>      The most bytes a request head (request line and header fields) may take. Larger heads get 431. [env: SMOCK_HEADER_SIZE_LIMIT] [default: 16384]
-      #|  --header-count-limit <header-count-limit>    The most header fields a request may have. More get 431. [env: SMOCK_HEADER_COUNT_LIMIT] [default: 100]
-      #|  --body-limit <body-limit>                    The longest request body, in bytes. Longer bodies get 413. [env: SMOCK_BODY_LIMIT] [default: 10485760]
-      #|  --read-timeout-ms <read-timeout-ms>          How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes. [env: SMOCK_READ_TIMEOUT_MS] [default: 30000]
-      #|  --idle-timeout-ms <idle-timeout-ms>          How long a connection may wait for a request, in milliseconds. Then it closes. [env: SMOCK_IDLE_TIMEOUT_MS] [default: 60000]
-      #|  --write-timeout-ms <write-timeout-ms>        How long a write to a client may make no progress, in milliseconds, as when the client stops reading. Then the connection closes. [env: SMOCK_WRITE_TIMEOUT_MS] [default: 30000]
-      #|  --drain-timeout-ms <drain-timeout-ms>        How long smock may drain after SIGTERM, in milliseconds: responses in progress, Server-Sent Event streams and delays still running then are cut, and smock exits. [env: SMOCK_DRAIN_TIMEOUT_MS] [default: 20000]
-      #|  --seed <seed>                                The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it. [env: SMOCK_SEED]
-      #|  --journal <journal>                          Whether smock records the requests it receives in the Journal: on or off. Off, it records none, and Journal queries are refused. [env: SMOCK_JOURNAL] [default: on]
-      #|  --journal-max-entries <journal-max-entries>  The most entries the Journal holds. Beyond it, the oldest entries are evicted. [env: SMOCK_JOURNAL_MAX_ENTRIES] [default: 10000]
-      #|  --journal-max-bytes <journal-max-bytes>      The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, 32 per value its Near miss keeps from a form or an XML body, and the body bytes it keeps. Beyond it, the oldest entries are evicted. Default: a quarter of the memory limit of smock's cgroup (cgroup v2 memory.max), at least 1048576 (1 MiB) and at most 67108864 (64 MiB); 67108864 when there is no limit or it cannot be read. [env: SMOCK_JOURNAL_MAX_BYTES]
-      #|  --journal-body-limit <journal-body-limit>    The most bytes of a request body a Journal entry keeps; the rest is cut. Its Near miss keeps the values of form fields and XML paths up to the same total, each counting 32 bytes more. [env: SMOCK_JOURNAL_BODY_LIMIT] [default: 4096]
-      #|  --state-max-bytes <state-max-bytes>          The most bytes the per-Session state of the whole process takes, across every Mock and Session: each Mock and Session that holds Variables counts its Mock name, its Session key and 64; each Variable counts its name, 64, and its value as compact JSON with 16 more per JSON value in it. A request or an Admin API set whose writes would pass it writes nothing and gets 507. Scenario state does not count. Default: an eighth of the memory limit of smock's cgroup (cgroup v2 memory.max), at least 1048576 (1 MiB) and at most 67108864 (64 MiB); 67108864 when there is no limit or it cannot be read. [env: SMOCK_STATE_MAX_BYTES]
+      #|  -h, --help                                                     Show help information.
+      #|  --dir <dir>                                                    The definitions directory. Without it, smock serves one empty Default Mock. [env: SMOCK_DIR]
+      #|  --port <port>                                                  The plain HTTP port. 0 picks a free port. [env: SMOCK_PORT] [default: 8080]
+      #|  --tls-port <tls-port>                                          The HTTPS port, separate from the plain port. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
+      #|  --tls-cert-file <tls-cert-file>                                The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. Without it and --tls-key-file, smock generates a self-signed certificate in memory for localhost, 127.0.0.1, ::1 and every Mock Host. [env: SMOCK_TLS_CERT_FILE]
+      #|  --tls-key-file <tls-key-file>                                  The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
+      #|  --tls-mock-certs <tls-mock-certs>                              Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {"users":{"certFile":"/certs/users/tls.crt","keyFile":"/certs/users/tls.key"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets the default certificate: --tls-cert-file, or without it the self-signed one. Empty by default. [env: SMOCK_TLS_MOCK_CERTS]
+      #|  --tls-http2 <tls-http2>                                        Whether the HTTPS port offers HTTP/2 by ALPN: on or off. On, it offers h2, then http/1.1, with every certificate; off, http/1.1 alone. The plain port serves h2c either way. [env: SMOCK_TLS_HTTP2] [default: on]
+      #|  --admin-port <admin-port>                                      The Admin API port, separate from the plain and TLS ports. 0 picks a free port. [env: SMOCK_ADMIN_PORT] [default: 9090]
+      #|  --admin-auth <admin-auth>                                      Whether the Admin API needs a bearer token: on or off. Turn it off only for local use. [env: SMOCK_ADMIN_AUTH] [default: on]
+      #|  --admin-token-file <admin-token-file>                          A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN. [env: SMOCK_ADMIN_TOKEN_FILE]
+      #|  --replicas <replicas>                                          How many replicas the deployment runs. Above 1, every Admin API response warns that state is per replica. [env: SMOCK_REPLICAS] [default: 1]
+      #|  --session-header <session-header>                              The request header that carries the Session, as W3C Baggage, on requests and Admin API calls. [env: SMOCK_SESSION_HEADER] [default: baggage]
+      #|  --session-member <session-member>                              The member of the Session header whose value is the Session key. [env: SMOCK_SESSION_MEMBER] [default: smock-session]
+      #|  --log-format <log-format>                                      The log format: json or mockoon. [env: SMOCK_LOG_FORMAT] [default: json]
+      #|  --body-file-dir <body-file-dir>                                The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
+      #|  --template-env <template-env>                                  The environment variables templates may read as env.NAME, separated by commas, such as REGION,API_BASE. Their values are read once, at startup. A listed value can show in responses, renderings and template error messages, so list only values that may be shown. A name is letters, digits and _, starting with a letter or _, and cannot start with SMOCK_. None by default. [env: SMOCK_TEMPLATE_ENV]
+      #|  --header-size-limit <header-size-limit>                        The most bytes a request head (request line and header fields) may take. Larger heads get 431. Over HTTP/2, a header list is counted as RFC 7541 counts it, each field with 32 octets more, and a larger one gets 431 on its stream; a header block over twice the limit closes the connection. [env: SMOCK_HEADER_SIZE_LIMIT] [default: 16384]
+      #|  --header-count-limit <header-count-limit>                      The most header fields a request may have. More get 431. [env: SMOCK_HEADER_COUNT_LIMIT] [default: 100]
+      #|  --body-limit <body-limit>                                      The longest request body, in bytes. Longer bodies get 413. [env: SMOCK_BODY_LIMIT] [default: 10485760]
+      #|  --http2-max-concurrent-streams <http2-max-concurrent-streams>  The most streams an HTTP/2 connection may have in progress at once, from 1 to 1000. A stream past it is refused with REFUSED_STREAM. [env: SMOCK_HTTP2_MAX_CONCURRENT_STREAMS] [default: 100]
+      #|  --read-timeout-ms <read-timeout-ms>                            How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes; over HTTP/2, a request that does not arrive in time resets its stream instead. [env: SMOCK_READ_TIMEOUT_MS] [default: 30000]
+      #|  --idle-timeout-ms <idle-timeout-ms>                            How long a connection may wait for a request, in milliseconds. Then it closes. [env: SMOCK_IDLE_TIMEOUT_MS] [default: 60000]
+      #|  --write-timeout-ms <write-timeout-ms>                          How long a write to a client may make no progress, in milliseconds, as when the client stops reading. Then the connection closes. [env: SMOCK_WRITE_TIMEOUT_MS] [default: 30000]
+      #|  --drain-timeout-ms <drain-timeout-ms>                          How long smock may drain after SIGTERM, in milliseconds: responses in progress, Server-Sent Event streams and delays still running then are cut, and smock exits. [env: SMOCK_DRAIN_TIMEOUT_MS] [default: 20000]
+      #|  --seed <seed>                                                  The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it. [env: SMOCK_SEED]
+      #|  --journal <journal>                                            Whether smock records the requests it receives in the Journal: on or off. Off, it records none, and Journal queries are refused. [env: SMOCK_JOURNAL] [default: on]
+      #|  --journal-max-entries <journal-max-entries>                    The most entries the Journal holds. Beyond it, the oldest entries are evicted. [env: SMOCK_JOURNAL_MAX_ENTRIES] [default: 10000]
+      #|  --journal-max-bytes <journal-max-bytes>                        The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, 32 per value its Near miss keeps from a form or an XML body, and the body bytes it keeps. Beyond it, the oldest entries are evicted. Default: a quarter of the memory limit of smock's cgroup (cgroup v2 memory.max), at least 1048576 (1 MiB) and at most 67108864 (64 MiB); 67108864 when there is no limit or it cannot be read. [env: SMOCK_JOURNAL_MAX_BYTES]
+      #|  --journal-body-limit <journal-body-limit>                      The most bytes of a request body a Journal entry keeps; the rest is cut. Its Near miss keeps the values of form fields and XML paths up to the same total, each counting 32 bytes more. [env: SMOCK_JOURNAL_BODY_LIMIT] [default: 4096]
+      #|  --state-max-bytes <state-max-bytes>                            The most bytes the per-Session state of the whole process takes, across every Mock and Session: each Mock and Session that holds Variables counts its Mock name, its Session key and 64; each Variable counts its name, 64, and its value as compact JSON with 16 more per JSON value in it. A request or an Admin API set whose writes would pass it writes nothing and gets 507. Scenario state does not count. Default: an eighth of the memory limit of smock's cgroup (cgroup v2 memory.max), at least 1048576 (1 MiB) and at most 67108864 (64 MiB); 67108864 when there is no limit or it cannot be read. [env: SMOCK_STATE_MAX_BYTES]
       #|
     ),
   )
@@ -135,6 +137,9 @@ async test "an invalid value stops startup with a message that names the setting
     ([], { "SMOCK_TLS_PORT": "https" }),
     (["--port", "8443", "--tls-port", "8443"], Map([])),
     ([], { "SMOCK_PORT": "9000", "SMOCK_TLS_PORT": "9000" }),
+    (["--tls-http2", "false"], Map([])),
+    (["--tls-http2", ""], Map([])),
+    ([], { "SMOCK_TLS_HTTP2": "OFF" }),
     (["--log-format", "text"], Map([])),
     ([], { "SMOCK_LOG_FORMAT": "Mockoon" }),
     ([], { "SMOCK_LOG_FORMAT": "" }),
@@ -146,6 +151,10 @@ async test "an invalid value stops startup with a message that names the setting
     (["--header-count-limit", "0"], Map([])),
     (["--body-limit", "1073741825"], Map([])),
     ([], { "SMOCK_BODY_LIMIT": "-1" }),
+    (["--http2-max-concurrent-streams", "0"], Map([])),
+    (["--http2-max-concurrent-streams", "1001"], Map([])),
+    ([], { "SMOCK_HTTP2_MAX_CONCURRENT_STREAMS": "ten" }),
+    ([], { "SMOCK_HTTP2_MAX_CONCURRENT_STREAMS": "-1" }),
     (["--read-timeout-ms", "30s"], Map([])),
     (["--read-timeout-ms", "2147483648"], Map([])),
     ([], { "SMOCK_IDLE_TIMEOUT_MS": "0" }),
@@ -206,6 +215,9 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "https" for --tls-port (SMOCK_TLS_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "8443" for --tls-port (SMOCK_TLS_PORT): must differ from --port (SMOCK_PORT)
       #|status 2: smock serve: invalid value "9000" for --tls-port (SMOCK_TLS_PORT): must differ from --port (SMOCK_PORT)
+      #|status 2: smock serve: invalid value "false" for --tls-http2 (SMOCK_TLS_HTTP2): must be on or off
+      #|status 2: smock serve: invalid value "" for --tls-http2 (SMOCK_TLS_HTTP2): must be on or off
+      #|status 2: smock serve: invalid value "OFF" for --tls-http2 (SMOCK_TLS_HTTP2): must be on or off
       #|status 2: smock serve: invalid value "text" for --log-format (SMOCK_LOG_FORMAT): must be json or mockoon
       #|status 2: smock serve: invalid value "Mockoon" for --log-format (SMOCK_LOG_FORMAT): must be json or mockoon
       #|status 2: smock serve: invalid value "" for --log-format (SMOCK_LOG_FORMAT): must be json or mockoon
@@ -217,6 +229,10 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "0" for --header-count-limit (SMOCK_HEADER_COUNT_LIMIT): must be an integer from 1 to 1073741824
       #|status 2: smock serve: invalid value "1073741825" for --body-limit (SMOCK_BODY_LIMIT): must be an integer from 0 to 1073741824
       #|status 2: smock serve: invalid value "-1" for --body-limit (SMOCK_BODY_LIMIT): must be an integer from 0 to 1073741824
+      #|status 2: smock serve: invalid value "0" for --http2-max-concurrent-streams (SMOCK_HTTP2_MAX_CONCURRENT_STREAMS): must be an integer from 1 to 1000
+      #|status 2: smock serve: invalid value "1001" for --http2-max-concurrent-streams (SMOCK_HTTP2_MAX_CONCURRENT_STREAMS): must be an integer from 1 to 1000
+      #|status 2: smock serve: invalid value "ten" for --http2-max-concurrent-streams (SMOCK_HTTP2_MAX_CONCURRENT_STREAMS): must be an integer from 1 to 1000
+      #|status 2: smock serve: invalid value "-1" for --http2-max-concurrent-streams (SMOCK_HTTP2_MAX_CONCURRENT_STREAMS): must be an integer from 1 to 1000
       #|status 2: smock serve: invalid value "30s" for --read-timeout-ms (SMOCK_READ_TIMEOUT_MS): must be an integer from 1 to 2147483647
       #|status 2: smock serve: invalid value "2147483648" for --read-timeout-ms (SMOCK_READ_TIMEOUT_MS): must be an integer from 1 to 2147483647
       #|status 2: smock serve: invalid value "0" for --idle-timeout-ms (SMOCK_IDLE_TIMEOUT_MS): must be an integer from 1 to 2147483647

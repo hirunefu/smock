@@ -15,7 +15,7 @@
 FROM gcr.io/distroless/base-debian13:nonroot@sha256:9039a88709bcc2bacf5a2faac331d65dd6840f763f225ad9594cc0c67bcd0fba
 
 LABEL org.opencontainers.image.title="smock" \
-      org.opencontainers.image.description="A mock server for HTTP/1.1, HTTPS and Server-Sent Events" \
+      org.opencontainers.image.description="A mock server for HTTP/1.1, HTTP/2, HTTPS and Server-Sent Events" \
       org.opencontainers.image.source="https://github.com/hirunefu/smock" \
       org.opencontainers.image.licenses="Apache-2.0"
 

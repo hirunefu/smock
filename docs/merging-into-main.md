@@ -24,8 +24,22 @@ pre-merge run compares with them.
 ## Checklist
 
 - [ ] **CI is green on the integration branch**, and its issues are done.
+  CI also runs h2spec, the HTTP/2 conformance tool, against the plain
+  port and the TLS port, on linux/amd64
+  ([Build and test](../README.md#build-and-test)). Before the merge, its
+  lists of the cases that do not pass, `scripts/h2spec/plain.txt` and
+  `scripts/h2spec/tls.txt`, name no case that waits for an issue, and each
+  listed case that the run reports as passing has come off them. On a branch that raises moonhttp, this run is
+  part of the checks the upgrade needs.
+- [ ] **If the branch raises moonhttp**, it has passed the gate of
+  [Upgrading moonhttp](releasing.md#upgrading-moonhttp): h2spec against
+  both traffic ports, the e2e tests, and the interop check by hand with
+  curl, Go, the JVM and a browser, with the results in the merge record.
+  The runs below follow, as for any branch. Any change that raises the
+  moonhttp version the build resolves is such an upgrade, and CI fails on
+  it until `moon.mod` names the new version.
 - [ ] **Run the local Autopilot plan** on the usual machine, the full plan
-  (about 20 minutes), as the benchmark's
+  (about 54 minutes), as the benchmark's
   [GKE Autopilot profiles](../bench/README.md#gke-autopilot-profiles) section
   says: plugged in, other programs closed, the CPU frequency governor at
   `performance`.
@@ -39,7 +53,10 @@ pre-merge run compares with them.
   CPU architecture: `bench/targets.json` has a set for arm64 and one for
   amd64, a run checks the set of the architecture it ran on (arm64 on the
   M1), and the line above the table says which. A missed target is a
-  finding to resolve or to record before the merge.
+  finding to resolve or to record before the merge. The targets of
+  `http-keep-alive` hold for the two HTTP/2 cases too, so a miss on one of
+  them is such a finding as well
+  ([Targets for several cases](../bench/README.md#targets-for-several-cases)).
 - [ ] **Compare it with the previous pre-merge local run**, from the same
   machine:
 
@@ -55,7 +72,12 @@ pre-merge run compares with them.
   p99.9 only where both runs measured at least 10,000 requests at the
   step: the rest swing from run to run, and the report shows them for
   reference without failing
-  ([Comparing runs](../bench/README.md#comparing-runs)). Its first lines say
+  ([Comparing runs](../bench/README.md#comparing-runs)). A previous run from
+  before the [HTTP/2 cases](../bench/README.md#http2-cases) has no steps
+  for them: they are listed as only in the newer run, and the HTTP/1.1
+  cases are compared as usual. `h2c-multiplexed`, which runs only here and
+  has no target, is likewise listed against a run from before it, and
+  compared like any case against a run that has it. Its first lines say
   whether the machine, the plan or anything else besides smock differed,
   and which steps count. A change to the plan's `about` alone is no
   difference, but a run from before runs recorded the plan's hash without
@@ -123,11 +145,11 @@ pre-merge run compares with them.
   and more can be asked for on the console's Quotas page), and that nothing is
   left from an earlier run, and prints every
   command it would run and the cost estimate. A full amd64 run is
-  expected to cost about $0.22, and at most about $0.63 if it ran until
-  its time limit of 80 minutes, before tax (about $0.26 and $0.77 in
+  expected to cost about $0.40, and at most about $0.78 if it ran until
+  its time limit of 100 minutes, before tax (about $0.48 and $0.95 in
   asia-northeast1); the free tier usually covers the cluster's management
   fee. When the checks pass
-  and the estimate is acceptable, run it (about 50 minutes), with the
+  and the estimate is acceptable, run it (about 75 minutes), with the
   machine kept awake, on power and online for the whole run, since the
   watchdog that deletes the cluster at the time limit runs on it:
 
