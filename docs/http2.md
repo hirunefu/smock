@@ -604,6 +604,15 @@ A reader of stdout that stops reading holds up a connection with a line to
 write: its reader, before it reads again, and the task of a stream whose
 response waited, as it ends. Other connections go on.
 
+The `mockoon` format costs CPU over HTTP/2 as over HTTP/1.1. In the
+benchmark on an M1 laptop, smock spent about 7 to 10 µs more on each
+HTTP/2 request than in `json`, 20% to 50% more. Under 1 CPU, HTTP/2 over
+TLS at 30,000 requests/s then used 88% of the CPU rather than 64%, and in
+one of two runs its p99 rose to 14 ms and its p99.9 to 25 ms, past the
+performance targets; at 20,000 it kept the latency of `json`. So smock
+serving HTTP/2 close to its CPU limit in `json` needs a higher limit in
+`mockoon` ([Run](../README.md#run)).
+
 ## Limits and timeouts
 
 The limits and timeouts of `smock serve` apply to HTTP/2 too. One flag is

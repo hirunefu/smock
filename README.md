@@ -96,11 +96,16 @@ the client's windows, writes its own as it ends
 smock's own lines then wait in a queue of up to 1,024 lines: one beyond
 it is dropped and counted in `smock_log_lines_dropped_total`.
 The `mockoon` format costs CPU. In the benchmark on an M1 laptop, smock
-spent about 8 to 11 µs more CPU on each request than in `json`, 40% to
-90% more, with the same latency at every rate up to the performance
-targets. Under a CPU limit it runs out sooner: the most it kept up with
-fell from 4,000 to 2,000 requests/s under 50m, and from 20,000 to 12,500
-under 250m, the next steps down in the benchmark.
+spent about 8 to 11 µs more CPU on each HTTP/1.1 request than in `json`,
+40% to 90% more, and about 7 to 10 µs more on each HTTP/2 request, 20%
+to 50% more. The latency stayed the same at every rate up to the
+performance targets but one: under 1 CPU, HTTP/2 over TLS at 30,000
+requests/s used 88% of the CPU rather than 64%, and in one of two runs
+its p99 rose to 14 ms and its p99.9 to 25 ms, past the targets. At
+20,000 it kept the latency of `json`. Under a CPU limit it runs out
+sooner: the most HTTP/1.1 kept up with fell from 4,000 to 2,000
+requests/s under 50m, and from 20,000 to 12,500 under 250m, the next
+steps down in the benchmark.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md#logs)
 lists the lines and how they differ from the Mockoon CLI's.
 
