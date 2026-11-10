@@ -3,9 +3,9 @@
 /// snapshot, or returns every problem: those reading the directory, then
 /// those in the definition set. `smock serve` and `smock check` both load
 /// definitions this way, so a set that one accepts, the other accepts too.
-/// Templates may read the environment variables `env`. The digest is
-/// computed by `digest`, so that other tasks, such as the admin port's
-/// probes, run while it is.
+/// Templates may read the environment variables `env`. A valid set's
+/// digest is computed by `digest`, so that other tasks, such as the admin
+/// port's probes, run while it is.
 ///
 /// Without a directory, the definition set is empty.
 pub async fn load(
@@ -17,7 +17,23 @@ pub async fn load(
     Some(dir) => read(dir, body_file_dir~)
     None => ({ files: [], body_files: [], }, [])
   }
-  @definitions.load(set, read_problems~, env~, digest=digest(set))
+  load_set(set, read_problems~, env~)
+}
+
+///|
+/// Validates `set`, read with the problems `read_problems`, into a
+/// snapshot, as `load` does once it has read the set. Only a valid set is
+/// hashed, so the problems of an invalid one come without the wait for
+/// its digest, which grows with the size of its body files.
+async fn load_set(
+  set : @definitions.DefinitionSet,
+  read_problems~ : Array[@definitions.Diagnostic],
+  env~ : @template.Env,
+) -> Result[@definitions.Snapshot, Array[@definitions.Diagnostic]] {
+  match @definitions.validate(set, read_problems~, env~) {
+    Ok(valid) => Ok(valid.snapshot(digest=digest(set)))
+    Err(problems) => Err(problems)
+  }
 }
 
 ///|

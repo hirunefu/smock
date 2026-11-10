@@ -1100,17 +1100,7 @@ pub fn normalize_host(host : String) -> String {
 
 ///|
 /// Validates a definition set and builds its snapshot, or returns every
-/// problem found, in file-name order and then in the order they appear in
-/// each file.
-///
-/// `read_problems` are the problems the caller had reading the set, such
-/// as a file that cannot be read. A set read with problems is invalid
-/// whatever its files hold; they come first among its problems.
-///
-/// `env` holds the environment variables that templates may read, as
-/// `--template-env` lists them, with the values the caller read: by
-/// default, none. A template that reads another name is a problem. The
-/// values are not part of the digest.
+/// problem found, as `validate` and `ValidSet::snapshot` do.
 ///
 /// `digest` is the set's digest, as `DefinitionSet::digest` gives it, when
 /// the caller has computed it already, such as a step at a time; without
@@ -1121,6 +1111,38 @@ pub fn load(
   env~ : @template.Env = @template.no_env,
   digest? : String,
 ) -> Result[Snapshot, Array[Diagnostic]] {
+  match validate(set, read_problems~, env~) {
+    Ok(valid) => {
+      let digest = match digest {
+        Some(digest) => digest
+        None => set.digest()
+      }
+      Ok(valid.snapshot(digest~))
+    }
+    Err(problems) => Err(problems)
+  }
+}
+
+///|
+/// Validates a definition set, or returns every problem found, in file-name
+/// order and then in the order they appear in each file. A valid set
+/// becomes a snapshot once its digest is known, with `ValidSet::snapshot`,
+/// so a caller that computes the digest itself, such as a step at a time,
+/// computes it only for a valid set.
+///
+/// `read_problems` are the problems the caller had reading the set, such
+/// as a file that cannot be read. A set read with problems is invalid
+/// whatever its files hold; they come first among its problems.
+///
+/// `env` holds the environment variables that templates may read, as
+/// `--template-env` lists them, with the values the caller read: by
+/// default, none. A template that reads another name is a problem. The
+/// values are not part of the digest.
+pub fn validate(
+  set : DefinitionSet,
+  read_problems~ : Array[Diagnostic] = [],
+  env~ : @template.Env = @template.no_env,
+) -> Result[ValidSet, Array[Diagnostic]] {
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
   })
@@ -1136,12 +1158,24 @@ pub fn load(
   if read_problems.length() > 0 || reader.diagnostics.length() > 0 {
     return Err([..read_problems, ..reader.diagnostics])
   }
-  let digest = match digest {
-    Some(digest) => digest
-    None => set.digest()
-  }
+  Ok({ reader, })
+}
+
+///|
+/// A definition set that `validate` found valid, not yet a snapshot.
+pub struct ValidSet {
+  /// What validating the set's files gathered: its Mocks, Stubs, Hosts and
+  /// Data buckets.
+  priv reader : Reader
+}
+
+///|
+/// The snapshot of the valid set, with the digest `digest`: the set's
+/// digest, as `DefinitionSet::digest` gives it.
+pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
+  let reader = self.reader
   if reader.mocks.length() == 0 {
-    return Ok({
+    return {
       mocks: ReadOnlyArray::from_array([
         {
           name: "default",
@@ -1160,7 +1194,7 @@ pub fn load(
       default_index: Some(0),
       stub_locations: Map([]),
       digest,
-    })
+    }
   }
   let mocks = reader.mocks.map(mock => {
     let stubs = ReadOnlyArray::from_array(
@@ -1202,13 +1236,13 @@ pub fn load(
     None if mocks.length() == 1 => Some(0)
     None => None
   }
-  Ok({
+  {
     mocks: ReadOnlyArray::from_array(mocks),
     host_index,
     default_index,
     stub_locations: reader.stub_locations,
     digest,
-  })
+  }
 }
 
 ///|
