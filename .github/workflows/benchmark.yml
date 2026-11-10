@@ -10,8 +10,16 @@ name: Benchmark
 on:
   workflow_dispatch:
     inputs:
+      plan:
+        description: "The plan to run, such as bench/plan-autopilot.json for the HTTP/2 cases (default: bench/plan.json)"
+        type: string
+        default: ""
+      profiles:
+        description: "Only these profiles of the plan, comma-separated, such as chart-default (default: every profile)"
+        type: string
+        default: ""
       cases:
-        description: "Only these cases of bench/plan.json, comma-separated (default: every case)"
+        description: "Only these cases of the plan, comma-separated (default: every case)"
         type: string
         default: ""
       cpu-limits:
@@ -80,10 +88,13 @@ jobs:
 
       - name: Run the benchmark
         env:
+          PLAN: ${{ inputs.plan }}
+          PROFILES: ${{ inputs.profiles }}
           CASES: ${{ inputs.cases }}
           CPU_LIMITS: ${{ inputs.cpu-limits }}
         run: >-
           python3 bench/bench.py run --out "$RUNNER_TEMP/benchmark"
+          ${PLAN:+--plan "$PLAN"} ${PROFILES:+--profiles "$PROFILES"}
           ${CASES:+--cases "$CASES"} ${CPU_LIMITS:+--cpu-limits "$CPU_LIMITS"}
 
       - name: Show the summary

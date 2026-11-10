@@ -130,7 +130,9 @@ of each GitHub release include its section
   carry 4 requests at once (oha's `-p 4`, a case's new
   `streams_per_connection`). It has no target, runs only on your machine
   (`local_only`), where it adds about 11 minutes, and the GKE run leaves it
-  out. See [HTTP/2 cases](bench/README.md#http2-cases).
+  out. The Benchmark workflow's new `plan` and `profiles` inputs run them
+  on GitHub's amd64 and arm64 runners. See
+  [HTTP/2 cases](bench/README.md#http2-cases).
 - The `smock/http1` module makes public the checks and encodings that its
   parser and encoder use, so that another protocol, such as HTTP/2,
   refuses what HTTP/1.1 refuses and sends the same octets:

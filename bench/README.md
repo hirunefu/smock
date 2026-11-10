@@ -1176,7 +1176,10 @@ linux/arm64 when started by hand from the Actions tab, optionally for some
 cases or CPU limits only. It builds the release binary, installs oha, lets
 the runner's systemd user manager set CPU quotas, runs the harness's tests
 and then the whole of `bench/plan.json`, whose profiles have no memory
-limits, so it reports the [targets](#targets) as not measured. The output
+limits, so it reports the [targets](#targets) as not measured. Its `plan`
+and `profiles` inputs run another plan instead, or some of its profiles,
+such as `bench/plan-autopilot.json` and `chart-default` for the
+[HTTP/2 cases](#http2-cases) on both architectures. The output
 of each architecture is a workflow artifact, `benchmark-linux-amd64` and
 `benchmark-linux-arm64`, and the run's page shows the summaries. It never
 runs on a schedule, on pull requests or on pushes:
