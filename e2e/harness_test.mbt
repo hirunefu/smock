@@ -1,6 +1,8 @@
 // The Seam 2 harness: it runs the smock binary as a black box. Each test
 // gets its own temporary definitions directory and its own ports (smock
-// binds port 0 and logs the port it got), so tests run in parallel.
+// binds port 0 and logs the port it got), so tests run in parallel. They
+// share one event loop, so a test computes for no more than about 20 ms
+// between awaits: see "Build and test" in README.md.
 
 ///|
 /// The binary under test: the native debug build of `cmd/smock`. Tests run
@@ -40,7 +42,14 @@ async fn with_definitions(
 }
 
 ///|
-/// Writes `text` to `dir/path`, creating the directories on the way.
+/// The most UTF-16 code units of a text that `write` encodes at once.
+let write_piece : Int32 = 1024 * 1024
+
+///|
+/// Writes `text` to `dir/path`, creating the directories on the way, as
+/// `@fs.write_file` does. A text longer than `write_piece` is encoded and
+/// written a piece at a time: encoding a 16 MiB body file in one go took
+/// 50 to 150 ms, in which no other test of the package ran.
 async fn write(dir : String, path : String, text : String) -> Unit {
   let parts = path.split("/").collect()
   let mut parent = dir
@@ -48,7 +57,20 @@ async fn write(dir : String, path : String, text : String) -> Unit {
     parent = "\{parent}/\{part}"
     @fs.mkdir(parent, allow_exist=true)
   }
-  @fs.write_file("\{dir}/\{path}", text)
+  let file = @fs.open(
+    "\{dir}/\{path}",
+    mode=WriteOnly,
+    sync=Data,
+    create_mode=CreateOrTruncate,
+  )
+  defer file.close()
+  let mut rest = text[:]
+  while rest.length() > 0 {
+    // A view never ends between the two halves of a surrogate pair.
+    let piece = rest[:write_piece]
+    file.write(@utf8.encode(piece))
+    rest = rest[piece.length():]
+  }
 }
 
 ///|

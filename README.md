@@ -1205,6 +1205,9 @@ Packages of `smock/smock`:
   times it writes, which the Admin API and the CLI also read.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
 - `e2e`: tests that run the `smock` binary as a black box (native).
+- `schema`: a test over every Definition-file fixture in
+  `schema/v1/fixtures/` that needs no `smock` binary: each, written as YAML
+  by `smock/yaml`, reads back as the same tree (native).
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
@@ -1392,6 +1395,22 @@ The test of the Journal's byte bound under a memory limit
 user manager with the `memory` controller delegated to it (see
 [Run it on your machine](bench/README.md#run-it-on-your-machine)). Where a
 scope cannot get the limit, it prints why it skipped and passes.
+
+`moon` runs the async tests of a package in one process, on one event
+loop, ten at a time. A test that computes without an await holds up the
+timers and reads of every other test running then: in `e2e`, one that
+computed for half a second made the timing tests beside it fail. So an e2e
+test computes for no more than about 20 ms between awaits, and even ten
+such tests in a row delay a timer less than the timing tests allow. A
+timing test takes the time it measures from before it sends the request:
+taken after an await, that time can come late, and what follows then looks
+early, which the timing tests do not allow. Build a large input once, in a
+top-level `let`, which runs as the test process starts, and cheaply: with
+`String::make`, `Bytes::make` or by doubling, not with `String::repeat`,
+which appends one piece at a time. The harness writes a large file 1 MiB
+at a time. A check that must compute for longer, and needs no `smock`,
+goes in a package of its own, whose tests get a process of their own, as
+`schema` does.
 
 `SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that a
 native build, such as `scripts/build-release.sh`, records in the binary.

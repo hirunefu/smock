@@ -187,18 +187,20 @@ async fn converse(smock : Smock) -> String {
   let from = @async.now()
   ask_chat(conn, weather_question(stream=true))
   let head = read_head(conn)
-  let head_at = @async.now()
   let first = first_match_waits[0]
   let out = [
-    "streamed, head \{head_arrival(head_at - from, first)}:",
+    "streamed, head \{head_arrival(@async.now() - from, first)}:",
     head.trim_end(chars="\n").to_owned(),
   ]
   // When each event is due, in milliseconds after the head: each piece
-  // after its wait, every other event at once after the one before it.
+  // after its wait, every other event at once after the one before it. The
+  // head goes out at once, so the waits count from the request too, and
+  // the time is taken from before it: a time taken after the head was
+  // read, an await later, could make an event look early.
   let mut due = 0
   let mut pieces = 0
   let mut call_id = ""
-  read_chat_stream(conn, head_at, (line, json, elapsed) => {
+  read_chat_stream(conn, from, (line, json, elapsed) => {
     if carries_piece(json) {
       guard pieces < first_match_waits.length() else {
         fail("more pieces than waits:\n\{out.join("\n")}")
