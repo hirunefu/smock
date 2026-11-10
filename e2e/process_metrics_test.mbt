@@ -82,13 +82,30 @@ fn cgroup_counts(stat : Map[String, Double], peak : Double?) -> Array[String] {
 }
 
 ///|
+/// Waits until the files of the cgroup `dir` have the counts `counts`, as
+/// `cgroup_counts` gives them, for up to `within` milliseconds.
+async fn until_cgroup_counts(
+  dir : String,
+  counts : Array[String],
+  within~ : Int32,
+) -> Unit {
+  let _ = @async.with_timeout_opt(within, () => {
+    while cgroup_counts(cgroup_cpu_stat(dir), cgroup_memory_peak(dir)) != counts {
+      @async.sleep(10)
+    }
+  })
+}
+
+///|
 /// Keeps the two tests of the cgroup metrics from running at once. A
 /// systemd scope with a CPU quota, as the first starts, has systemd turn on
 /// the cpu controller of the scope's parent cgroup, and turn it off again
-/// once the scope ends: that adds the CFS counts to the cpu.stat of every
-/// cgroup beside the scope, then takes them away. The test process's
-/// cgroup is one of those when it runs in a scope of its own, as under
-/// `systemd-run --user --scope`, and the second test's smock runs in it.
+/// shortly after the scope ends: that adds the CFS counts to the cpu.stat
+/// of every cgroup beside the scope, then takes them away. The test
+/// process's cgroup is one of those when it runs in a scope of its own, as
+/// under `systemd-run --user --scope`, and the second test's smock runs in
+/// it. So the first test holds this until the test process's cgroup has its
+/// counts back.
 let cgroup_tests : @async.Mutex = @async.Mutex()
 
 ///|
@@ -368,6 +385,8 @@ fn cgroup_report(
 async test "cgroup metrics: under a CPU quota and a memory limit, smock's cgroup's CPU usage, CFS periods, throttling and memory peak as its files have them when /metrics is scraped" {
   cgroup_tests.acquire()
   defer cgroup_tests.release()
+  let own = cgroup_of()
+  let own_counts = cgroup_counts(cgroup_cpu_stat(own), cgroup_memory_peak(own))
   if quota_scope_unavailable() is Some(reason) {
     println(
       "skipped \"cgroup metrics: under a CPU quota\" (e2e/process_metrics_test.mbt): it runs smock in a systemd user scope with a CPU quota, but \{reason}",
@@ -419,6 +438,7 @@ async test "cgroup metrics: under a CPU quota and a memory limit, smock's cgroup
       )
     },
   )
+  until_cgroup_counts(own, own_counts, within=2000)
 }
 
 ///|
@@ -426,9 +446,9 @@ async test "cgroup metrics: in whatever cgroup smock runs, /metrics has a cgroup
   // smock serves the cgroup metrics whose counts the files have when it
   // starts (README.md), so the check holds of a smock whose cgroup had the
   // same counts from before it started until after the scrape. Their
-  // controllers can still change in between, as when the scope of the test
-  // above ends just after it: the check is then made again with a new
-  // smock.
+  // controllers can still change in between, as when a scope with a CPU
+  // quota from outside the tests starts or ends beside the test process:
+  // the check is then made again with a new smock.
   cgroup_tests.acquire()
   defer cgroup_tests.release()
   let dir = cgroup_of()
