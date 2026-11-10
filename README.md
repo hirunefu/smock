@@ -98,7 +98,7 @@ it is dropped and counted in `smock_log_lines_dropped_total`.
 The `mockoon` format costs CPU. In the benchmark on an M1 laptop, smock
 spent about 8 to 11 µs more CPU on each HTTP/1.1 request than in `json`,
 40% to 90% more, and about 7 to 10 µs more on each HTTP/2 request, 20%
-to 50% more. The latency stayed the same at every rate up to the
+to 50% more. Up to the target rates, every step stayed within the
 performance targets but one: under 1 CPU, HTTP/2 over TLS at 30,000
 requests/s used 88% of the CPU rather than 64%, and in one of two runs
 its p99 rose to 14 ms and its p99.9 to 25 ms, past the targets. At
