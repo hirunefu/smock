@@ -3,6 +3,9 @@
 // window, and closes the connection past it, with no GOAWAY; a stream whose
 // own window stays at zero is reset with CANCEL, alone. A window that
 // widens, however slowly, restarts it, and smock's own waits never count.
+// Each test takes the time it measures from before it sends the request:
+// other tests can run before a send returns, and a time taken after it
+// could make the timeout look short.
 
 ///|
 async test "h2c: a client that keeps the connection window at zero is closed at the write timeout, with no GOAWAY and no RST_STREAM, unlogged, and a new connection is served" {
@@ -12,6 +15,7 @@ async test "h2c: a client that keeps the connection window at zero is closed at 
       smock => {
         let raw = smock.raw_h2(settings=false)
         defer raw.close()
+        let start = @async.now()
         // Wide stream windows, so that only the connection window of 65,535
         // octets holds the body back.
         raw.send([
@@ -21,7 +25,6 @@ async test "h2c: a client that keeps the connection window at zero is closed at 
           ),
           raw.get(1, "/big"),
         ])
-        let start = @async.now()
         let frames = raw.frames_until(start, _ => false)
         let client = smock.h2c()
         defer client.close()
@@ -65,6 +68,7 @@ async test "h2c: a stream whose own window stays at zero for the write timeout w
         let raw = smock.raw_h2(settings=false)
         defer raw.close()
         let out = []
+        let start = @async.now()
         // Stream windows of 0, with the connection window open: both bodies
         // wait for their own windows.
         raw.send([
@@ -73,7 +77,6 @@ async test "h2c: a stream whose own window stays at zero for the write timeout w
           raw.get(3, "/item"),
           fence,
         ])
-        let start = @async.now()
         out.push(raw.frames_until_ping_ack())
         // Stream 3's window widens a while later, and its body goes out,
         // while stream 1's stays at zero.
@@ -166,13 +169,13 @@ async test "h2c: a client that widens its windows slowly but steadily keeps its 
         let out = []
         let raw = smock.raw_h2(settings=false)
         defer raw.close()
+        let start = @async.now()
         // On the stream: a window of one octet for "hello", widened by one
         // octet every 200 ms, so that the body takes about 800 ms in all.
         raw.send([
           Settings(params=[(@http2.settings_initial_window_size, 1)], ack=false),
           raw.get(1, "/item"),
         ])
-        let start = @async.now()
         out.append(
           raw.granting(
             1,
@@ -183,10 +186,10 @@ async test "h2c: a client that widens its windows slowly but steadily keeps its 
         out.push(
           "by WINDOW_UPDATE on the stream, longer than the write timeout: \{@async.now() - start > 500}",
         )
+        let start = @async.now()
         // By SETTINGS: the initial window, still one octet, raised by one
         // octet every 200 ms.
         raw.send([raw.get(3, "/item")])
-        let start = @async.now()
         out.append(
           raw.granting(
             3,
@@ -207,6 +210,7 @@ async test "h2c: a client that widens its windows slowly but steadily keeps its 
         // three octets 200 ms after each DATA frame it reads.
         let raw = smock.raw_h2(settings=false)
         defer raw.close()
+        let start = @async.now()
         raw.send([
           Settings(
             params=[(@http2.settings_initial_window_size, 1_000_000)],
@@ -214,7 +218,6 @@ async test "h2c: a client that widens its windows slowly but steadily keeps its 
           ),
           raw.get(1, "/medium"),
         ])
-        let start = @async.now()
         let frames = raw.granting(
           1,
           _ => WindowUpdate(stream_id=0, increment=3),
