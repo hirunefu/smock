@@ -883,10 +883,12 @@ let large_body_file_bytes : Int32 = 16 * 1024 * 1024
 ///|
 /// How long a request may take while a reload hashes the large body file.
 /// A debug build answers within about 10 ms, since it hashes 64 KiB between
-/// pauses; this leaves room for a loaded machine and for the other tests in
-/// this process, and stays well under the 400 ms it takes to hash the file
-/// at once.
-let while_reloading_ms : Int64 = 150
+/// pauses. The tests of this package share one event loop, so a test that
+/// computes meanwhile delays the reply as it reaches this test, and this
+/// allows as much as the other timing tests do, such as `lateness` in
+/// sse_test.mbt. It stays under the 400 ms it takes to hash the file at
+/// once.
+let while_reloading_ms : Int64 = 250
 
 ///|
 async test "while a reload hashes a large body file, requests on an open connection are answered at once, from the old set, then the new" {
@@ -949,7 +951,7 @@ async test "while a reload hashes a large body file, requests on an open connect
           content=(
             #|swapped in time: true; "swapped", digest changed: true
             #|bodies, in order: old, new
-            #|every request answered within 150 ms: true
+            #|every request answered within 250 ms: true
           ),
         )
       })
