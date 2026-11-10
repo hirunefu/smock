@@ -432,9 +432,13 @@ at once, and the container runtime reads stdout all the time. A reader
 that stops reading holds up only the connections whose requests have a
 line to write, and smock's own lines beyond 1,024 waiting are dropped and
 counted in `smock_log_lines_dropped_total`. The `mockoon` format costs
-CPU: on an M1 laptop smock spent about 8 to 11 µs more on each request
-than in `json`, 40% to 90% more, so a Pod that comes close to its CPU
-limit in `json` needs a higher one in `mockoon`. The
+CPU: on an M1 laptop smock spent about 8 to 11 µs more on each HTTP/1.1
+request than in `json`, 40% to 90% more, and about 7 to 10 µs more on
+each HTTP/2 request, 20% to 50% more, so a Pod that comes close to its
+CPU limit in `json` needs a higher one in `mockoon`. Under 1 CPU, HTTP/2
+over TLS at 30,000 requests/s used 88% of the CPU in `mockoon` against
+64% in `json`, and its latency rose past the targets in one of two runs.
+The
 [migration guide](https://github.com/hirunefu/smock/blob/main/docs/migrating-from-mockoon.md#logs)
 lists the lines and how they differ from Mockoon's.
 

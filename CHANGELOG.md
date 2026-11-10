@@ -84,7 +84,11 @@ of each GitHub release include its section
     stream's response has ended: its last frame, its RST_STREAM or GOAWAY,
     a client's reset, or the end of the connection. A stream that never
     reaches a Mock, such as one refused with 431 or `REFUSED_STREAM`, gets
-    none. See [Logs](docs/http2.md#logs).
+    none. The format costs about 7 to 10 µs more on each HTTP/2 request
+    than `json` on an M1 laptop, 20% to 50% more: under 1 CPU, HTTP/2 over
+    TLS at 30,000 requests/s used 88% of the CPU rather than 64%, and its
+    latency rose past the performance targets in one of two runs. See
+    [Logs](docs/http2.md#logs).
 - HTTP/2 comes from moonbitstack/moonhttp 0.14.0 (Apache-2.0), pinned to
   that exact version: CI fails when the build resolves another one
   ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)). moonhttp and
