@@ -90,12 +90,21 @@ async fn Reloader::run(self : Reloader, watch : @watch.Watch) -> Unit {
 /// check after events always reloads.
 async fn Reloader::check(self : Reloader, check : @watch.Check) -> Bool {
   let (set, problems) = @defdir.read(self.dir, body_file_dir=self.body_file_dir)
-  let read = (set.digest(), problems)
+  // Requests go on being served from the set served now while the new one
+  // is hashed, and the swap below happens in one step.
+  let digest = @defdir.digest(set)
+  let read = (digest, problems)
   if check is Poll && read == self.last_read {
     return problems.is_empty()
   }
   self.last_read = read
-  let result = self.engine.reload(set, read_problems=problems, at=@async.now())
+  // The engine takes the digest computed here, so the set is hashed once.
+  let result = self.engine.reload(
+    set,
+    read_problems=problems,
+    digest~,
+    at=@async.now(),
+  )
   self.reloads.labels([result.result.name()]).inc()
   match result.result {
     Swapped | Unchanged => {

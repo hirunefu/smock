@@ -344,8 +344,10 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 ///|
 /// Reloads the definitions from `set`, read with the problems
 /// `read_problems`, at the time `at` (milliseconds since the Unix epoch).
-/// Templates read the environment variables the engine was created with.
-/// Every file is validated and a whole new snapshot is built:
+/// `digest` is the set's digest when the caller has computed it already,
+/// as `@definitions.load` takes it. Templates read the environment
+/// variables the engine was created with. Every file is validated and a
+/// whole new snapshot is built:
 ///
 /// - When it is valid and its digest differs from the served one, it
 ///   replaces the served snapshot at once, and each Stub with a seed gets a
@@ -367,6 +369,7 @@ pub fn Engine::reload(
   self : Engine,
   set : @definitions.DefinitionSet,
   read_problems~ : Array[@definitions.Diagnostic] = [],
+  digest? : String,
   at~ : Int64,
 ) -> ReloadResult {
   let old_snapshot = self.snapshot
@@ -374,7 +377,7 @@ pub fn Engine::reload(
   let mut scenario_states_reset = 0
   let mut data_buckets_reset = 0
   let (result, errors) : (ReloadOutcome, Array[@definitions.Diagnostic]) = match
-    @definitions.load(set, read_problems~, env=self.env) {
+    @definitions.load(set, read_problems~, env=self.env, digest?) {
     Ok(snapshot) if snapshot.digest == old_digest => (Unchanged, [])
     Ok(snapshot) => {
       self.snapshot = snapshot

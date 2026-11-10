@@ -179,6 +179,14 @@ of each GitHub release include its section
 
 ### Fixed
 
+- A reload of the Definition files no longer stops smock from answering
+  requests while it computes the definition set digest. smock hashed every
+  Definition file and body file at once, and twice per reload, so a reload
+  with a 16 MiB body file held every connection for about half a second,
+  and one with 64 MiB for about 2 s. It now hashes the files once, a step
+  at a time, and answers requests between the steps. At startup, the
+  admin port answers its probes meanwhile too. The digest is the same as
+  before.
 - An HTTP/1.1 connection no longer holds on to the header fields of its
   earlier, longer requests. A client that sent long requests and then
   short ones on one connection could leave smock holding about 5 MB of

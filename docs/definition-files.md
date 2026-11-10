@@ -5884,7 +5884,10 @@ restart:
 - A reload reads and validates every file, builds a whole new definition
   set and swaps it in at once, so no request sees half of a change.
   Requests already being handled finish with the set they started with,
-  body-file bytes included.
+  body-file bytes included. Until the swap, requests are answered from the
+  current set, also while the digest of the new files is computed, however
+  large they are. Reading and validating the new files can still delay
+  requests for a moment, longer for larger files.
 - Ephemeral Stubs survive the swap. A Mock the new set no longer declares
   is gone: its Ephemeral Stubs are dropped, and its Hosts resolve like any
   unknown Host.

@@ -3,7 +3,9 @@
 /// snapshot, or returns every problem: those reading the directory, then
 /// those in the definition set. `smock serve` and `smock check` both load
 /// definitions this way, so a set that one accepts, the other accepts too.
-/// Templates may read the environment variables `env`.
+/// Templates may read the environment variables `env`. A valid set's
+/// digest is computed by `digest`, so that other tasks, such as the admin
+/// port's probes, run while it is.
 ///
 /// Without a directory, the definition set is empty.
 pub async fn load(
@@ -15,7 +17,46 @@ pub async fn load(
     Some(dir) => read(dir, body_file_dir~)
     None => ({ files: [], body_files: [], }, [])
   }
-  @definitions.load(set, read_problems~, env~)
+  load_set(set, read_problems~, env~)
+}
+
+///|
+/// Validates `set`, read with the problems `read_problems`, into a
+/// snapshot, as `load` does once it has read the set. Only a valid set is
+/// hashed, so the problems of an invalid one come without the wait for
+/// its digest, which grows with the size of its body files.
+async fn load_set(
+  set : @definitions.DefinitionSet,
+  read_problems~ : Array[@definitions.Diagnostic],
+  env~ : @template.Env,
+) -> Result[@definitions.Snapshot, Array[@definitions.Diagnostic]] {
+  match @definitions.validate(set, read_problems~, env~) {
+    Ok(valid) => Ok(valid.snapshot(digest=digest(set)))
+    Err(problems) => Err(problems)
+  }
+}
+
+///|
+/// How many bytes `digest` hashes between pauses: about a millisecond's
+/// work for a release build.
+let digest_step_bytes : Int32 = 65536
+
+///|
+/// The definition set digest of `set`, as `DefinitionSet::digest` gives it,
+/// computed a step at a time with a pause after each step. Hashing takes
+/// time in proportion to the bytes of the files, about 240 ms for a 16 MiB
+/// body file in a release build, and smock serves every connection from
+/// one event loop. So the connections are served between steps, and a
+/// large body file delays a request by one step at most, not by the whole
+/// digest.
+pub async fn digest(set : @definitions.DefinitionSet) -> String {
+  let digester = set.digester()
+  for ;; {
+    if digester.step(budget=digest_step_bytes) is Some(digest) {
+      return digest
+    }
+    @async.pause()
+  }
 }
 
 ///|
