@@ -1,7 +1,7 @@
-// Seam 2 tests of reloading the Definition files: smock watches the
-// definitions directory and its body-file subdirectory, and swaps in a new
-// definition set when its files change. Every status response is checked
-// against the OpenAPI document (contract_test.mbt).
+// Seam 2 tests of reloading the Definition files: smock polls the
+// definitions directory and its body-file subdirectory every second, and
+// swaps in a new definition set when its files change. Every status
+// response is checked against the OpenAPI document (contract_test.mbt).
 
 ///|
 /// The status, checked against the document.
@@ -12,15 +12,11 @@ async fn Smock::status(self : Smock) -> Map[String, Json] {
 }
 
 ///|
-/// How long a test waits for a reload after changing a file: well below
-/// the 10 s poll interval, so that a reload in time comes from watching
-/// the files, not from polling them.
-let reload_patience_ms : Int32 = 5000
-
-///|
-/// How long a test waits for the next poll to find a change: the 10 s poll
-/// interval, and some.
-let poll_patience_ms : Int32 = 15_000
+/// How long a test waits for a reload after changing a file, and so how
+/// soon the tests require one: the 1 s poll interval, then the reload,
+/// which reads, validates and hashes every file, then a margin for a busy
+/// machine. A reload came about 1 s after the change when this was set.
+let reload_patience_ms : Int32 = 3000
 
 ///|
 /// Waits until status shows another last reload than `before` does, at
@@ -408,8 +404,8 @@ async test "a large body written to a slow reader during a reload completes with
 ///|
 async test "without a definitions directory, nothing is watched and no reload happens" {
   let stopped = with_smock(["--port", "0"], smock => {
-    // Four quiet periods: a reload would have happened by now.
-    @async.sleep(1000)
+    // More than a poll interval: a reload would have happened by now.
+    @async.sleep(1500)
     let status = smock.status()
     inspect(
       (
@@ -432,7 +428,7 @@ async test "without a definitions directory, nothing is watched and no reload ha
 }
 
 ///|
-async test "a definitions directory that does not exist yet is polled every 10 s, without a warning, so its files are loaded once it appears" {
+async test "a definitions directory that does not exist yet is polled every second, without a warning, so its files are loaded once it appears" {
   with_definitions([], parent => {
     let dir = "\{parent}/later"
     let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
@@ -441,16 +437,7 @@ async test "a definitions directory that does not exist yet is polled every 10 s
       write(dir, "mocks.json", reload_mock)
       write(dir, "users.json", user_stub)
       write(dir, "files/users/1.json", "Alice")
-      let status = @async.with_timeout_opt(15_000, () => {
-        for ;; {
-          let status = smock.status()
-          if status.get("lastReload") != before.get("lastReload") {
-            break status
-          }
-          @async.sleep(200)
-        }
-      })
-      guard status is Some(status) else { fail("no reload within 15 s") }
+      let status = smock.reloaded(before)
       inspect(
         "\{last_reload(status)}; /users/1: \{smock.brief("/users/1")}",
         content=(
@@ -634,16 +621,14 @@ async test "a git-sync update, which points the symlink that --dir goes through 
 
 ///|
 /// Serves the definitions directory `defs`, whose files are reached through
-/// symlinks that lead out of it, so that no event reports their changes:
-/// `users.json` leads into the ConfigMap-style volume `cm`, and the
-/// body-file subdirectory `files` into `body`, whose subdirectory `users`
-/// the file watcher does not look into. Runs `change` with the directory
-/// that holds them all, then tells whether a reload came within 1 s, as an
-/// event would bring one, and what the next poll reloaded.
+/// symlinks that lead out of it: `users.json` leads into the
+/// ConfigMap-style volume `cm`, and the body-file subdirectory `files` into
+/// `body`. Runs `change` with the directory that holds them all, then tells
+/// what the next poll reloaded.
 ///
 /// The files are older than the 2 s after which a poll trusts its stamp
-/// when smock starts, so that the first poll finds the change by comparing
-/// its stamp with the one taken at startup.
+/// when smock starts, so that a poll reads only when its stamp sees the
+/// change, not because the stamp taken at startup was too new to trust.
 async fn found_by_poll(change : async (String) -> Unit) -> String {
   let out = []
   with_definitions(
@@ -662,9 +647,7 @@ async fn found_by_poll(change : async (String) -> Unit) -> String {
       let _ = with_smock(["--dir", "\{root}/defs", "--port", "0"], smock => {
         let before = smock.status()
         change(root)
-        @async.sleep(1000)
-        out.push("within 1 s: \{last_reload(smock.status())}")
-        let after = smock.reloaded(before, within=poll_patience_ms)
+        let after = smock.reloaded(before)
         out.push(
           "by the next poll: \{last_reload(after)}; /users/1: \{smock.brief("/users/1")}",
         )
@@ -675,40 +658,37 @@ async fn found_by_poll(change : async (String) -> Unit) -> String {
 }
 
 ///|
-async test "a body file edited where no event reports it, through a symlink that leads out of the definitions directory, is found by the next poll" {
+async test "a body file edited through a symlink that leads out of the definitions directory is found by the next poll" {
   inspect(
     found_by_poll(root => write(root, "body/users/1.json", "Bob")),
     content=(
-      #|within 1 s: null
       #|by the next poll: "swapped"; /users/1: 200 Bob
     ),
   )
 }
 
 ///|
-async test "a body file added where no event reports it is found by the next poll" {
+async test "a body file added under a symlink that leads out of the definitions directory is found by the next poll" {
   inspect(
     found_by_poll(root => write(root, "body/users/2.json", "Carol")),
     content=(
-      #|within 1 s: null
       #|by the next poll: "swapped"; /users/1: 200 Alice
     ),
   )
 }
 
 ///|
-async test "a body file removed where no event reports it is found by the next poll" {
+async test "a body file removed under a symlink that leads out of the definitions directory is found by the next poll" {
   inspect(
     found_by_poll(root => @fs.remove("\{root}/body/users/old.txt")),
     content=(
-      #|within 1 s: null
       #|by the next poll: "swapped"; /users/1: 200 Alice
     ),
   )
 }
 
 ///|
-async test "a ConfigMap-style ..data swap where no event reports it, behind a symlink that leads out of the definitions directory, is found by the next poll" {
+async test "a ConfigMap-style ..data swap behind a symlink that leads out of the definitions directory is found by the next poll" {
   inspect(
     found_by_poll(root => {
       configmap_update(
@@ -719,14 +699,13 @@ async test "a ConfigMap-style ..data swap where no event reports it, behind a sy
       )
     }),
     content=(
-      #|within 1 s: null
       #|by the next poll: "swapped"; /users/1: 200 Dave
     ),
   )
 }
 
 ///|
-async test "a git-sync update that keeps the old worktree, so that no event reports it, is found by the next poll" {
+async test "a git-sync update that keeps the old worktree is found by the next poll" {
   with_definitions([], root => {
     git_sync_update(root, "c1", [
       ("mocks/mocks.json", reload_mock),
@@ -744,16 +723,10 @@ async test "a git-sync update that keeps the old worktree, so that no event repo
         ("mocks/files/users/1.json", "Alice"),
         ("mocks/orders.json", stub_file("orders", "/orders", "orders")),
       ])
-      @async.sleep(1000)
-      let within = last_reload(smock.status())
-      let after = smock.reloaded(before, within=poll_patience_ms)
+      let after = smock.reloaded(before)
       inspect(
-        (
-          $|within 1 s: \{within}
-          $|by the next poll: \{last_reload(after)}; /orders: \{smock.brief("/orders")}
-        ),
+        "by the next poll: \{last_reload(after)}; /orders: \{smock.brief("/orders")}",
         content=(
-          #|within 1 s: null
           #|by the next poll: "swapped"; /orders: 200 orders
         ),
       )
@@ -854,20 +827,16 @@ async test "a symlink outside the definitions directory pointed at a file with t
       let served_before = smock.brief("/users/1")
       @fs.symlink(target="\{release}b", "\{root}/rel/next")
       @fs.rename("\{root}/rel/next", "\{root}/rel/current")
-      @async.sleep(1000)
-      let within = last_reload(smock.status())
-      let after = smock.reloaded(before, within=poll_patience_ms)
+      let after = smock.reloaded(before)
       inspect(
         (
           $|the very same times: \{same}
           $|before: \{served_before}
-          $|within 1 s: \{within}
           $|by the next poll: \{last_reload(after)}; /users/1: \{smock.brief("/users/1")}
         ),
         content=(
           #|the very same times: true
           #|before: 200 a
-          #|within 1 s: null
           #|by the next poll: "swapped"; /users/1: 200 b
         ),
       )

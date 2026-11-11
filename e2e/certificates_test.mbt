@@ -99,8 +99,10 @@ async test "rewriting the certificate files rotates the certificate without a re
             let first = status_line(read_response(open))
             let before = smock.presented(certs)
             let metric_before = smock.metric(expiry_metric)
-            write(tls_dir, "tls.crt", @testcerts.ecdsa_chain + "\n")
-            write(tls_dir, "tls.key", @testcerts.ecdsa_key + "\n")
+            write_together(tls_dir, [
+              ("tls.crt", @testcerts.ecdsa_chain + "\n"),
+              ("tls.key", @testcerts.ecdsa_key + "\n"),
+            ])
             let logged = smock.certificate_entries(1)
             open.write(keep_alive_get)
             let second = status_line(read_response(open))
@@ -220,8 +222,10 @@ async test "files created, written and removed in the certificate directory for 
               smock,
               tls_dir,
               change=() => {
-                write(tls_dir, "tls.crt", @testcerts.ecdsa_chain + "\n")
-                write(tls_dir, "tls.key", @testcerts.ecdsa_key + "\n")
+                write_together(tls_dir, [
+                  ("tls.crt", @testcerts.ecdsa_chain + "\n"),
+                  ("tls.key", @testcerts.ecdsa_key + "\n"),
+                ])
               },
               changed=() => {
                 let lines = smock.logs.filter(is_certificate_entry)
@@ -248,7 +252,7 @@ async test "files created, written and removed in the certificate directory for 
 }
 
 ///|
-async test "a Secret-style update where no event reports it, behind symlinks that lead out of the certificate directory, is found by the next poll" {
+async test "a Secret-style update behind symlinks that lead out of the certificate directory is found by the next poll" {
   with_definitions([("users.json", users)], dir => {
     with_certificates(certs => {
       with_secret(@testcerts.rsa_chain, @testcerts.rsa_key, secret => {
@@ -271,19 +275,15 @@ async test "a Secret-style update where no event reports it, behind symlinks tha
                 ],
                 replaces="2026_10_13_01",
               )
-              @async.sleep(1000)
-              let within = smock.logs.filter(is_certificate_entry).length()
-              let logged = smock.certificate_entries(1, within=poll_patience_ms)
+              let logged = smock.certificate_entries(1)
               inspect(
                 (
                   $|before: \{before}
-                  $|entries within 1 s: \{within}
                   $|\{logged}
                   $|after: \{smock.presented(certs)}
                 ),
                 content=(
                   #|before: smock-test-rsa
-                  #|entries within 1 s: 0
                   #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                   #|after: smock-test-ecdsa
                 ),
@@ -611,8 +611,10 @@ async test "a Mock's certificate rotates the same way as the default certificate
                 (
                   "rewriting the default pair",
                   () => {
-                    write(default_dir, "tls.crt", @testcerts.ecdsa_chain + "\n")
-                    write(default_dir, "tls.key", @testcerts.ecdsa_key + "\n")
+                    write_together(default_dir, [
+                      ("tls.crt", @testcerts.ecdsa_chain + "\n"),
+                      ("tls.key", @testcerts.ecdsa_key + "\n"),
+                    ])
                   },
                 ),
               ]

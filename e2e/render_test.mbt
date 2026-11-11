@@ -391,11 +391,12 @@ async test "the Admin render operation renders against the definitions the repli
       }
       let out = [brief(smock.render("get-user", sample~))]
       let before = smock.status()
-      write(dir, "files/users/1.json", "Bob")
-      @fs.remove("\{dir}/10-users.json")
-      write(
-        dir, "10-users.json", "{ \"mocks\": [{ \"name\": \"users\" }], \"stubs\": [] }",
-      )
+      write_together(dir, [
+        ("files/users/1.json", "Bob"),
+        (
+          "10-users.json", "{ \"mocks\": [{ \"name\": \"users\" }], \"stubs\": [] }",
+        ),
+      ])
       let after = smock.reloaded(before)
       out.push(last_reload(after))
       out.push(brief(smock.render("get-user", sample~)))
