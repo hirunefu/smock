@@ -117,6 +117,15 @@ async fn[T] wait_for(within : Int32, f : async () -> T?) -> T? {
 }
 
 ///|
+/// Sleeps for part of a second: as many milliseconds as the clock has
+/// past the second. smock polls every second from when it started, so a
+/// change made after it comes at another point between two polls from run
+/// to run, not always at the same one.
+async fn sleep_part_of_a_second() -> Unit {
+  @async.sleep((@async.now() % 1000L).to_int())
+}
+
+///|
 /// Creates, writes and removes files in `dir` for `ms` milliseconds, as a
 /// program that keeps SQLite databases there does: four writers, each of
 /// which creates a file and writes it for 50 ms, creates, writes and

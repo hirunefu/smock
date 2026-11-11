@@ -149,6 +149,45 @@ async test "replacing the certificate files rotates the certificate without a re
 }
 
 ///|
+async test "a certificate and its key rewritten in place one after the other, 100 ms apart, give one reload and no failed one" {
+  with_definitions([("users.json", users)], dir => {
+    with_certificates(certs => {
+      with_pair(@testcerts.rsa_chain, @testcerts.rsa_key, tls_dir => {
+        let stopped = with_smock(
+          ["--dir", dir, "--port", "0", ..certs.pair_args(tls_dir)],
+          smock => {
+            sleep_part_of_a_second()
+            // A pair read in between has a key the certificate does not
+            // belong to.
+            write(tls_dir, "tls.crt", @testcerts.ecdsa_chain + "\n")
+            @async.sleep(100)
+            write(tls_dir, "tls.key", @testcerts.ecdsa_key + "\n")
+            let reloaded = wait_for(reload_patience_ms, () => {
+              smock.logs.search_by(line => {
+                line.contains("\"TLS certificate reloaded\"")
+              })
+            })
+            guard reloaded is Some(_) else {
+              fail("no reload in time:\n\{smock.logs.join("\n")}")
+            }
+            inspect(
+              "presented: \{smock.presented(certs)}",
+              content="presented: smock-test-ecdsa",
+            )
+          },
+        )
+        inspect(
+          log_entries(stopped.logs.filter(is_certificate_entry)),
+          content=(
+            #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+          ),
+        )
+      })
+    })
+  })
+}
+
+///|
 /// Runs `f` with a new temporary directory laid out as a Kubernetes Secret
 /// volume: `tls.crt` and `tls.key` are symlinks into `..data`, which points
 /// at the version `..2026_10_13_01` that holds `chain` and `key`.
