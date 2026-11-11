@@ -1,10 +1,10 @@
 ///|
-/// What a poll compares with the last poll's before it reads anything, so
-/// that a poll that finds nothing changed costs a few calls for each file's
-/// metadata instead of reading and digesting it. That saves most of a
-/// poll's CPU when the files are a few large ones, and little when they are
-/// many small ones; each check that reads pays for both. The caller
-/// notes in it, in the order it would read them, the names in each
+/// What a watch compares with the stamp taken before it, before it reads
+/// anything, so that a poll that finds nothing changed costs a few calls
+/// for each file's metadata instead of reading and digesting it. That saves
+/// most of a poll's CPU when the files are a few large ones, and little
+/// when they are many small ones; each check that reads pays for both. The
+/// caller notes in it, in the order it would read them, the names in each
 /// directory it would list and each file it would read, whose real path,
 /// once symlinks are resolved, and modification and change times are noted.
 ///
@@ -27,7 +27,7 @@
 ///
 /// File times are coarse, though: a change made soon after another can get
 /// the same time. So a stamp is trusted only once it was taken a while
-/// after the newest time it notes (`settle_ms`): any change after that gets
+/// after the newest time it notes (`trust_ms`): any change after that gets
 /// a later time. A modification time ahead of the clock by more than that
 /// does not count, so that one set into the future, as by an archive made
 /// on a host whose clock ran ahead, does not keep every stamp from being
@@ -43,7 +43,7 @@ pub struct Stamp {
   /// epoch, rounded up, or 0 before any.
   priv mut newest : Int64
   /// The first file noted with a time ahead of the clock by more than
-  /// `settle_ms`, and that time.
+  /// `trust_ms`, and that time.
   priv mut ahead : (String, Int64)?
 }
 
@@ -52,7 +52,7 @@ pub struct Stamp {
 /// taken to be trusted: longer than the coarsest file times in common use
 /// (FAT keeps them to 2 s, ext3 and HFS+ to 1 s) and than the coarse clock
 /// the kernel stamps files with.
-let settle_ms : Int64 = 2000
+let trust_ms : Int64 = 2000
 
 ///|
 /// Starts a stamp taken at `now`, in milliseconds since the epoch, before
@@ -105,7 +105,7 @@ pub async fn Stamp::note_file(
       let modified = ms_up(modified)
       let changed = ms_up(changed)
       // A time later than this was set by a clock ahead of this one.
-      let clock_ahead = self.taken_at + settle_ms
+      let clock_ahead = self.taken_at + trust_ms
       if modified <= clock_ahead && modified > self.newest {
         self.newest = modified
       }
@@ -128,7 +128,7 @@ fn ms_up(time : (Int64, Int32)) -> Int64 {
 
 ///|
 /// The first file noted whose modification or change time is ahead of the
-/// clock by more than `settle_ms`, as the caller named it, and that time,
+/// clock by more than `trust_ms`, as the caller named it, and that time,
 /// the later of the two, in milliseconds since the epoch. A modification
 /// time ahead does not keep the stamp from being trusted; a change time
 /// ahead, which only a clock set back since can give, does, until the
@@ -138,24 +138,17 @@ pub fn Stamp::ahead(self : Stamp) -> (String, Int64)? {
 }
 
 ///|
-/// Whether nothing `self` notes can have changed since `last` was taken:
-/// they note the same, and `last` is trusted, having been taken at least
-/// `settle_ms` after the newest file time it notes.
-pub fn Stamp::unchanged_since(self : Stamp, last : Stamp) -> Bool {
-  last.trusted() && self.notes_same(last)
-}
-
-///|
 /// Whether a change made after `self` was taken would show in a later
-/// stamp: `self` was taken at least `settle_ms` after the newest file time
-/// it notes, so any later change gets a later time.
-fn Stamp::trusted(self : Stamp) -> Bool {
-  self.newest <= self.taken_at - settle_ms
+/// stamp: `self` was taken at least `trust_ms` after the newest file time
+/// it notes, so any later change gets a later time. So when a later stamp
+/// notes the same as a trusted one, nothing it notes changed in between.
+pub fn Stamp::trusted(self : Stamp) -> Bool {
+  self.newest <= self.taken_at - trust_ms
 }
 
 ///|
 /// Whether `self` notes the same as `other`, in the same order, whether or
 /// not either can be trusted.
-fn Stamp::notes_same(self : Stamp, other : Stamp) -> Bool {
+pub fn Stamp::notes_same(self : Stamp, other : Stamp) -> Bool {
   self.notes == other.notes
 }
