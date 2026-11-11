@@ -11,6 +11,7 @@
 /// How a request moved a Scenario: the clause of the Stub that answered it,
 /// with the state the Scenario was in and the state it is in after. Without
 /// `moveTo`, `to` is `from`.
+#derive(Debug, Eq)
 pub(all) struct ScenarioMove {
   /// The Scenario's name, within the Mock that answered.
   name : String
@@ -18,7 +19,7 @@ pub(all) struct ScenarioMove {
   from : String
   /// The state the Scenario is in after.
   to : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// The JSON form of the move, the `ScenarioMove` schema of the Admin API
@@ -183,6 +184,7 @@ fn Engine::known_states(
 /// A Scenario of a Mock as one Session sees it: the state it is in and its
 /// known states, as the Admin API lists and sets it. Its JSON form is the
 /// `Scenario` schema of the Admin API document.
+#derive(Debug, Eq)
 pub(all) struct Scenario {
   /// The Scenario's name, within its Mock.
   name : String
@@ -191,7 +193,7 @@ pub(all) struct Scenario {
   /// The known states of the Scenario for the Session: `Started` first,
   /// then the others in byte-wise order.
   states : Array[String]
-} derive(Debug, Eq)
+}
 
 ///|
 /// `{"name", "state", "states"}`.

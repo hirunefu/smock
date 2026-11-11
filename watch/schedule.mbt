@@ -20,13 +20,14 @@ pub struct Schedule {
 
 ///|
 /// Why a directory is checked.
+#derive(Debug, Eq)
 pub(all) enum Check {
   /// Events came, and have been quiet for the quiet period, or kept coming
   /// for a whole poll interval.
   Changed
   /// The poll interval passed without events.
   Poll
-} derive(Debug, Eq)
+}
 
 ///|
 /// Creates a schedule at time `now`: the first poll is due `poll_ms` later.

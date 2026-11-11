@@ -13,6 +13,7 @@
 /// and the key text of its item path for an operation on one item. The
 /// Journal records it. Its JSON form is the `CrudCall` schema of the Admin
 /// API document.
+#derive(Debug, Eq)
 pub(all) struct CrudCall {
   op : @definitions.CrudOp
   /// The key text of the item path, for an operation on one item: the
@@ -20,7 +21,7 @@ pub(all) struct CrudCall {
   /// the key text of the item stored, or of the body's key member when an
   /// item has that key already, and else `None`. `None` for a list.
   key : String?
-} derive(Debug, Eq)
+}
 
 ///|
 /// The `CrudCall` schema of the Admin API document: `{op, key}`.

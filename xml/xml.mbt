@@ -20,9 +20,10 @@ pub struct Document {
 /// Why bytes are not an XML document that the module accepts. `position`
 /// is the byte offset in the input where the problem is, from 0, and
 /// `message` says what the problem is.
+#derive(Eq, Debug)
 pub(all) suberror ParseError {
   ParseError(position~ : Int32, message~ : String)
-} derive(Eq, Debug)
+}
 
 ///|
 /// Shows the error as `position <n>: <message>`.

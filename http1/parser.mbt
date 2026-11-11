@@ -63,6 +63,7 @@ pub struct Parser {
 
 ///|
 /// What `Parser::next` found in the bytes fed so far.
+#derive(Debug)
 pub(all) enum Parsed {
   /// A complete request. Its bytes are consumed; the next call looks at the
   /// bytes after it.
@@ -96,25 +97,28 @@ pub(all) enum Parsed {
   ///
   /// Bytes that cannot begin a request head get 400 as soon as they arrive.
   Invalid(status~ : Int32)
-} derive(Debug)
+}
 
 ///|
 /// The HTTP version of a request.
+#derive(Debug, Eq)
 pub(all) enum Version {
   Http10
   Http11
-} derive(Debug, Eq)
+}
 
 ///|
 /// A header field, with its name as sent and its value without the
 /// surrounding whitespace.
+#derive(Debug, Eq)
 pub(all) struct Header {
   name : String
   value : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
 /// A complete request.
+#derive(Debug, Eq)
 pub(all) struct Request {
   meth : String
   /// The request target as sent, such as `/users/1?x=y`.
@@ -129,7 +133,7 @@ pub(all) struct Request {
   /// it open unless the request says `Connection: close`, HTTP/1.0 closes it
   /// unless the request says `Connection: keep-alive`.
   keep_alive : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 /// Creates a parser with nothing fed yet.

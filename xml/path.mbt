@@ -34,9 +34,10 @@ pub impl Debug for Path with fn to_repr(self) {
 /// Why a path does not compile. `position` is where in the path the
 /// problem is, counted in characters (code points) from 0, and `message`
 /// says what the problem is.
+#derive(Eq, Debug)
 pub(all) suberror PathError {
   PathError(position~ : Int32, message~ : String)
-} derive(Eq, Debug)
+}
 
 ///|
 /// Shows the error as `position <n>: <message>`.

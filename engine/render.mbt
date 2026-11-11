@@ -6,6 +6,7 @@
 /// A sample request to render a Stub for. Its JSON form is the
 /// `SampleRequest` schema of the Admin API document, which
 /// `smock render --request` reads too.
+#derive(Debug)
 pub(all) struct SampleRequest {
   meth : String
   /// The path as Stub conditions compare it: percent-decoded, without the
@@ -30,15 +31,16 @@ pub(all) struct SampleRequest {
   /// the data the request finds before the Stub writes. A rendering reads
   /// these, never a Session's copies.
   data : Map[String, Json]
-} derive(Debug)
+}
 
 ///|
 /// A sample request that does not have the shape of the `SampleRequest`
 /// schema: what is wrong, and a JSON Pointer (RFC 6901) to the value it is
 /// about, `""` for the whole sample.
+#derive(Debug)
 pub suberror InvalidSample {
   InvalidSample(pointer~ : String, message~ : String)
-} derive(Debug)
+}
 
 ///|
 /// `<pointer>: <message>`, or the message alone when it is about the whole
@@ -207,6 +209,7 @@ fn SampleRequest::to_request(self : SampleRequest) -> Request {
 /// conditions that the sample fails. For a CRUD Stub, the answer of the
 /// operation the sample asks of it. Its JSON form is the `Rendering`
 /// schema of the Admin API document, without `warnings`.
+#derive(Debug)
 pub(all) struct Rendering {
   /// The Stub's ID.
   stub : String
@@ -248,11 +251,12 @@ pub(all) struct Rendering {
   /// renders only a sample that fits one of its operations, and so fails
   /// neither its method nor its path.
   failed : Array[FailedCondition]
-} derive(Debug)
+}
 
 ///|
 /// A write that a Stub's `dataWrites` would make, or the write of a CRUD
 /// Stub's operation, as a rendering shows it.
+#derive(Debug)
 pub(all) struct RenderedWrite {
   op : @definitions.DataOp
   /// The name of the Data bucket written to.
@@ -264,7 +268,7 @@ pub(all) struct RenderedWrite {
   /// the new key filled in for an `append` to a keyed bucket; `None` for a
   /// `remove`, which has no value.
   value : Json?
-} derive(Debug)
+}
 
 ///|
 /// The `RenderedWrite` schema of the Admin API document.
@@ -279,6 +283,7 @@ pub impl ToJson for RenderedWrite with fn to_json(self) {
 
 ///|
 /// Why a Stub cannot be rendered.
+#derive(Debug)
 pub suberror RenderFailure {
   /// No Stub from the Definition files has this ID.
   UnknownStub(String)
@@ -305,7 +310,7 @@ pub suberror RenderFailure {
     meth~ : String,
     path~ : String
   )
-} derive(Debug)
+}
 
 ///|
 /// Why the Stub cannot be rendered, as smock render and the Admin render

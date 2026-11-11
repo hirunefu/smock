@@ -209,6 +209,7 @@ pub fn Engine::delete_ephemeral_stub(
 
 ///|
 /// What a reset clears.
+#derive(Debug)
 pub(all) enum ResetScope {
   /// The Ephemeral Stubs, Journal entries, Scenario state, Variables and
   /// copies of Data buckets of this Session, or of the no-Session space for
@@ -220,10 +221,11 @@ pub(all) enum ResetScope {
   /// Every Ephemeral Stub, the whole Journal, every Scenario state, every
   /// Variable, every copy of a Data bucket and every eviction count.
   All
-} derive(Debug)
+}
 
 ///|
 /// What a reset removed.
+#derive(Debug)
 pub(all) struct Removed {
   /// How many Ephemeral Stubs.
   ephemeral_stubs : Int32
@@ -237,7 +239,7 @@ pub(all) struct Removed {
   /// How many copies of Data buckets, each of one Mock, Session and bucket,
   /// whose buckets read their initial values again.
   data_buckets : Int32
-} derive(Debug)
+}
 
 ///|
 /// Clears the Ephemeral Stubs, the Journal entries, the Scenario state, the

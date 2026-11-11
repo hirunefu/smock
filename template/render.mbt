@@ -6,9 +6,10 @@
 /// field, within the Stub, and what went wrong. A caller that checks a
 /// rule across rendered values, such as the call ids of an LLM reply that
 /// must differ, raises it too.
+#derive(Debug)
 pub(all) suberror RenderError {
   RenderError(at~ : String, message~ : String)
-} derive(Debug)
+}
 
 ///|
 /// The request a response is rendered for, as templates see it.

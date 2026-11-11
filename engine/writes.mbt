@@ -8,10 +8,11 @@
 /// Pointer to the write, within the Stub, such as `/dataWrites/0`, and
 /// what went wrong. The client then gets a 500, and the Journal entry
 /// records it.
+#derive(Debug, Eq)
 pub(all) struct DataError {
   at : String
   message : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// The `DataError` schema of the Admin API document.

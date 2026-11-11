@@ -8,6 +8,7 @@
 ///|
 /// A Data bucket of a Mock as one Session sees it, as the Admin API shows
 /// it.
+#derive(Debug)
 pub(all) struct SessionBucket {
   /// The bucket's name.
   name : String
@@ -19,7 +20,7 @@ pub(all) struct SessionBucket {
   written : Bool
   /// What the Session reads: its copy, or else the initial value.
   value : Json
-} derive(Debug)
+}
 
 ///|
 /// The Data buckets of the Mock `mock`, sorted by name in byte order, as
@@ -98,11 +99,12 @@ pub fn Engine::set_data(
 ///|
 /// What dropping a Session's copy of a Data bucket left: the bucket as the
 /// Session then sees it, and whether there was a copy to drop.
+#derive(Debug)
 pub(all) struct DroppedCopy {
   bucket : SessionBucket
   /// Whether the Session held a copy, which is now dropped.
   dropped : Bool
-} derive(Debug)
+}
 
 ///|
 /// Drops the copy of the Data bucket `bucket` of the Mock `mock` that

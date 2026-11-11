@@ -7,6 +7,7 @@
 ///|
 /// The LLM API whose wire form a reply takes, as `api` names it. It is
 /// never inferred from the request's path.
+#derive(Debug, Eq)
 pub(all) enum Api {
   /// OpenAI Chat Completions: `openai-chat`.
   OpenaiChat
@@ -14,7 +15,7 @@ pub(all) enum Api {
   OpenaiResponses
   /// Anthropic Messages: `anthropic-messages`.
   AnthropicMessages
-} derive(Debug, Eq)
+}
 
 ///|
 /// The API's name, as `api` gives it.
@@ -52,10 +53,11 @@ pub fn read_api(value : Json) -> Result[Api, String] {
 /// A stop reason as `stopReason` writes it: a word of the Stub's API,
 /// checked when the definitions are loaded or the Stub is added. Only
 /// `read_stop_reason` makes one.
+#derive(Debug, Eq)
 pub struct StopReason {
   /// The word, as the API writes it.
   word : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// The stop reasons of `api`, in the order its reference lists them. Any of
@@ -126,10 +128,11 @@ let anthropic_error_types : ReadOnlyArray[String] = [
 /// The kind of a mid-stream error as its `type`, or `code` for
 /// `openai-responses`, writes it: checked when the definitions are loaded
 /// or the Stub is added. Only `read_error_kind` makes one.
+#derive(Debug, Eq)
 pub struct ErrorKind {
   /// The type or code, as written.
   text : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// The load check of a mid-stream error's `type`, or `code` for
@@ -159,6 +162,7 @@ pub fn read_error_kind(api : Api, value : Json) -> Result[ErrorKind, String] {
 /// What an `llm` field declares, apart from its strings: the parts that are
 /// never templates, checked when the definitions are loaded or the Stub is
 /// added.
+#derive(Debug, Eq)
 pub struct Declaration {
   api : Api
   /// `chunkSize`: the code points each piece of the text holds in a
@@ -173,7 +177,7 @@ pub struct Declaration {
   /// The error that cuts the stream, or `None` for a stream that ends as
   /// usual. Its message is among the strings.
   error : MidStreamError?
-} derive(Debug, Eq)
+}
 
 ///|
 /// A declaration for the API `api` whose pieces of text hold `chunk_size`
@@ -196,6 +200,7 @@ pub fn Declaration::Declaration(
 /// API's own error, which a stream sends after part of its text and in
 /// place of the rest of the reply. A request that does not stream gets the
 /// ordinary reply.
+#derive(Debug, Eq)
 pub struct MidStreamError {
   /// `after`: how many code points of the text the stream sends before the
   /// error, from 0.
@@ -203,7 +208,7 @@ pub struct MidStreamError {
   /// The error's `type`, or its `code` for `openai-responses`, sent as
   /// written.
   kind : ErrorKind
-} derive(Debug, Eq)
+}
 
 ///|
 /// The error that follows `after` code points of the text, whose `type`, or
@@ -224,12 +229,13 @@ pub let max_chunk_size : Int32 = 1_000_000
 /// The token counts a reply reports, as declared: smock counts and
 /// estimates nothing. Each API places them in its own members, with their
 /// total where it gives one.
+#derive(Debug, Eq)
 pub struct Usage {
   /// The tokens of the prompt.
   input : Int64
   /// The tokens of the reply.
   output : Int64
-} derive(Debug, Eq)
+}
 
 ///|
 /// The usage of `input` tokens in the prompt and `output` in the reply.
@@ -262,6 +268,7 @@ pub fn check_error_after(after : Int32, text : String) -> Result[Unit, String] {
 
 ///|
 /// The strings of a declaration, as written, or rendered for the request.
+#derive(Debug, Eq)
 pub struct Strings {
   /// The text of the reply: empty when left out, or the join of `chunks`.
   text : String
@@ -279,7 +286,7 @@ pub struct Strings {
   /// The message of the declaration's mid-stream error: empty when it
   /// declares none.
   error_message : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// The strings of a reply whose text is `text`, empty by default; or, with
@@ -320,6 +327,7 @@ fn Strings::has_content(self : Strings) -> Bool {
 
 ///|
 /// A function tool call of a reply, as `toolCalls` declares it.
+#derive(Debug, Eq)
 pub struct ToolCall {
   /// The function's name, sent as written. The definitions check that it
   /// is not empty, and nothing checks it against a vendor's naming rule.
@@ -333,7 +341,7 @@ pub struct ToolCall {
   priv object : Json?
   /// The call id, sent as written, or `None` for a generated one.
   id : String?
-} derive(Debug, Eq)
+}
 
 ///|
 /// The tool call of the function `name` with `arguments`, and the call id

@@ -26,10 +26,11 @@ priv enum DfaSlot {
 ///|
 /// Where a match was found: `input[start:end]` is the matched text. Both are
 /// byte offsets into the input, and both fall on character boundaries.
+#derive(Eq, Debug)
 pub(all) struct Match {
   start : Int32
   end : Int32
-} derive(Eq, Debug)
+}
 
 ///|
 /// Why a pattern does not compile. `position` is where in the pattern the
@@ -40,9 +41,10 @@ pub(all) struct Match {
 /// syntax that the subset leaves out. One that ends in "is not RE2 syntax"
 /// names syntax that RE2 does not have, such as a backreference or a
 /// lookahead.
+#derive(Eq, Debug)
 pub(all) suberror CompileError {
   CompileError(position~ : Int32, message~ : String)
-} derive(Eq, Debug)
+}
 
 ///|
 /// Shows the error as `position <n>: <message>`.

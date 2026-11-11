@@ -33,6 +33,7 @@ pub struct Engine {
 
 ///|
 /// A request as the engine sees it, whatever protocol carried it.
+#derive(Debug)
 pub(all) struct Request {
   meth : String
   /// The request target as sent, such as `/users/1?x=y`.
@@ -42,10 +43,11 @@ pub(all) struct Request {
   /// The header fields in the order they were sent.
   headers : Array[(String, String)]
   body : Bytes
-} derive(Debug)
+}
 
 ///|
 /// What the engine decided for one request.
+#derive(Debug)
 pub(all) struct Outcome {
   /// Which Mock answered the request, if any.
   resolution : Resolution
@@ -68,11 +70,12 @@ pub(all) struct Outcome {
   /// `data write failed`. There is none for a request answered as planned,
   /// so that it pays nothing for it.
   content_error : ContentError?
-} derive(Debug)
+}
 
 ///|
 /// Why the Stub that matched a request could not serve its own content,
 /// with the Stub, as the Mockoon-equivalent error line names it.
+#derive(Debug)
 pub(all) struct ContentError {
   /// The ID of the Stub that matched.
   stub : String
@@ -82,10 +85,11 @@ pub(all) struct ContentError {
   path : String?
   /// What failed. The Journal entry, when there is one, holds the same.
   failure : ContentFailure
-} derive(Debug)
+}
 
 ///|
 /// What kept the Stub that matched a request from serving its content.
+#derive(Debug)
 pub(all) enum ContentFailure {
   /// A template could not be rendered, a value of the Stub's `variables` or
   /// `dataWrites` included: the response is the 500 `template failed`.
@@ -93,7 +97,7 @@ pub(all) enum ContentFailure {
   /// A write of the Stub's `dataWrites` could not be applied: the response
   /// is the 500 `data write failed`.
   Data(DataError)
-} derive(Debug)
+}
 
 ///|
 /// The message of `failure`, as the 500's body gives it.
@@ -117,12 +121,13 @@ fn ContentError::new(
 /// The Stub that matched a request, by its ID, and where it comes from. A
 /// Stub from a Definition file may have an ID that looks like one smock
 /// assigns, so only this tells the two apart.
+#derive(Debug, Eq)
 pub(all) enum MatchedStub {
   /// A Stub from a Definition file.
   FromFile(String)
   /// An Ephemeral Stub, added through the Admin API.
   Ephemeral(String)
-} derive(Debug, Eq)
+}
 
 ///|
 /// Where the Stub comes from.
@@ -137,10 +142,11 @@ pub fn MatchedStub::source(self : MatchedStub) -> StubSource {
 /// Where a Stub comes from: a Definition file, or the Admin API as an
 /// Ephemeral Stub. The Journal and the Near miss record it, since a Stub
 /// from a Definition file may have an ID that looks like one smock assigns.
+#derive(Debug, Eq)
 pub(all) enum StubSource {
   File
   Ephemeral
-} derive(Debug, Eq)
+}
 
 ///|
 /// The source's name, as the Admin API gives it: `file` or `ephemeral`.
@@ -153,6 +159,7 @@ pub fn StubSource::name(self : StubSource) -> String {
 
 ///|
 /// Which Mock answered a request, and how the engine chose it.
+#derive(Debug, Eq)
 pub(all) enum Resolution {
   /// The Mock whose Hosts include the request's Host.
   ByHost(String)
@@ -160,10 +167,11 @@ pub(all) enum Resolution {
   ViaDefault(String)
   /// None: no Mock lists the request's Host and there is no Default Mock.
   NoMock
-} derive(Debug, Eq)
+}
 
 ///|
 /// The response to send, and how to send it.
+#derive(Debug)
 pub(all) struct ResponsePlan {
   status : Int32
   headers : Array[(String, String)]
@@ -172,16 +180,17 @@ pub(all) struct ResponsePlan {
   delay_ms : Int32
   /// A connection Fault to inject instead of a normal response.
   fault : @definitions.ConnectionKind?
-} derive(Debug)
+}
 
 ///|
 /// A response body: bytes sent at once, or a stream of Server-Sent Events,
 /// each written after waiting its `delay_ms` milliseconds. The bytes may be
 /// a view of a body file's bytes, such as the byte range a 206 sends.
+#derive(Debug)
 pub(all) enum Body {
   Bytes(BytesView)
   Events(ReadOnlyArray[@definitions.SseEvent])
-} derive(Debug)
+}
 
 ///|
 /// Creates an engine that serves `snapshot`. Each Stub with a seed gets its
@@ -224,6 +233,7 @@ pub fn Engine::Engine(
 
 ///|
 /// The engine's side of the Admin API status: what it serves.
+#derive(Debug)
 pub(all) struct Status {
   /// The Mocks, in declaration order.
   mocks : Array[MockStatus]
@@ -231,17 +241,18 @@ pub(all) struct Status {
   digest : String
   /// The result of the last reload, or `None` before the first one.
   last_reload : ReloadResult?
-} derive(Debug)
+}
 
 ///|
 /// A Mock as the Admin API status shows it.
+#derive(Debug)
 pub(all) struct MockStatus {
   name : String
   /// The Hosts the Mock answers to, as declared.
   hosts : Array[String]
   /// Whether the Mock is the Default Mock.
   is_default : Bool
-} derive(Debug)
+}
 
 ///|
 /// What the engine serves: the Mocks with their Hosts, and which one is the
@@ -287,6 +298,7 @@ pub fn Engine::mock_for_host(self : Engine, host : String) -> String? {
 
 ///|
 /// What a reload did.
+#derive(Debug)
 pub(all) struct ReloadResult {
   /// When the reload finished, in milliseconds since the Unix epoch.
   at : Int64
@@ -311,10 +323,11 @@ pub(all) struct ReloadResult {
   /// whose initial value or `key` it changed. It is 0 when nothing was
   /// swapped.
   data_buckets_reset : Int32
-} derive(Debug)
+}
 
 ///|
 /// How a reload ended.
+#derive(Debug, Eq)
 pub(all) enum ReloadOutcome {
   /// The new set was valid and is served now.
   Swapped
@@ -322,7 +335,7 @@ pub(all) enum ReloadOutcome {
   Unchanged
   /// The new set was invalid, and the one served before still is.
   Failed
-} derive(Debug, Eq)
+}
 
 ///|
 /// Every way a reload can end.
