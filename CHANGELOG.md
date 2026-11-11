@@ -182,6 +182,11 @@ of each GitHub release include its section
 - `scripts/verify-image.sh` also requires moonhttp, and every other module
   that NOTICE names, in each SBOM. It reads NOTICE, so check an image with
   the script and NOTICE of the image's own tag.
+- smock is built with the MoonBit toolchain moonc v0.10.20+65efd5b93, up
+  from v0.10.17+d971670cd, which `smock --version`, the startup log entry,
+  `smock_build_info` and the Admin API status operation name. Its core
+  library's NOTICE, which NOTICE quotes, is unchanged, and mimalloc is
+  still 2.1.7.
 
 ### Fixed
 
