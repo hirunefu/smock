@@ -2,14 +2,14 @@
 let sample : @buildinfo.BuildInfo = {
   version: "1.2.3",
   commit: "0123456789ab",
-  toolchain: "moonc v0.10.17+d971670cd",
+  toolchain: "moonc v0.10.20+65efd5b93",
 }
 
 ///|
 test "the version line names the version, the commit and the toolchain" {
   inspect(
     sample.version_line(),
-    content="smock 1.2.3 (commit 0123456789ab, moonc v0.10.17+d971670cd)",
+    content="smock 1.2.3 (commit 0123456789ab, moonc v0.10.20+65efd5b93)",
   )
 }
 
@@ -23,7 +23,7 @@ test "the startup entry carries the version, the commit and the toolchain" {
   inspect(
     lines.join("\n"),
     content=(
-      #|{"time":"2026-10-12T14:30:05.123Z","level":"info","msg":"smock starting","version":"1.2.3","commit":"0123456789ab","toolchain":"moonc v0.10.17+d971670cd"}
+      #|{"time":"2026-10-12T14:30:05.123Z","level":"info","msg":"smock starting","version":"1.2.3","commit":"0123456789ab","toolchain":"moonc v0.10.20+65efd5b93"}
     ),
   )
 }
@@ -38,7 +38,7 @@ test "the startup entry carries further fields after the build" {
   inspect(
     lines.join("\n"),
     content=(
-      #|{"time":"2026-10-12T14:30:05.123Z","level":"info","msg":"smock starting","version":"1.2.3","commit":"0123456789ab","toolchain":"moonc v0.10.17+d971670cd","adminAuth":"off"}
+      #|{"time":"2026-10-12T14:30:05.123Z","level":"info","msg":"smock starting","version":"1.2.3","commit":"0123456789ab","toolchain":"moonc v0.10.20+65efd5b93","adminAuth":"off"}
     ),
   )
 }
