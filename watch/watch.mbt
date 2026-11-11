@@ -107,7 +107,8 @@ pub async fn Watch::run(
     if wait > 0L {
       @async.sleep(wait.to_int())
     }
-    if self.schedule.due(@async.now()) && self.restamp() is Some(check) {
+    if self.schedule.due(@async.now()) is Some(_) &&
+      self.restamp() is Some(check) {
       on_check(check)
     }
   }
