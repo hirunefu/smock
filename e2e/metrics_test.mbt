@@ -3,7 +3,7 @@
 
 ///|
 /// The version, the commit and the toolchain in a `smock --version` line,
-/// such as `smock 1.2.3 (commit 0123456789ab, moonc v0.10.17+d971670cd)`.
+/// such as `smock 1.2.3 (commit 0123456789ab, moonc v0.10.20+65efd5b93)`.
 fn version_parts(line : String) -> (String, String, String) raise {
   let line = line.trim()
   guard line.strip_prefix("smock ") is Some(rest) &&
@@ -47,7 +47,7 @@ async test "the build-info metric carries the version, commit and toolchain smoc
 
 ///|
 async test "/metrics needs no token, also with authentication on, and names the replica" {
-  let (_, uname) = collect_stdout("uname", ["-n"])
+  let (_, uname) = @process.collect_stdout("uname", ["-n"])
   let host = uname.text().trim().to_owned()
   let _ = with_smock(["--port", "0"], smock => {
     let out = []

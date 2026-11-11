@@ -7,10 +7,11 @@
 /// A template that could not be rendered for a request: a JSON Pointer to
 /// the field, within the Stub, and what went wrong. The client then gets
 /// a 500, and the Journal entry records it.
+#derive(Debug, Eq)
 pub(all) struct TemplateError {
   at : String
   message : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// The `TemplateError` schema of the Admin API document.

@@ -7,6 +7,7 @@
 
 ///|
 /// What a verification checks the count against.
+#derive(Debug, Eq)
 pub(all) enum CountCheck {
   /// The count must be exactly this.
   Exactly(Int32)
@@ -14,7 +15,7 @@ pub(all) enum CountCheck {
   AtLeast(Int32)
   /// The count must be at most this.
   AtMost(Int32)
-} derive(Debug, Eq)
+}
 
 ///|
 /// A verification: which entries to count, and the check of their count.
@@ -26,17 +27,19 @@ pub(all) struct VerifyRequest {
 
 ///|
 /// Why a verification failed.
+#derive(Debug, Eq)
 pub(all) enum VerifyFailure {
   /// The count is not what the check asks for.
   Count
   /// Entries of the Session were evicted, so an "exactly" or "at most"
   /// count cannot be trusted.
   Evicted
-} derive(Debug, Eq)
+}
 
 ///|
 /// The verdict of a verification. Its JSON form is the `Verification`
 /// schema of the Admin API document, without `warnings`.
+#derive(Debug)
 pub struct Verification {
   /// Whether the check passed.
   ok : Bool
@@ -47,7 +50,7 @@ pub struct Verification {
   evicted : Int32
   /// Why the check failed, or `None` when it passed.
   reason : VerifyFailure?
-} derive(Debug)
+}
 
 ///|
 /// The members that give the check, in the `VerifyRequest` schema, each

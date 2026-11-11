@@ -77,6 +77,11 @@ priv struct TlsStream {
 const MAX_WRITE = 16384
 
 ///|
+/// How long a failed handshake may take to send its alert, at most, in
+/// milliseconds. No cancellation cuts that write, so this bounds it.
+let alert_ms : Int32 = 1000
+
+///|
 /// Runs the server side of the handshake on `tcp`, with the configuration
 /// `select` gives for the name the client asks for by SNI, or for no name.
 /// Returns `None` when the client closes the connection first. A client
@@ -112,8 +117,14 @@ async fn TlsStream::accept(
     read_output_left: false,
   }
   self.tls.receive(hello.to_bytes()[:])
-  // A failed handshake still sends its alert.
-  errdefer self.try_flush()
+  // A failed handshake still sends its alert, even if a cancellation comes
+  // while it does, but for `alert_ms` at most: a client that takes nothing
+  // holds neither the connection nor the drain past that. When a
+  // cancellation ends the handshake, during a read, there is nothing to
+  // send: each step's output goes out before the read.
+  errdefer @async.protect_from_cancel(() => {
+    let _ = @async.with_timeout_opt(alert_ms, () => self.try_flush())
+  })
   for ;; {
     let done = self.tls.handshake()
     self.flush()

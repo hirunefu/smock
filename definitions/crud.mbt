@@ -6,6 +6,7 @@
 ///|
 /// What a CRUD Stub serves: a keyed Data bucket of its Mock, at a path,
 /// with static headers on every answer.
+#derive(Debug, Eq)
 pub struct Crud {
   /// The name of the bucket it serves, a keyed bucket of the Stub's Mock
   /// when the Stub was read.
@@ -18,11 +19,12 @@ pub struct Crud {
   /// every answer of the Stub after smock's own. A header given an array
   /// has one field per value, in array order.
   headers : ReadOnlyArray[(String, String)]
-} derive(Debug, Eq)
+}
 
 ///|
 /// What a request asks of a CRUD Stub, by its method and the shape of its
 /// path.
+#derive(Debug, Eq)
 pub enum CrudOp {
   /// `GET <path>`: the bucket's items.
   List
@@ -37,7 +39,7 @@ pub enum CrudOp {
   Update
   /// `DELETE <path>/<key>`: the item with that key is removed.
   Delete
-} derive(Debug, Eq)
+}
 
 ///|
 /// The operation's name, as the Journal writes it: `list`, `create`,
@@ -71,13 +73,14 @@ pub fn CrudOp::write_op(self : CrudOp) -> DataOp? {
 ///|
 /// The shape of a request path that a CRUD Stub serves. Other packages
 /// may name a shape, to ask `crud_methods` for its methods.
+#derive(Debug, Eq)
 pub(all) enum CrudShape {
   /// The Stub's path, where it lists and creates.
   ListPath
   /// The Stub's path, then `/`, then one non-empty segment, the key text:
   /// where it reads, replaces, updates and deletes.
   ItemPath
-} derive(Debug, Eq)
+}
 
 ///|
 /// The shape of `path`, a request path percent-decoded and without the

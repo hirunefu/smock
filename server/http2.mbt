@@ -193,6 +193,10 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
     // In the mockoon log format, the lines still to write once every task of
     // the connection has ended: those of streams whose tasks the end of the
     // connection cut short, as the drain or a write that timed out does.
+    // `write_rest` raises nothing, as a line that cannot be written is
+    // dropped, so the group still ends with the error or the cancellation
+    // that ended it: an error that a group's defer raises would take that
+    // error's place.
     if h2.lines is Some(lines) {
       group.add_defer(() => @async.protect_from_cancel(() => lines.write_rest()))
     }

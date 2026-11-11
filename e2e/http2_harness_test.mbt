@@ -60,7 +60,7 @@ async fn Smock::tls(
       if done {
         break
       }
-      let n = past_spurious_eagain(() => tcp.read(client.input))
+      let n = tcp.read(client.input)
       if n == 0 {
         fail("smock closed the connection during the handshake")
       }
@@ -106,9 +106,7 @@ async fn TlsClient::read(self : TlsClient, buf : FixedArray[Byte]) -> Int32 {
       Closed => return 0
       NeedInput => {
         self.flush()
-        let n = past_spurious_eagain(() => self.tcp.read(self.input)) catch {
-          _ => 0
-        }
+        let n = self.tcp.read(self.input) catch { _ => 0 }
         if n == 0 {
           return 0
         }
@@ -164,7 +162,7 @@ async fn Wire::write(self : Wire, data : BytesView) -> Unit {
 /// ended the connection.
 async fn Wire::read(self : Wire, buf : FixedArray[Byte]) -> Int32 {
   match self {
-    Cleartext(tcp) => past_spurious_eagain(() => tcp.read(buf))
+    Cleartext(tcp) => tcp.read(buf)
     Encrypted(tls) => tls.read(buf)
   }
 }

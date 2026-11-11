@@ -8,11 +8,12 @@
 /// A warning about a valid definition set: the file it is in, a JSON
 /// Pointer (RFC 6901) to the value it is about within that file, and a
 /// message. Warnings do not stop a definition set from loading.
+#derive(Debug, Eq)
 pub(all) struct Warning {
   file : String
   pointer : String
   message : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// `<file>: <pointer>: warning: <message>`, written as

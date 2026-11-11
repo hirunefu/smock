@@ -238,11 +238,13 @@ test "value_is agrees with utf8_value on random documents" {
         assert_false(document.value_is(path, node, value + "x"))
         assert_false(document.value_is(path, node, "x" + value))
         if value != "" {
+          // A value can end in an emoji: clamped_view then drops the whole
+          // pair, still a strict prefix, where exact_view would abort.
           assert_false(
             document.value_is(
               path,
               node,
-              value.view(end_offset=value.length() - 1),
+              value.clamped_view(end=value.length() - 1),
             ),
           )
         }

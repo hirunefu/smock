@@ -6,6 +6,7 @@
 
 ///|
 /// Why a TLS configuration or connection failed.
+#derive(Debug, Eq)
 pub suberror TlsError {
   /// The certificate chain holds no PEM certificate, or one that cannot be
   /// used. The message says which.
@@ -17,7 +18,7 @@ pub suberror TlsError {
   /// The handshake or the connection failed, with OpenSSL's reason, such
   /// as `certificate verify failed`.
   Failed(String)
-} derive(Debug, Eq)
+}
 
 ///|
 /// Why it failed, without the file or the connection it is about, such as
@@ -33,6 +34,7 @@ pub fn TlsError::message(self : TlsError) -> String {
 
 ///|
 /// What reading plaintext from a Connection gave.
+#derive(Debug, Eq)
 pub(all) enum ReadResult {
   /// This many bytes were read into the buffer.
   Data(Int32)
@@ -40,7 +42,7 @@ pub(all) enum ReadResult {
   NeedInput
   /// The peer closed the TLS connection with a close_notify alert.
   Closed
-} derive(Debug, Eq)
+}
 
 ///|
 /// An OpenSSL `SSL_CTX`.

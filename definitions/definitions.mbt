@@ -19,11 +19,12 @@ pub(all) struct DefinitionSet {
 ///
 /// A problem in an Ephemeral Stub has no file: its file is `""`, and its
 /// pointer points into the Stub as the Admin API received it.
+#derive(Debug, Eq)
 pub(all) struct Diagnostic {
   file : String
   pointer : String
   message : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// `<file>: <pointer>: <message>`, or `<file>: <message>` when the problem
@@ -61,6 +62,7 @@ fn one_line(s : String) -> String {
 /// An immutable snapshot of a valid definition set: what the engine serves.
 /// Each Mock holds its Stubs in matching order and their match index, both
 /// built with the snapshot.
+#derive(Debug, Eq)
 pub struct Snapshot {
   /// The Mocks, in declaration order: file-name order, then position in the
   /// file. When no Definition file declares a Mock, this is one empty Mock
@@ -77,10 +79,11 @@ pub struct Snapshot {
   /// The definition set digest of the set the snapshot was built from, as
   /// `DefinitionSet::digest` gives it.
   digest : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// A Mock and its Stubs.
+#derive(Debug, Eq)
 pub struct Mock {
   name : String
   /// The Hosts the Mock answers to, as declared.
@@ -111,7 +114,7 @@ pub struct Mock {
   /// read as `data.NAME`. It is the snapshot's own, so it must never be
   /// changed.
   initial_data : Map[String, Json]
-} derive(Debug, Eq)
+}
 
 ///|
 /// Whether any Stub of the Mock has a Scenario clause. A Mock without one
@@ -126,6 +129,7 @@ pub fn Mock::has_scenarios(self : Mock) -> Bool {
 /// name, and the states that the Stubs in the Definition files name for it.
 /// A Scenario is a named state machine within the Mock, identified by the
 /// Mock and its name.
+#derive(Debug, Eq)
 pub struct ScenarioFileStates {
   /// The Scenario's name, within its Mock.
   name : String
@@ -133,7 +137,7 @@ pub struct ScenarioFileStates {
   /// `moveTo` of the Mock's Stubs name for the Scenario, in byte-wise
   /// order.
   states : ReadOnlyArray[String]
-} derive(Debug, Eq)
+}
 
 ///|
 /// The state every Scenario starts in, compared case-sensitively.
@@ -142,6 +146,7 @@ pub let initial_state : String = "Started"
 ///|
 /// A Stub from a Definition file: what every Stub has, its ID, its Mock,
 /// its priority and its Faults, and what it serves.
+#derive(Debug, Eq)
 pub struct Stub {
   id : String
   /// The name of the Mock the Stub belongs to.
@@ -154,19 +159,20 @@ pub struct Stub {
   serves : Serves
   /// The Faults the Stub injects when it matches, if it has `fault`.
   fault : Fault?
-} derive(Debug, Eq)
+}
 
 ///|
 /// What a Stub serves, by kind. Code that needs it matches on the kind with
 /// no catch-all, so that a new kind does not compile until every such place
 /// handles it.
+#derive(Debug, Eq)
 pub enum Serves {
   /// An ordinary Stub's request conditions, Scenario clause, responses,
   /// `variables` and `dataWrites`.
   Ordinary(Ordinary)
   /// A CRUD Stub's keyed Data bucket, its path and its headers, `crud`.
   Crud(Crud)
-} derive(Debug, Eq)
+}
 
 ///|
 /// The Stub's Scenario clause, if it has one: an ordinary Stub's
@@ -183,6 +189,7 @@ pub fn Stub::scenario(self : Stub) -> ScenarioClause? {
 /// conditions, in the states its Scenario clause allows, get one of its
 /// responses, and it writes its Variables and Data buckets when it
 /// matches.
+#derive(Debug, Eq)
 pub struct Ordinary {
   request : Conditions
   /// The Stub's Scenario clause, if it has `scenario`.
@@ -201,17 +208,18 @@ pub struct Ordinary {
   /// The writes to Data buckets the Stub makes when it matches, in the
   /// order written, `dataWrites`: none when it has no `dataWrites`.
   data_writes : ReadOnlyArray[DataWrite]
-} derive(Debug, Eq)
+}
 
 ///|
 /// The Variables a Stub writes when it matches, in the order written: the
 /// name of each, and the template of its value, a structured template
 /// whose pointer is `/variables/NAME`. The two arrays have the same
 /// length.
+#derive(Debug, Eq)
 pub struct VariableWrites {
   names : ReadOnlyArray[String]
   values : ReadOnlyArray[@template.Structured]
-} derive(Debug, Eq)
+}
 
 ///|
 /// Whether the Stub writes any Variable. A Stub that writes none pays only
@@ -250,11 +258,12 @@ pub fn is_variable_name(name : String) -> Bool {
 /// One of a Stub's responses, with its weight: the chance that a matched
 /// request gets it is its weight over the sum of the weights of the Stub's
 /// responses.
+#derive(Debug, Eq)
 pub struct WeightedResponse {
   /// An integer from 1 to `max_weight`.
   weight : Int32
   response : Response
-} derive(Debug, Eq)
+}
 
 ///|
 /// The most responses a Stub's `responses` holds.
@@ -270,6 +279,7 @@ pub let max_weight : Int32 = 1_000_000
 /// be in for the Stub to match, the state the Stub moves it to when it is
 /// chosen, or both. It is not a request condition: it depends on the
 /// engine's state, not on the request alone.
+#derive(Debug, Eq)
 pub struct ScenarioClause {
   /// The Scenario's name.
   name : String
@@ -278,12 +288,13 @@ pub struct ScenarioClause {
   requires : String?
   /// The state the Scenario moves to when the Stub is chosen.
   move_to : String?
-} derive(Debug, Eq)
+}
 
 ///|
 /// The Faults a Stub injects when it matches. Their random draws come from
 /// the Stub's own generator when it has a seed, and otherwise from the
 /// process generator.
+#derive(Debug, Eq)
 pub struct Fault {
   /// A delay before the status line is written.
   delay : Delay?
@@ -291,7 +302,7 @@ pub struct Fault {
   connection : ConnectionFault?
   /// The seed of the Stub's own generator, from 0 to `max_seed`.
   seed : UInt64?
-} derive(Debug, Eq)
+}
 
 ///|
 /// The longest duration a Definition file can give, in milliseconds, such
@@ -306,14 +317,16 @@ pub let max_seed : UInt64 = 9007199254740991
 ///|
 /// A delay drawn from a distribution, applied to a share of the matched
 /// requests.
+#derive(Debug, Eq)
 pub struct Delay {
   distribution : Distribution
   /// The share of matched requests the delay applies to, from 0 to 1.
   probability : Double
-} derive(Debug, Eq)
+}
 
 ///|
 /// A distribution of delays, in whole milliseconds.
+#derive(Debug, Eq)
 pub enum Distribution {
   /// Always this many milliseconds.
   Fixed(Int32)
@@ -324,18 +337,20 @@ pub enum Distribution {
   /// this median, where `sigma` is the standard deviation of its natural
   /// logarithm.
   Lognormal(median~ : Int32, sigma~ : Double)
-} derive(Debug, Eq)
+}
 
 ///|
 /// A connection Fault, applied to a share of the matched requests.
+#derive(Debug, Eq)
 pub struct ConnectionFault {
   kind : ConnectionKind
   /// The share of matched requests the Fault applies to, from 0 to 1.
   probability : Double
-} derive(Debug, Eq)
+}
 
 ///|
 /// How a connection Fault ends the connection.
+#derive(Debug, Eq)
 pub enum ConnectionKind {
   /// Read the whole request, then reset the connection (an RST) without
   /// writing anything.
@@ -345,7 +360,7 @@ pub enum ConnectionKind {
   /// Write the status line, the headers and the first half of the body,
   /// then close the connection.
   Partial
-} derive(Debug, Eq)
+}
 
 ///|
 /// The kind's name, as Definition files and the Journal write it: `reset`,
@@ -367,6 +382,7 @@ fn connection_kind(name : String) -> ConnectionKind? {
 ///|
 /// The conditions a request must meet for a Stub to match it. An omitted
 /// condition matches anything.
+#derive(Debug, Eq)
 pub struct Conditions {
   /// The method, compared exactly.
   meth : String?
@@ -390,7 +406,7 @@ pub struct Conditions {
   /// fields of a form, or conditions on the values at paths into it as
   /// XML.
   body : BodyCondition?
-} derive(Debug, Eq)
+}
 
 ///|
 /// A condition on a value of a request, such as its path or a header
@@ -401,6 +417,7 @@ pub struct Conditions {
 /// when one of the values meets it, so it fails when the name is absent; an
 /// operator is about the name as a whole. The path is a name with exactly
 /// one value.
+#derive(Debug, Eq)
 pub enum ValueCondition {
   /// An exact value or a pattern: one of the name's values passes the
   /// test.
@@ -411,11 +428,12 @@ pub enum ValueCondition {
   /// `$exists`: the name is present, with any value, when true, and absent
   /// when false.
   Exists(Bool)
-} derive(Debug, Eq)
+}
 
 ///|
 /// The test that each value of a name is given for a value condition, as
 /// `ValueCondition::value_test` gives it.
+#derive(Debug, Eq)
 pub enum ValueTest {
   /// The value is exactly this text.
   Exact(String)
@@ -426,7 +444,7 @@ pub enum ValueTest {
   /// `$exists: true` as `Exists(true)`, not as a condition that has this
   /// test.
   Any
-} derive(Debug, Eq)
+}
 
 ///|
 /// Whether `value` passes the test.
@@ -520,6 +538,7 @@ pub impl Debug for Pattern with fn to_repr(self) {
 
 ///|
 /// A condition on the request body.
+#derive(Debug, Eq)
 pub enum BodyCondition {
   /// The body is exactly these bytes: the text of the condition in UTF-8.
   Exact(Bytes)
@@ -539,7 +558,7 @@ pub enum BodyCondition {
   /// that is absent. A body that does not parse fails the condition, even
   /// one with no path, and every one of them, operators included.
   Xml(ReadOnlyArray[(@xml.Path, ValueCondition)])
-} derive(Debug, Eq)
+}
 
 ///|
 /// A `json` condition on the request body: a JSON value the body must
@@ -746,6 +765,7 @@ fn deep_copy(json : Json) -> Json {
 
 ///|
 /// A Stub's response.
+#derive(Debug, Eq)
 pub struct Response {
   status : Int32
   /// The header fields, in the order written, their values as written or
@@ -768,13 +788,14 @@ pub struct Response {
   /// `data.NAME`: only then does its rendering look up the Session's copies
   /// of them.
   reads_data : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 /// The header fields of a response, in the order written. A header given an
 /// array has one field per value, in array order. Whether their values are
 /// templates is held apart from the body's kind, so that any kind can have
 /// either.
+#derive(Debug, Eq)
 pub enum ResponseHeaders {
   /// Values sent as written.
   Written(ReadOnlyArray[(String, String)])
@@ -782,7 +803,7 @@ pub enum ResponseHeaders {
   /// definition set was loaded or the Stub was added, and rendered for each
   /// request before the body. `Content-Type` is never templated.
   Templated(ReadOnlyArray[(String, @template.Text)])
-} derive(Debug, Eq)
+}
 
 ///|
 /// Whether one of the header values is a template for which `text` holds.
@@ -805,6 +826,7 @@ fn ResponseHeaders::reads(
 
 ///|
 /// The body of a response with `template` on.
+#derive(Debug, Eq)
 pub enum BodyTemplate {
   /// `body` or `bodyFile`: a text template, escaped by the media type of
   /// the response's `Content-Type`. An empty body is an empty text.
@@ -813,10 +835,11 @@ pub enum BodyTemplate {
   Json(@template.Structured)
   /// `events`: Server-Sent Events, each templated.
   Events(ReadOnlyArray[EventTemplate])
-} derive(Debug, Eq)
+}
 
 ///|
 /// A Server-Sent Event of a response with `template` on.
+#derive(Debug, Eq)
 pub struct EventTemplate {
   /// How long to wait before writing the event, in milliseconds.
   delay_ms : Int32
@@ -825,21 +848,23 @@ pub struct EventTemplate {
   /// The event ID.
   id : @template.Text?
   data : EventData
-} derive(Debug, Eq)
+}
 
 ///|
 /// The data of a templated Server-Sent Event.
+#derive(Debug, Eq)
 pub enum EventData {
   /// `data`: a text template, which may give several lines.
   Text(@template.Text)
   /// `json`: a structured template, sent as one line of compact JSON.
   Json(@template.Structured)
-} derive(Debug, Eq)
+}
 
 ///|
 /// What a Stub's response sends, as one kind that says how it is made.
 /// Every place that plans, renders or inspects a response matches the kind
 /// without a wildcard, so that a new kind is handled everywhere.
+#derive(Debug, Eq)
 pub enum ResponseBody {
   /// Bytes as written, sent at once: the inline body in UTF-8, or the bytes
   /// of the body file, read when the snapshot was built.
@@ -852,11 +877,12 @@ pub enum ResponseBody {
   Template(BodyTemplate)
   /// `llm`: an LLM reply, written in its API's wire form for each request.
   Llm(LlmReply)
-} derive(Debug, Eq)
+}
 
 ///|
 /// What a response's `llm` declares: an LLM reply by its content, which the
 /// engine writes in the wire form of its API for each request.
+#derive(Debug, Eq)
 pub struct LlmReply {
   /// The declaration, checked when the definition set was loaded or the
   /// Stub was added.
@@ -868,11 +894,12 @@ pub struct LlmReply {
   /// The JSON Pointer of `llm` within the Stub, where a reply over the size
   /// bound for a request is reported.
   pointer : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// The strings of an LLM reply: its text or chunks, its `id` and `model`,
 /// and its tool calls' ids, names and arguments.
+#derive(Debug, Eq)
 pub enum LlmStrings {
   /// As written.
   Written(@llm.Strings)
@@ -880,7 +907,7 @@ pub enum LlmStrings {
   /// loaded or the Stub was added, and rendered for each request after the
   /// header values, before the reply is cut into pieces.
   Templated(LlmTemplates)
-} derive(Debug, Eq)
+}
 
 ///|
 /// The templates of an LLM reply with `template` on, in the order they
@@ -888,6 +915,7 @@ pub enum LlmStrings {
 /// each chunk, each tool call's `id`, `name` and `arguments`, then the
 /// mid-stream error's `message`. They escape nothing: the reply's JSON
 /// escapes what they give.
+#derive(Debug, Eq)
 pub struct LlmTemplates {
   /// `id`, a text template, or `None` for a generated id.
   id : @template.Text?
@@ -900,19 +928,21 @@ pub struct LlmTemplates {
   /// The message of a mid-stream `error`, a text template, or `None` when
   /// there is none.
   error_message : @template.Text?
-} derive(Debug, Eq)
+}
 
 ///|
 /// The text of an LLM reply with `template` on.
+#derive(Debug, Eq)
 pub enum LlmText {
   /// `text`, rendered whole, then cut into pieces. Left out, it is empty.
   Whole(@template.Text)
   /// The elements of `chunks`, each rendered on its own, each one piece.
   Chunks(ReadOnlyArray[@template.Text])
-} derive(Debug, Eq)
+}
 
 ///|
 /// A tool call of an LLM reply with `template` on.
+#derive(Debug, Eq)
 pub struct ToolCallTemplate {
   /// The call id, a text template, or `None` for a generated one.
   id : @template.Text?
@@ -920,16 +950,17 @@ pub struct ToolCallTemplate {
   name : @template.Text
   /// The arguments.
   arguments : ArgumentsTemplate
-} derive(Debug, Eq)
+}
 
 ///|
 /// The arguments of a tool call with `template` on.
+#derive(Debug, Eq)
 pub enum ArgumentsTemplate {
   /// A string: a text template, whose output is the arguments' text.
   Text(@template.Text)
   /// An object: a structured template, written as compact JSON.
   Json(@template.Structured)
-} derive(Debug, Eq)
+}
 
 ///|
 /// Whether one of the templates of the strings is one for which `text` or
@@ -980,13 +1011,14 @@ fn LlmStrings::reads(
 /// The pacing of an LLM reply's stream, `timing`: the distributions of the
 /// delay Fault that its waits are drawn from, in whole milliseconds. A wait
 /// left out is none. A JSON reply has no wait.
+#derive(Debug, Eq)
 pub struct LlmTiming {
   /// The wait before the first event that carries a piece, counted from
   /// the head, or before the closing events of a reply with no piece.
   first : Distribution?
   /// The wait before each later event that carries a piece.
   interval : Distribution?
-} derive(Debug, Eq)
+}
 
 ///|
 /// Whether one of the body's templates reads something: the body, or a
@@ -1026,6 +1058,7 @@ fn ResponseBody::reads(
 
 ///|
 /// One Server-Sent Event of a response.
+#derive(Debug, Eq)
 pub struct SseEvent {
   /// How long to wait before writing the event, in milliseconds: after the
   /// previous event, or after the head for the first one.
@@ -1036,7 +1069,7 @@ pub struct SseEvent {
   id : String?
   /// The data, which may span several lines.
   data : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// An event with these fields: one rendered from an `EventTemplate`.

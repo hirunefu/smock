@@ -274,7 +274,8 @@ async test "smock check names the definitions directory as given when the direct
   let files = [("defs/users.json", users_file), ("users.json", users_file)]
   with_definitions(files, dir => {
     @fs.chmod("\{dir}/defs", 0o000)
-    defer @fs.chmod("\{dir}/defs", 0o755)
+    // Even when the test is cancelled, so that the directory can be removed.
+    defer @async.protect_from_cancel(() => @fs.chmod("\{dir}/defs", 0o755))
     guard !still_readable("\{dir}/defs", directory=true) else { return }
     let out = [check(["\{dir}/defs"]), check(["\{dir}/users.json"])]
     inspect(

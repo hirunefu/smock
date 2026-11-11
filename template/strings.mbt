@@ -1,5 +1,11 @@
 // The string helpers. Lengths count Unicode code points, so an emoji or a
 // Japanese character counts as one.
+//
+// smock's strings are well-formed UTF-16: its decoders give U+FFFD for
+// what is not UTF-8, and the JSON, YAML and XML parsers it uses reject an
+// unpaired surrogate. So every cut here, right after a search or a
+// separator or at a code-point offset, falls between code points, where
+// `exact_view` cuts; it aborts on a cut before a trailing surrogate.
 
 ///|
 /// A string helper.
@@ -321,7 +327,7 @@ fn substring(
   }
   let begin = char_offset(text, start, 0)
   let end = char_offset(text, taken, begin)
-  let part = text.view(start_offset=begin, end_offset=end)
+  let part = text.exact_view(start=begin, end~)
   check_result(name, utf8_length(part).to_int64(), at)
   part.to_owned()
 }
@@ -336,9 +342,8 @@ fn index_of(text : String, search : String, from : Int32) -> Int32 {
     return -1
   }
   let begin = char_offset(text, from, 0)
-  match text.view(start_offset=begin).find(search) {
-    Some(found) =>
-      from + text.char_length(start_offset=begin, end_offset=begin + found)
+  match text.exact_view(start=begin).find(search) {
+    Some(found) => from + text.char_length(start=begin, end=begin + found)
     None => -1
   }
 }
@@ -365,7 +370,7 @@ fn replaced(
   }
   let mut count = 0
   let mut offset = 0
-  while text.view(start_offset=offset).find(search) is Some(found) {
+  while text.exact_view(start=offset).find(search) is Some(found) {
     count += 1
     offset += found + search.length()
     if !all {
@@ -381,14 +386,14 @@ fn replaced(
   let out = StringBuilder()
   offset = 0
   for _ in 0..<count {
-    guard text.view(start_offset=offset).find(search) is Some(found) else {
+    guard text.exact_view(start=offset).find(search) is Some(found) else {
       break
     }
-    out.write_view(text.view(start_offset=offset, end_offset=offset + found))
+    out.write_view(text.exact_view(start=offset, end=offset + found))
     out.write_string(replacement)
     offset += found + search.length()
   }
-  out.write_view(text.view(start_offset=offset))
+  out.write_view(text.exact_view(start=offset))
   out.to_string()
 }
 
@@ -421,7 +426,7 @@ fn split_text(
   }
   let mut count = 0
   let mut offset = 0
-  while text.view(start_offset=offset).find(separator) is Some(found) {
+  while text.exact_view(start=offset).find(separator) is Some(found) {
     count += 1
     offset += found + separator.length()
   }
@@ -437,17 +442,15 @@ fn split_text(
   let items : Array[Json] = Array(capacity=count + 1)
   offset = 0
   for _ in 0..<count {
-    guard text.view(start_offset=offset).find(separator) is Some(found) else {
+    guard text.exact_view(start=offset).find(separator) is Some(found) else {
       break
     }
     items.push(
-      Json::string(
-        text.view(start_offset=offset, end_offset=offset + found).to_owned(),
-      ),
+      Json::string(text.exact_view(start=offset, end=offset + found).to_owned()),
     )
     offset += found + separator.length()
   }
-  items.push(Json::string(text.view(start_offset=offset).to_owned()))
+  items.push(Json::string(text.exact_view(start=offset).to_owned()))
   items
 }
 
@@ -495,7 +498,9 @@ fn joined(
 
 ///|
 /// The offset, in UTF-16 code units, `chars` code points of `text` after
-/// the offset `from`, or the end of `text` when fewer follow it.
+/// the offset `from`, or the end of `text` when fewer follow it. It steps
+/// over a lone surrogate as one code point, but `text` has none: smock's
+/// strings are well-formed (see the top of this file).
 fn char_offset(text : String, chars : Int32, from : Int32) -> Int32 {
   let mut offset = from
   for _ in 0..<chars {

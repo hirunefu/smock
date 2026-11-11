@@ -244,7 +244,7 @@ async test "smock import-openapi without --overwrite on keeps a file that appear
     // A FIFO as the document holds smock in its read until the test has
     // made the output, after smock checked that it did not exist.
     let document = "\{dir}/api/fifo.json"
-    let (status, _) = collect_output_merged("mkfifo", [document])
+    let (status, _) = @process.collect_output_merged("mkfifo", [document])
     inspect(status, content="0")
     let output = "\{dir}/defs/petstore.json"
     @async.with_task_group(group => {

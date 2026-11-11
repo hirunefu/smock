@@ -8,14 +8,16 @@
 /// `template:`. In a text template of several lines, the message gives the
 /// line and the column (from 1) of the problem, and in a one-line string
 /// its column.
+#derive(Debug, Eq)
 pub(all) struct Problem {
   pointer : String
   message : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// What a text template is for: how its values are written, and what
 /// becomes of its output.
+#derive(Debug, Eq)
 pub(all) enum TextKind {
   /// A body, `body` or `bodyFile`: values are escaped as `Escaping` says,
   /// and the output counts toward the bound of a rendered body.
@@ -30,11 +32,12 @@ pub(all) enum TextKind {
   /// control character becomes a space. It counts toward the bound of all
   /// events together.
   EventLine
-} derive(Debug, Eq)
+}
 
 ///|
 /// How the values inserted into a text body are escaped, by the media type
 /// of the response's `Content-Type`.
+#derive(Debug, Eq)
 pub(all) enum Escaping {
   /// Not at all.
   Plain
@@ -44,7 +47,7 @@ pub(all) enum Escaping {
   /// `&`, `<`, `>`, `"` and `'` as character references, for `text/html`,
   /// `text/xml`, `application/xml` and `*/*+xml`.
   Markup
-} derive(Debug, Eq)
+}
 
 ///|
 /// How values inserted into a text body are escaped for the response's

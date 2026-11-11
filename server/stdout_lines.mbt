@@ -115,7 +115,7 @@ pub fn StdoutLines::push(self : StdoutLines, line : String) -> Unit {
 /// the calling task waits for it, however long stdout takes. A line, once
 /// given, is written whole even when the task is cancelled meanwhile, as
 /// when the drain cuts its connection.
-async fn StdoutLines::write(self : StdoutLines, line : String) -> Unit {
+async fn StdoutLines::write(self : StdoutLines, line : String) -> Unit nocancel {
   self.queue(line)
   self.flush()
 }
@@ -133,7 +133,7 @@ fn StdoutLines::queue(self : StdoutLines, line : String) -> Unit {
 /// Writes every line given and not written yet, and returns once they are
 /// out, even when the task is cancelled meanwhile. `serve` calls it last,
 /// so that no line is left when the process exits.
-async fn StdoutLines::flush(self : StdoutLines) -> Unit {
+async fn StdoutLines::flush(self : StdoutLines) -> Unit nocancel {
   @async.protect_from_cancel(self.write_queued)
 }
 

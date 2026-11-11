@@ -23,7 +23,7 @@ async fn regenerated(args : Array[String], golden~ : String) -> String {
   }
   let committed = @fs.read_file(golden).binary() catch { _ => b"" }
   if written != committed {
-    let (_, difference, problem) = collect_output("git", [
+    let (_, difference, problem) = @process.collect_output("git", [
       "diff", "--no-index", "--no-color", "--no-prefix", "--", golden, output,
     ])
     let command = [binary, "import-openapi", ..args, "--output", golden]

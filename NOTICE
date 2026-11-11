@@ -9,7 +9,7 @@ Third-party software in the smock binary
 ========================================
 
 The smock binary, both the release binaries and the one in the container
-image, is built with the MoonBit toolchain moonc v0.10.17+d971670cd, which
+image, is built with the MoonBit toolchain moonc v0.10.20+65efd5b93, which
 smock --version names. The software below is compiled or linked into it.
 Each part stays under its own licence. Where that is the Apache License,
 Version 2.0, its text is the one in LICENSE.
@@ -210,7 +210,7 @@ SUCH DAMAGE.
 moonbitlang/async
 -----------------
 
-Version 0.22.4.
+Version 0.22.9.
 
 Source:  https://github.com/moonbitlang/async
 Licence: Apache License, Version 2.0

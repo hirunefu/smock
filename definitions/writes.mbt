@@ -5,6 +5,7 @@
 ///|
 /// One write of a Stub's `dataWrites`: what it does, the bucket it writes
 /// to, and the templates of its key and its value.
+#derive(Debug, Eq)
 pub struct DataWrite {
   op : DataOp
   /// The name of the bucket written to, one of the buckets of the Stub's
@@ -20,10 +21,11 @@ pub struct DataWrite {
   /// `/dataWrites/<i>/value`, parsed whether or not a response has
   /// `template` on. Every op but `remove` has one.
   value : @template.Structured?
-} derive(Debug, Eq)
+}
 
 ///|
 /// What a write does to its bucket, by its `op`.
+#derive(Debug, Eq)
 pub enum DataOp {
   /// `set`: the bucket becomes the value; with a key, the item with that
   /// key does, in its place.
@@ -39,7 +41,7 @@ pub enum DataOp {
   Append
   /// `remove`: the item with the key is removed from the keyed bucket.
   Remove
-} derive(Debug, Eq)
+}
 
 ///|
 /// The op's name, as `dataWrites` writes it: `set`, `merge`, `append` or

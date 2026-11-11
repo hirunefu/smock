@@ -7,9 +7,10 @@
 /// scalar, the pointer names that value; for a key, it names the member.
 /// For a syntax error, it names the deepest node the parser reached. It is
 /// `""` for the whole document.
+#derive(Debug, Eq)
 pub(all) suberror ParseError {
   ParseError(pointer~ : String, message~ : String)
-} derive(Debug, Eq)
+}
 
 ///|
 /// `<pointer>: <message>`, or `<message>` when the pointer is `""`.
@@ -133,9 +134,10 @@ pub fn parse(
 /// Why a tree cannot be written as a YAML document that `parse` reads back
 /// as the same tree: a JSON Pointer (RFC 6901) to the value the problem is
 /// about, and a message. The pointer is `""` for the whole tree.
+#derive(Debug, Eq)
 pub(all) suberror WriteError {
   WriteError(pointer~ : String, message~ : String)
-} derive(Debug, Eq)
+}
 
 ///|
 /// `<pointer>: <message>`, or `<message>` when the pointer is `""`.

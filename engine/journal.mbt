@@ -8,6 +8,7 @@
 
 ///|
 /// The bounds of the Journal and whether it is on: process settings.
+#derive(Debug)
 pub struct JournalSettings {
   /// Whether the engine records requests at all.
   enabled : Bool
@@ -25,7 +26,7 @@ pub struct JournalSettings {
   /// Near miss keeps from a form or an XML body, in total, each value
   /// counting 32 bytes more.
   body_limit : Int32
-} derive(Debug)
+}
 
 ///|
 /// Journal settings: on by default, with at most 10,000 entries and
@@ -42,6 +43,7 @@ pub fn JournalSettings::JournalSettings(
 ///|
 /// One request the engine handled, and how it answered. Its JSON form is
 /// the `JournalEntry` schema of the Admin API document.
+#derive(Debug)
 pub struct JournalEntry {
   /// Its sequence number, which the Journal gives it when it is committed:
   /// 1 for the first entry the process commits, then one more for each
@@ -111,7 +113,7 @@ pub struct JournalEntry {
   template_error : TemplateError?
   /// The bytes the entry counts against the Journal's byte bound.
   priv size : Int32
-} derive(Debug)
+}
 
 ///|
 /// Fills in the timing of the entry: its response's last byte was written
@@ -549,6 +551,7 @@ fn Journal::reset_all(self : Journal) -> Int32 {
 
 ///|
 /// What the Journal holds, and how many entries its bound has evicted.
+#derive(Debug)
 pub(all) struct JournalStats {
   /// The entries it holds.
   entries : Int32
@@ -557,7 +560,7 @@ pub(all) struct JournalStats {
   /// The entries the bound has evicted since the process started, whatever
   /// resets came since.
   evictions : Int64
-} derive(Debug)
+}
 
 ///|
 /// What the Journal holds now, and how many entries its bound has evicted
@@ -614,9 +617,10 @@ fn JournalFilter::passes(self : JournalFilter, entry : JournalEntry) -> Bool {
 /// A Journal query or filter that does not have the shape the Admin API
 /// document gives it: every problem, each with a JSON Pointer into it and
 /// no file.
+#derive(Debug)
 pub suberror InvalidQuery {
   InvalidQuery(Array[@definitions.Diagnostic])
-} derive(Debug)
+}
 
 ///|
 /// The problems, one per line, as `<pointer>: <message>`.
@@ -801,6 +805,7 @@ pub fn JournalQuery::from_json(json : Json) -> JournalQuery raise InvalidQuery {
 ///|
 /// A page of Journal entries, oldest first. Its JSON form is the
 /// `JournalPage` schema of the Admin API document, without `warnings`.
+#derive(Debug)
 pub struct JournalPage {
   entries : Array[JournalEntry]
   /// Whether more entries passed than the limit let through: the next page
@@ -809,7 +814,7 @@ pub struct JournalPage {
   /// How many of the Session's entries the bound has evicted since its
   /// last reset.
   evicted : Int32
-} derive(Debug)
+}
 
 ///|
 /// The entries of `session`, or of the no-Session space for `None`, that
