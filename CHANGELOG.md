@@ -193,6 +193,16 @@ of each GitHub release include its section
   no longer fails now and then with EAGAIN while the tests start other
   processes. smock itself starts no process while it serves, so it was
   never exposed.
+- smock finds changes to the Definition files and to the TLS certificate
+  and key files by polling them every second, where it used file events
+  and polled every 10 s as well. A change is reloaded within about a
+  second, where it took 250 ms. Changes are no longer coalesced: a change
+  of several files that a poll splits gives a reload for each part, the
+  first of which can fail, and a change to a name that starts with `.`, or
+  to a file smock does not read, no longer leads to a reload. The warning
+  that the definitions directory or a certificate directory cannot be
+  watched and is only polled is gone, and the inotify limits no longer
+  matter. See [Reloading](docs/definition-files.md#reloading).
 
 ### Fixed
 
@@ -209,6 +219,15 @@ of each GitHub release include its section
   short ones on one connection could leave smock holding about 5 MB of
   their fields and decoded text until the connection closed. A
   connection now holds its last request's fields at most.
+- smock no longer aborts (SIGABRT, exit status 134) when files are created
+  and written in a directory it watches: the definitions directory, or the
+  directory of a TLS certificate or key file, as an editor, a Kubernetes
+  ConfigMap update or a program that keeps a database there can do. The
+  file watcher of moonbitlang/async panicked on such changes
+  ([smock#264](https://github.com/hirunefu/smock/issues/264),
+  [moonbitlang/async#725](https://github.com/moonbitlang/async/issues/725)),
+  so smock no longer uses it: it polls every second instead of using file
+  events, until a release of the runtime fixes that.
 
 ## [0.4.0] - 2026-11-01
 
