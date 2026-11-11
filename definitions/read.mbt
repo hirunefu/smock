@@ -81,10 +81,11 @@ fn declared_mocks(
 ///|
 /// Where a value is in a definition set: the Definition file it is in, and
 /// the JSON Pointer to it within that file.
+#derive(Debug, Eq)
 priv struct Location {
   file : String
   pointer : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// `<file>: <pointer>`, as problems name a place.

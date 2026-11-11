@@ -1,10 +1,11 @@
 ///|
 /// How `run` matches: `Full` needs a match of the whole input, `Search` looks
 /// for the leftmost match.
+#derive(Eq)
 priv enum Mode {
   Full
   Search
-} derive(Eq)
+}
 
 ///|
 /// The threads at one input position, in priority order, with the input

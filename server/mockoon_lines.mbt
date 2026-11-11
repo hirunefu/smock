@@ -97,7 +97,7 @@ async fn MockoonLines::transaction(
   meth~ : String,
   target~ : String,
   outcome : @engine.Outcome,
-) -> Unit {
+) -> Unit nocancel {
   let error = self.serving_error(outcome)
   let line = self.transaction_line(meth~, target~, outcome)
   if error is Some(error) {
@@ -199,7 +199,7 @@ fn PendingLine::new(lines : MockoonLines) -> PendingLine {
 async fn PendingLine::write(
   self : PendingLine,
   request : @http1.Request,
-) -> Unit {
+) -> Unit nocancel {
   guard self.outcome is Some(outcome) else { return }
   self.outcome = None
   self.lines.transaction(meth=request.meth, target=request.target, outcome)

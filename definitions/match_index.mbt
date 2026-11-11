@@ -12,6 +12,7 @@
 /// The Stubs of a Mock, by their position in matching order, grouped by
 /// their method and exact path conditions. Every list of positions is in
 /// ascending order.
+#derive(Debug, Eq)
 priv struct MatchIndex {
   /// The Stubs with an exact path condition, by that path.
   by_path : Map[String, PathStubs]
@@ -21,16 +22,17 @@ priv struct MatchIndex {
   /// The Stubs with neither a method nor an exact path condition, and the
   /// CRUD Stubs: they are tried for every request.
   scanned : Array[Int32]
-} derive(Debug, Eq)
+}
 
 ///|
 /// The Stubs with one exact path condition.
+#derive(Debug, Eq)
 priv struct PathStubs {
   /// The Stubs that also have a method condition, by method.
   by_method : Map[String, Array[Int32]]
   /// The Stubs without a method condition.
   any_method : Array[Int32]
-} derive(Debug, Eq)
+}
 
 ///|
 /// Indexes `stubs`, given in matching order.

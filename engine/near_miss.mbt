@@ -8,6 +8,7 @@
 /// The Stub that came closest to matching a request that matched nothing,
 /// and the conditions it failed. Its JSON form is the `NearMiss` schema of
 /// the Admin API document.
+#derive(Debug)
 pub(all) struct NearMiss {
   /// The Stub's ID.
   stub : String
@@ -17,11 +18,12 @@ pub(all) struct NearMiss {
   /// parameters, headers, cookies, body, form fields or XML paths,
   /// Scenario state.
   failed : Array[FailedCondition]
-} derive(Debug)
+}
 
 ///|
 /// A condition of a Stub that a request failed, with what the Stub expects
 /// and what the request carries.
+#derive(Debug)
 pub(all) struct FailedCondition {
   condition : Condition
   expected : Expected
@@ -33,10 +35,11 @@ pub(all) struct FailedCondition {
   /// as conditions compare them. For a Scenario, the one state it is in for
   /// the request's Session.
   actual : Array[String]
-} derive(Debug)
+}
 
 ///|
 /// One condition of a Stub. Each counts once towards a Near miss.
+#derive(Debug, Eq)
 pub(all) enum Condition {
   Method
   Path
@@ -54,7 +57,7 @@ pub(all) enum Condition {
   /// The state that the Stub's Scenario clause requires of the Scenario
   /// with this name.
   Scenario(String)
-} derive(Debug, Eq)
+}
 
 ///|
 /// The name of the condition, as the Near miss reports it: `method`,
@@ -76,6 +79,7 @@ pub fn Condition::to_string(self : Condition) -> String {
 
 ///|
 /// The value a condition expects, as the Stub gives it, operators included.
+#derive(Debug)
 pub(all) enum Expected {
   /// Exactly this text.
   Exact(String)
@@ -99,7 +103,7 @@ pub(all) enum Expected {
   /// either shape when the path is neither its list path nor an item path,
   /// in the order GET, POST, PUT, PATCH, DELETE.
   CrudMethods(ReadOnlyArray[String])
-} derive(Debug)
+}
 
 ///|
 /// The JSON form of the Near miss, the `NearMiss` schema of the Admin API

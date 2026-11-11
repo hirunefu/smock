@@ -23,10 +23,11 @@ priv struct Conversion {
 /// A place in the documents of a conversion, where a problem is reported:
 /// a JSON Pointer into the document numbered `document`, its number among
 /// the documents given, or into the root document for `None`.
+#derive(Eq)
 priv struct Place {
   document : Int32?
   pointer : String
-} derive(Eq)
+}
 
 ///|
 /// The place `pointer` in the root document.

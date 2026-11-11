@@ -661,6 +661,6 @@ fn path_of(target : String) -> String {
   if query == target.length() {
     target
   } else {
-    target.view(end_offset=query).to_owned()
+    target.exact_view(end=query).to_owned()
   }
 }

@@ -5,6 +5,7 @@
 
 ///|
 /// Why the engine refused an Admin API operation.
+#derive(Debug)
 pub suberror AdminError {
   /// No Mock has this name. Mocks come only from Definition files.
   UnknownMock(String)
@@ -49,16 +50,17 @@ pub suberror AdminError {
   /// The Journal is off: globally for `None`, or for the Mock with this
   /// name, which the operation's filter names.
   JournalOff(String?)
-} derive(Debug)
+}
 
 ///|
 /// A warning that an Admin API response carries, in its `warnings` array.
+#derive(Debug, Eq, ToJson)
 pub(all) struct AdminWarning {
   /// What it is about, such as `per_replica_state`.
   code : String
   /// The warning, for people.
   message : String
-} derive(Debug, Eq, ToJson)
+}
 
 ///|
 /// The warnings every Admin API response of the replica named `replica`

@@ -109,10 +109,11 @@ pub fn Options::path(self : Options, name : String) -> String {
 /// A problem with a document or with the file: an error, which stops the
 /// file from being written, or a warning, about a part of the document
 /// that was left out or changed. Each prints as `smock check` prints it.
+#derive(Debug, Eq)
 pub(all) enum Problem {
   Error(@definitions.Diagnostic)
   Warning(@definitions.Warning)
-} derive(Debug, Eq)
+}
 
 ///|
 /// `<file>: <pointer>: <message>` for an error, and
@@ -133,6 +134,7 @@ pub fn Problem::is_error(self : Problem) -> Bool {
 ///|
 /// Why a document that a conversion asked for cannot be read. The
 /// converter reports it at every `$ref` that names the document.
+#derive(Debug, Eq)
 pub(all) enum Unreadable {
   /// There is no file of that name.
   Missing
@@ -143,7 +145,7 @@ pub(all) enum Unreadable {
   SymlinkOutside
   /// Another reason, as the system gives it, such as `permission denied`.
   Other(String)
-} derive(Debug, Eq)
+}
 
 ///|
 /// The reason, as a problem gives it, such as `no such file`.

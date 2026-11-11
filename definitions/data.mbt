@@ -8,6 +8,7 @@
 /// A Data bucket: a named JSON value that a Mock declares in Definition
 /// files, with its initial value. Each Session reads and writes its own
 /// copy; until it writes, it reads the initial value.
+#derive(Debug, Eq)
 pub struct DataBucket {
   /// The bucket's name, unique within its Mock, as `is_bucket_name` allows.
   name : String
@@ -21,16 +22,17 @@ pub struct DataBucket {
   /// The initial value: static JSON, never templated, as written inline or
   /// read from the bucket's JSON file.
   initial : Json
-} derive(Debug, Eq)
+}
 
 ///|
 /// How a keyed bucket makes new keys.
+#derive(Debug, Eq)
 pub enum NewKey {
   /// One more than the highest integer key.
   Integer
   /// A version 4 UUID.
   Uuid
-} derive(Debug, Eq)
+}
 
 ///|
 /// The way's name, as `newKey` writes it: `integer` or `uuid`.
@@ -85,7 +87,7 @@ pub fn key_text(json : Json) -> String? {
 /// the same text are told apart without writing the number's text out.
 pub fn key_text_integer(text : String) -> Double? {
   let negative = text.has_prefix("-")
-  let digits = if negative { text.view(start_offset=1) } else { text.view() }
+  let digits = text.exact_view(start=if negative { 1 } else { 0 })
   // No leading zeros, and no `-0`: the text of 0 is `0`.
   if digits.is_empty() ||
     (digits.has_prefix("0") && (negative || digits.length() > 1)) {
@@ -111,10 +113,11 @@ pub let not_a_key : String = "must be a key: a non-empty string without /, or an
 /// A way the value of a keyed bucket breaks the rules of keyed buckets: a
 /// JSON Pointer (RFC 6901) into the value, `""` for the value itself, and
 /// what is wrong there.
+#derive(Debug, Eq)
 pub(all) struct KeyedProblem {
   pointer : String
   message : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// Every way `value` breaks the rules of a bucket keyed by the member

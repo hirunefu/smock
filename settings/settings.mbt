@@ -1,18 +1,20 @@
 ///|
 /// How smock writes its log entries.
+#derive(Debug, Eq)
 pub(all) enum LogFormat {
   /// One JSON object per line, on stderr, in smock's own shape.
   Json
   /// The Mockoon CLI's envelope, on stdout, for every line, with a
   /// `Transaction recorded` line for each request a Mock handles.
   Mockoon
-} derive(Debug, Eq)
+}
 
 ///|
 /// The settings of `smock serve`. Every setting is a flag, such as
 /// `--port`, with a matching environment variable, such as `SMOCK_PORT`. The
 /// flag wins over the variable, and the variable over the default. Settings
 /// never live in Definition files.
+#derive(Debug)
 pub(all) struct ServeSettings {
   /// The definitions directory, or `None` for no Definition files.
   dir : String?
@@ -99,23 +101,25 @@ pub(all) struct ServeSettings {
   /// sets it. `None` leaves it to the memory limit, which `smock serve`
   /// reads at startup (`ByteBound::state`).
   state_max_bytes : ByteBound?
-} derive(Debug)
+}
 
 ///|
 /// The PEM files the TLS port presents.
+#derive(Debug)
 pub(all) struct TlsFiles {
   /// The certificate chain: the leaf certificate, then the certificates
   /// that issued it.
   cert_file : String
   /// The private key of the leaf certificate.
   key_file : String
-} derive(Debug)
+}
 
 ///|
 /// The settings of `smock check`. The definitions directory is its
 /// argument. The body-file subdirectory and the environment variables
 /// templates may read are the `smock serve` settings of the same names,
 /// flags and variables, so that both load a directory the same way.
+#derive(Debug)
 pub(all) struct CheckSettings {
   /// The definitions directory.
   dir : String
@@ -124,7 +128,7 @@ pub(all) struct CheckSettings {
   /// The environment variables templates may read, as `--template-env`
   /// lists them: each name once, in the order given.
   template_env : Array[String]
-} derive(Debug)
+}
 
 ///|
 /// The settings of `smock render`. The definitions directory, the
@@ -134,6 +138,7 @@ pub(all) struct CheckSettings {
 /// and the sample request, the time, the seed and the response are flags of
 /// its own, without variables: they belong to one rendering, not to a
 /// process.
+#derive(Debug)
 pub(all) struct RenderSettings {
   /// The definitions directory.
   dir : String
@@ -155,7 +160,7 @@ pub(all) struct RenderSettings {
   /// The index of the response to render among the Stub's `responses`,
   /// or `None` for the one the seed picks.
   response_index : Int32?
-} derive(Debug)
+}
 
 ///|
 /// The settings of `smock import-openapi`. The OpenAPI document is its
@@ -163,6 +168,7 @@ pub(all) struct RenderSettings {
 /// directory references are followed in, the output, the base path and
 /// whether the output may be replaced are flags of its own, without
 /// variables: they belong to one import, not to a process.
+#derive(Debug)
 pub(all) struct ImportOpenapiSettings {
   /// The OpenAPI document, a JSON or YAML file, as given.
   document : String
@@ -189,10 +195,11 @@ pub(all) struct ImportOpenapiSettings {
   base_path : String?
   /// Whether an existing regular file at `output` is replaced.
   overwrite : Bool
-} derive(Debug)
+}
 
 ///|
 /// A setting or an argument was given a value it cannot take.
+#derive(Debug)
 pub suberror InvalidSetting {
   InvalidSetting(
     flag~ : String,
@@ -203,7 +210,7 @@ pub suberror InvalidSetting {
   InvalidArgument(name~ : String, value~ : String, reason~ : String)
   /// A flag without a variable.
   InvalidOption(flag~ : String, value~ : String, reason~ : String)
-} derive(Debug)
+}
 
 ///|
 /// What to tell the user, naming the setting by its flag and its variable,

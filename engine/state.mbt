@@ -60,6 +60,7 @@ fn StateBound::refuse(self : StateBound, more : Int64) -> String {
 
 ///|
 /// What the bound on per-Session state counts, and what it refused.
+#derive(Debug)
 pub(all) struct StateStats {
   /// The bytes the count holds now.
   bytes : Int32
@@ -67,7 +68,7 @@ pub(all) struct StateStats {
   /// resets came since: each refused request once, and each refused Admin
   /// API set once.
   writes_refused : Int64
-} derive(Debug)
+}
 
 ///|
 /// What the bound on per-Session state counts now, and how many writes,

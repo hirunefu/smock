@@ -9,6 +9,7 @@
 ///|
 /// The memory limit of smock's cgroup: what `memory.max` of the cgroup v2
 /// that smock runs in holds.
+#derive(Debug, Eq)
 pub(all) enum MemoryLimit {
   /// At most this many bytes.
   Limited(Int64)
@@ -17,19 +18,21 @@ pub(all) enum MemoryLimit {
   /// The limit could not be read, for the reason given, such as a cgroup v1
   /// host or a `memory.max` that does not exist.
   Unknown(String)
-} derive(Debug, Eq)
+}
 
 ///|
 /// A byte bound that follows the memory limit, the Journal's or the
 /// per-Session state's: the most bytes it lets what it bounds count, and
 /// what chose it.
+#derive(Debug, Eq)
 pub(all) struct ByteBound {
   max_bytes : Int32
   source : ByteBoundSource
-} derive(Debug, Eq)
+}
 
 ///|
 /// What chose a byte bound.
+#derive(Debug, Eq)
 pub(all) enum ByteBoundSource {
   /// Its flag, such as `--journal-max-bytes`.
   Flag
@@ -44,7 +47,7 @@ pub(all) enum ByteBoundSource {
   /// The default, 64 MiB: there is no memory limit, it cannot be read, or
   /// its share of it is 64 MiB or more.
   Default(MemoryLimit)
-} derive(Debug, Eq)
+}
 
 ///|
 /// The smallest bound a memory limit gives: 1 MiB. For the Journal, it

@@ -50,9 +50,7 @@ fn number_of(schema : String, openapi~ : String = "3.1.0") -> String {
     return out.to_string()
   }
   out.write_string(
-    compact
-    .view(start_offset=start + 7, end_offset=compact.length() - 4)
-    .to_owned(),
+    compact.exact_view(start=start + 7, end=compact.length() - 4).to_owned(),
   )
   out.to_string()
 }

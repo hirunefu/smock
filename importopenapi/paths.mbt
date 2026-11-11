@@ -23,6 +23,7 @@ priv enum PathCondition {
 /// The kind of a segment of a path that Stubs match: of the text before
 /// its first `/`, between two, or after its last. The kinds come in order:
 /// a more specific one first.
+#derive(Eq, Compare)
 priv enum Segment {
   /// Literal text only, or nothing.
   Literal
@@ -31,7 +32,7 @@ priv enum Segment {
   Mixed
   /// One parameter, such as `{petId}`.
   Parameter
-} derive(Eq, Compare)
+}
 
 ///|
 /// Whether the path key `key`, written at `pointer`, is a path, or reports

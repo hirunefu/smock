@@ -120,6 +120,7 @@ pub fn cgroup_dir(proc_self_cgroup : String) -> String? {
 /// the file does not have it: the CFS ones (`nr_periods`, `nr_throttled`,
 /// `throttled_usec`) are there only when the cgroup's cpu controller is
 /// enabled, which it is for a container with a CPU limit.
+#derive(Debug, Eq)
 pub(all) struct CpuStat {
   /// `usage_usec`: the CPU time the cgroup's processes used, in
   /// microseconds.
@@ -132,7 +133,7 @@ pub(all) struct CpuStat {
   /// `throttled_usec`: how long the CPU quota held the cgroup back, in
   /// microseconds.
   throttled_usec : Int64?
-} derive(Debug, Eq)
+}
 
 ///|
 /// The counts in `text`, what a cgroup v2 `cpu.stat` file holds: a

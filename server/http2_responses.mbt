@@ -91,7 +91,7 @@ fn trimmed(value : String) -> String {
   if start == 0 && end == value.length() {
     value
   } else {
-    value.view(start_offset=start, end_offset=end).to_owned()
+    value.exact_view(start~, end~).to_owned()
   }
 }
 

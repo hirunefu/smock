@@ -242,7 +242,7 @@ test "value_is agrees with utf8_value on random documents" {
             document.value_is(
               path,
               node,
-              value.view(end_offset=value.length() - 1),
+              value.clamped_view(end=value.length() - 1),
             ),
           )
         }
