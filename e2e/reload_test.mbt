@@ -235,6 +235,59 @@ async test "an invalid set keeps the current one serving and is reported in stat
 }
 
 ///|
+async test "two Definition files rewritten in place one after the other, 100 ms apart, give one reload with the final set and no failed one" {
+  with_definitions(
+    [
+      ("mocks.json", reload_mock),
+      ("users.json", user_stub),
+      ("files/users/1.json", "Alice"),
+    ],
+    dir => {
+      let mut digests = []
+      let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+        let before = smock.status()
+        sleep_part_of_a_second()
+        // The Mock renamed, then its Stub moved to the new name: a set read
+        // in between has a Stub of a Mock that no file declares.
+        write(
+          dir,
+          "mocks.json",
+          reload_mock.replace(old="\"m\"", new="\"people\""),
+        )
+        @async.sleep(100)
+        write(
+          dir,
+          "users.json",
+          user_stub
+          .replace(old="\"m\"", new="\"people\"")
+          .replace(old="200", new="201"),
+        )
+        let reloaded = wait_for(reload_patience_ms, () => {
+          smock.logs.search_by(line => line.contains("\"definitions reloaded\""))
+        })
+        guard reloaded is Some(_) else {
+          fail("no reload in time:\n\{smock.logs.join("\n")}")
+        }
+        digests = [
+          ("<served at startup>", before.get("digest")),
+          ("<the final set>", smock.status().get("digest")),
+        ]
+        inspect(
+          "/users/1: \{smock.brief("/users/1")}",
+          content="/users/1: 201 Alice",
+        )
+      })
+      inspect(
+        reload_entries(stopped.logs, digests),
+        content=(
+          #|{"level":"info","msg":"definitions reloaded","result":"swapped","oldDigest":"<served at startup>","newDigest":"<the final set>","scenarioStatesReset":0,"dataBucketsReset":0}
+        ),
+      )
+    },
+  )
+}
+
+///|
 /// Mock `payments` with two Scenarios: `POST /orders/42/pay` moves
 /// `checkout` to `Paid`, and `GET /orders/42` answers paid from then on;
 /// `POST /orders/42/ship` moves `shipping` to `Shipped`, and `GET
@@ -425,14 +478,10 @@ async test "a definitions directory that does not exist yet is polled every seco
     let dir = "\{parent}/later"
     let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
       let before = smock.status()
-      // The directory appears with its files in one step, so that no poll
-      // finds it empty or with only some of them.
-      let next = "\{parent}/.later.new"
-      @fs.mkdir(next)
-      write(next, "mocks.json", reload_mock)
-      write(next, "users.json", user_stub)
-      write(next, "files/users/1.json", "Alice")
-      @fs.rename(next, dir)
+      @fs.mkdir(dir)
+      write(dir, "mocks.json", reload_mock)
+      write(dir, "users.json", user_stub)
+      write(dir, "files/users/1.json", "Alice")
       let status = smock.reloaded(before)
       inspect(
         "\{last_reload(status)}; /users/1: \{smock.brief("/users/1")}",
