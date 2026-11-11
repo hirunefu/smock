@@ -5883,20 +5883,22 @@ change, without a restart:
   smock polls alone until a release of the runtime fixes that.
 - A poll first compares the names in the directories, where each file
   really is once symlinks are resolved, and the modification and change
-  times of the files with those of the poll before, and reads the files
-  only when something differs. That takes a few calls for each file instead
-  of reading it, which saves most of a poll's CPU when the files are a few
+  times of the files with those it noted last, and reads the files only
+  when something differs. That takes a few calls for each file instead of
+  reading it, which saves most of a poll's CPU when the files are a few
   large ones, as in the benchmark's set, and little when they are many
   small body files; startup and each check that reads pay for both. Those
-  calls are made at every poll, every second, while nothing changes too:
-  a directory of a thousand body files keeps about 5% of an Apple M1 core
+  calls are made at every poll, every second, while nothing changes too: a
+  directory of a thousand body files keeps about 5% of an Apple M1 core
   busy while smock is idle. While a change settles, they are made every
   250 ms. File times are coarse, so the polls of the 2 s after a change
   read the files too, but reload only when they differ from those read
-  last. After a read that met a problem reading the directory,
-  such as a file that cannot be read, each poll reads again while the
-  problem lasts: smock reads and hashes every file each second until it is
-  fixed. A file time ahead of the clock is logged as a warning, once. A
+  last. After a read that met a problem reading the directory, such as a
+  file that cannot be read, each poll reads again while the problem lasts:
+  smock reads and hashes every file each second until it is fixed. Those
+  reads come at the poll, without waiting for the files to settle, so a
+  change of several files made while the problem lasts can be read apart.
+  A file time ahead of the clock is logged as a warning, once. A
   modification time ahead, as from an archive made on a host whose clock
   ran ahead, changes nothing else; a change time ahead, which only a clock
   set back gives, makes each poll read the files until the clock passes

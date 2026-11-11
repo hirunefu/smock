@@ -3,12 +3,12 @@
 /// each check: every poll interval, 1 s, as `Schedule` has it, it takes a
 /// `Stamp`, in which the `stamp` function given to `Watch::Watch` notes
 /// what the caller reads, and checks only when the stamp may differ from
-/// the one it kept: the one taken when it started, or at the last poll or
-/// check. So a poll that finds nothing changed reads no file's contents.
-/// Which files changed does not matter: a ConfigMap update, for one, swaps
-/// a `..data` symlink and changes no name the caller reads. What the stamp
-/// notes need not exist yet: a directory that does not is polled the same
-/// way until it appears.
+/// the one taken before it, the first of which it takes when it starts. So
+/// a poll that finds nothing changed reads no file's contents. Which files
+/// changed does not matter: a ConfigMap update, for one, swaps a `..data`
+/// symlink and changes no name the caller reads. What the stamp notes need
+/// not exist yet: a directory that does not is polled the same way until
+/// it appears.
 ///
 /// A change is checked once it has settled: after a stamp that notes a
 /// change, the watch stamps again every 250 ms, and checks once a stamp
@@ -24,11 +24,9 @@ pub struct Watch {
   priv schedule : Schedule
   /// Notes in a stamp what the caller reads.
   priv stamp : async (Stamp) -> Unit
-  /// The stamp kept: the one taken when the watch started, at the last
-  /// poll that found nothing new, or just before the last check.
+  /// The stamp taken last, which the next one is compared with, or none
+  /// after `forget`.
   priv mut last : Stamp?
-  /// The stamp taken last while a change settles.
-  priv mut settling : Stamp?
   /// Whether the last stamp noted a file time ahead of the clock, so that
   /// one that stays ahead is told once, not at every check.
   priv mut ahead : Bool
@@ -37,17 +35,17 @@ pub struct Watch {
 }
 
 ///|
-/// Why a poll checks what a watch polls.
+/// Why a watch checks what it polls.
 #derive(Debug, Eq)
 pub(all) enum Check {
-  /// A stamp noted something other than the one kept did: a name, where a
-  /// file really is, or a file's times. The change has settled since, or
-  /// has gone on for 10 s. What the caller reads has likely changed, or at
-  /// least been written again.
+  /// A stamp noted something other than the one before it did: a name,
+  /// where a file really is, or a file's times. The change has settled
+  /// since, or has gone on for 10 s. What the caller reads has likely
+  /// changed, or at least been written again.
   Changed
-  /// A poll's stamp notes the same as the one kept, but cannot tell whether
-  /// anything changed: that one was taken too soon after a change to be
-  /// trusted, or there is none, after `forget`. Only reading what the
+  /// A poll's stamp notes the same as the one before it, but cannot tell
+  /// whether anything changed: that one was taken too soon after a change
+  /// to be trusted, or there is none, after `forget`. Only reading what the
   /// caller reads can tell. It comes at the poll, with no quiet period.
   Unsure
 }
@@ -61,7 +59,6 @@ pub async fn Watch::Watch(stamp~ : async (Stamp) -> Unit) -> Watch {
     schedule: Schedule(now=@async.now()),
     stamp,
     last: None,
-    settling: None,
     ahead: false,
     untold_ahead: None,
   }
@@ -88,53 +85,27 @@ async fn Watch::take(self : Watch) -> Stamp {
 }
 
 ///|
-/// Takes the stamp `due` at `now`, and tells which check it calls for, if
-/// any: none while a change settles.
+/// Takes the stamp `due` at `now`, compares it with the stamp taken before
+/// it, and tells which check that calls for, if any, as `Schedule::noted`
+/// has it. Each stamp is kept for the next one to compare with. So after a
+/// check, the next poll compares with the stamp taken just before the
+/// check read, and trusts it only once it is old enough.
 async fn Watch::restamp(self : Watch, due : Due, now : Int64) -> Check? {
   let stamp = self.take()
-  let check : Check = match due {
-    Poll =>
-      match self.last {
-        Some(last) if !stamp.notes_same(last) => {
-          // A change: let it settle before checking.
-          self.schedule.changed(now)
-          self.settling = Some(stamp)
-          return None
-        }
-        Some(last) if last.trusted() => {
-          self.last = Some(stamp)
-          return None
-        }
-        _ => Unsure
-      }
-    Quiet =>
-      match self.settling {
-        Some(before) if !stamp.notes_same(before) => {
-          self.schedule.changed(now)
-          self.settling = Some(stamp)
-          return None
-        }
-        _ => {
-          self.schedule.settled(now)
-          Changed
-        }
-      }
-    Capped => Changed
+  let noted : Noted = match self.last {
+    Some(last) if !stamp.notes_same(last) => Differs
+    Some(last) if last.trusted() => Same
+    _ => Untrusted
   }
-  // The stamp kept is the one taken just before the check reads, so that
-  // the next poll compares with what the check read, and trusts it only
-  // once it is old enough.
-  self.settling = None
   self.last = Some(stamp)
-  Some(check)
+  self.schedule.noted(due, now, noted)
 }
 
 ///|
 /// Calls `on_check` for each check, in turn, until the task is cancelled:
-/// for each poll whose stamp may have changed, as `Check` tells, once a
-/// change has settled. A stamp is taken at every poll, so that each
-/// compares with what the stamp kept noted. A poll that falls due while
-/// `on_check` runs comes once it returns.
+/// for each stamp that calls for one, as `Check` tells: once a change has
+/// settled, or at a poll that cannot tell whether anything changed. A
+/// stamp that falls due while `on_check` runs comes once it returns.
 ///
 /// `on_ahead` is called with a file and its time, as `Stamp::ahead` gives
 /// them, when a stamp notes a file time ahead of the clock. It is called
@@ -162,10 +133,11 @@ pub async fn Watch::run(
 }
 
 ///|
-/// Forgets the last stamp, so that the next poll checks whatever its stamp
-/// notes. A caller whose check could not read all that the stamp notes,
-/// such as a file that gave an I/O error, calls it so that the next poll
-/// tries again: the files need not change again, and nor would the stamp.
+/// Forgets the stamp taken last, so that the next poll has none to compare
+/// with and checks, whatever its stamp notes. A caller whose check could
+/// not read all that the stamp notes, such as a file that gave an I/O
+/// error, calls it so that the next poll tries again: the files need not
+/// change again, and nor would the stamp.
 pub fn Watch::forget(self : Watch) -> Unit {
   self.last = None
 }

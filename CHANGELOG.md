@@ -203,9 +203,9 @@ of each GitHub release include its section
   250 ms. A change to a name that starts with `.`, or an edit to a file
   smock does not read, such as a README, no longer leads to a reload.
   Adding, removing or renaming a visible file that smock does not read
-  still does, once such changes pause for 250 ms, or about every 10 s
-  while they go on. An idle poll still reads no file, but it checks the
-  times of every file each second. While a problem reading the
+  still does, once such changes pause for 250 ms, or at most once every
+  10 s while they go on. An idle poll still reads no file, but it checks
+  the times of every file each second. While a problem reading the
   definitions directory lasts, smock reads every file each second, where
   it did every 10 s. The warning that the definitions directory or a
   certificate directory cannot be watched and is only polled is gone, and

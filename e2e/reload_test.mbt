@@ -244,11 +244,15 @@ async test "two Definition files rewritten in place one after the other, 100 ms 
     ],
     dir => {
       let mut digests = []
+      let mut took = 0L
       let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
         let before = smock.status()
         sleep_part_of_a_second()
         // The Mock renamed, then its Stub moved to the new name: a set read
-        // in between has a Stub of a Mock that no file declares.
+        // in between has a Stub of a Mock that no file declares. The 100 ms
+        // pause leaves 150 ms of the 250 ms quiet period for the writes and
+        // a late wake-up.
+        let start = @async.now()
         write(
           dir,
           "mocks.json",
@@ -262,6 +266,7 @@ async test "two Definition files rewritten in place one after the other, 100 ms 
           .replace(old="\"m\"", new="\"people\"")
           .replace(old="200", new="201"),
         )
+        took = @async.now() - start
         let reloaded = wait_for(reload_patience_ms, () => {
           smock.logs.search_by(line => line.contains("\"definitions reloaded\""))
         })
@@ -277,8 +282,14 @@ async test "two Definition files rewritten in place one after the other, 100 ms 
           content="/users/1: 201 Alice",
         )
       })
+      let entries = reload_entries(stopped.logs, digests)
+      guard took < 250L || !entries.contains("reload failed") else {
+        fail(
+          "the writes took \{took} ms, not less than the 250 ms quiet period, so a check could read them apart:\n\{entries}",
+        )
+      }
       inspect(
-        reload_entries(stopped.logs, digests),
+        entries,
         content=(
           #|{"level":"info","msg":"definitions reloaded","result":"swapped","oldDigest":"<served at startup>","newDigest":"<the final set>","scenarioStatesReset":0,"dataBucketsReset":0}
         ),
@@ -449,7 +460,8 @@ async test "a large body written to a slow reader during a reload completes with
 ///|
 async test "without a definitions directory, nothing is watched and no reload happens" {
   let stopped = with_smock(["--port", "0"], smock => {
-    // More than a poll interval: a reload would have happened by now.
+    // More than a poll interval and the quiet period: a reload would have
+    // happened by now.
     @async.sleep(1500)
     let status = smock.status()
     inspect(
@@ -1004,6 +1016,18 @@ async test "files created, written and removed in the definitions directory for 
         )
       })
       inspect(stopped.status, content="0")
+      // The churn changes names that the stamps note until it stops, so the
+      // change made amid it is read once, after the churn, not at each
+      // poll. A second reload is allowed, for a churn that stalls for 250
+      // ms on a busy machine.
+      let reloads = stopped.logs.filter(line => {
+        line.contains("\"msg\":\"definitions reload")
+      })
+      guard reloads.length() <= 2 else {
+        fail(
+          "\{reloads.length()} reloads amid the churn:\n\{reloads.join("\n")}",
+        )
+      }
     },
   )
 }

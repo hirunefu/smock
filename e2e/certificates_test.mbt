@@ -151,15 +151,19 @@ async test "a certificate and its key rewritten in place one after the other, 10
   with_definitions([("users.json", users)], dir => {
     with_certificates(certs => {
       with_pair(@testcerts.rsa_chain, @testcerts.rsa_key, tls_dir => {
+        let mut took = 0L
         let stopped = with_smock(
           ["--dir", dir, "--port", "0", ..certs.pair_args(tls_dir)],
           smock => {
             sleep_part_of_a_second()
             // A pair read in between has a key the certificate does not
-            // belong to.
+            // belong to. The 100 ms pause leaves 150 ms of the 250 ms quiet
+            // period for the writes and a late wake-up.
+            let start = @async.now()
             write(tls_dir, "tls.crt", @testcerts.ecdsa_chain + "\n")
             @async.sleep(100)
             write(tls_dir, "tls.key", @testcerts.ecdsa_key + "\n")
+            took = @async.now() - start
             let reloaded = wait_for(reload_patience_ms, () => {
               smock.logs.search_by(line => {
                 line.contains("\"TLS certificate reloaded\"")
@@ -174,8 +178,14 @@ async test "a certificate and its key rewritten in place one after the other, 10
             )
           },
         )
+        let entries = log_entries(stopped.logs.filter(is_certificate_entry))
+        guard took < 250L || !entries.contains("reload failed") else {
+          fail(
+            "the writes took \{took} ms, not less than the 250 ms quiet period, so a check could read them apart:\n\{entries}",
+          )
+        }
         inspect(
-          log_entries(stopped.logs.filter(is_certificate_entry)),
+          entries,
           content=(
             #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
           ),
