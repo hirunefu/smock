@@ -142,7 +142,15 @@ pub fn Stamp::ahead(self : Stamp) -> (String, Int64)? {
 /// they note the same, and `last` is trusted, having been taken at least
 /// `settle_ms` after the newest file time it notes.
 pub fn Stamp::unchanged_since(self : Stamp, last : Stamp) -> Bool {
-  last.newest <= last.taken_at - settle_ms && self.notes_same(last)
+  last.trusted() && self.notes_same(last)
+}
+
+///|
+/// Whether a change made after `self` was taken would show in a later
+/// stamp: `self` was taken at least `settle_ms` after the newest file time
+/// it notes, so any later change gets a later time.
+fn Stamp::trusted(self : Stamp) -> Bool {
+  self.newest <= self.taken_at - settle_ms
 }
 
 ///|

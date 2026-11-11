@@ -71,12 +71,12 @@ async fn Reloader::run(self : Reloader, watch : @watch.Watch) -> Unit {
 /// Reads the definitions directory and reloads the engine from it. Tells
 /// whether it read the directory without problems.
 ///
-/// A `Poll` check reloads only when the set read differs from the one read
-/// last: its stamp noted nothing new, so that a set that stays the same,
-/// valid or not, does not log a reload at each poll while the stamp is too
-/// new to be trusted or a problem reading the directory lasts. A `Changed`
-/// check, whose stamp noted a change, always reloads, so that a file
-/// written again with the same bytes logs a reload that finds the set
+/// An `Unsure` check reloads only when the set read differs from the one
+/// read last: its stamp noted nothing new, so that a set that stays the
+/// same, valid or not, does not log a reload at each poll while the stamp
+/// is too new to be trusted or a problem reading the directory lasts. A
+/// `Changed` check, whose stamp noted a change, always reloads, so that a
+/// file written again with the same bytes logs a reload that finds the set
 /// unchanged.
 async fn Reloader::check(self : Reloader, check : @watch.Check) -> Bool {
   let (set, problems) = @defdir.read(self.dir, body_file_dir=self.body_file_dir)
@@ -84,7 +84,7 @@ async fn Reloader::check(self : Reloader, check : @watch.Check) -> Bool {
   // is hashed, and the swap below happens in one step.
   let digest = @defdir.digest(set)
   let read = (digest, problems)
-  if check is Poll && read == self.last_read {
+  if check is Unsure && read == self.last_read {
     return problems.is_empty()
   }
   self.last_read = read

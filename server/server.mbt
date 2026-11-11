@@ -48,26 +48,23 @@ pub async fn serve(
     None => None
     Some(dir) =>
       Some(
-        @watch.Watch(dir, stamp=stamp => {
+        @watch.Watch(stamp=stamp => {
           @defdir.stamp(stamp, dir, body_file_dir=settings.body_file_dir)
         }),
       )
   }
-  defer (if watch is Some(watch) { watch.close() })
-  // The directories of the certificate and key files are watched too, also
-  // from before the first load, and their polls compare a stamp of the
-  // files the same way.
-  let tls_watches = []
+  // The certificate and key files are watched too, all of them in one
+  // watch, also from before the first load, and its polls compare a stamp
+  // of the files the same way.
   let pairs = match settings.tls {
     Some(files) => [files, ..settings.tls_mock_certs.values()]
     None => [..settings.tls_mock_certs.values()]
   }
-  for dir in tls_dirs(pairs) {
-    tls_watches.push(
-      @watch.Watch(dir, stamp=stamp => stamp_pairs(stamp, pairs)),
-    )
+  let tls_watch = if pairs.is_empty() {
+    None
+  } else {
+    Some(@watch.Watch(stamp=stamp => stamp_pairs(stamp, pairs)))
   }
-  defer tls_watches.each(watch => watch.close())
   // The process generator. Its seed is logged, so that a run can be
   // replayed with --seed.
   let seed = match settings.seed {
@@ -150,7 +147,7 @@ pub async fn serve(
             state_max_bytes=bounds.state.max_bytes,
             metrics~,
             watch~,
-            tls_watches~,
+            tls_watch~,
             rand~,
             reloads~,
             traffic~,
@@ -206,7 +203,7 @@ async fn run(
   state_max_bytes~ : Int32,
   metrics~ : @metrics.Registry,
   watch~ : @watch.Watch?,
-  tls_watches~ : Array[@watch.Watch],
+  tls_watch~ : @watch.Watch?,
   rand~ : @prng.Generator,
   reloads~ : @metrics.Counter,
   traffic~ : Traffic,
@@ -342,7 +339,7 @@ async fn run(
       }
       group.spawn_bg(no_wait=true, () => reloader.run(watch))
     }
-    for watch in tls_watches {
+    if tls_watch is Some(watch) {
       group.spawn_bg(no_wait=true, () => certificates.run(watch))
     }
     let listening = group.spawn(() => {
