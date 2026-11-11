@@ -51,7 +51,8 @@ never with `subPath`, so Kubernetes swaps updated files in and smock reloads
 them, without a restart: `helm upgrade` with new Definition files changes
 the ConfigMap and leaves the Deployment as it is. The kubelet refreshes
 mounted ConfigMaps periodically, so an update takes up to a minute or two to
-arrive. The definition set digest in each replica's `GET /v1/status` shows
+arrive; smock polls the directory every second and reloads it within about
+a second of that. The definition set digest in each replica's `GET /v1/status` shows
 which files it serves.
 
 The values can carry the files, by name in `definitions.configMap.files`,
@@ -115,12 +116,12 @@ With `definitions.source=gitSync`, a [git-sync](https://github.com/kubernetes/gi
 init container clones `definitions.gitSync.repo` before smock starts, so
 smock never starts without its files, and a git-sync sidecar then checks for
 new commits every `definitions.gitSync.period`. git-sync publishes each new
-commit by swapping a symlink and removing the worktree it replaced, and smock
-reloads the files it finds there as soon as that worktree goes. A
-`--stale-worktree-timeout` in `definitions.gitSync.extraArgs` keeps old
-worktrees for a while; smock then finds each new commit with its poll of the
-directory, within 10 s. `definitions.gitSync.path` is the definitions
-directory inside the repository.
+commit by swapping a symlink, and smock's poll of the directory, every
+second, reloads the files it finds there within about a second, whether
+git-sync removes the worktree it replaced, as it does by default, or keeps
+it for a while, with a `--stale-worktree-timeout` in
+`definitions.gitSync.extraArgs`. `definitions.gitSync.path` is the
+definitions directory inside the repository.
 
 ```yaml
 definitions:

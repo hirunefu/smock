@@ -53,10 +53,14 @@ async test "--tls-http2 holds for the certificate files and for a Mock's own cer
               out.push("--tls-http2 \{flag}:")
               out.push("certificate files: \{smock.offers("localhost")}")
               out.push("users' own: \{smock.offers("users.example.com")}")
-              write(tls_dir, "tls.crt", @testcerts.ecdsa_chain + "\n")
-              write(tls_dir, "tls.key", @testcerts.ecdsa_key + "\n")
-              write(users_dir, "tls.crt", @testcerts.users_renewed_chain + "\n")
-              write(users_dir, "tls.key", @testcerts.users_renewed_key + "\n")
+              write_together(tls_dir, [
+                ("tls.crt", @testcerts.ecdsa_chain + "\n"),
+                ("tls.key", @testcerts.ecdsa_key + "\n"),
+              ])
+              write_together(users_dir, [
+                ("tls.crt", @testcerts.users_renewed_chain + "\n"),
+                ("tls.key", @testcerts.users_renewed_key + "\n"),
+              ])
               out.push(smock.certificate_entries(2))
               out.push(
                 "certificate files, reloaded: \{smock.offers("localhost")}",

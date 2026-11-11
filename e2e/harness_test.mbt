@@ -74,6 +74,28 @@ async fn write(dir : String, path : String, text : String) -> Unit {
 }
 
 ///|
+/// Writes `files`, given as (relative path, text) pairs, into `dir` as one
+/// change: each to a hidden name beside it, then each renamed over its own
+/// name, one right after the other. smock polls every second, and a poll
+/// between two writes would find one file changed and not the other, as
+/// it can when a person copies files one at a time. Between two renames
+/// there is next to no time for one.
+async fn write_together(dir : String, files : Array[(String, String)]) -> Unit {
+  let hidden = (path : String) => {
+    match path.rev_find("/") {
+      Some(i) => "\{path[:i]}/.\{path[i + 1:]}.new"
+      None => ".\{path}.new"
+    }
+  }
+  for file in files {
+    write(dir, hidden(file.0), file.1)
+  }
+  for file in files {
+    @fs.rename("\{dir}/\{hidden(file.0)}", "\{dir}/\{file.0}")
+  }
+}
+
+///|
 /// The Admin API token the harness gives smock, through `SMOCK_ADMIN_TOKEN`,
 /// unless a test sets that variable itself.
 let test_token : String = "e2e-admin-token"

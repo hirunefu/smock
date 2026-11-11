@@ -66,9 +66,9 @@ Each port's `listening` log entry names the protocols it serves:
 `["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]` on the TLS
 port (`["http/1.1"]` with `--tls-http2 off`) and `["http/1.1"]` on the
 admin port.
-It watches the directory and swaps in the new definition set when the files
-change, ConfigMap updates included; an invalid set is reported and the
-current one keeps serving
+It polls the directory every second and swaps in the new definition set
+when the files change, ConfigMap updates included; an invalid set is
+reported and the current one keeps serving
 ([docs/definition-files.md](docs/definition-files.md#reloading)).
 
 smock logs one JSON object per line, in one of two formats. In the `json`
@@ -289,10 +289,12 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
 - The `listening` log entry of the TLS port names the certificate and key
   files.
 
-smock watches the directories of the certificate and key files, as it
-watches the definitions directory: changes are coalesced for 250 ms, the
-directories are polled every 10 s as well, and a Secret update (which swaps
-the `..data` symlink) counts as a change. When a pair changes, smock loads
+smock polls the certificate and key files every second, as it polls the
+definitions directory ([Reloading](docs/definition-files.md#reloading)), so
+a change is found within about a second, and a Secret update (which swaps
+the `..data` symlink) counts as one. A poll that comes between writing a
+certificate and writing its key finds a pair that cannot be used, and the
+next poll loads the new pair. When a pair changes, smock loads
 it without a restart: new handshakes get the new certificate, and open
 connections carry on with the one they started with. A changed pair that
 cannot be used (a file that cannot be read or holds no usable PEM, or a key
@@ -1169,13 +1171,16 @@ Packages of `smock/smock`:
   the name chooses the certificate without a C callback. Its one C
   function, in `server/reset.c`, sets `SO_LINGER` so that the reset Fault
   ends a connection with an RST, the exception ADR 0001 makes for it.
-- `watch`: watches a directory, with the async runtime's file watcher
-  (inotify) and polling in case an event is missed, so that `server` can
-  reload the definitions directory and the certificate directories
-  (native). Its `Schedule`, which coalesces a burst of events into one
-  check and keeps the poll interval, does no I/O and reads no clock. A poll
-  reads nothing unless the `Stamp` of what the caller reads (the names it
-  lists, and where the files it reads really are and their times) may have
+- `watch`: watches a directory by polling it every second, so that
+  `server` can reload the definitions directory and the certificate files
+  (native). It uses no file-system events: the async runtime's file
+  watcher can abort the process
+  ([#264](https://github.com/hirunefu/smock/issues/264),
+  [moonbitlang/async#725](https://github.com/moonbitlang/async/issues/725)),
+  so smock polls alone until a release fixes that. Its `Schedule`, which
+  keeps the poll interval, does no I/O and reads no clock. A poll reads
+  nothing unless the `Stamp` of what the caller reads (the names it lists,
+  and where the files it reads really are and their times) may have
   changed since the last one.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
