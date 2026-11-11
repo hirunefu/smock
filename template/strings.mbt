@@ -1,5 +1,11 @@
 // The string helpers. Lengths count Unicode code points, so an emoji or a
 // Japanese character counts as one.
+//
+// smock's strings are well-formed UTF-16: its decoders give U+FFFD for
+// what is not UTF-8, and the JSON, YAML and XML parsers it uses reject an
+// unpaired surrogate. So every cut here, right after a search or a
+// separator or at a code-point offset, falls between code points, where
+// `exact_view` cuts; it aborts on a cut before a trailing surrogate.
 
 ///|
 /// A string helper.
@@ -492,7 +498,9 @@ fn joined(
 
 ///|
 /// The offset, in UTF-16 code units, `chars` code points of `text` after
-/// the offset `from`, or the end of `text` when fewer follow it.
+/// the offset `from`, or the end of `text` when fewer follow it. It steps
+/// over a lone surrogate as one code point, but `text` has none: smock's
+/// strings are well-formed (see the top of this file).
 fn char_offset(text : String, chars : Int32, from : Int32) -> Int32 {
   let mut offset = from
   for _ in 0..<chars {
