@@ -294,13 +294,13 @@ definitions directory ([Reloading](docs/definition-files.md#reloading)), so
 a change is found within about a second, and a Secret update (which swaps
 the `..data` symlink) counts as one. A poll that comes between writing a
 certificate and writing its key finds a pair that cannot be used, and the
-next poll loads the new pair. When a pair changes, smock loads
-it without a restart: new handshakes get the new certificate, and open
-connections carry on with the one they started with. A changed pair that
-cannot be used (a file that cannot be read or holds no usable PEM, or a key
-that does not belong to the certificate) is not swapped in, and smock keeps
-presenting the previous one. Either way one log entry names the pair
-(`"mock":""` for the default certificate) and the new certificate's expiry:
+next poll loads the new pair. When a pair changes, smock loads it without a
+restart: new handshakes get the new certificate, and open connections carry
+on with the one they started with. A changed pair that cannot be used (a
+file that cannot be read or holds no usable PEM, or a key that does not
+belong to the certificate) is not swapped in, and smock keeps presenting
+the previous one. Either way one log entry names the pair (`"mock":""` for
+the default certificate) and the new certificate's expiry:
 
 ```json
 {"time":"…","level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"/etc/smock/tls/tls.crt","keyFile":"/etc/smock/tls/tls.key","expiry":"2027-01-01T00:00:00.000Z"}
@@ -1171,17 +1171,14 @@ Packages of `smock/smock`:
   the name chooses the certificate without a C callback. Its one C
   function, in `server/reset.c`, sets `SO_LINGER` so that the reset Fault
   ends a connection with an RST, the exception ADR 0001 makes for it.
-- `watch`: watches a directory by polling it every second, so that
-  `server` can reload the definitions directory and the certificate files
-  (native). It uses no file-system events: the async runtime's file
-  watcher can abort the process
-  ([#264](https://github.com/hirunefu/smock/issues/264),
-  [moonbitlang/async#725](https://github.com/moonbitlang/async/issues/725)),
-  so smock polls alone until a release fixes that. Its `Schedule`, which
-  keeps the poll interval, does no I/O and reads no clock. A poll reads
-  nothing unless the `Stamp` of what the caller reads (the names it lists,
-  and where the files it reads really are and their times) may have
-  changed since the last one.
+- `watch`: polls the definitions directory and the certificate files
+  every second, so that `server` can reload them (native). It uses no
+  file-system events until a release of the async runtime fixes its file
+  watcher ([Reloading](docs/definition-files.md#reloading) says why). Its
+  `Schedule`, which keeps the poll interval, does no I/O and reads no
+  clock. A poll reads nothing unless the `Stamp` of what the caller reads
+  (the names it lists, and where the files it reads really are and their
+  times) may have changed since the last one.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
