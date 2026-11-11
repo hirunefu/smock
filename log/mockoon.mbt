@@ -188,6 +188,10 @@ fn write_json_string(
 /// error line's message. The template package writes its JSON strings
 /// with it too, and counts their bytes with its own `json_char_length`,
 /// which a change to the escapes must follow.
+///
+/// It reads code units unchecked, so `start` and `end` must lie within
+/// `s`, and copies them as they are, with `unsafe_view`: unlike
+/// `exact_view`, that never aborts on a cut before a trailing surrogate.
 pub fn write_json_escaped(
   out : StringBuilder,
   s : String,
@@ -201,7 +205,7 @@ pub fn write_json_escaped(
       continue
     }
     if run < i {
-      out.write_view(s.exact_view(start=run, end=i))
+      out.write_view(s.unsafe_view(start=run, end=i))
     }
     run = i + 1
     match c {
@@ -220,7 +224,7 @@ pub fn write_json_escaped(
     }
   }
   if run < end {
-    out.write_view(s.exact_view(start=run, end~))
+    out.write_view(s.unsafe_view(start=run, end~))
   }
 }
 
