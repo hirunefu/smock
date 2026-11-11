@@ -195,13 +195,16 @@ of each GitHub release include its section
   never exposed.
 - smock finds changes to the Definition files and to the TLS certificate
   and key files by polling them every second. It used file events, and
-  polled every 10 s as well. A change is reloaded within about a second,
-  where it took 250 ms. Changes are no longer coalesced. A change of
-  several files that a poll splits gives a reload for each part, and the
-  first one can fail. A change to a name that starts with `.`, or an edit
-  to a file smock does not read, such as a README, no longer leads to a
-  reload. Adding, removing or renaming a visible file that smock does not
-  read still does. An idle poll still reads no file, but it checks the
+  polled every 10 s as well. As before, a change is read once the files
+  have stayed the same for 250 ms, so a change of several files written
+  one after the other gives one reload. Files that keep changing are read
+  10 s after the change was first seen. A change is now reloaded within
+  about 1.25 s (0.8 s at the median in a measurement), where it took about
+  250 ms. A change to a name that starts with `.`, or an edit to a file
+  smock does not read, such as a README, no longer leads to a reload.
+  Adding, removing or renaming a visible file that smock does not read
+  still does, once such changes pause for 250 ms, or about every 10 s
+  while they go on. An idle poll still reads no file, but it checks the
   times of every file each second. While a problem reading the
   definitions directory lasts, smock reads every file each second, where
   it did every 10 s. The warning that the definitions directory or a

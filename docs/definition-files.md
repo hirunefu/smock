@@ -5856,18 +5856,22 @@ change, without a restart:
   directories or to the times of a file smock reads counts, so a reload
   can also find nothing new, as when a file is written again with the same
   bytes. Names that start with `.` do not count.
-- A change is reloaded within about a second, by the next poll. A change
-  made of several writes, such as a `git checkout` of several files, can
-  be split by a poll. smock then reloads the part it finds, or reports the
-  set as invalid and keeps serving the current one, and the next poll
-  reloads the rest. Writing each new file under another name and renaming
-  it into place shrinks the gap between the files to almost nothing, but
-  a poll can still fall between two renames. To make a change of several
-  files one step, write them into a new directory and swap a symlink to
-  it, as a ConfigMap update and git-sync do.
+- When a poll finds a change, smock waits for the files to settle. It
+  looks again every 250 ms, and reads them once they have stayed the same
+  for 250 ms. So a change made of several writes, such as a `git checkout`
+  of several files, gives one reload of them all. Files that never stay
+  the same for 250 ms are read 10 s after the change was first seen.
+- A change is reloaded within about the poll interval plus 250 ms. In a
+  measurement of 12 edits of a body file, the new body was served 0.4 s to
+  1.2 s after the edit, 0.8 s at the median.
+- Writes more than 250 ms apart can still be read apart. smock then
+  reloads the part it finds, or reports the set as invalid and keeps
+  serving the current one, and reloads the rest once it has settled. To
+  make a change of several files one step, write them into a new directory
+  and swap a symlink to it, as a ConfigMap update and git-sync do.
 - When `--dir` goes through a symlink that is pointed at a new directory,
   as git-sync does for each commit (`--dir /git/current/mocks`), the next
-  poll reads the new directory, whether the old one is removed, as git-sync
+  poll finds the new directory, whether the old one is removed, as git-sync
   does by default, or stays, as with git-sync's `--stale-worktree-timeout`.
 - A definitions directory that does not exist yet is polled until it
   appears.
@@ -5886,9 +5890,10 @@ change, without a restart:
   small body files; startup and each check that reads pay for both. Those
   calls are made at every poll, every second, while nothing changes too:
   a directory of a thousand body files keeps about 5% of an Apple M1 core
-  busy while smock is idle. File times are coarse, so the polls of the 2 s
-  after a change read the files too, but reload only when they differ from
-  those read last. After a read that met a problem reading the directory,
+  busy while smock is idle. While a change settles, they are made every
+  250 ms. File times are coarse, so the polls of the 2 s after a change
+  read the files too, but reload only when they differ from those read
+  last. After a read that met a problem reading the directory,
   such as a file that cannot be read, each poll reads again while the
   problem lasts: smock reads and hashes every file each second until it is
   fixed. A file time ahead of the clock is logged as a warning, once. A
