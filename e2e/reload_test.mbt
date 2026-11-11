@@ -478,14 +478,10 @@ async test "a definitions directory that does not exist yet is polled every seco
     let dir = "\{parent}/later"
     let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
       let before = smock.status()
-      // The directory appears with its files in one step, so that no poll
-      // finds it empty or with only some of them.
-      let next = "\{parent}/.later.new"
-      @fs.mkdir(next)
-      write(next, "mocks.json", reload_mock)
-      write(next, "users.json", user_stub)
-      write(next, "files/users/1.json", "Alice")
-      @fs.rename(next, dir)
+      @fs.mkdir(dir)
+      write(dir, "mocks.json", reload_mock)
+      write(dir, "users.json", user_stub)
+      write(dir, "files/users/1.json", "Alice")
       let status = smock.reloaded(before)
       inspect(
         "\{last_reload(status)}; /users/1: \{smock.brief("/users/1")}",

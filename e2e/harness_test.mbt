@@ -74,32 +74,11 @@ async fn write(dir : String, path : String, text : String) -> Unit {
 }
 
 ///|
-/// Writes `files`, given as (relative path, text) pairs, into `dir` as one
-/// change: each to a hidden name beside it, then each renamed over its own
-/// name, one right after the other. smock polls every second, and a poll
-/// between two writes would find one file changed and not the other, as
-/// it can when a person copies files one at a time. Between two renames
-/// there is next to no time for one.
-async fn write_together(dir : String, files : Array[(String, String)]) -> Unit {
-  let hidden = (path : String) => {
-    match path.rev_find("/") {
-      Some(i) => "\{path[:i]}/.\{path[i + 1:]}.new"
-      None => ".\{path}.new"
-    }
-  }
-  for file in files {
-    write(dir, hidden(file.0), file.1)
-  }
-  for file in files {
-    @fs.rename("\{dir}/\{hidden(file.0)}", "\{dir}/\{file.0}")
-  }
-}
-
-///|
 /// How long a test waits for a reload after changing a file: a ceiling on
 /// the wait, not how soon a reload must come, which is the 1 s poll
-/// interval and the time to read, validate and hash every file. It leaves
-/// room for a machine busy with the tests that run beside it.
+/// interval, the 250 ms quiet period and the time to read, validate and
+/// hash every file. It leaves room for a machine busy with the tests that
+/// run beside it.
 let reload_patience_ms : Int32 = 5000
 
 ///|
@@ -174,7 +153,10 @@ async fn churn(dir : String, ms~ : Int32) -> Unit {
 /// `found` until it gives what the change should lead to, at most
 /// `reload_patience_ms`, and returns that, or "no change in time". Fails
 /// when smock exits before the churn has ended, so a test that gets a value
-/// back knows smock kept running.
+/// back knows smock kept running. Where smock notes the names the churn
+/// changes, as in the definitions directory, its stamps differ until the
+/// churn stops, so the change is read then, well within the 10 s after
+/// which smock reads it all the same.
 async fn amid_churn(
   smock : Smock,
   dir : String,
