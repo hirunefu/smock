@@ -956,10 +956,7 @@ fn host_of(request : Request, authority : String?) -> String? {
 fn authority_of(target : String) -> String? {
   let parts = @log.target_parts(target)
   guard parts.authority >= 0 else { return None }
-  let authority = target.view(
-    start_offset=parts.authority,
-    end_offset=parts.path,
-  )
+  let authority = target.exact_view(start=parts.authority, end=parts.path)
   let authority = match authority.rev_find("@") {
     Some(i) => authority[i + 1:]
     None => authority
@@ -976,6 +973,6 @@ fn path_of(target : String) -> String {
   if parts.path == parts.query {
     "/"
   } else {
-    target.view(start_offset=parts.path, end_offset=parts.query).to_owned()
+    target.exact_view(start=parts.path, end=parts.query).to_owned()
   }
 }

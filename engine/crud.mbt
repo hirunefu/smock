@@ -390,10 +390,7 @@ fn location(crud : @definitions.Crud, key : String) -> String {
   for i in 1..<=path.length() {
     if i == path.length() || path[i] == '/' {
       out.write_char('/')
-      @template.write_url_encoded(
-        out,
-        path.view(start_offset=start, end_offset=i),
-      )
+      @template.write_url_encoded(out, path.exact_view(start~, end=i))
       start = i + 1
     }
   }

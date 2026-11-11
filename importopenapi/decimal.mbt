@@ -95,7 +95,7 @@ fn Decimal::parse(text : String) -> Decimal? {
     return None
   }
   let units = @bigint.BigInt::from_string(
-    digits.view(start_offset=first, end_offset=end).to_owned() +
+    digits.exact_view(start=first, end~).to_owned() +
     "0".repeat(places + last.to_int()),
   )
   Some({ units: if negative { -units } else { units }, })
@@ -123,10 +123,10 @@ fn Decimal::text(self : Decimal) -> String {
   if negative {
     out.write_char('-')
   }
-  out.write_string(digits.view(end_offset=point).to_owned())
+  out.write_string(digits.exact_view(end=point).to_owned())
   if end > point {
     out.write_char('.')
-    out.write_string(digits.view(start_offset=point, end_offset=end).to_owned())
+    out.write_string(digits.exact_view(start=point, end~).to_owned())
   }
   out.to_string()
 }

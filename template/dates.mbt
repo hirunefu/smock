@@ -428,8 +428,7 @@ fn written_date(
       CalendarYear(2) => zero_padded(date.year % 100, 2)
       CalendarYear(digits) => zero_padded(date.year, digits)
       MonthOfYear(1 | 2 as digits) => zero_padded(date.month, digits)
-      MonthOfYear(3) =>
-        month_names[date.month - 1].view(end_offset=3).to_owned()
+      MonthOfYear(3) => month_names[date.month - 1].exact_view(end=3).to_owned()
       MonthOfYear(_) => month_names[date.month - 1]
       DayOfMonth(digits) => zero_padded(date.day, digits)
       Hour(digits) => zero_padded(date.hour, digits)
@@ -448,7 +447,7 @@ fn written_date(
       Fraction(1) => zero_padded(date.milli / 100, 1)
       Fraction(2) => zero_padded(date.milli / 10, 2)
       Fraction(_) => zero_padded(date.milli, 3)
-      Weekday(3) => weekday_names[date.weekday].view(end_offset=3).to_owned()
+      Weekday(3) => weekday_names[date.weekday].exact_view(end=3).to_owned()
       Weekday(_) => weekday_names[date.weekday]
       Offset(zulu, width) => written_offset(offset, zulu, width)
       // Rounded toward zero, as date-fns does.

@@ -201,7 +201,7 @@ pub fn write_json_escaped(
       continue
     }
     if run < i {
-      out.write_view(s.view(start_offset=run, end_offset=i))
+      out.write_view(s.exact_view(start=run, end=i))
     }
     run = i + 1
     match c {
@@ -220,7 +220,7 @@ pub fn write_json_escaped(
     }
   }
   if run < end {
-    out.write_view(s.view(start_offset=run, end_offset=end))
+    out.write_view(s.exact_view(start=run, end~))
   }
 }
 

@@ -87,7 +87,7 @@ pub fn key_text(json : Json) -> String? {
 /// the same text are told apart without writing the number's text out.
 pub fn key_text_integer(text : String) -> Double? {
   let negative = text.has_prefix("-")
-  let digits = if negative { text.view(start_offset=1) } else { text.view() }
+  let digits = text.exact_view(start=if negative { 1 } else { 0 })
   // No leading zeros, and no `-0`: the text of 0 is `0`.
   if digits.is_empty() ||
     (digits.has_prefix("0") && (negative || digits.length() > 1)) {

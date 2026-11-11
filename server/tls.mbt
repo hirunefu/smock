@@ -112,8 +112,10 @@ async fn TlsStream::accept(
     read_output_left: false,
   }
   self.tls.receive(hello.to_bytes()[:])
-  // A failed handshake still sends its alert.
-  errdefer self.try_flush()
+  // A failed handshake still sends its alert, even if a cancellation comes
+  // while it does. When a cancellation ends the handshake, during a read,
+  // there is nothing to send: each step's output goes out before the read.
+  errdefer @async.protect_from_cancel(() => self.try_flush())
   for ;; {
     let done = self.tls.handshake()
     self.flush()
