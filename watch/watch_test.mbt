@@ -5,7 +5,7 @@
 // When the stamps come is for the Schedule tests to check.
 
 ///|
-async test "a poll checks only when the stamp may have changed since the last one, which the watch takes when it starts: Changed once the change settles, then Unsure while the stamp kept is too new to be trusted" {
+async test "a poll checks only when the stamp may have changed since the one before it, the first of which the watch takes when it starts: Changed once the change settles, then Unsure while the stamp before it is too new to be trusted" {
   let dir = @fs.tmpdir(prefix="smock-watch-")
   defer @fs.rmdir(dir, recursive=true)
   for name in ["same", "changed"] {
@@ -14,24 +14,45 @@ async test "a poll checks only when the stamp may have changed since the last on
   // Older than the 2 s a stamp needs to be trusted.
   @async.sleep(2500)
   let checks = []
+  // How many stamps the watch of changed.json has taken. Counted once the
+  // stamp is noted, so that its check, if any, comes before the count is
+  // seen.
+  let taken = Ref(0)
   @async.with_task_group(group => {
     for name in ["same", "changed"] {
       let watch = @watch.Watch(stamp=stamp => {
         stamp.note_file("\{dir}/\{name}.json")
+        if name == "changed" {
+          taken.val += 1
+        }
       })
       group.spawn_bg(no_wait=true, () => {
         watch.run(check => checks.push("\{name}: \{@debug.to_string(check)}"))
       })
     }
-    // 0.6 s after the watches took their first stamp. The poll 1 s after
-    // they started notes the new times, and the stamp 250 ms after it the
-    // same, so the watch checks and keeps that stamp. It was taken less
-    // than 2 s after the change, and so was the one the next poll keeps:
-    // the next two polls note the same, but each compares with a stamp too
-    // new to be trusted; the poll after them, with one that is trusted.
-    @async.sleep(600)
+    // The write comes 0.625 s after the watches took their first stamp,
+    // with as much room before the first poll, at 1 s, as after 0.25 s.
+    // The poll notes the new times, and the stamp at 1.25 s the same, so
+    // the watch checks. The polls at 2.25 s and 3.25 s note the same, but
+    // each compares with a stamp taken less than 2 s after the write, too
+    // new to be trusted (the one at 2.25 s only because the write came
+    // after 0.25 s). The poll at 4.25 s compares with one that is trusted,
+    // and checks nothing.
+    @async.sleep(625)
     @fs.write_file("\{dir}/changed.json", "{\"changed\": true}")
-    @async.sleep(3900)
+    let done = @async.with_timeout_opt(10_000, () => {
+      while checks.length() < 3 {
+        @async.sleep(20)
+      }
+      // One more poll, which must add no check.
+      let polled = taken.val
+      while taken.val == polled {
+        @async.sleep(20)
+      }
+    })
+    guard done is Some(_) else {
+      fail("too few checks or polls in time: \{checks.join(" ")}")
+    }
   })
   inspect(
     checks.join("\n"),
