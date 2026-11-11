@@ -142,5 +142,12 @@ pub fn Stamp::ahead(self : Stamp) -> (String, Int64)? {
 /// they note the same, and `last` is trusted, having been taken at least
 /// `settle_ms` after the newest file time it notes.
 pub fn Stamp::unchanged_since(self : Stamp, last : Stamp) -> Bool {
-  last.newest <= last.taken_at - settle_ms && self.notes == last.notes
+  last.newest <= last.taken_at - settle_ms && self.notes_same(last)
+}
+
+///|
+/// Whether `self` notes the same as `other`, in the same order, whether or
+/// not either can be trusted.
+fn Stamp::notes_same(self : Stamp, other : Stamp) -> Bool {
+  self.notes == other.notes
 }

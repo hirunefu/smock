@@ -958,3 +958,118 @@ async test "while a reload hashes a large body file, requests on an open connect
     },
   )
 }
+
+///|
+/// Creates, writes and removes files in `dir` for `ms` milliseconds, as a
+/// program that keeps SQLite databases there does: four writers, each of
+/// which creates a file and writes it for 50 ms, creates, writes and
+/// removes a `-journal` file beside it, then removes the first, over and
+/// over. The async runtime's file watcher aborted a process that watched
+/// such a directory within about a second.
+async fn churn(dir : String, ms~ : Int32) -> Unit {
+  let end = @async.now() + ms.to_int64()
+  let piece = Bytes::make(512, b'x')
+  @async.with_task_group(group => {
+    for writer in 0..<4 {
+      group.spawn_bg(() => {
+        for i = 0; @async.now() < end; i = i + 1 {
+          let path = "\{dir}/w\{writer}-\{i % 20}.db"
+          let file = @fs.open(
+            path,
+            mode=WriteOnly,
+            create_mode=CreateOrTruncate,
+          )
+          let written = @async.now() + 50
+          while @async.now() < written {
+            file.write(piece)
+          }
+          file.close()
+          let journal = @fs.open(
+            "\{path}-journal",
+            mode=WriteOnly,
+            create_mode=CreateOrTruncate,
+          )
+          for _ in 0..<50 {
+            journal.write(piece)
+          }
+          journal.close()
+          @fs.remove("\{path}-journal")
+          @fs.remove(path)
+        }
+      })
+    }
+  })
+}
+
+///|
+/// Runs `churn` in `dir` for 3 s, and `change` 1.5 s into it, then waits
+/// for `changed`, at most `reload_patience_ms`, and tells whether smock was
+/// still running after the churn and what `changed` gave. Fails when smock
+/// exits first.
+async fn amid_churn(
+  smock : Smock,
+  dir : String,
+  change~ : async () -> Unit,
+  changed~ : async () -> String?,
+) -> String {
+  let exited = () => {
+    guard smock.process.try_wait() is Some(status) else { return }
+    fail(
+      "smock exited with status \{status} amid the churn:\n\{smock.logs.join("\n")}",
+    )
+  }
+  let mut seen = "nothing"
+  @async.with_task_group(group => {
+    group.spawn_bg(() => churn(dir, ms=3000))
+    @async.sleep(1500)
+    exited()
+    change()
+    let found = @async.with_timeout_opt(reload_patience_ms, () => {
+      for ;; {
+        exited()
+        if changed() is Some(found) {
+          break found
+        }
+        @async.sleep(20)
+      }
+    })
+    seen = found.unwrap_or("no change in time")
+  })
+  exited()
+  "running after the churn: true; \{seen}"
+}
+
+///|
+async test "files created, written and removed in the definitions directory for seconds leave smock serving, and a change made meanwhile is reloaded" {
+  with_definitions(
+    [
+      ("mocks.json", reload_mock),
+      ("users.json", user_stub),
+      ("files/users/1.json", "Alice"),
+    ],
+    dir => {
+      let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+        let seen = amid_churn(
+          smock,
+          dir,
+          change=() => write(dir, "files/users/1.json", "Bob"),
+          changed=() => {
+            let served = smock.brief("/users/1")
+            if served.contains("Bob") {
+              Some("/users/1: \{served}")
+            } else {
+              None
+            }
+          },
+        )
+        inspect(
+          seen,
+          content=(
+            #|running after the churn: true; /users/1: 200 Bob
+          ),
+        )
+      })
+      inspect(stopped.status, content="0")
+    },
+  )
+}

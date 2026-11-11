@@ -209,6 +209,45 @@ async test "a Secret-style update, which swaps the ..data symlink and keeps the 
 }
 
 ///|
+async test "files created, written and removed in the certificate directory for seconds leave smock serving, and a rotation made meanwhile is loaded" {
+  with_definitions([("users.json", users)], dir => {
+    with_certificates(certs => {
+      with_pair(@testcerts.rsa_chain, @testcerts.rsa_key, tls_dir => {
+        let stopped = with_smock(
+          ["--dir", dir, "--port", "0", ..certs.pair_args(tls_dir)],
+          smock => {
+            let seen = amid_churn(
+              smock,
+              tls_dir,
+              change=() => {
+                write(tls_dir, "tls.crt", @testcerts.ecdsa_chain + "\n")
+                write(tls_dir, "tls.key", @testcerts.ecdsa_key + "\n")
+              },
+              changed=() => {
+                let lines = smock.logs.filter(is_certificate_entry)
+                if lines.is_empty() {
+                  None
+                } else {
+                  Some(log_entries(lines))
+                }
+              },
+            )
+            inspect(
+              "\{seen}\npresented: \{smock.presented(certs)}",
+              content=(
+                #|running after the churn: true; {"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                #|presented: smock-test-ecdsa
+              ),
+            )
+          },
+        )
+        inspect(stopped.status, content="0")
+      })
+    })
+  })
+}
+
+///|
 async test "a Secret-style update where no event reports it, behind symlinks that lead out of the certificate directory, is found by the next poll" {
   with_definitions([("users.json", users)], dir => {
     with_certificates(certs => {
