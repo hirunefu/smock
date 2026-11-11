@@ -3,12 +3,18 @@
 /// each check: every poll interval, 1 s, as `Schedule` has it, it takes a
 /// `Stamp`, in which the `stamp` function given to `Watch::Watch` notes
 /// what the caller reads, and checks only when the stamp may differ from
-/// the one taken at the poll before, or when the watch started. So a poll
-/// that finds nothing changed reads no file's contents. Which files
-/// changed does not matter: a ConfigMap update, for one, swaps a `..data`
-/// symlink and changes no name the caller reads. What the stamp notes need
-/// not exist yet: a directory that does not is polled the same way until
-/// it appears.
+/// the one it kept: the one taken when it started, or at the last poll or
+/// check. So a poll that finds nothing changed reads no file's contents.
+/// Which files changed does not matter: a ConfigMap update, for one, swaps
+/// a `..data` symlink and changes no name the caller reads. What the stamp
+/// notes need not exist yet: a directory that does not is polled the same
+/// way until it appears.
+///
+/// A change is checked once it has settled: after a stamp that notes a
+/// change, the watch stamps again every 250 ms, and checks once a stamp
+/// notes the same as the one before it, so that files written one after
+/// the other give one check, of them all. Changes that never pause are
+/// checked 10 s after the first was seen.
 ///
 /// It uses no file-system events: the async runtime's file watcher can
 /// abort the process (moonbitlang/async#725), so a watch polls alone until
@@ -18,8 +24,11 @@ pub struct Watch {
   priv schedule : Schedule
   /// Notes in a stamp what the caller reads.
   priv stamp : async (Stamp) -> Unit
-  /// The stamp taken last: when the watch started, or at the last poll.
+  /// The stamp kept: the one taken when the watch started, at the last
+  /// poll that found nothing new, or just before the last check.
   priv mut last : Stamp?
+  /// The stamp taken last while a change settles.
+  priv mut settling : Stamp?
   /// Whether the last stamp noted a file time ahead of the clock, so that
   /// one that stays ahead is told once, not at every check.
   priv mut ahead : Bool
@@ -31,14 +40,15 @@ pub struct Watch {
 /// Why a poll checks what a watch polls.
 #derive(Debug, Eq)
 pub(all) enum Check {
-  /// Its stamp notes something other than the last one did: a name, where
-  /// a file really is, or a file's times. What the caller reads has likely
-  /// changed, or at least been written again.
+  /// A stamp noted something other than the one kept did: a name, where a
+  /// file really is, or a file's times. The change has settled since, or
+  /// has gone on for 10 s. What the caller reads has likely changed, or at
+  /// least been written again.
   Changed
-  /// Its stamp notes the same as the last one did, but cannot tell whether
+  /// A poll's stamp notes the same as the one kept, but cannot tell whether
   /// anything changed: that one was taken too soon after a change to be
   /// trusted, or there is none, after `forget`. Only reading what the
-  /// caller reads can tell.
+  /// caller reads can tell. It comes at the poll, with no quiet period.
   Unsure
 }
 
@@ -51,26 +61,20 @@ pub async fn Watch::Watch(stamp~ : async (Stamp) -> Unit) -> Watch {
     schedule: Schedule(now=@async.now()),
     stamp,
     last: None,
+    settling: None,
     ahead: false,
     untold_ahead: None,
   }
-  let _ = watch.restamp()
+  watch.last = Some(watch.take())
   watch
 }
 
 ///|
-/// Takes a stamp, and tells which check it calls for, if any, compared
-/// with the last one.
-async fn Watch::restamp(self : Watch) -> Check? {
+/// Takes a stamp, and keeps track of whether it notes a file time ahead of
+/// the clock, for `run` to tell.
+async fn Watch::take(self : Watch) -> Stamp {
   let stamp = Stamp(now=@async.now())
   (self.stamp)(stamp)
-  let check : Check? = match self.last {
-    None => Some(Unsure)
-    Some(last) if !stamp.notes_same(last) => Some(Changed)
-    Some(last) if last.trusted() => None
-    Some(_) => Some(Unsure)
-  }
-  self.last = Some(stamp)
   match stamp.ahead() {
     Some(ahead) => {
       if !self.ahead {
@@ -80,15 +84,57 @@ async fn Watch::restamp(self : Watch) -> Check? {
     }
     None => self.ahead = false
   }
-  check
+  stamp
+}
+
+///|
+/// Takes the stamp `due` at `now`, and tells which check it calls for, if
+/// any: none while a change settles.
+async fn Watch::restamp(self : Watch, due : Due, now : Int64) -> Check? {
+  let stamp = self.take()
+  let check : Check = match due {
+    Poll =>
+      match self.last {
+        Some(last) if !stamp.notes_same(last) => {
+          // A change: let it settle before checking.
+          self.schedule.changed(now)
+          self.settling = Some(stamp)
+          return None
+        }
+        Some(last) if last.trusted() => {
+          self.last = Some(stamp)
+          return None
+        }
+        _ => Unsure
+      }
+    Quiet =>
+      match self.settling {
+        Some(before) if !stamp.notes_same(before) => {
+          self.schedule.changed(now)
+          self.settling = Some(stamp)
+          return None
+        }
+        _ => {
+          self.schedule.settled(now)
+          Changed
+        }
+      }
+    Capped => Changed
+  }
+  // The stamp kept is the one taken just before the check reads, so that
+  // the next poll compares with what the check read, and trusts it only
+  // once it is old enough.
+  self.settling = None
+  self.last = Some(stamp)
+  Some(check)
 }
 
 ///|
 /// Calls `on_check` for each check, in turn, until the task is cancelled:
-/// for each poll whose stamp may have changed, as `Check` tells. A stamp is
-/// taken at every poll, so that each compares with what the poll before
-/// noted. A poll that falls due while `on_check` runs comes once it
-/// returns.
+/// for each poll whose stamp may have changed, as `Check` tells, once a
+/// change has settled. A stamp is taken at every poll, so that each
+/// compares with what the stamp kept noted. A poll that falls due while
+/// `on_check` runs comes once it returns.
 ///
 /// `on_ahead` is called with a file and its time, as `Stamp::ahead` gives
 /// them, when a stamp notes a file time ahead of the clock. It is called
@@ -107,8 +153,9 @@ pub async fn Watch::run(
     if wait > 0L {
       @async.sleep(wait.to_int())
     }
-    if self.schedule.due(@async.now()) is Some(_) &&
-      self.restamp() is Some(check) {
+    let now = @async.now()
+    if self.schedule.due(now) is Some(due) &&
+      self.restamp(due, now) is Some(check) {
       on_check(check)
     }
   }
