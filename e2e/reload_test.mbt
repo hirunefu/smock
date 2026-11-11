@@ -12,13 +12,6 @@ async fn Smock::status(self : Smock) -> Map[String, Json] {
 }
 
 ///|
-/// How long a test waits for a reload after changing a file, and so how
-/// soon the tests require one: the 1 s poll interval, then the reload,
-/// which reads, validates and hashes every file, then a margin for a busy
-/// machine. A reload came about 1 s after the change when this was set.
-let reload_patience_ms : Int32 = 3000
-
-///|
 /// Waits until status shows another last reload than `before` does, at
 /// most `within` milliseconds, and returns that status.
 async fn Smock::reloaded(
@@ -27,13 +20,12 @@ async fn Smock::reloaded(
   within~ : Int32 = reload_patience_ms,
 ) -> Map[String, Json] {
   let previous = before.get("lastReload")
-  let status = @async.with_timeout_opt(within, () => {
-    for ;; {
-      let status = self.status()
-      if status.get("lastReload") != previous {
-        break status
-      }
-      @async.sleep(20)
+  let status = wait_for(within, () => {
+    let status = self.status()
+    if status.get("lastReload") != previous {
+      Some(status)
+    } else {
+      None
     }
   })
   guard status is Some(status) else {
@@ -428,15 +420,19 @@ async test "without a definitions directory, nothing is watched and no reload ha
 }
 
 ///|
-async test "a definitions directory that does not exist yet is polled every second, without a warning, so its files are loaded once it appears" {
+async test "a definitions directory that does not exist yet is polled every second, so its files are loaded once it appears, and no warning is logged" {
   with_definitions([], parent => {
     let dir = "\{parent}/later"
     let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
       let before = smock.status()
-      @fs.mkdir(dir)
-      write(dir, "mocks.json", reload_mock)
-      write(dir, "users.json", user_stub)
-      write(dir, "files/users/1.json", "Alice")
+      // The directory appears with its files in one step, so that no poll
+      // finds it empty or with only some of them.
+      let next = "\{parent}/.later.new"
+      @fs.mkdir(next)
+      write(next, "mocks.json", reload_mock)
+      write(next, "users.json", user_stub)
+      write(next, "files/users/1.json", "Alice")
+      @fs.rename(next, dir)
       let status = smock.reloaded(before)
       inspect(
         "\{last_reload(status)}; /users/1: \{smock.brief("/users/1")}",
@@ -445,7 +441,7 @@ async test "a definitions directory that does not exist yet is polled every seco
         ),
       )
     })
-    // No warning about watching.
+    // One reload, and no warning.
     inspect(
       warnings_and_reloads(stopped.logs),
       content=(
@@ -581,8 +577,8 @@ async test "a git-sync update, which points the symlink that --dir goes through 
         )
         let after = smock.reloaded(before)
         let served_after = smock.brief("/users/1")
-        // The watch has moved on to the new worktree, so the next commit
-        // is seen too.
+        // Each poll reads --dir through the symlink, so the next poll
+        // finds the next commit too.
         git_sync_update(
           root,
           "c3",
@@ -608,7 +604,7 @@ async test "a git-sync update, which points the symlink that --dir goes through 
         )
       },
     )
-    // A reload for each commit, and no warning about watching.
+    // A reload for each commit, and no warning.
     inspect(
       warnings_and_reloads(stopped.logs),
       content=(
@@ -929,86 +925,6 @@ async test "while a reload hashes a large body file, requests on an open connect
 }
 
 ///|
-/// Creates, writes and removes files in `dir` for `ms` milliseconds, as a
-/// program that keeps SQLite databases there does: four writers, each of
-/// which creates a file and writes it for 50 ms, creates, writes and
-/// removes a `-journal` file beside it, then removes the first, over and
-/// over. The async runtime's file watcher aborted a process that watched
-/// such a directory within about a second.
-async fn churn(dir : String, ms~ : Int32) -> Unit {
-  let end = @async.now() + ms.to_int64()
-  let piece = Bytes::make(512, b'x')
-  @async.with_task_group(group => {
-    for writer in 0..<4 {
-      group.spawn_bg(() => {
-        for i = 0; @async.now() < end; i = i + 1 {
-          let path = "\{dir}/w\{writer}-\{i % 20}.db"
-          let file = @fs.open(
-            path,
-            mode=WriteOnly,
-            create_mode=CreateOrTruncate,
-          )
-          let written = @async.now() + 50
-          while @async.now() < written {
-            file.write(piece)
-          }
-          file.close()
-          let journal = @fs.open(
-            "\{path}-journal",
-            mode=WriteOnly,
-            create_mode=CreateOrTruncate,
-          )
-          for _ in 0..<50 {
-            journal.write(piece)
-          }
-          journal.close()
-          @fs.remove("\{path}-journal")
-          @fs.remove(path)
-        }
-      })
-    }
-  })
-}
-
-///|
-/// Runs `churn` in `dir` for 3 s, and `change` 1.5 s into it, then waits
-/// for `changed`, at most `reload_patience_ms`, and tells whether smock was
-/// still running after the churn and what `changed` gave. Fails when smock
-/// exits first.
-async fn amid_churn(
-  smock : Smock,
-  dir : String,
-  change~ : async () -> Unit,
-  changed~ : async () -> String?,
-) -> String {
-  let exited = () => {
-    guard smock.process.try_wait() is Some(status) else { return }
-    fail(
-      "smock exited with status \{status} amid the churn:\n\{smock.logs.join("\n")}",
-    )
-  }
-  let mut seen = "nothing"
-  @async.with_task_group(group => {
-    group.spawn_bg(() => churn(dir, ms=3000))
-    @async.sleep(1500)
-    exited()
-    change()
-    let found = @async.with_timeout_opt(reload_patience_ms, () => {
-      for ;; {
-        exited()
-        if changed() is Some(found) {
-          break found
-        }
-        @async.sleep(20)
-      }
-    })
-    seen = found.unwrap_or("no change in time")
-  })
-  exited()
-  "running after the churn: true; \{seen}"
-}
-
-///|
 async test "files created, written and removed in the definitions directory for seconds leave smock serving, and a change made meanwhile is reloaded" {
   with_definitions(
     [
@@ -1022,7 +938,7 @@ async test "files created, written and removed in the definitions directory for 
           smock,
           dir,
           change=() => write(dir, "files/users/1.json", "Bob"),
-          changed=() => {
+          found=() => {
             let served = smock.brief("/users/1")
             if served.contains("Bob") {
               Some("/users/1: \{served}")
@@ -1034,7 +950,7 @@ async test "files created, written and removed in the definitions directory for 
         inspect(
           seen,
           content=(
-            #|running after the churn: true; /users/1: 200 Bob
+            #|/users/1: 200 Bob
           ),
         )
       })

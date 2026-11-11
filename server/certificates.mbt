@@ -2,8 +2,8 @@
 // certificates of single Mocks, which SNI chooses. The default certificate
 // comes from the configured files or, without them, is a self-signed one
 // smock generates for the Hosts it serves. Each certificate and key file
-// pair is read again when its directory changes, as the Definition files
-// are, and a new pair that can be used replaces the one presented: new
+// pair is read again when the files change, as the Definition files are,
+// and a new pair that can be used replaces the one presented: new
 // handshakes get it, while open connections keep the one they started
 // with. A new pair that cannot be used is not swapped in.
 
@@ -46,8 +46,6 @@ priv struct Certificates {
   /// The protocols every certificate it loads or generates accepts by ALPN
   /// (`tls_alpn`), reloads included.
   alpn : Array[String]
-  /// Serialises the checks of the files, which several watches start.
-  checking : @async.Mutex
   /// The Mocks of `by_mock` that the definition set served does not
   /// declare, as last warned about.
   mut undeclared : Array[String]
@@ -100,15 +98,7 @@ async fn Certificates::load(
     }
     pairs[mock] = pair
   }
-  let self = {
-    default,
-    by_mock: pairs,
-    engine,
-    logger,
-    alpn,
-    checking: @async.Mutex(),
-    undeclared: [],
-  }
+  let self = { default, by_mock: pairs, engine, logger, alpn, undeclared: [], }
   self.warn_undeclared()
   Some(self)
 }
@@ -181,28 +171,8 @@ fn Pair::set_expiry(self : Pair) -> Unit {
 }
 
 ///|
-/// The directories that hold the certificate and key files of `pairs`:
-/// each one is watched.
-fn tls_dirs(pairs : Array[@settings.TlsFiles]) -> Array[String] {
-  let dirs = []
-  for files in pairs {
-    for path in [files.cert_file, files.key_file] {
-      let dir = match path.rev_find("/") {
-        None => "."
-        Some(0) => "/"
-        Some(i) => path[:i].to_owned()
-      }
-      if !dirs.contains(dir) {
-        dirs.push(dir)
-      }
-    }
-  }
-  dirs
-}
-
-///|
 /// Notes in `stamp` the certificate and key files of `pairs`, which each
-/// check of their directories reads.
+/// check of the certificates reads.
 async fn stamp_pairs(
   stamp : @watch.Stamp,
   pairs : Array[@settings.TlsFiles],
@@ -269,8 +239,8 @@ fn Certificates::warn_undeclared(self : Certificates) -> Unit {
 }
 
 ///|
-/// Checks every pair on each check of `watch`, the watch of a directory
-/// that holds certificate or key files, until the task is cancelled.
+/// Checks every pair on each check of `watch`, the watch of the
+/// certificate and key files, until the task is cancelled.
 async fn Certificates::run(self : Certificates, watch : @watch.Watch) -> Unit {
   let check = async fn(_) { if !self.check() { watch.forget() } }
   watch.run(check, on_ahead=(file, time) => {
@@ -290,8 +260,6 @@ async fn Certificates::run(self : Certificates, watch : @watch.Watch) -> Unit {
 /// files of every pair: when it did not, the next poll reads again, though
 /// the files may not have changed, since the problem may have passed.
 async fn Certificates::check(self : Certificates) -> Bool {
-  self.checking.acquire()
-  defer self.checking.release()
   let pairs = match self.default {
     Files(pair) => [pair, ..self.by_mock.values()]
     SelfSigned(_) => [..self.by_mock.values()]

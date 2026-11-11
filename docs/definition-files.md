@@ -5858,40 +5858,44 @@ change, without a restart:
   bytes. Names that start with `.` do not count.
 - A change is reloaded within about a second, by the next poll. A change
   made of several writes, such as a `git checkout` of several files, can
-  be split by a poll: smock then reloads the part it finds, or reports the
+  be split by a poll. smock then reloads the part it finds, or reports the
   set as invalid and keeps serving the current one, and the next poll
-  reloads the rest. Writing the new files under other names and renaming
-  them into place, as a ConfigMap update and git-sync do, makes the change
-  one step.
+  reloads the rest. Writing each new file under another name and renaming
+  it into place shrinks the gap between the files to almost nothing, but
+  a poll can still fall between two renames. To make a change of several
+  files one step, write them into a new directory and swap a symlink to
+  it, as a ConfigMap update and git-sync do.
 - When `--dir` goes through a symlink that is pointed at a new directory,
   as git-sync does for each commit (`--dir /git/current/mocks`), the next
   poll reads the new directory, whether the old one is removed, as git-sync
   does by default, or stays, as with git-sync's `--stale-worktree-timeout`.
 - A definitions directory that does not exist yet is polled until it
   appears.
-- smock polls because the file watcher of moonbitlang/async, the runtime it
-  is built on, can abort the process when files are created and written in
-  a directory it watches
+- smock polls instead of using file events because the file watcher of
+  moonbitlang/async, the runtime it is built on, can abort the process
+  when files are created and written in a directory it watches
   ([smock#264](https://github.com/hirunefu/smock/issues/264),
   [moonbitlang/async#725](https://github.com/moonbitlang/async/issues/725)).
-  Before that was found, smock used the file watcher, and polled every
-  10 s only for the changes it missed. It goes back to file events once a
-  release of the runtime fixes the abort.
+  smock polls alone until a release of the runtime fixes that.
 - A poll first compares the names in the directories, where each file
   really is once symlinks are resolved, and the modification and change
   times of the files with those of the poll before, and reads the files
   only when something differs. That takes a few calls for each file instead
   of reading it, which saves most of a poll's CPU when the files are a few
   large ones, as in the benchmark's set, and little when they are many
-  small body files; startup and each check that reads pay for both. File
-  times are coarse, so the polls of the 2 s after a change read the files
-  too, but reload only when they differ from those read last. After a
-  read that met a problem reading the directory, such as a file that cannot
-  be read, each poll reads again while the problem lasts. A file time ahead
-  of the clock is logged as a warning, once. A modification time ahead, as
-  from an archive made on a host whose clock ran ahead, changes nothing
-  else; a change time ahead, which only a clock set back gives, makes each
-  poll read the files until the clock passes it.
+  small body files; startup and each check that reads pay for both. Those
+  calls are made at every poll, every second, while nothing changes too:
+  a directory of a thousand body files keeps about 5% of an Apple M1 core
+  busy while smock is idle. File times are coarse, so the polls of the 2 s
+  after a change read the files too, but reload only when they differ from
+  those read last. After a read that met a problem reading the directory,
+  such as a file that cannot be read, each poll reads again while the
+  problem lasts: smock reads and hashes every file each second until it is
+  fixed. A file time ahead of the clock is logged as a warning, once. A
+  modification time ahead, as from an archive made on a host whose clock
+  ran ahead, changes nothing else; a change time ahead, which only a clock
+  set back gives, makes each poll read the files until the clock passes
+  it.
 - A reload reads and validates every file, builds a whole new definition
   set and swaps it in at once, so no request sees half of a reload.
   Requests already being handled finish with the set they started with,

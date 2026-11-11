@@ -51,13 +51,12 @@ async fn Smock::certificate_entries(
   count : Int32,
   within~ : Int32 = reload_patience_ms,
 ) -> String {
-  let logged = @async.with_timeout_opt(within, () => {
-    for ;; {
-      let lines = self.logs.filter(is_certificate_entry)
-      if lines.length() >= count {
-        break log_entries(lines)
-      }
-      @async.sleep(20)
+  let logged = wait_for(within, () => {
+    let lines = self.logs.filter(is_certificate_entry)
+    if lines.length() >= count {
+      Some(log_entries(lines))
+    } else {
+      None
     }
   })
   guard logged is Some(logged) else {
@@ -86,7 +85,7 @@ fn Certificates::pair_args(self : Certificates, dir : String) -> Array[String] {
 }
 
 ///|
-async test "rewriting the certificate files rotates the certificate without a restart: new handshakes get the new one, an open connection carries on, and the expiry metric and one log line follow, with no log line per handshake" {
+async test "replacing the certificate files rotates the certificate without a restart: new handshakes get the new one, an open connection carries on, and the expiry metric and one log line follow, with no log line per handshake" {
   with_definitions([("users.json", users)], dir => {
     with_certificates(certs => {
       with_pair(@testcerts.rsa_chain, @testcerts.rsa_key, tls_dir => {
@@ -227,7 +226,7 @@ async test "files created, written and removed in the certificate directory for 
                   ("tls.key", @testcerts.ecdsa_key + "\n"),
                 ])
               },
-              changed=() => {
+              found=() => {
                 let lines = smock.logs.filter(is_certificate_entry)
                 if lines.is_empty() {
                   None
@@ -239,7 +238,7 @@ async test "files created, written and removed in the certificate directory for 
             inspect(
               "\{seen}\npresented: \{smock.presented(certs)}",
               content=(
-                #|running after the churn: true; {"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                 #|presented: smock-test-ecdsa
               ),
             )
@@ -576,7 +575,7 @@ async test "SNI never chooses the Mock: a request whose SNI gets one Mock's cert
 }
 
 ///|
-async test "a Mock's certificate rotates the same way as the default certificate, and in the same process one pair rotates by a Secret-style update and the other by rewriting its files, each changing only its own handshakes, metric series and log entry" {
+async test "a Mock's certificate rotates the same way as the default certificate, and in the same process one pair rotates by a Secret-style update and the other by replacing its files, each changing only its own handshakes, metric series and log entry" {
   with_definitions(users_and_orders, dir => {
     with_certificates(certs => {
       with_pair(@testcerts.rsa_chain, @testcerts.rsa_key, default_dir => {
@@ -609,7 +608,7 @@ async test "a Mock's certificate rotates the same way as the default certificate
                   },
                 ),
                 (
-                  "rewriting the default pair",
+                  "replacing the default pair",
                   () => {
                     write_together(default_dir, [
                       ("tls.crt", @testcerts.ecdsa_chain + "\n"),
@@ -647,7 +646,7 @@ async test "a Mock's certificate rotates the same way as the default certificate
                   #|no SNI: smock-test-rsa
                   #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
                   #|smock_tls_certificate_expiry_timestamp_seconds{mock="users"} 4875465600
-                  #|rewriting the default pair:
+                  #|replacing the default pair:
                   #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                   #|SNI users.example.com: smock-test-users-renewed
                   #|no SNI: smock-test-ecdsa

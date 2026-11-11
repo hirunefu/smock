@@ -1,24 +1,20 @@
 ///|
-/// Watches a directory and everything under it, for a caller that reads
-/// it again whole on each check, by polling it every poll interval: 1 s,
-/// as `Schedule` has it by default. Which files changed does not matter: a
-/// ConfigMap update, for one, swaps a `..data` symlink and changes no name
-/// the caller reads.
+/// Polls what a caller reads, for a caller that reads it again whole on
+/// each check: every poll interval, 1 s, as `Schedule` has it, it takes a
+/// `Stamp`, in which the `stamp` function given to `Watch::Watch` notes
+/// what the caller reads, and checks only when the stamp may differ from
+/// the one taken at the poll before, or when the watch started. So a poll
+/// that finds nothing changed reads no file's contents. Which files
+/// changed does not matter: a ConfigMap update, for one, swaps a `..data`
+/// symlink and changes no name the caller reads. What the stamp notes need
+/// not exist yet: a directory that does not is polled the same way until
+/// it appears.
 ///
-/// A poll does not check when nothing the caller reads can have changed:
-/// it first takes a `Stamp` of what the caller reads, and checks only when
-/// the stamp may differ from the one taken at the poll before, or when the
-/// watch started. So a poll that finds nothing changed reads no file's
-/// contents. A directory that does not exist yet is polled the same way
-/// until it appears.
-///
-/// It uses no file-system events: the async runtime's file watcher
-/// (`@fs.Watcher`, inotify on Linux) can abort the process when files are
-/// created and written in a directory it watches (moonbitlang/async#725),
-/// so a watch polls alone until a release of the runtime fixes that.
-/// Polling needs no C either (ADR 0001).
+/// It uses no file-system events: the async runtime's file watcher can
+/// abort the process (moonbitlang/async#725), so a watch polls alone until
+/// a release of the runtime fixes that. Polling needs no C either (ADR
+/// 0001).
 pub struct Watch {
-  priv dir : String
   priv schedule : Schedule
   /// Notes in a stamp what the caller reads.
   priv stamp : async (Stamp) -> Unit
@@ -29,43 +25,34 @@ pub struct Watch {
   priv mut ahead : Bool
   /// A file time ahead of the clock that `run` has not told yet.
   priv mut untold_ahead : (String, Int64)?
-  /// Whether `close` was called, after which `run` makes no check.
-  priv mut closed : Bool
 }
 
 ///|
-/// Why a poll checks a watched directory.
+/// Why a poll checks what a watch polls.
 #derive(Debug, Eq)
 pub(all) enum Check {
   /// Its stamp notes something other than the last one did: a name, where
   /// a file really is, or a file's times. What the caller reads has likely
   /// changed, or at least been written again.
   Changed
-  /// Its stamp notes the same as the last one did, but that one was taken
-  /// too soon after a change to be trusted, or there is none, after
-  /// `forget`. What the caller reads may have changed, and only reading
-  /// it can tell.
-  Poll
+  /// Its stamp notes the same as the last one did, but cannot tell whether
+  /// anything changed: that one was taken too soon after a change to be
+  /// trusted, or there is none, after `forget`. Only reading what the
+  /// caller reads can tell.
+  Unsure
 }
 
 ///|
-/// Starts watching `dir`, and takes the first stamp with `stamp`, which
-/// notes in a stamp what the caller reads, before the caller reads it the
-/// first time. Changes from then on lead to a check once `run` runs, even
-/// those made before it does. The poll interval is the one `Schedule` has
-/// by default.
-pub async fn Watch::Watch(
-  dir : String,
-  stamp~ : async (Stamp) -> Unit,
-) -> Watch {
+/// Starts a watch of what `stamp` notes in a stamp, and takes the first
+/// stamp, before the caller reads it the first time. Changes from then on
+/// lead to a check once `run` runs, even those made before it does.
+pub async fn Watch::Watch(stamp~ : async (Stamp) -> Unit) -> Watch {
   let watch = {
-    dir,
     schedule: Schedule(now=@async.now()),
     stamp,
     last: None,
     ahead: false,
     untold_ahead: None,
-    closed: false,
   }
   let _ = watch.restamp()
   watch
@@ -78,10 +65,10 @@ async fn Watch::restamp(self : Watch) -> Check? {
   let stamp = Stamp(now=@async.now())
   (self.stamp)(stamp)
   let check : Check? = match self.last {
-    None => Some(Poll)
+    None => Some(Unsure)
     Some(last) if !stamp.notes_same(last) => Some(Changed)
-    Some(last) if stamp.unchanged_since(last) => None
-    Some(_) => Some(Poll)
+    Some(last) if last.trusted() => None
+    Some(_) => Some(Unsure)
   }
   self.last = Some(stamp)
   match stamp.ahead() {
@@ -97,11 +84,11 @@ async fn Watch::restamp(self : Watch) -> Check? {
 }
 
 ///|
-/// Calls `on_check` for each check, in turn, until the task is cancelled
-/// or the watch is closed: for each poll whose stamp may have changed, as
-/// `Check` tells. A stamp is taken at every poll, so that each compares
-/// with what the poll before noted. A poll that falls due while `on_check`
-/// runs comes once it returns.
+/// Calls `on_check` for each check, in turn, until the task is cancelled:
+/// for each poll whose stamp may have changed, as `Check` tells. A stamp is
+/// taken at every poll, so that each compares with what the poll before
+/// noted. A poll that falls due while `on_check` runs comes once it
+/// returns.
 ///
 /// `on_ahead` is called with a file and its time, as `Stamp::ahead` gives
 /// them, when a stamp notes a file time ahead of the clock. It is called
@@ -111,7 +98,7 @@ pub async fn Watch::run(
   on_check : async (Check) -> Unit,
   on_ahead~ : (String, Int64) -> Unit = (_, _) => (),
 ) -> Unit {
-  while !self.closed {
+  for ;; {
     if self.untold_ahead is Some((file, time)) {
       self.untold_ahead = None
       on_ahead(file, time)
@@ -120,9 +107,7 @@ pub async fn Watch::run(
     if wait > 0L {
       @async.sleep(wait.to_int())
     }
-    if !self.closed &&
-      self.schedule.due(@async.now()) &&
-      self.restamp() is Some(check) {
+    if self.schedule.due(@async.now()) && self.restamp() is Some(check) {
       on_check(check)
     }
   }
@@ -135,17 +120,4 @@ pub async fn Watch::run(
 /// tries again: the files need not change again, and nor would the stamp.
 pub fn Watch::forget(self : Watch) -> Unit {
   self.last = None
-}
-
-///|
-/// Stops watching: `run` makes no check after it, and returns when it
-/// wakes for the next poll.
-pub fn Watch::close(self : Watch) -> Unit {
-  self.closed = true
-}
-
-///|
-/// The directory watched, as given to `Watch::Watch`.
-pub fn Watch::dir(self : Watch) -> String {
-  self.dir
 }
