@@ -16,8 +16,8 @@
 /// before it, which can be trusted, nothing it looks at changed, and the
 /// poll is done. Otherwise the poll takes a stamp, and compares it with the
 /// stamp before it. A poll takes one too when that stamp was taken 10 s
-/// before (`full_stamp_ms`), so that what a glance does not see shows
-/// within 10 s.
+/// or more before (`full_stamp_ms`), so that what a glance does not see
+/// shows within 10 s.
 ///
 /// A change is checked once it has settled: after a stamp that notes a
 /// change, the watch stamps again every 250 ms, and checks once a stamp
