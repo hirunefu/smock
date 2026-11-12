@@ -1,10 +1,10 @@
 ///|
-/// What a poll compares with the last poll's before it reads anything, so
-/// that a poll that finds nothing changed costs a few calls for each file's
-/// metadata instead of reading and digesting it. That saves most of a
-/// poll's CPU when the files are a few large ones, and little when they are
-/// many small ones; each check that reads pays for both. The caller
-/// notes in it, in the order it would read them, the names in each
+/// What a watch compares with the stamp taken before it, before it reads
+/// anything, so that a poll that finds nothing changed costs a few calls
+/// for each file's metadata instead of reading and digesting it. That saves
+/// most of a poll's CPU when the files are a few large ones, and little
+/// when they are many small ones; each check that reads pays for both. The
+/// caller notes in it, in the order it would read them, the names in each
 /// directory it would list and each file it would read, whose real path,
 /// once symlinks are resolved, and modification and change times are noted.
 ///
@@ -27,23 +27,36 @@
 ///
 /// File times are coarse, though: a change made soon after another can get
 /// the same time. So a stamp is trusted only once it was taken a while
-/// after the newest time it notes (`settle_ms`): any change after that gets
+/// after the newest time it notes (`trust_ms`): any change after that gets
 /// a later time. A modification time ahead of the clock by more than that
 /// does not count, so that one set into the future, as by an archive made
 /// on a host whose clock ran ahead, does not keep every stamp from being
 /// trusted: the call that set it set the change time to the time then, and
 /// that counts.
+///
+/// A glance (`Stamp::glance`) is a lighter stamp, which a watch takes at
+/// each poll: one call for each path the stamp before it looked at, which
+/// notes the path's change time. It looks at each file that stamp noted,
+/// and at each path the caller had it look at too (`Stamp::glance_at`),
+/// such as a directory it listed, whose change time changes when an entry
+/// is added, removed or renamed in it. A glance is compared, and trusted,
+/// as a stamp is. It sees less: it takes each change time by path, so on
+/// NFS from the client's attribute cache, and a symlink pointed at another
+/// file with the very same times does not show.
 pub struct Stamp {
   /// When it was taken, in milliseconds since the epoch: before the caller
   /// notes anything.
   priv taken_at : Int64
   /// What the caller noted, in order.
   priv notes : Array[String]
+  /// What a glance at it looks at, in order: each file noted, and each
+  /// path given to `glance_at`.
+  priv looked_at : Array[String]
   /// The newest file time noted that counts, in milliseconds since the
   /// epoch, rounded up, or 0 before any.
   priv mut newest : Int64
   /// The first file noted with a time ahead of the clock by more than
-  /// `settle_ms`, and that time.
+  /// `trust_ms`, and that time.
   priv mut ahead : (String, Int64)?
 }
 
@@ -52,13 +65,13 @@ pub struct Stamp {
 /// taken to be trusted: longer than the coarsest file times in common use
 /// (FAT keeps them to 2 s, ext3 and HFS+ to 1 s) and than the coarse clock
 /// the kernel stamps files with.
-let settle_ms : Int64 = 2000
+let trust_ms : Int64 = 2000
 
 ///|
 /// Starts a stamp taken at `now`, in milliseconds since the epoch, before
 /// anything is noted.
 pub fn Stamp::Stamp(now~ : Int64) -> Stamp {
-  { taken_at: now, notes: [], newest: 0, ahead: None, }
+  { taken_at: now, notes: [], looked_at: [], newest: 0, ahead: None, }
 }
 
 ///|
@@ -69,15 +82,24 @@ pub fn Stamp::note(self : Stamp, note : String) -> Unit {
 }
 
 ///|
+/// Has a glance at what `self` looked at look at the change time of the
+/// file or directory at `path` too, such as a directory whose names the
+/// caller noted, or a path it found missing.
+pub fn Stamp::glance_at(self : Stamp, path : String) -> Unit {
+  self.looked_at.push(path)
+}
+
+///|
 /// Notes the file at `path`: its real path, once symlinks are resolved, and
 /// its modification and change times, taken from the file opened, or why
 /// they cannot be had. `real` is its real path, when the caller has
-/// resolved it already.
+/// resolved it already. A glance at what `self` looked at looks at `path`.
 pub async fn Stamp::note_file(
   self : Stamp,
   path : String,
   real? : String,
 ) -> Unit {
+  self.looked_at.push(path)
   let real = match real {
     Some(real) => real
     None =>
@@ -105,7 +127,7 @@ pub async fn Stamp::note_file(
       let modified = ms_up(modified)
       let changed = ms_up(changed)
       // A time later than this was set by a clock ahead of this one.
-      let clock_ahead = self.taken_at + settle_ms
+      let clock_ahead = self.taken_at + trust_ms
       if modified <= clock_ahead && modified > self.newest {
         self.newest = modified
       }
@@ -121,6 +143,30 @@ pub async fn Stamp::note_file(
 }
 
 ///|
+/// A glance, taken at `now`, in milliseconds since the epoch, at what
+/// `self` looked at: for each path a glance looks at, in order, its change
+/// time, taken by path and following symlinks, or why it cannot be had. So
+/// a path that stays missing notes the same each time. A glance at a
+/// glance looks at nothing.
+pub async fn Stamp::glance(self : Stamp, now~ : Int64) -> Stamp {
+  let glance = Stamp(now~)
+  for path in self.looked_at {
+    try @fs.ctime(path) catch {
+      err => glance.notes.push("\{path}: \{err}")
+    } noraise {
+      changed => {
+        glance.notes.push("\{path} \{changed.0}.\{changed.1}")
+        let changed = ms_up(changed)
+        if changed > glance.newest {
+          glance.newest = changed
+        }
+      }
+    }
+  }
+  glance
+}
+
+///|
 /// A file time, seconds and nanoseconds, in milliseconds, rounded up.
 fn ms_up(time : (Int64, Int32)) -> Int64 {
   time.0 * 1000 + ((time.1 + 999_999) / 1_000_000).to_int64()
@@ -128,7 +174,7 @@ fn ms_up(time : (Int64, Int32)) -> Int64 {
 
 ///|
 /// The first file noted whose modification or change time is ahead of the
-/// clock by more than `settle_ms`, as the caller named it, and that time,
+/// clock by more than `trust_ms`, as the caller named it, and that time,
 /// the later of the two, in milliseconds since the epoch. A modification
 /// time ahead does not keep the stamp from being trusted; a change time
 /// ahead, which only a clock set back since can give, does, until the
@@ -138,9 +184,17 @@ pub fn Stamp::ahead(self : Stamp) -> (String, Int64)? {
 }
 
 ///|
-/// Whether nothing `self` notes can have changed since `last` was taken:
-/// they note the same, and `last` is trusted, having been taken at least
-/// `settle_ms` after the newest file time it notes.
-pub fn Stamp::unchanged_since(self : Stamp, last : Stamp) -> Bool {
-  last.newest <= last.taken_at - settle_ms && self.notes == last.notes
+/// Whether a change made after `self` was taken would show in a later
+/// stamp: `self` was taken at least `trust_ms` after the newest file time
+/// it notes, so any later change gets a later time. So when a later stamp
+/// notes the same as a trusted one, nothing it notes changed in between.
+pub fn Stamp::trusted(self : Stamp) -> Bool {
+  self.newest <= self.taken_at - trust_ms
+}
+
+///|
+/// Whether `self` notes the same as `other`, in the same order, whether or
+/// not either can be trusted.
+pub fn Stamp::notes_same(self : Stamp, other : Stamp) -> Bool {
+  self.notes == other.notes
 }

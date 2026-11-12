@@ -1,88 +1,160 @@
 ///|
-/// When to check a watched directory: once its file-system events have been
-/// quiet for a while, so that a burst of changes, such as a ConfigMap update
-/// or a `git checkout`, gives one check; and at a fixed interval, in case an
-/// event was missed. A check, whatever its cause, starts the interval
-/// again.
+/// When to stamp what a watch polls, and which stamps lead to a check. A
+/// poll comes every second (`poll_ms`). When a stamp notes a change, the
+/// watch lets it settle before it checks: a stamp comes every 250 ms
+/// (`quiet_ms`) instead, until one notes the same as the stamp just before
+/// it, so that files written one after the other give one check. If the
+/// stamps keep differing, the watch checks 10 s (`settle_cap_ms`) after
+/// the change was first seen, so that changes that never pause are still
+/// checked. Polls go on every second from the check.
+///
+/// A stamp starts the interval to the next one from when it came, so one
+/// that comes late moves the ones after it, and stamps never pile up.
 ///
 /// It does no I/O and reads no clock: the caller gives it the time with
-/// every call, in milliseconds. The caller waits until `deadline()` or the
-/// next event, whichever comes first, reports an event with `event`, and
-/// then asks `due` what to do.
+/// every call, in milliseconds. The caller waits until `deadline()`, asks
+/// `due` whether a stamp is due and what for, takes it, compares it with
+/// the stamp it took before, and tells the schedule what it noted
+/// (`noted`), with the time `due` was given. That tells whether to check.
+/// At a poll, a glance that notes the same as the one before it can do in
+/// place of the stamp, as `Watch` has it: it tells the schedule `Same`.
 pub struct Schedule {
-  priv quiet_ms : Int64
-  priv poll_ms : Int64
-  /// When the last event came, while it waits for its quiet period.
-  priv mut last_event : Int64?
-  /// When the next poll is due.
-  priv mut next_poll : Int64
+  /// Whether a change settles, and when the next stamp is due.
+  priv mut phase : Phase
 }
 
 ///|
-/// Why a directory is checked.
+/// What a schedule waits for.
+priv enum Phase {
+  /// No change settles: the next poll is due at `next`.
+  Polling(next~ : Int64)
+  /// A change first seen at `seen` settles: the next stamp of the quiet
+  /// period is due at `next`.
+  Settling(seen~ : Int64, next~ : Int64)
+}
+
+///|
+/// What a stamp that `Schedule::due` says is due is for.
 #derive(Debug, Eq)
-pub(all) enum Check {
-  /// Events came, and have been quiet for the quiet period, or kept coming
-  /// for a whole poll interval.
-  Changed
-  /// The poll interval passed without events.
+pub(all) enum Due {
+  /// A poll, every poll interval.
   Poll
+  /// A stamp while a change settles: the change has settled when it notes
+  /// the same as the stamp just before it.
+  Quiet
+  /// The last stamp of a change that has not settled 10 s after it was
+  /// first seen: the watch checks whatever it notes.
+  Capped
 }
 
 ///|
-/// Creates a schedule at time `now`: the first poll is due `poll_ms` later.
-///
-/// - `quiet_ms` is how long events must have been quiet before a check:
-///   250 ms by default.
-/// - `poll_ms` is the poll interval: 10 s by default.
-pub fn Schedule::Schedule(
-  now~ : Int64,
-  quiet_ms~ : Int32 = 250,
-  poll_ms~ : Int32 = 10_000,
-) -> Schedule {
-  {
-    quiet_ms: quiet_ms.to_int64(),
-    poll_ms: poll_ms.to_int64(),
-    last_event: None,
-    next_poll: now + poll_ms.to_int64(),
-  }
+/// What a stamp noted, compared with the stamp taken just before it.
+#derive(Debug, Eq)
+pub(all) enum Noted {
+  /// Something other than the stamp before it: a change.
+  Differs
+  /// The same as the stamp before it, which can be trusted: nothing
+  /// changed.
+  Same
+  /// The same as the stamp before it, but that one was taken too soon
+  /// after a change to be trusted, or there is none, after
+  /// `Watch::forget`: only a read can tell whether anything changed.
+  Untrusted
 }
 
 ///|
-/// Records that a file-system event came at `now`.
-pub fn Schedule::event(self : Schedule, now : Int64) -> Unit {
-  self.last_event = Some(now)
+/// The poll interval, in milliseconds.
+let poll_ms : Int64 = 1000
+
+///|
+/// The quiet period: how long apart the stamps of a change that settles
+/// are, in milliseconds.
+let quiet_ms : Int64 = 250
+
+///|
+/// How long after it was first seen a change that has not settled is
+/// checked all the same, in milliseconds.
+let settle_cap_ms : Int64 = 10_000
+
+///|
+/// Creates a schedule at time `now`: the first poll is due one poll
+/// interval later.
+pub fn Schedule::Schedule(now~ : Int64) -> Schedule {
+  { phase: Polling(next=now + poll_ms), }
 }
 
 ///|
-/// When something can next be due: the end of the quiet period after the
-/// last event, if one waits, or else the next poll, whichever is earlier.
+/// When the next stamp is due: while a change settles, the next stamp of
+/// the quiet period or the end of the 10 s, whichever is earlier; else the
+/// next poll.
 pub fn Schedule::deadline(self : Schedule) -> Int64 {
-  match self.last_event {
-    Some(at) if at + self.quiet_ms < self.next_poll => at + self.quiet_ms
-    _ => self.next_poll
+  match self.phase {
+    Polling(next~) => next
+    Settling(seen~, next~) if seen + settle_cap_ms < next =>
+      seen + settle_cap_ms
+    Settling(next~, ..) => next
   }
 }
 
 ///|
-/// The check due at `now`, if any. Once it is returned, it is no longer
-/// due: the events it covers are forgotten and the next poll is due one
-/// interval after `now`.
-///
-/// - `Changed` when events came and either have been quiet for the quiet
-///   period or the poll is due: events that never pause are still checked
-///   once per interval.
-/// - `Poll` when the poll is due and no event came.
-pub fn Schedule::due(self : Schedule, now : Int64) -> Check? {
-  let check : Check? = match self.last_event {
-    Some(at) if now >= at + self.quiet_ms || now >= self.next_poll =>
-      Some(Changed)
-    _ if now >= self.next_poll => Some(Poll)
+/// The stamp due at `now`, if any. Once it is returned, it is no longer
+/// due: the next poll, or the next stamp of the quiet period, is due one
+/// interval after `now`. After `Capped`, no change settles any more, and
+/// the next poll is due one poll interval after `now`.
+pub fn Schedule::due(self : Schedule, now : Int64) -> Due? {
+  match self.phase {
+    Settling(seen~, ..) if now >= seen + settle_cap_ms => {
+      self.phase = Polling(next=now + poll_ms)
+      Some(Capped)
+    }
+    Settling(seen~, next~) if now >= next => {
+      self.phase = Settling(seen~, next=now + quiet_ms)
+      Some(Quiet)
+    }
+    Polling(next~) if now >= next => {
+      self.phase = Polling(next=now + poll_ms)
+      Some(Poll)
+    }
     _ => None
   }
-  if check is Some(_) {
-    self.last_event = None
-    self.next_poll = now + self.poll_ms
+}
+
+///|
+/// Tells the schedule what the stamp `due` at `now` noted, and tells which
+/// check that calls for, if any:
+///
+/// - A poll that notes a change checks nothing yet: the change starts to
+///   settle, and the next stamp is due one quiet period after `now`.
+/// - A poll that notes the same as a stamp that can be trusted checks
+///   nothing.
+/// - A poll that notes the same as a stamp that cannot be trusted, or that
+///   has none to compare with, checks at once, `Unsure`, with no quiet
+///   period: no stamp shows a change under way.
+/// - A stamp of the quiet period that notes a change checks nothing: the
+///   change goes on settling, and the 10 s still count from when it was
+///   first seen.
+/// - One that notes the same, trusted or not, has settled: the watch
+///   checks, `Changed`, even when the stamps note the same as before the
+///   change, since something was written. The next poll is due one poll
+///   interval after `now`.
+/// - A `Capped` stamp checks, `Changed`, whatever it notes.
+pub fn Schedule::noted(
+  self : Schedule,
+  due : Due,
+  now : Int64,
+  noted : Noted,
+) -> Check? {
+  match (due, noted) {
+    (Poll, Differs) => {
+      self.phase = Settling(seen=now, next=now + quiet_ms)
+      None
+    }
+    (Poll, Same) | (Quiet, Differs) => None
+    (Poll, Untrusted) => Some(Unsure)
+    (Quiet, Same | Untrusted) => {
+      self.phase = Polling(next=now + poll_ms)
+      Some(Changed)
+    }
+    (Capped, _) => Some(Changed)
   }
-  check
 }

@@ -66,9 +66,9 @@ Each port's `listening` log entry names the protocols it serves:
 `["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]` on the TLS
 port (`["http/1.1"]` with `--tls-http2 off`) and `["http/1.1"]` on the
 admin port.
-It watches the directory and swaps in the new definition set when the files
-change, ConfigMap updates included; an invalid set is reported and the
-current one keeps serving
+It polls the directory every second and swaps in the new definition set
+when the files change, ConfigMap updates included; an invalid set is
+reported and the current one keeps serving
 ([docs/definition-files.md](docs/definition-files.md#reloading)).
 
 smock logs one JSON object per line, in one of two formats. In the `json`
@@ -289,16 +289,23 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
 - The `listening` log entry of the TLS port names the certificate and key
   files.
 
-smock watches the directories of the certificate and key files, as it
-watches the definitions directory: changes are coalesced for 250 ms, the
-directories are polled every 10 s as well, and a Secret update (which swaps
-the `..data` symlink) counts as a change. When a pair changes, smock loads
-it without a restart: new handshakes get the new certificate, and open
-connections carry on with the one they started with. A changed pair that
-cannot be used (a file that cannot be read or holds no usable PEM, or a key
-that does not belong to the certificate) is not swapped in, and smock keeps
-presenting the previous one. Either way one log entry names the pair
-(`"mock":""` for the default certificate) and the new certificate's expiry:
+smock polls the certificate and key files every second, as it polls the
+definitions directory ([Reloading](docs/definition-files.md#reloading)). It
+reads them once they have stayed the same for 250 ms, so a certificate and
+its key written less than 250 ms apart are loaded together, within about
+1.25 s, and a Secret update (which swaps the `..data` symlink) counts as a
+change. Written further apart, as by two `cp` commands typed one after the
+other, they can be read apart: smock logs one "TLS certificate reload
+failed" entry and keeps presenting the previous pair until the other file
+arrives. To rotate a pair in one step, write both files into a new
+directory and swap a symlink to it, as a Secret update does. When a pair
+changes, smock loads it without a restart: new handshakes get the new
+certificate, and open connections carry on with the one they started with.
+A changed pair that cannot be used (a file that cannot be read or holds no
+usable PEM, or a key that does not belong to the certificate) is not
+swapped in, and smock keeps presenting the previous one. Either way one log
+entry names the pair (`"mock":""` for the default certificate) and the new
+certificate's expiry:
 
 ```json
 {"time":"…","level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"/etc/smock/tls/tls.crt","keyFile":"/etc/smock/tls/tls.key","expiry":"2027-01-01T00:00:00.000Z"}
@@ -1169,14 +1176,19 @@ Packages of `smock/smock`:
   the name chooses the certificate without a C callback. Its one C
   function, in `server/reset.c`, sets `SO_LINGER` so that the reset Fault
   ends a connection with an RST, the exception ADR 0001 makes for it.
-- `watch`: watches a directory, with the async runtime's file watcher
-  (inotify) and polling in case an event is missed, so that `server` can
-  reload the definitions directory and the certificate directories
-  (native). Its `Schedule`, which coalesces a burst of events into one
-  check and keeps the poll interval, does no I/O and reads no clock. A poll
-  reads nothing unless the `Stamp` of what the caller reads (the names it
-  lists, and where the files it reads really are and their times) may have
-  changed since the last one.
+- `watch`: polls the definitions directory and the certificate files
+  every second, so that `server` can reload them (native). It uses no
+  file-system events until a release of the async runtime fixes its file
+  watcher ([Reloading](docs/definition-files.md#reloading) says why). Its
+  `Schedule` keeps the poll interval, the 250 ms quiet period that lets a
+  change settle before it is read, and the 10 s after which a change that
+  never settles is read all the same, and decides which stamps lead to a
+  read. It does no I/O and reads no clock. A poll reads nothing unless the
+  `Stamp` of what the caller reads (the names it lists, and where the
+  files it reads really are and their times) may have changed since the
+  last one. It first takes a glance at the change time of each file and
+  directory the last stamp looked at, one call each, and takes the stamp
+  only when one changed, or every 10 s.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.

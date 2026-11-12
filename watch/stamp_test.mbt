@@ -1,8 +1,8 @@
 // What a poll compares before it reads anything: a stamp notes the names a
 // check would list and the times of the files it would read, and a poll
-// reads only when the stamp may have changed since the last one. Real files
-// give the times; each stamp is given the time it is taken at, so that a
-// test can say how long after a change it was taken.
+// reads only when it may note something other than the stamp before it.
+// Real files give the times; each stamp is given the time it is taken at,
+// so that a test can say how long after a change it was taken.
 
 ///|
 /// A stamp taken at `at` that notes `names` and the file at `path`.
@@ -25,21 +25,20 @@ async fn changed_at(path : String) -> Int64 {
 }
 
 ///|
-async test "a poll trusts the last stamp only when it was taken at least 2 s after the newest change it notes" {
+async test "a stamp is trusted only when it was taken at least 2 s after the newest change it notes" {
   let dir = @fs.tmpdir(prefix="smock-stamp-")
   defer @fs.rmdir(dir, recursive=true)
   let path = "\{dir}/users.json"
   @fs.write_file(path, "{}")
   let changed = changed_at(path)
-  let poll = stamp_of(path, at=changed + 12_000)
   inspect(
     (
-      $|last taken 1.9 s after the change: unchanged \{poll.unchanged_since(stamp_of(path, at=changed + 1900))}
-      $|last taken 2.1 s after the change: unchanged \{poll.unchanged_since(stamp_of(path, at=changed + 2100))}
+      $|taken 1.9 s after the change: trusted \{stamp_of(path, at=changed + 1900).trusted()}
+      $|taken 2.1 s after the change: trusted \{stamp_of(path, at=changed + 2100).trusted()}
     ),
     content=(
-      #|last taken 1.9 s after the change: unchanged false
-      #|last taken 2.1 s after the change: unchanged true
+      #|taken 1.9 s after the change: trusted false
+      #|taken 2.1 s after the change: trusted true
     ),
   )
 }
@@ -52,12 +51,11 @@ async test "a stamp changes when a noted file is written again, replaced through
   @fs.write_file("\{dir}/v1.json", "{}")
   @fs.write_file("\{dir}/v2.json", "{}")
   @fs.symlink(target="v1.json", path)
-  // Far enough after the files were written to be trusted.
-  let at = changed_at("\{dir}/v2.json") + 60_000
+  let at = @async.now()
   let last = stamp_of(path, at~)
   let out = [
-    "nothing changed: unchanged \{stamp_of(path, at~).unchanged_since(last)}",
-    "other names noted: unchanged \{stamp_of(path, at~, names="orders.json").unchanged_since(last)}",
+    "nothing changed: same \{stamp_of(path, at~).notes_same(last)}",
+    "other names noted: same \{stamp_of(path, at~, names="orders.json").notes_same(last)}",
   ]
   // Later than the coarsest clock tick, so that each change gets a time of
   // its own.
@@ -78,17 +76,17 @@ async test "a stamp changes when a noted file is written again, replaced through
     @async.sleep(20)
     make()
     let next = stamp_of(path, at~)
-    out.push("\{name}: unchanged \{next.unchanged_since(last)}")
+    out.push("\{name}: same \{next.notes_same(last)}")
     last = next
   }
   inspect(
     out.join("\n"),
     content=(
-      #|nothing changed: unchanged true
-      #|other names noted: unchanged false
-      #|written again with the same bytes: unchanged false
-      #|replaced through a symlink: unchanged false
-      #|removed: unchanged false
+      #|nothing changed: same true
+      #|other names noted: same false
+      #|written again with the same bytes: same false
+      #|replaced through a symlink: same false
+      #|removed: same false
     ),
   )
 }
@@ -121,14 +119,16 @@ async test "a modification time ahead of the clock does not keep a stamp from be
   let written = stamp_of(path, at=changed + 12_000)
   inspect(
     (
-      $|nothing changed: unchanged \{poll.unchanged_since(last)}
-      $|written again: unchanged \{written.unchanged_since(poll)}
+      $|taken 2.1 s after the change: trusted \{last.trusted()}
+      $|nothing changed: same \{poll.notes_same(last)}
+      $|written again: same \{written.notes_same(poll)}
       $|ahead of the clock: \{last.ahead() == Some((path, ahead * 1000))}
       $|after the write, ahead of the clock: \{written.ahead() is Some(_)}
     ),
     content=(
-      #|nothing changed: unchanged true
-      #|written again: unchanged false
+      #|taken 2.1 s after the change: trusted true
+      #|nothing changed: same true
+      #|written again: same false
       #|ahead of the clock: true
       #|after the write, ahead of the clock: false
     ),
@@ -148,12 +148,88 @@ async test "a stamp notes where a file really is, so that a symlink pointed at a
   let status = @process.run("ln", ["\{dir}/a/users.json", "\{dir}/b/users.json"])
   guard status == 0 else { fail("ln exited with \{status}") }
   @fs.symlink(target="a/users.json", path)
-  let at = changed_at("\{dir}/a/users.json") + 60_000
+  let at = @async.now()
   let last = stamp_of(path, at~)
   @fs.symlink(target="b/users.json", "\{dir}/next")
   @fs.rename("\{dir}/next", path)
   inspect(
-    "pointed at b: unchanged \{stamp_of(path, at~).unchanged_since(last)}",
-    content="pointed at b: unchanged false",
+    "pointed at b: same \{stamp_of(path, at~).notes_same(last)}",
+    content="pointed at b: same false",
+  )
+}
+
+///|
+async test "a glance looks at the change time of each file its stamp noted and each path it was told to, following symlinks, and differs when one is written, replaced through a symlink or removed, gains an entry, or appears" {
+  let dir = @fs.tmpdir(prefix="smock-stamp-")
+  defer @fs.rmdir(dir, recursive=true)
+  let path = "\{dir}/users.json"
+  @fs.write_file("\{dir}/v1.json", "{}")
+  @fs.write_file("\{dir}/v2.json", "{}")
+  @fs.symlink(target="v1.json", path)
+  @fs.mkdir("\{dir}/files")
+  let at = @async.now()
+  let stamp = @watch.Stamp(now=at)
+  stamp.note_file(path)
+  stamp.glance_at("\{dir}/files")
+  stamp.glance_at("\{dir}/later")
+  let mut last = stamp.glance(now=at)
+  let out = ["nothing changed: same \{stamp.glance(now=at).notes_same(last)}"]
+  // Later than the coarsest clock tick, so that each change gets a time of
+  // its own.
+  let changes : Array[(String, async () -> Unit)] = [
+    ("written again with the same bytes", () => @fs.write_file(path, "{}")),
+    (
+      "replaced through a symlink",
+      () => {
+        @fs.symlink(target="v2.json", "\{dir}/next")
+        @fs.rename("\{dir}/next", path)
+      },
+    ),
+    ("removed", () => @fs.remove("\{dir}/v2.json")),
+    (
+      "an entry added to a directory",
+      () => @fs.write_file("\{dir}/files/1.json", "{}"),
+    ),
+    ("a missing directory created", () => @fs.mkdir("\{dir}/later")),
+  ]
+  for change in changes {
+    let (name, make) = change
+    @async.sleep(20)
+    make()
+    let next = stamp.glance(now=at)
+    out.push("\{name}: same \{next.notes_same(last)}")
+    last = next
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|nothing changed: same true
+      #|written again with the same bytes: same false
+      #|replaced through a symlink: same false
+      #|removed: same false
+      #|an entry added to a directory: same false
+      #|a missing directory created: same false
+    ),
+  )
+}
+
+///|
+async test "a glance is trusted, as a stamp is, only when it was taken at least 2 s after the newest change time it notes" {
+  let dir = @fs.tmpdir(prefix="smock-stamp-")
+  defer @fs.rmdir(dir, recursive=true)
+  let path = "\{dir}/users.json"
+  @fs.write_file(path, "{}")
+  let changed = changed_at(path)
+  let stamp = @watch.Stamp(now=changed)
+  stamp.glance_at(path)
+  inspect(
+    (
+      $|taken 1.9 s after the change: trusted \{stamp.glance(now=changed + 1900).trusted()}
+      $|taken 2.1 s after the change: trusted \{stamp.glance(now=changed + 2100).trusted()}
+    ),
+    content=(
+      #|taken 1.9 s after the change: trusted false
+      #|taken 2.1 s after the change: trusted true
+    ),
   )
 }

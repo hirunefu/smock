@@ -1,6 +1,7 @@
-// The stamp of a definitions directory, which a poll compares with the last
-// poll's before it reads the directory: it changes with every change that a
-// read could see, and only then.
+// The stamp of a definitions directory, which a watch compares with the
+// stamp before it, so that it reads the directory only when something may
+// have changed: it changes with every change that a read could see, and
+// only then.
 
 ///|
 /// Writes `text` to `dir/path`, creating the directories on the way.
@@ -59,8 +60,7 @@ async test "the stamp of a definitions directory changes with each change a read
   ])
   guard status == 0 else { fail("ln exited with \{status}") }
   @fs.symlink(target=".releases/a/payments.json", "\{dir}/payments.json")
-  // Far enough after the files were written for each stamp to be trusted.
-  let at = @async.now() + 60_000
+  let at = @async.now()
   let changes : Array[(String, async () -> Unit)] = [
     ("nothing", () => ()),
     ("a file that is not read edited", () => write(dir, "README.md", "x")),
@@ -109,25 +109,25 @@ async test "the stamp of a definitions directory changes with each change a read
     @async.sleep(20)
     make()
     let next = stamp_of(dir, at~)
-    out.push("\{name}: unchanged \{next.unchanged_since(last)}")
+    out.push("\{name}: same \{next.notes_same(last)}")
     last = next
   }
   inspect(
     out.join("\n"),
     content=(
-      #|nothing: unchanged true
-      #|a file that is not read edited: unchanged true
-      #|an entry whose name starts with . added: unchanged true
-      #|a Definition file written again with the same bytes: unchanged false
-      #|a Definition file added: unchanged false
-      #|a Definition file renamed: unchanged false
-      #|a Definition file removed: unchanged false
-      #|a body file edited: unchanged false
-      #|a body file added: unchanged false
-      #|a body file removed: unchanged false
-      #|the ..data symlink swapped: unchanged false
-      #|a Definition file's symlink pointed at a file with the very same times: unchanged false
-      #|a Definition file replaced by a directory: unchanged false
+      #|nothing: same true
+      #|a file that is not read edited: same true
+      #|an entry whose name starts with . added: same true
+      #|a Definition file written again with the same bytes: same false
+      #|a Definition file added: same false
+      #|a Definition file renamed: same false
+      #|a Definition file removed: same false
+      #|a body file edited: same false
+      #|a body file added: same false
+      #|a body file removed: same false
+      #|the ..data symlink swapped: same false
+      #|a Definition file's symlink pointed at a file with the very same times: same false
+      #|a Definition file replaced by a directory: same false
     ),
   )
 }
@@ -137,18 +137,114 @@ async test "the stamp of a definitions directory notes whether it exists" {
   let parent = @fs.tmpdir(prefix="smock-stamp-")
   defer @fs.rmdir(parent, recursive=true)
   let dir = "\{parent}/later"
-  let at = @async.now() + 60_000
+  let at = @async.now()
   let missing = stamp_of(dir, at~)
   let still_missing = stamp_of(dir, at~)
   @fs.mkdir(dir)
   inspect(
     (
-      $|still missing: unchanged \{still_missing.unchanged_since(missing)}
-      $|created, empty: unchanged \{stamp_of(dir, at~).unchanged_since(missing)}
+      $|still missing: same \{still_missing.notes_same(missing)}
+      $|created, empty: same \{stamp_of(dir, at~).notes_same(missing)}
     ),
     content=(
-      #|still missing: unchanged true
-      #|created, empty: unchanged false
+      #|still missing: same true
+      #|created, empty: same false
+    ),
+  )
+}
+
+///|
+async test "a glance after the stamp of a definitions directory looks at each file it would read, each directory it would list and each path it found missing, so it differs with each change a read could see that changes a time" {
+  let dir = @fs.tmpdir(prefix="smock-stamp-")
+  defer @fs.rmdir(dir, recursive=true)
+  write(dir, "mocks.json", "{}")
+  write(dir, "files/users/1.json", "Alice")
+  write(dir, "README.md", "")
+  configmap_update(dir, "v1", [("orders.json", "{}")])
+  @fs.symlink(target="..data/orders.json", "\{dir}/orders.json")
+  // A symlink to a file that does not exist yet, in a directory that does,
+  // so that creating the file changes no directory the stamp lists.
+  @fs.mkdir("\{dir}/.releases")
+  @fs.symlink(target=".releases/payments.json", "\{dir}/payments.json")
+  let at = @async.now()
+  let stamp = stamp_of(dir, at~)
+  let changes : Array[(String, async () -> Unit)] = [
+    ("nothing", () => ()),
+    ("a file that is not read edited", () => write(dir, "README.md", "x")),
+    (
+      "an entry whose name starts with . added, which a read skips",
+      () => write(dir, ".hidden.json", "{}"),
+    ),
+    (
+      "a Definition file written again with the same bytes",
+      () => write(dir, "mocks.json", "{}"),
+    ),
+    ("a Definition file added", () => write(dir, "more.yml", "{}")),
+    (
+      "a body file added to a subdirectory",
+      () => write(dir, "files/users/2.json", "Carol"),
+    ),
+    ("a body file edited", () => write(dir, "files/users/1.json", "Bob")),
+    (
+      "a body file removed from a subdirectory",
+      () => @fs.remove("\{dir}/files/users/2.json"),
+    ),
+    (
+      "the ..data symlink swapped",
+      () => configmap_update(dir, "v2", [("orders.json", "{}")]),
+    ),
+    (
+      "the missing file a Definition file's symlink leads to created",
+      () => write(dir, ".releases/payments.json", "{}"),
+    ),
+  ]
+  let out = []
+  let mut last = stamp.glance(now=at)
+  for change in changes {
+    let (name, make) = change
+    // Later than the coarsest clock tick, so that each change gets a time
+    // of its own.
+    @async.sleep(20)
+    make()
+    let next = stamp.glance(now=at)
+    out.push("\{name}: same \{next.notes_same(last)}")
+    last = next
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|nothing: same true
+      #|a file that is not read edited: same true
+      #|an entry whose name starts with . added, which a read skips: same false
+      #|a Definition file written again with the same bytes: same false
+      #|a Definition file added: same false
+      #|a body file added to a subdirectory: same false
+      #|a body file edited: same false
+      #|a body file removed from a subdirectory: same false
+      #|the ..data symlink swapped: same false
+      #|the missing file a Definition file's symlink leads to created: same false
+    ),
+  )
+}
+
+///|
+async test "a glance after the stamp of a missing definitions directory notes the same until the directory is created" {
+  let parent = @fs.tmpdir(prefix="smock-stamp-")
+  defer @fs.rmdir(parent, recursive=true)
+  let dir = "\{parent}/later"
+  let at = @async.now()
+  let stamp = stamp_of(dir, at~)
+  let missing = stamp.glance(now=at)
+  let still_missing = stamp.glance(now=at)
+  @fs.mkdir(dir)
+  inspect(
+    (
+      $|still missing: same \{still_missing.notes_same(missing)}
+      $|created, empty: same \{stamp.glance(now=at).notes_same(missing)}
+    ),
+    content=(
+      #|still missing: same true
+      #|created, empty: same false
     ),
   )
 }

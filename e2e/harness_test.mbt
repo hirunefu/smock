@@ -74,6 +74,118 @@ async fn write(dir : String, path : String, text : String) -> Unit {
 }
 
 ///|
+/// How long a test waits for a reload after changing a file: a ceiling on
+/// the wait, not how soon a reload must come, which is the 1 s poll
+/// interval, the 250 ms quiet period and the time to read, validate and
+/// hash every file. It leaves room for a machine busy with the tests that
+/// run beside it.
+let reload_patience_ms : Int32 = 5000
+
+///|
+/// Calls `f` every 20 ms until it gives a value, at most `within`
+/// milliseconds, and returns that value, or `None` when the time runs out.
+async fn[T] wait_for(within : Int32, f : async () -> T?) -> T? {
+  @async.with_timeout_opt(within, () => {
+    for ;; {
+      if f() is Some(value) {
+        break value
+      }
+      @async.sleep(20)
+    }
+  })
+}
+
+///|
+/// Sleeps for part of a second: as many milliseconds as the clock has
+/// past the second. smock polls every second from when it started, so a
+/// change made after it comes at another point between two polls from run
+/// to run, not always at the same one.
+async fn sleep_part_of_a_second() -> Unit {
+  @async.sleep((@async.now() % 1000L).to_int())
+}
+
+///|
+/// Creates, writes and removes files in `dir` for `ms` milliseconds, as a
+/// program that keeps SQLite databases there does: four writers, each of
+/// which creates a file and writes it for 50 ms, creates, writes and
+/// removes a `-journal` file beside it, then removes the first, over and
+/// over. The async runtime's file watcher aborted a process that watched
+/// such a directory within about a second. The writes come back to back,
+/// each awaited: with a pause between them, it aborted in only about half
+/// of the runs.
+async fn churn(dir : String, ms~ : Int32) -> Unit {
+  let end = @async.now() + ms.to_int64()
+  let piece = Bytes::make(512, b'x')
+  @async.with_task_group(group => {
+    for writer in 0..<4 {
+      group.spawn_bg(() => {
+        for i = 0; @async.now() < end; i = i + 1 {
+          let path = "\{dir}/w\{writer}-\{i % 20}.db"
+          let file = @fs.open(
+            path,
+            mode=WriteOnly,
+            create_mode=CreateOrTruncate,
+          )
+          let written = @async.now() + 50
+          while @async.now() < written {
+            file.write(piece)
+          }
+          file.close()
+          let journal = @fs.open(
+            "\{path}-journal",
+            mode=WriteOnly,
+            create_mode=CreateOrTruncate,
+          )
+          for _ in 0..<50 {
+            journal.write(piece)
+          }
+          journal.close()
+          @fs.remove("\{path}-journal")
+          @fs.remove(path)
+        }
+      })
+    }
+  })
+}
+
+///|
+/// Runs `churn` in `dir` for 3 s, and `change` 1.5 s into it, then calls
+/// `found` until it gives what the change should lead to, at most
+/// `reload_patience_ms`, and returns that, or "no change in time". Fails
+/// when smock exits before the churn has ended, so a test that gets a value
+/// back knows smock kept running. Where smock notes the names the churn
+/// changes, as in the definitions directory, its stamps differ until the
+/// churn stops, so the change is read then, well within the 10 s after
+/// which smock reads it all the same.
+async fn amid_churn(
+  smock : Smock,
+  dir : String,
+  change~ : async () -> Unit,
+  found~ : async () -> String?,
+) -> String {
+  let exited = () => {
+    guard smock.process.try_wait() is Some(status) else { return }
+    fail(
+      "smock exited with status \{status} amid the churn:\n\{smock.logs.join("\n")}",
+    )
+  }
+  let mut seen = "nothing"
+  @async.with_task_group(group => {
+    group.spawn_bg(() => churn(dir, ms=3000))
+    @async.sleep(1500)
+    exited()
+    change()
+    let result = wait_for(reload_patience_ms, () => {
+      exited()
+      found()
+    })
+    seen = result.unwrap_or("no change in time")
+  })
+  exited()
+  seen
+}
+
+///|
 /// The Admin API token the harness gives smock, through `SMOCK_ADMIN_TOKEN`,
 /// unless a test sets that variable itself.
 let test_token : String = "e2e-admin-token"

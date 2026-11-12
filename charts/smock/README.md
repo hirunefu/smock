@@ -51,8 +51,14 @@ never with `subPath`, so Kubernetes swaps updated files in and smock reloads
 them, without a restart: `helm upgrade` with new Definition files changes
 the ConfigMap and leaves the Deployment as it is. The kubelet refreshes
 mounted ConfigMaps periodically, so an update takes up to a minute or two to
-arrive. The definition set digest in each replica's `GET /v1/status` shows
-which files it serves.
+arrive. smock polls the directory every second, and reads a change once
+the files have stayed the same for 250 ms, so it reloads within about
+1.25 s of that. It polls instead of using file events, because the file
+watcher of its runtime can abort it, and it goes on polling until a release
+of the runtime fixes that
+([Reloading](https://github.com/hirunefu/smock/blob/main/docs/definition-files.md#reloading)).
+The definition set digest in each replica's `GET /v1/status` shows which
+files it serves.
 
 The values can carry the files, by name in `definitions.configMap.files`,
 and the body files, by path in `definitions.configMap.bodyFiles`. Body files
@@ -115,12 +121,12 @@ With `definitions.source=gitSync`, a [git-sync](https://github.com/kubernetes/gi
 init container clones `definitions.gitSync.repo` before smock starts, so
 smock never starts without its files, and a git-sync sidecar then checks for
 new commits every `definitions.gitSync.period`. git-sync publishes each new
-commit by swapping a symlink and removing the worktree it replaced, and smock
-reloads the files it finds there as soon as that worktree goes. A
-`--stale-worktree-timeout` in `definitions.gitSync.extraArgs` keeps old
-worktrees for a while; smock then finds each new commit with its poll of the
-directory, within 10 s. `definitions.gitSync.path` is the definitions
-directory inside the repository.
+commit by swapping a symlink. smock finds it at its next poll of the
+directory, and reloads it within about 1.25 s. That holds whether git-sync
+removes the worktree it replaced, as it does by default, or keeps it for a
+while, with a `--stale-worktree-timeout` in
+`definitions.gitSync.extraArgs`. `definitions.gitSync.path` is the
+definitions directory inside the repository.
 
 ```yaml
 definitions:

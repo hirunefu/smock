@@ -5846,43 +5846,72 @@ file never means something smock silently ignores.
 
 ## Reloading
 
-`smock serve` watches the definitions directory, body-file subdirectory
-included, and reloads the definition set when its files change, without a
-restart:
+`smock serve` polls the definitions directory, body-file subdirectory
+included, every second, and reloads the definition set when its files
+change, without a restart:
 
 - Adding, editing, renaming or removing a Definition file or a body file
   triggers a reload. So does a Kubernetes ConfigMap update, which swaps the
-  `..data` symlink and keeps the visible names. Any change in the directory
-  counts, so a reload can also find nothing new.
+  `..data` symlink and keeps the visible names. Any change to a name in the
+  directories or to the times of a file smock reads counts, so a reload
+  can also find nothing new, as when a file is written again with the same
+  bytes. Names that start with `.` do not count.
+- When a poll finds a change, smock waits for the files to settle. It
+  looks again every 250 ms, and reads them once they have stayed the same
+  for 250 ms. So a change made of several writes, such as a `git checkout`
+  of several files, gives one reload of them all. Files that never stay
+  the same for 250 ms are read 10 s after the change was first seen.
+- A change is reloaded within about the poll interval plus 250 ms. In a
+  measurement of 12 edits of a body file, the new body was served 0.4 s to
+  1.2 s after the edit, 0.8 s at the median. A few changes are found
+  within 10 s instead: on NFS, one that the client's attribute cache still
+  hides from the first look of a poll (below), and a symlink pointed at
+  another file with the very same times.
+- Writes more than 250 ms apart can still be read apart. smock then
+  reloads the part it finds, or reports the set as invalid and keeps
+  serving the current one, and reloads the rest once it has settled. To
+  make a change of several files one step, write them into a new directory
+  and swap a symlink to it, as a ConfigMap update and git-sync do.
 - When `--dir` goes through a symlink that is pointed at a new directory,
-  as git-sync does for each commit (`--dir /git/current/mocks`), smock goes
-  on watching the directory it found at first until that one changes or is
-  removed. git-sync removes the directory it replaced at once by default,
-  so the new commit is reloaded right away and watched from then on. When
-  the old directory stays, as with git-sync's `--stale-worktree-timeout`,
-  the new commit is found by the next poll, within 10 s.
-- Changes are coalesced: smock reloads once they have been quiet for
-  250 ms, so a burst of changes gives one reload. It also polls the
-  directory every 10 s, in case a change went unnoticed, and reloads when
-  the files differ from those it read last. A definitions directory that
-  does not exist yet is polled until it appears. One that cannot be watched
-  for another reason, such as the inotify limits, is only polled, and smock
-  logs a warning.
-- A poll first compares the names in the directories, where each file
-  really is once symlinks are resolved, and the modification and change
-  times of the files with those of the last check, and reads the files only
-  when something differs. That takes a few calls for each file instead of
-  reading it, which saves most of a poll's CPU when the files are a few
-  large ones, as in the benchmark's set, and little when they are many
-  small body files; startup and each check that reads pay for both. After a
-  read that met a problem reading the directory, such as a file that cannot
-  be read, each poll reads again while the problem lasts. A file time ahead
-  of the clock is logged as a warning, once. A modification time ahead, as
-  from an archive made on a host whose clock ran ahead, changes nothing
-  else; a change time ahead, which only a clock set back gives, makes each
-  poll read the files until the clock passes it.
+  as git-sync does for each commit (`--dir /git/current/mocks`), the next
+  poll finds the new directory, whether the old one is removed, as git-sync
+  does by default, or stays, as with git-sync's `--stale-worktree-timeout`.
+- A definitions directory that does not exist yet is polled until it
+  appears.
+- smock polls instead of using file events because the file watcher of
+  moonbitlang/async, the runtime it is built on, can abort the process
+  when files are created and written in a directory it watches
+  ([smock#264](https://github.com/hirunefu/smock/issues/264),
+  [moonbitlang/async#725](https://github.com/moonbitlang/async/issues/725)).
+  smock polls alone until a release of the runtime fixes that.
+- A poll first takes the change time of each file smock reads and of
+  each directory it lists, with one call each, and is done when none
+  changed. Otherwise, and at least every 10 s, it compares the names in
+  the directories, where each file really is once symlinks are resolved,
+  and the modification and change times of the files with those it noted
+  last, and reads the files only when something differs. That takes a few
+  calls for each file instead of reading it, which saves most of a poll's
+  CPU when the files are a few large ones, as in the benchmark's set, and
+  little when they are many small body files; startup and each check that
+  reads pay for both. While nothing changes, smock still makes the one
+  call for each file and directory every second, and the others every
+  10 s: about 15 calls a second for the benchmark's set and a certificate
+  pair, and for a directory of a thousand body files about 1,500, which
+  keep 1% to 2% of an Apple M1 core busy while smock is idle. While a
+  change settles, it compares every 250 ms. File times are coarse, so the
+  polls of the 2 s after a change compare and read the files too, but
+  reload only when they differ from those read last. After a read that
+  met a problem reading the directory, such as a file that cannot be
+  read, each poll reads again while the problem lasts: smock reads and
+  hashes every file each second until it is fixed. Those reads come at
+  the poll, without waiting for the files to settle, so a change of
+  several files made while the problem lasts can be read apart. A file
+  time ahead of the clock is logged as a warning, once. A modification
+  time ahead, as from an archive made on a host whose clock ran ahead,
+  changes nothing else; a change time ahead, which only a clock set back
+  gives, makes each poll read the files until the clock passes it.
 - A reload reads and validates every file, builds a whole new definition
-  set and swaps it in at once, so no request sees half of a change.
+  set and swaps it in at once, so no request sees half of a reload.
   Requests already being handled finish with the set they started with,
   body-file bytes included. Until the swap, requests are answered from the
   current set, also while the digest of the new files is computed, however
