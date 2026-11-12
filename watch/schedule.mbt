@@ -16,6 +16,8 @@
 /// `due` whether a stamp is due and what for, takes it, compares it with
 /// the stamp it took before, and tells the schedule what it noted
 /// (`noted`), with the time `due` was given. That tells whether to check.
+/// At a poll, a glance that notes the same as the one before it can do in
+/// place of the stamp, as `Watch` has it: it tells the schedule `Same`.
 pub struct Schedule {
   /// Whether a change settles, and when the next stamp is due.
   priv mut phase : Phase
