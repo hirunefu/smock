@@ -1186,7 +1186,9 @@ Packages of `smock/smock`:
   read. It does no I/O and reads no clock. A poll reads nothing unless the
   `Stamp` of what the caller reads (the names it lists, and where the
   files it reads really are and their times) may have changed since the
-  last one.
+  last one. It first takes a glance at the change time of each file and
+  directory the last stamp looked at, one call each, and takes the stamp
+  only when one changed, or every 10 s.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.

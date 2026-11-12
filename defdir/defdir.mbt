@@ -91,6 +91,11 @@ pub async fn read(
 /// file really is, the times of each file it would read and the problems it
 /// would report. So a poll can tell, from the stamp alone, that a read
 /// would give the same definition set and the same problems.
+///
+/// A glance at the stamp looks at each file it would read, each directory
+/// it would list, `dir` included, and each path it found missing, such as
+/// `dir` itself or a symlink's missing target. A directory's change time
+/// changes with any name in it, even one that a read skips.
 pub async fn stamp(
   stamp : @watch.Stamp,
   dir : String,
@@ -109,7 +114,8 @@ pub async fn stamp(
 /// directory, and `""` is the directory itself.
 ///
 /// While it takes a stamp instead, it notes in it what it finds, and the
-/// times of each file in place of reading it.
+/// times of each file in place of reading it, and has a glance at the stamp
+/// look at each directory it lists and each path it finds missing.
 priv struct DirReader {
   root : String
   diagnostics : Array[@definitions.Diagnostic]
@@ -132,6 +138,7 @@ async fn DirReader::read(
   }
   if !exists {
     self.note("missing")
+    self.glance_at("")
     return set
   }
   if self.kind("") is Some(kind) && !(kind is Directory) {
@@ -163,6 +170,14 @@ async fn DirReader::read(
 fn DirReader::note(self : DirReader, note : String) -> Unit {
   if self.stamp is Some(stamp) {
     stamp.note(note)
+  }
+}
+
+///|
+/// Has a glance at the stamp, while taking one, look at `relative`.
+fn DirReader::glance_at(self : DirReader, relative : String) -> Unit {
+  if self.stamp is Some(stamp) {
+    stamp.glance_at(self.path(relative))
   }
 }
 
@@ -274,6 +289,7 @@ async fn DirReader::visible_entries(
   let visible = names.filter(name => !name.has_prefix("."))
   visible.sort_by((a, b) => @utf8.encode(a).lexical_compare(@utf8.encode(b)))
   self.note("\{self.path(relative)}: entries \{visible.join("/")}")
+  self.glance_at(relative)
   visible
 }
 
@@ -296,7 +312,9 @@ async fn DirReader::realpath(self : DirReader, relative : String) -> String? {
 
 ///|
 /// The kind of the file at `relative`, following symlinks, or `None` when
-/// it cannot be found, such as a symlink to a missing file.
+/// it cannot be found, such as a symlink to a missing file. While taking a
+/// stamp, notes it, and has a glance at the stamp look at `relative` when
+/// it cannot be found.
 async fn DirReader::kind(self : DirReader, relative : String) -> @fs.FileKind? {
   let kind = try @fs.kind(self.path(relative)) catch {
     _ => None
@@ -311,6 +329,9 @@ async fn DirReader::kind(self : DirReader, relative : String) -> @fs.FileKind? {
       None => "missing"
     }
     self.note("\{self.path(relative)}: \{shown}")
+    if kind is None {
+      self.glance_at(relative)
+    }
   }
   kind
 }
