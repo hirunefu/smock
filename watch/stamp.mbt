@@ -33,12 +33,25 @@
 /// on a host whose clock ran ahead, does not keep every stamp from being
 /// trusted: the call that set it set the change time to the time then, and
 /// that counts.
+///
+/// A glance (`Stamp::glance`) is a lighter stamp, which a watch takes at
+/// each poll: one call for each path the stamp before it looked at, which
+/// notes the path's change time. It looks at each file that stamp noted,
+/// and at each path the caller had it look at too (`Stamp::glance_at`),
+/// such as a directory it listed, whose change time changes when an entry
+/// is added, removed or renamed in it. A glance is compared, and trusted,
+/// as a stamp is. It sees less: it takes each change time by path, so on
+/// NFS from the client's attribute cache, and a symlink pointed at another
+/// file with the very same times does not show.
 pub struct Stamp {
   /// When it was taken, in milliseconds since the epoch: before the caller
   /// notes anything.
   priv taken_at : Int64
   /// What the caller noted, in order.
   priv notes : Array[String]
+  /// What a glance at it looks at, in order: each file noted, and each
+  /// path given to `glance_at`.
+  priv looked_at : Array[String]
   /// The newest file time noted that counts, in milliseconds since the
   /// epoch, rounded up, or 0 before any.
   priv mut newest : Int64
@@ -58,7 +71,7 @@ let trust_ms : Int64 = 2000
 /// Starts a stamp taken at `now`, in milliseconds since the epoch, before
 /// anything is noted.
 pub fn Stamp::Stamp(now~ : Int64) -> Stamp {
-  { taken_at: now, notes: [], newest: 0, ahead: None, }
+  { taken_at: now, notes: [], looked_at: [], newest: 0, ahead: None, }
 }
 
 ///|
@@ -69,15 +82,24 @@ pub fn Stamp::note(self : Stamp, note : String) -> Unit {
 }
 
 ///|
+/// Has a glance at what `self` looked at look at the change time of the
+/// file or directory at `path` too, such as a directory whose names the
+/// caller noted, or a path it found missing.
+pub fn Stamp::glance_at(self : Stamp, path : String) -> Unit {
+  self.looked_at.push(path)
+}
+
+///|
 /// Notes the file at `path`: its real path, once symlinks are resolved, and
 /// its modification and change times, taken from the file opened, or why
 /// they cannot be had. `real` is its real path, when the caller has
-/// resolved it already.
+/// resolved it already. A glance at what `self` looked at looks at `path`.
 pub async fn Stamp::note_file(
   self : Stamp,
   path : String,
   real? : String,
 ) -> Unit {
+  self.looked_at.push(path)
   let real = match real {
     Some(real) => real
     None =>
@@ -118,6 +140,30 @@ pub async fn Stamp::note_file(
       }
     }
   }
+}
+
+///|
+/// A glance, taken at `now`, in milliseconds since the epoch, at what
+/// `self` looked at: for each path a glance looks at, in order, its change
+/// time, taken by path and following symlinks, or why it cannot be had. So
+/// a path that stays missing notes the same each time. A glance at a
+/// glance looks at nothing.
+pub async fn Stamp::glance(self : Stamp, now~ : Int64) -> Stamp {
+  let glance = Stamp(now~)
+  for path in self.looked_at {
+    try @fs.ctime(path) catch {
+      err => glance.notes.push("\{path}: \{err}")
+    } noraise {
+      changed => {
+        glance.notes.push("\{path} \{changed.0}.\{changed.1}")
+        let changed = ms_up(changed)
+        if changed > glance.newest {
+          glance.newest = changed
+        }
+      }
+    }
+  }
+  glance
 }
 
 ///|
