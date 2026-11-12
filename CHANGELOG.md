@@ -204,12 +204,17 @@ of each GitHub release include its section
   smock does not read, such as a README, no longer leads to a reload.
   Adding, removing or renaming a visible file that smock does not read
   still does, once such changes pause for 250 ms, or at most once every
-  10 s while they go on. An idle poll still reads no file, but it checks
-  the times of every file each second. While a problem reading the
-  definitions directory lasts, smock reads every file each second, where
-  it did every 10 s. The warning that the definitions directory or a
-  certificate directory cannot be watched and is only polled is gone, and
-  the inotify limits no longer matter. See
+  10 s while they go on. An idle poll still reads no file. Each second it
+  takes the change time of each file smock reads and of each directory it
+  lists, one call each, and only when one changed, or every 10 s, does it
+  also compare the names in the directories and the times and real paths
+  of the files. A change that the change times do not show, as on NFS
+  while the client's attribute cache hides it, or a symlink pointed at
+  another file with the very same times, is found within 10 s. While a
+  problem reading the definitions directory lasts, smock reads every file
+  each second, where it did every 10 s. The warning that the definitions
+  directory or a certificate directory cannot be watched and is only
+  polled is gone, and the inotify limits no longer matter. See
   [Reloading](docs/definition-files.md#reloading).
 
 ### Fixed
