@@ -12,7 +12,7 @@
 # package manager. It is pinned by the digest of its multi-architecture
 # index; scripts/smoke-test-image.sh checks that smock, LICENSE and NOTICE
 # are the only files this image adds to it.
-FROM gcr.io/distroless/base-debian13:nonroot@sha256:9039a88709bcc2bacf5a2faac331d65dd6840f763f225ad9594cc0c67bcd0fba
+FROM gcr.io/distroless/base-debian13:nonroot@sha256:a08d9054afbaf1af9b90fd02cdc7b32236319b5376d374505a41548d42b0c5db
 
 LABEL org.opencontainers.image.title="smock" \
       org.opencontainers.image.description="A mock server for HTTP/1.1, HTTP/2, HTTPS and Server-Sent Events" \
