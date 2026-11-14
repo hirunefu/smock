@@ -100,7 +100,7 @@ test "a Stub whose exact path names a unary method of its Mock's set is a gRPC S
 }
 
 ///|
-test "a gRPC Stub's json reply is checked against the method's output type: an unknown field, a value of the wrong type and an int32 out of range are problems at their pointers" {
+test "a gRPC Stub's json reply is read as ProtoJSON and checked against the method's output type: its first problem is at its pointer" {
   inspect(
     check_stubs(
       (
@@ -113,23 +113,22 @@ test "a gRPC Stub's json reply is checked against the method's output type: an u
         #|    request: { path: /catalog.Catalog/CountItems }
         #|    responses:
         #|      - { weight: 2, json: { count: 2147483648, exact: "yes", shelf: 1 } }
-        #|      - { json: { count: -2147483649 } }
+        #|      - { json: { count: "-2147483649" } }
         #|      - { json: { count: 1.5, exact: null } }
         #|      - { json: [] }
-        #|      - { json: { count: 2147483647, exact: true, shelf: "" } }
-        #|      - { json: { count: -2147483648, exact: false } }
+        #|      - { json: { count: "2147483647", exact: true, shelf: "" } }
+        #|      - { json: { count: -2147483648, exact: null } }
+        #|      - { json: { shelf: A1, in_stock: true } }
         #|      - { json: {} }
       ),
     ),
     content=(
       #|a.yaml: /stubs/0/response/json/mesage: is not a field of helloworld.HelloReply
-      #|a.yaml: /stubs/1/responses/0/json/count: must be an integer from -2147483648 to 2147483647: the field count of catalog.CountReply is an int32
-      #|a.yaml: /stubs/1/responses/0/json/exact: must be true or false: the field exact of catalog.CountReply is a bool
-      #|a.yaml: /stubs/1/responses/0/json/shelf: must be a string: the field shelf of catalog.CountReply is a string
-      #|a.yaml: /stubs/1/responses/1/json/count: must be an integer from -2147483648 to 2147483647: the field count of catalog.CountReply is an int32
-      #|a.yaml: /stubs/1/responses/2/json/count: must be an integer from -2147483648 to 2147483647: the field count of catalog.CountReply is an int32
-      #|a.yaml: /stubs/1/responses/2/json/exact: must be true or false: the field exact of catalog.CountReply is a bool
-      #|a.yaml: /stubs/1/responses/3/json: must be an object: the reply is a catalog.CountReply message
+      #|a.yaml: /stubs/1/responses/0/json/count: must be an integer from -2147483648 to 2147483647: the field count of catalog.CountReply has the type int32
+      #|a.yaml: /stubs/1/responses/1/json/count: must be an integer from -2147483648 to 2147483647: the field count of catalog.CountReply has the type int32
+      #|a.yaml: /stubs/1/responses/2/json/count: must be an integer from -2147483648 to 2147483647: the field count of catalog.CountReply has the type int32
+      #|a.yaml: /stubs/1/responses/3/json: must be an object: the message is a catalog.CountReply
+      #|a.yaml: /stubs/1/responses/6/json/in_stock: is not a field of catalog.CountReply
     ),
   )
 }
@@ -226,7 +225,7 @@ test "a Stub on a client-, server- or bidi-streaming method is a problem at its 
 }
 
 ///|
-test "a method whose input or output type has a field other than a singular string, bool or int32, or comes from a file that is not proto3, is not served yet, each side on its own; a nested type is served" {
+test "a method whose input type has a field other than a singular string, bool or int32, or whose input or output type comes from a file that is not proto3, is not served yet, each side on its own; a nested type is served" {
   inspect(
     check_stubs(
       (
@@ -253,11 +252,6 @@ test "a method whose input or output type has a field other than a singular stri
       ),
     ),
     content=(
-      #|a.yaml: /stubs/0/request/path: the output type catalog.Item is not served yet: its field price has the type int64, and gRPC Stubs serve only singular string, bool and int32 fields so far
-      #|a.yaml: /stubs/0/request/path: the output type catalog.Item is not served yet: its field tags is repeated, and gRPC Stubs serve only singular string, bool and int32 fields so far
-      #|a.yaml: /stubs/0/request/path: the output type catalog.Item is not served yet: its field kind has the type catalog.Kind, and gRPC Stubs serve only singular string, bool and int32 fields so far
-      #|a.yaml: /stubs/0/request/path: the output type catalog.Item is not served yet: its field stock has the type catalog.CountReply, and gRPC Stubs serve only singular string, bool and int32 fields so far
-      #|a.yaml: /stubs/0/request/path: the output type catalog.Item is not served yet: its field picture has the type bytes, and gRPC Stubs serve only singular string, bool and int32 fields so far
       #|a.yaml: /stubs/0/response/json/sku: is not a field of catalog.Item
       #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field price has the type int64, and gRPC Stubs serve only singular string, bool and int32 fields so far
       #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field tags is repeated, and gRPC Stubs serve only singular string, bool and int32 fields so far
@@ -375,7 +369,7 @@ test "a gRPC Stub and an HTTP Stub never shadow each other: a catch-all HTTP Stu
 }
 
 ///|
-test "a method whose input or output type has a field in a oneof, or a proto3 optional field, is not served yet" {
+test "a method whose input type has a field in a oneof, or a proto3 optional field, is not served yet; its output type is served" {
   inspect(
     check_stubs(
       (
@@ -389,9 +383,76 @@ test "a method whose input or output type has a field in a oneof, or a proto3 op
       #|a.yaml: /stubs/0/request/path: the input type oneofs.Pick is not served yet: its field word is in the oneof choice, and gRPC Stubs serve no optional or oneof fields so far
       #|a.yaml: /stubs/0/request/path: the input type oneofs.Pick is not served yet: its field number is in the oneof choice, and gRPC Stubs serve no optional or oneof fields so far
       #|a.yaml: /stubs/0/request/path: the input type oneofs.Pick is not served yet: its field exact is a proto3 optional field, and gRPC Stubs serve no optional or oneof fields so far
-      #|a.yaml: /stubs/0/request/path: the output type oneofs.Pick is not served yet: its field word is in the oneof choice, and gRPC Stubs serve no optional or oneof fields so far
-      #|a.yaml: /stubs/0/request/path: the output type oneofs.Pick is not served yet: its field number is in the oneof choice, and gRPC Stubs serve no optional or oneof fields so far
-      #|a.yaml: /stubs/0/request/path: the output type oneofs.Pick is not served yet: its field exact is a proto3 optional field, and gRPC Stubs serve no optional or oneof fields so far
+    ),
+  )
+}
+
+///|
+/// The reply message of each response of each Stub that `check_stubs`
+/// loads, as the files' load encoded it, in hex, one Stub per line, or
+/// every problem. A response that the load did not encode shows as
+/// `none`.
+fn reply_messages(stubs : String) -> String raise {
+  let yaml =
+    #|mocks:
+    #|  - { name: catalog, grpc: { descriptorSet: catalog.binpb } }
+    #|stubs:
+    #|
+  match
+    @definitions.load({
+      files: [("a.yaml", @utf8.encode(yaml + stubs))],
+      body_files: [("catalog.binpb", set_bytes(catalog_set))],
+    }) {
+    Ok(snapshot) => {
+      let lines = []
+      for stub in snapshot.mocks[0].stubs {
+        guard stub.serves is Ordinary(ordinary) else { continue }
+        let messages = []
+        for weighted in ordinary.responses {
+          messages.push(
+            match weighted.response.encoded {
+              Some(encoded) => "[\{@hex.encode(encoded.message)}]"
+              None => "none"
+            },
+          )
+        }
+        lines.push("\{stub.id}: \{messages.join(" ")}")
+      }
+      lines.join("\n")
+    }
+    Err(problems) => problems.map(problem => problem.to_string()).join("\n")
+  }
+}
+
+///|
+test "a static reply is encoded when the files load, with every proto3 field type its output type has; a templated one is encoded once rendered, and an HTTP Stub's reply never" {
+  // protoc encodes `price: 12 tags: "a" kind: BOOK stock { count: 1 }
+  // picture: "\001"` as 080c1201611801220208012a0101.
+  inspect(
+    reply_messages(
+      (
+        #|  - id: item
+        #|    mock: catalog
+        #|    request: { path: /catalog.Catalog/GetItem }
+        #|    responses:
+        #|      - json: { price: "12", tags: [a], kind: BOOK, stock: { count: 1 }, picture: AQ== }
+        #|      - json: { picture: AQ, stock: { count: 1 }, kind: 1, tags: [a], price: 12 }
+        #|      - json: {}
+        #|      - {}
+        #|  - id: item-templated
+        #|    mock: catalog
+        #|    request: { path: /catalog.Catalog/GetItem, headers: { x-id: a } }
+        #|    response: { template: true, json: { tags: ["${body.id}"] } }
+        #|  - id: item-http
+        #|    mock: catalog
+        #|    request: { path: /item }
+        #|    response: { status: 200, json: { price: 12 } }
+      ),
+    ),
+    content=(
+      #|item: [080c1201611801220208012a0101] [080c1201611801220208012a0101] [] []
+      #|item-templated: none
+      #|item-http: none
     ),
   )
 }

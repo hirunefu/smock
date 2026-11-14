@@ -810,6 +810,38 @@ pub struct Response {
   /// `data.NAME`: only then does its rendering look up the Session's copies
   /// of them.
   reads_data : Bool
+  /// The reply message of a gRPC Stub's response without templates: its
+  /// `json`, or an empty message without one, encoded with the method's
+  /// output type when the files were loaded. `None` for an HTTP Stub's
+  /// response, and for a templated one, whose message is encoded once
+  /// rendered.
+  encoded : EncodedMessage?
+}
+
+///|
+/// A gRPC reply message, encoded when the files were loaded.
+pub struct EncodedMessage {
+  /// The output type it was encoded with. The message is one of the method
+  /// it answers only while the set that defines this type is served.
+  output : @protobuf.MessageDescriptor
+  /// The message, in protobuf's binary encoding.
+  message : Bytes
+}
+
+///|
+/// Encoded messages are equal when they are encoded with the same output
+/// type, not merely an equal one, into the same octets.
+pub impl Eq for EncodedMessage with fn equal(self, other) {
+  physical_equal(self.output, other.output) && self.message == other.message
+}
+
+///|
+/// Shows the output type by its full name, and the message.
+pub impl Debug for EncodedMessage with fn to_repr(self) {
+  Repr::ctor("EncodedMessage", [
+    (Some("output"), Repr::string(self.output.full_name)),
+    (Some("message"), Debug::to_repr(self.message)),
+  ])
 }
 
 ///|

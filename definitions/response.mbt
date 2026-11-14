@@ -142,6 +142,7 @@ fn File::read_response(
       serves_ranges: false,
       reads_variables: false,
       reads_data: false,
+      encoded: None,
     }
   }
   // An `llm` needs it before it is read below: its text is known only once
@@ -257,6 +258,8 @@ fn File::read_response(
     body.reads(@template.Text::reads_vars, @template.Structured::reads_vars),
     reads_data: headers.reads(@template.Text::reads_data) ||
     body.reads(@template.Text::reads_data, @template.Structured::reads_data),
+    // A gRPC Stub's reply is encoded once its Stub is checked.
+    encoded: None,
   }
 }
 

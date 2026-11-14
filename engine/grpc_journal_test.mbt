@@ -33,7 +33,22 @@ test "a call answered by a gRPC Stub has a plan with the gRPC status OK, which i
     "{\"name\":\"Tom\"}",
     octets=10,
   )
-  debug_inspect(call.plan.grpc, content="Some({ status: Ok })")
+  debug_inspect(
+    call.plan.grpc,
+    content=(
+      #|Some(
+      #|  {
+      #|    status: Ok,
+      #|    encoded: Some(
+      #|      EncodedMessage(
+      #|        output="helloworld.HelloReply",
+      #|        message=<Bytes: [0x0a, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f]>,
+      #|      ),
+      #|    ),
+      #|  },
+      #|)
+    ),
+  )
   json_inspect(answer_members(call), content={
     "stub": "hello",
     "status": 200,
