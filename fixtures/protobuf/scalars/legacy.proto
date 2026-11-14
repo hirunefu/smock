@@ -1,0 +1,8 @@
+// Written for smock's tests: a proto2 type that a proto3 type reaches.
+syntax = "proto2";
+
+package legacy;
+
+message Note {
+  optional string text = 1;
+}

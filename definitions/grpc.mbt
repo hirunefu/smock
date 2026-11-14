@@ -123,7 +123,7 @@ fn File::grpc_method_of(self : File, stub : Map[String, Json]) -> NamedMethod? {
 /// Checks the gRPC Stub `stub`, at `pointer`, against `named`, the method
 /// its exact path names. Its fields must be served, as
 /// `File::refuse_unserved` says. The method must be unary. Its input type
-/// must be served, as `File::check_served` says, and its output type, as
+/// must be served, as `File::check_input` says, and its output type, as
 /// `File::check_output` says. Returns the output type when it is served,
 /// so that the Stub's static replies are encoded with it.
 fn File::check_grpc_stub(
@@ -148,7 +148,7 @@ fn File::check_grpc_stub(
     )
     return None
   }
-  self.check_served(path, "input", named.set.input_of(rpc))
+  self.check_input(path, named.set, named.set.input_of(rpc))
   let output = named.set.output_of(rpc)
   if self.check_output(path, named.set, output) {
     Some(output)
@@ -190,10 +190,11 @@ fn File::encode_reply(
 
 ///|
 /// Reports at `pointer`, a gRPC Stub's path, what gRPC Stubs do not serve
-/// yet among the types that `output`, the output type of its method, a
-/// type of `set`, reaches through its fields: a type of a file that is not
-/// proto3, and the well-known types, such as `google.protobuf.Timestamp`.
-/// Returns whether they serve every type it reaches.
+/// yet of `output`, the output type of its method, a message of `set`, and
+/// of each message type it reaches through its fields, each once, a map's
+/// values included: a type of a file that is not proto3, and each field of
+/// a well-known type. Every other field is served, as `File::check_input`
+/// words its problems. Returns whether every type it reaches is served.
 fn File::check_output(
   self : File,
   pointer : String,
@@ -201,68 +202,67 @@ fn File::check_output(
   output : @protobuf.MessageDescriptor,
 ) -> Bool {
   let not_served = "the output type \{output.full_name} is not served yet"
-  if output.is_well_known() {
+  if @protobuf.is_well_known(output.full_name) {
     self.error(
       pointer,
-      "\{not_served}: it is a well-known type, and gRPC Stubs do not serve the well-known types yet",
+      "\{not_served}: it is a well-known type, and gRPC Stubs serve no well-known types so far",
     )
     return false
   }
-  if syntax_name(output.syntax) is Some(syntax) {
-    self.error(
-      pointer,
-      "\{not_served}: \{output.file_name}, which defines it, is \{syntax}, and gRPC Stubs serve only types of proto3 files so far",
-    )
-    return false
-  }
-  // The messages it reaches, in the order they are first reached, each
-  // once; those after `next` have yet to be walked.
-  let reached = [output]
-  let seen : Map[String, Bool] = Map([(output.full_name, true)])
-  let mut next = 0
   let mut served = true
-  while next < reached.length() {
-    let message = reached[next]
-    next += 1
+  let seen : Set[String] = Set([output.full_name])
+  let pending = [output]
+  while pending.pop() is Some(message) {
+    let reached = message.full_name != output.full_name
+    if syntax_name(message.syntax) is Some(syntax) {
+      let defines = if reached {
+        "\{message.full_name}, a type it reaches"
+      } else {
+        "it"
+      }
+      self.error(
+        pointer,
+        "\{not_served}: \{message.file_name}, which defines \{defines}, is \{syntax}, and gRPC Stubs serve only types of proto3 files so far",
+      )
+      served = false
+      continue
+    }
+    let reached_types = []
     for field in message.fields {
       // A map field reaches the type of its values.
-      let reaching = match set.message_of(field) {
+      let value = match set.message_of(field) {
         Some(entry) if entry.map_entry =>
-          match entry.find_field_by_number(2) {
-            Some(value) => value
-            None => field
-          }
+          entry.find_field_by_number(2).unwrap_or(field)
         _ => field
       }
-      let problem = match (set.message_of(reaching), set.enum_of(reaching)) {
-        (Some(type_), _) if type_.is_well_known() =>
-          Some(
-            "the field \{field.name} of \{message.full_name} has the type \{type_.full_name}, and gRPC Stubs do not serve the well-known types yet",
-          )
-        (Some(type_), _) =>
-          match syntax_name(type_.syntax) {
-            Some(syntax) =>
-              Some(
-                "the field \{field.name} of \{message.full_name} has the type \{type_.full_name}, which \{type_.file_name} defines, \{syntax}, and gRPC Stubs serve only types of proto3 files so far",
-              )
-            None => {
-              if !seen.contains(type_.full_name) {
-                seen[type_.full_name] = true
-                reached.push(type_)
-              }
-              None
-            }
-          }
-        (_, Some(type_)) if type_.is_well_known() =>
-          Some(
-            "the field \{field.name} of \{message.full_name} has the type \{type_.full_name}, and gRPC Stubs do not serve the well-known types yet",
-          )
-        _ => None
+      let type_ = set.message_of(value)
+      let name = match (type_, set.enum_of(value)) {
+        (Some(type_), _) => type_.full_name
+        (_, Some(type_)) => type_.full_name
+        _ => continue
       }
-      if problem is Some(problem) {
-        self.error(pointer, "\{not_served}: \{problem}")
-        served = false
+      if !@protobuf.is_well_known(name) {
+        if type_ is Some(type_) && !seen.contains(name) {
+          seen.add(name)
+          reached_types.push(type_)
+        }
+        continue
       }
+      let field_name = if reached {
+        "the field \{field.name} of \{message.full_name}, a type it reaches,"
+      } else {
+        "its field \{field.name}"
+      }
+      self.error(
+        pointer,
+        "\{not_served}: \{field_name} has the well-known type \{name}, and gRPC Stubs serve no well-known types so far",
+      )
+      served = false
+    }
+    // The types this one reaches are checked next, in the order of its
+    // fields.
+    for i = reached_types.length() - 1; i >= 0; i = i - 1 {
+      pending.push(reached_types[i])
     }
   }
   served
@@ -281,61 +281,79 @@ fn syntax_name(syntax : @protobuf.Syntax) -> String? {
 
 ///|
 /// Reports at `pointer`, a gRPC Stub's path, what gRPC Stubs do not serve
-/// yet of `message`, the input or output type of its method, as `side`
-/// says: a type of a file that is not proto3, each field that is not a
-/// singular string, bool or int32, and each field of those types that is in
-/// a oneof, or is a proto3 `optional` field, in a synthetic one.
-fn File::check_served(
+/// yet of `input`, the input type of its method, a message of `set`, and
+/// of each message type it reaches through its fields, each once: a type
+/// of a file that is not proto3, and each field that is repeated, a map
+/// included, in a oneof other than a proto3 `optional` field's, or of a
+/// well-known type. Every other singular field is served: one of any scalar
+/// type, of an enum, or of a message, which is checked in turn.
+fn File::check_input(
   self : File,
   pointer : String,
-  side : String,
-  message : @protobuf.MessageDescriptor,
+  set : @protobuf.DescriptorSet,
+  input : @protobuf.MessageDescriptor,
 ) -> Unit {
-  let not_served = "the \{side} type \{message.full_name} is not served yet"
-  if syntax_name(message.syntax) is Some(syntax) {
-    self.error(
-      pointer,
-      "\{not_served}: \{message.file_name}, which defines it, is \{syntax}, and gRPC Stubs serve only types of proto3 files so far",
-    )
-  }
-  for field in message.fields {
-    let problem = match (field.label, field.type_) {
-      (Repeated, _) => "is repeated"
-      (_, String | Bool | Int32) => {
-        match field.oneof_index {
-          Some(_) if field.proto3_optional =>
-            self.error(
-              pointer,
-              "\{not_served}: its field \{field.name} is a proto3 optional field, and gRPC Stubs serve no optional or oneof fields so far",
-            )
-          Some(index) =>
-            self.error(
-              pointer,
-              "\{not_served}: its field \{field.name} is in the oneof \{message.oneofs[index].name}, and gRPC Stubs serve no optional or oneof fields so far",
-            )
-          None => ()
-        }
-        continue
-      }
-      (_, Message | Group | Enum) =>
-        "has the type \{without_dot(field.type_name)}"
-      (_, type_) => "has the type \{type_}"
+  let not_served = "the input type \{input.full_name} is not served yet"
+  let later = "and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far"
+  let seen : Set[String] = Set([input.full_name])
+  let pending = [input]
+  while pending.pop() is Some(message) {
+    let reached = message.full_name != input.full_name
+    let syntax = match message.syntax {
+      Proto3 => None
+      Proto2 => Some("a proto2 file")
+      Editions => Some("an editions file")
     }
-    self.error(
-      pointer,
-      "\{not_served}: its field \{field.name} \{problem}, and gRPC Stubs serve only singular string, bool and int32 fields so far",
-    )
-  }
-}
-
-///|
-/// A full name as a Descriptor set writes it, such as `.helloworld.Hello`,
-/// without its leading dot.
-fn without_dot(name : String) -> String {
-  if name.has_prefix(".") {
-    name[1:].to_owned()
-  } else {
-    name
+    if syntax is Some(syntax) {
+      let defines = if reached {
+        "\{message.full_name}, a type it reaches"
+      } else {
+        "it"
+      }
+      self.error(
+        pointer,
+        "\{not_served}: \{message.file_name}, which defines \{defines}, is \{syntax}, and gRPC Stubs serve only types of proto3 files so far",
+      )
+      continue
+    }
+    let reached_types = []
+    for field in message.fields {
+      let type_ = set.message_of(field)
+      let problem = if field.label is Repeated {
+        if type_ is Some({ map_entry: true, .. }) {
+          "is a map, \{later}"
+        } else {
+          "is repeated, \{later}"
+        }
+      } else if field.oneof_index is Some(index) && !field.proto3_optional {
+        "is in the oneof \{message.oneofs[index].name}, \{later}"
+      } else {
+        let name = match (type_, set.enum_of(field)) {
+          (Some(type_), _) => type_.full_name
+          (_, Some(type_)) => type_.full_name
+          _ => continue
+        }
+        if !@protobuf.is_well_known(name) {
+          if type_ is Some(type_) && !seen.contains(name) {
+            seen.add(name)
+            reached_types.push(type_)
+          }
+          continue
+        }
+        "has the well-known type \{name}, and gRPC Stubs serve no well-known types so far"
+      }
+      let field_name = if reached {
+        "the field \{field.name} of \{message.full_name}, a type it reaches,"
+      } else {
+        "its field \{field.name}"
+      }
+      self.error(pointer, "\{not_served}: \{field_name} \{problem}")
+    }
+    // The types this one reaches are checked next, in the order of its
+    // fields.
+    for i = reached_types.length() - 1; i >= 0; i = i - 1 {
+      pending.push(reached_types[i])
+    }
   }
 }
 

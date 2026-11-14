@@ -1,0 +1,8 @@
+# An Order from a newer client: a status that Status does not define, and
+# fields that Order does not have.
+id: 5
+status: 7
+address { city: "Kyoto" }
+coupon: "SPRING"
+marks: [1, 2]
+billing { city: "Osaka" }

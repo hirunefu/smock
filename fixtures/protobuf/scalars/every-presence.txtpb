@@ -1,0 +1,4 @@
+# The nested message and the two optional fields set, each at its default.
+an_address {}
+maybe_count: 0
+maybe_name: ""

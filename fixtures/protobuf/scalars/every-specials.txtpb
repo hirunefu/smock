@@ -1,0 +1,3 @@
+# A double that is not a number, and a float of minus infinity.
+a_double: nan
+a_float: -inf

@@ -81,7 +81,7 @@ pub fn DescriptorSet::encode_json(
 /// Why the encoder does not encode messages of the type `message` yet, or
 /// `None` when it does.
 fn not_encoded(message : MessageDescriptor) -> String? {
-  if message.is_well_known() {
+  if is_well_known(message.full_name) {
     return Some(
       "smock does not encode \{message.full_name} yet: it is a well-known type",
     )
@@ -97,39 +97,6 @@ fn not_encoded(message : MessageDescriptor) -> String? {
         "smock does not encode \{message.full_name} yet: it is a type of an editions file",
       )
   }
-}
-
-///|
-/// Whether the message is one of protobuf's well-known types, which
-/// ProtoJSON writes in forms of their own: Timestamp, Duration, Struct,
-/// Value, ListValue, FieldMask, Empty, Any and the wrappers, such as
-/// `google.protobuf.StringValue`.
-pub fn MessageDescriptor::is_well_known(self : MessageDescriptor) -> Bool {
-  self.full_name
-  is ("google.protobuf.Timestamp"
-  | "google.protobuf.Duration"
-  | "google.protobuf.Struct"
-  | "google.protobuf.Value"
-  | "google.protobuf.ListValue"
-  | "google.protobuf.FieldMask"
-  | "google.protobuf.Empty"
-  | "google.protobuf.Any"
-  | "google.protobuf.DoubleValue"
-  | "google.protobuf.FloatValue"
-  | "google.protobuf.Int64Value"
-  | "google.protobuf.UInt64Value"
-  | "google.protobuf.Int32Value"
-  | "google.protobuf.UInt32Value"
-  | "google.protobuf.BoolValue"
-  | "google.protobuf.StringValue"
-  | "google.protobuf.BytesValue")
-}
-
-///|
-/// Whether the enum is `google.protobuf.NullValue`, the well-known enum
-/// that ProtoJSON writes as `null`.
-pub fn EnumDescriptor::is_well_known(self : EnumDescriptor) -> Bool {
-  self.full_name == "google.protobuf.NullValue"
 }
 
 ///|
@@ -722,7 +689,8 @@ fn DescriptorSet::scalar_bits(
       }
     }
     Enum => {
-      guard self.enum_of(field) is Some(type_) && !type_.is_well_known() else {
+      guard self.enum_of(field) is Some(type_) &&
+        !is_well_known(type_.full_name) else {
         raise Unfit
       }
       match json {
