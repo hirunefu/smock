@@ -38,7 +38,8 @@ priv struct H2Request {
   /// When the read timeout ends it, in `@async.now()` milliseconds: the
   /// read timeout after the read that brought its first frame.
   deadline : Int64
-  /// Whether it is a gRPC call: its `content-type` is `application/grpc`.
+  /// Whether it is a gRPC call: its `content-type` is `application/grpc`,
+  /// alone or followed by `+` or `;`, with no content subtype or `proto`.
   grpc : Bool
 }
 
@@ -172,7 +173,9 @@ fn H2Request::new(
         }
       } else if name == b"expect" && @http1.expects_continue(value) {
         expects = true
-      } else if name == b"content-type" && is_grpc_content_type(field.value) {
+      } else if name == b"content-type" &&
+        @grpc.content_subtype(field.value[:]) is Some(subtype) &&
+        is_served_subtype(subtype) {
         grpc = true
       }
       headers.push(text)

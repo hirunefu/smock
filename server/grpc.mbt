@@ -35,10 +35,10 @@
 let grpc_content_type : Bytes = @utf8.encode(@grpc.content_type)
 
 ///|
-/// Whether `value`, the value of a request's `content-type` field, makes
-/// its stream a gRPC call: it is `application/grpc` exactly.
-fn is_grpc_content_type(value : Bytes) -> Bool {
-  value == grpc_content_type
+/// Whether `subtype`, the content subtype of a gRPC call, is one smock
+/// serves: none, or `proto`, the subtypes of protobuf messages.
+fn is_served_subtype(subtype : BytesView) -> Bool {
+  subtype.length() == 0 || subtype == b"proto"[:]
 }
 
 ///|

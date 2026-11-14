@@ -42,13 +42,14 @@ struct GrpcReply {
 
 ///|
 /// Makes a gRPC call to `path` with `body`, by default the framed
-/// HelloRequest `{name: "Tom"}`: POST with `content-type: application/grpc`
-/// and `te: trailers`, as gRPC clients send it, then `headers`. Reads its
-/// reply.
+/// HelloRequest `{name: "Tom"}`: POST with `content-type: <content_type>`,
+/// by default `application/grpc`, and `te: trailers`, as gRPC clients send
+/// it, then `headers`. Reads its reply.
 async fn H2Client::call(
   self : H2Client,
   path : String,
   authority~ : String = "localhost",
+  content_type~ : String = "application/grpc",
   headers~ : Array[(String, String)] = [],
   body? : Bytes,
 ) -> GrpcReply {
@@ -60,11 +61,7 @@ async fn H2Client::call(
     "POST",
     path,
     authority~,
-    headers=[
-      ("content-type", "application/grpc"),
-      ("te", "trailers"),
-      ..headers,
-    ],
+    headers=[("content-type", content_type), ("te", "trailers"), ..headers],
     body~,
   )
   self.reply(stream)

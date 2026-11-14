@@ -37,15 +37,9 @@ fn calls_of(values : Array[Bytes]) -> String {
 test "application/grpc, alone or followed by + or ;, makes a gRPC call, whose subtype is the text after +, up to any ;" {
   inspect(
     calls_of([
-      b"application/grpc",
-      b"application/grpc+proto",
-      b"application/grpc;v=1",
-      b"application/grpc+proto;v=1",
-      b"application/grpc+proto; charset=utf-8",
-      b"application/grpc+json",
-      b"application/grpc+json;v=1",
-      b"application/grpc+proto+json",
-      b"application/grpc;subtype=+json",
+      b"application/grpc", b"application/grpc+proto", b"application/grpc;v=1", b"application/grpc+proto;v=1",
+      b"application/grpc+proto; charset=utf-8", b"application/grpc+json", b"application/grpc+json;v=1",
+      b"application/grpc+proto+json", b"application/grpc;subtype=+json",
     ]),
     content=(
       #|application/grpc: call ""
@@ -77,13 +71,8 @@ test "a + or a ; with nothing after it leaves the subtype empty" {
 test "any other content type makes no gRPC call, gRPC-Web's and one that only begins like gRPC's included" {
   inspect(
     calls_of([
-      b"application/grpc-web",
-      b"application/grpc-web+proto",
-      b"application/grpc-web-text",
-      b"application/grpcx",
-      b"application/grpc ;v=1",
-      b"application/grp",
-      b"application/json",
+      b"application/grpc-web", b"application/grpc-web+proto", b"application/grpc-web-text",
+      b"application/grpcx", b"application/grpc ;v=1", b"application/grp", b"application/json",
       b"",
     ]),
     content=(

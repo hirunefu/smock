@@ -22,8 +22,7 @@ messages: none, or `proto`, for protobuf.
 ```mbt check
 ///|
 test "tell a gRPC call by its content type" {
-  guard @grpc.content_subtype(b"application/grpc+proto;v=1"[:])
-    is Some(subtype) else {
+  guard @grpc.content_subtype(b"application/grpc+proto;v=1"[:]) is Some(subtype) else {
     fail("not a call")
   }
   inspect(subtype == b"proto"[:], content="true")
