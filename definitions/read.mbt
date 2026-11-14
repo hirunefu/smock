@@ -663,6 +663,9 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   }
   self.require(stub, pointer, "id")
   self.require(stub, pointer, "mock")
+  if grpc is Some(named) {
+    self.check_grpc_stub(pointer, stub, named)
+  }
   if stub.contains("crud") {
     // A CRUD Stub has `crud` in place of conditions, responses, a Scenario
     // clause and writes of its own.

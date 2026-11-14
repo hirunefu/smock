@@ -94,6 +94,8 @@ priv struct NamedMethod {
   service : String
   /// The method, as the set declares it.
   rpc : @protobuf.MethodDescriptor
+  /// The set.
+  set : @protobuf.DescriptorSet
 }
 
 ///|
@@ -125,7 +127,7 @@ fn method_named(set : @protobuf.DescriptorSet, path : String) -> NamedMethod? {
       guard full_name(file, declared.name) == service else { continue }
       for rpc in declared.methods {
         if rpc.name == name.to_owned() {
-          return Some({ service, rpc, })
+          return Some({ service, rpc, set })
         }
       }
     }
@@ -141,5 +143,157 @@ fn full_name(file : @protobuf.FileDescriptor, name : String) -> String {
     name
   } else {
     "\{file.package_name}.\{name}"
+  }
+}
+
+///|
+/// A message type of a Descriptor set, found by its full name.
+priv struct FoundMessage {
+  /// Its full name, such as `helloworld.HelloReply`.
+  name : String
+  /// The file that defines it.
+  file : @protobuf.FileDescriptor
+  message : @protobuf.MessageDescriptor
+}
+
+///|
+/// The top-level message of `set` whose full name is `type_name`, as a
+/// method names its types, with a leading dot, such as
+/// `.helloworld.HelloReply`.
+fn find_message(
+  set : @protobuf.DescriptorSet,
+  type_name : String,
+) -> FoundMessage? {
+  let name = if type_name.has_prefix(".") {
+    type_name[1:].to_owned()
+  } else {
+    type_name
+  }
+  for file in set.files {
+    for message in file.messages {
+      if full_name(file, message.name) == name {
+        return Some({ name, file, message })
+      }
+    }
+  }
+  None
+}
+
+///|
+/// Checks the gRPC Stub `stub`, at `pointer`, against `named`, the method
+/// its exact path names: each static `json` reply against the method's
+/// output type.
+fn File::check_grpc_stub(
+  self : File,
+  pointer : String,
+  stub : Map[String, Json],
+  named : NamedMethod,
+) -> Unit {
+  guard find_message(named.set, named.rpc.output_type) is Some(output) else {
+    return
+  }
+  if stub.get("response") is Some(Object(response)) {
+    self.check_reply(child_pointer(pointer, "response"), response, output)
+  }
+  if stub.get("responses") is Some(Array(responses)) {
+    let at = child_pointer(pointer, "responses")
+    for i, response in responses {
+      if response is Object(response) {
+        self.check_reply(child_pointer(at, i.to_string()), response, output)
+      }
+    }
+  }
+}
+
+///|
+/// Checks the `json` of `response`, the reply at `pointer`, against
+/// `output`, unless it is templated: a templated reply is checked once
+/// rendered.
+fn File::check_reply(
+  self : File,
+  pointer : String,
+  response : Map[String, Json],
+  output : FoundMessage,
+) -> Unit {
+  if response.get("template") is Some(True) {
+    return
+  }
+  if response.get("json") is Some(json) {
+    self.check_message(child_pointer(pointer, "json"), json, output)
+  }
+}
+
+///|
+/// Checks `json`, the value at `pointer`, as a message of the type
+/// `message`: an object whose keys name its fields, each with a value of
+/// the field's type. A field of a type that gRPC Stubs do not serve yet is
+/// reported where the method is named, so its value is not checked.
+fn File::check_message(
+  self : File,
+  pointer : String,
+  json : Json,
+  message : FoundMessage,
+) -> Unit {
+  guard json is Object(members) else {
+    self.error(
+      pointer,
+      "must be an object: the reply is a \{message.name} message",
+    )
+    return
+  }
+  let fields = message.message.fields
+  for key, value in members {
+    let at = child_pointer(pointer, key)
+    let mut field = None
+    for i in 0..<fields.length() {
+      if fields[i].name == key {
+        field = Some(fields[i])
+        break
+      }
+    }
+    match field {
+      Some(field) => self.check_value(at, value, field, message)
+      None => self.error(at, "is not a field of \{message.name}")
+    }
+  }
+}
+
+///|
+/// Checks `json`, the value at `pointer`, as a value of `field`, a field of
+/// `message`.
+fn File::check_value(
+  self : File,
+  pointer : String,
+  json : Json,
+  field : @protobuf.FieldDescriptor,
+  message : FoundMessage,
+) -> Unit {
+  if field.label is Repeated {
+    return
+  }
+  let wanted = match (field.type_, json) {
+    (Some(String), String(_)) | (Some(Bool), True | False) => return
+    (Some(Int32), Number(n, ..)) if n == n.floor() &&
+      n >= @int.MIN_VALUE.to_double() &&
+      n <= @int.MAX_VALUE.to_double() => return
+    (Some(String), _) => "a string"
+    (Some(Bool), _) => "true or false"
+    (Some(Int32), _) =>
+      "an integer from \{@int.MIN_VALUE} to \{@int.MAX_VALUE}"
+    _ => return
+  }
+  let type_ = field.type_.map_or("", type_ => type_.to_string())
+  self.error(
+    pointer,
+    "must be \{wanted}: the field \{field.name} of \{message.name} is \{article(type_)} \{type_}",
+  )
+}
+
+///|
+/// The indefinite article of `word`: `an` before a vowel, else `a`.
+fn article(word : String) -> String {
+  match word.get_char(0) {
+    Some('a' | 'e' | 'i' | 'o' | 'u') => "an"
+    _ => "a"
   }
 }
