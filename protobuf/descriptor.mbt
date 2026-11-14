@@ -70,6 +70,8 @@ pub struct MessageDescriptor {
   /// Its full name, without a leading dot, such as
   /// `helloworld.HelloRequest`.
   full_name : String
+  /// The name of the file that defines it.
+  file_name : String
   /// The syntax of the file that defines it.
   syntax : Syntax
   /// Its fields, in the order of the file.
@@ -235,6 +237,8 @@ pub struct EnumDescriptor {
   name : String
   /// Its full name, without a leading dot, such as `shop.Status`.
   full_name : String
+  /// The name of the file that defines it.
+  file_name : String
   /// The syntax of the file that defines it.
   syntax : Syntax
   /// Its values, in the order of the file. An alias is a value with the
@@ -368,6 +372,8 @@ priv struct Scope {
   prefix : String
   /// How many messages the scope is nested in: 0 for a package.
   depth : Int32
+  /// The name of the file.
+  file_name : String
   /// The syntax of the file.
   syntax : Syntax
   /// What is left of the bound on full names.
@@ -423,7 +429,13 @@ fn read_file(
       _ => reader.skip()
     }
   }
-  let scope = { prefix: package_name, depth: 0, syntax, names, }
+  let scope = {
+    prefix: package_name,
+    depth: 0,
+    file_name: name,
+    syntax,
+    names,
+  }
   let messages = []
   for view in message_views {
     messages.push(read_message(view, scope))
@@ -501,6 +513,7 @@ fn read_message(
   let inner = {
     prefix: full_name,
     depth: scope.depth + 1,
+    file_name: scope.file_name,
     syntax: scope.syntax,
     names: scope.names,
   }
@@ -523,6 +536,7 @@ fn read_message(
   {
     name,
     full_name,
+    file_name: scope.file_name,
     syntax: scope.syntax,
     fields: ReadOnlyArray::from_array(fields),
     oneofs: ReadOnlyArray::from_array(oneofs),
@@ -733,6 +747,7 @@ fn read_enum(
   {
     name,
     full_name: scope.full_name(name),
+    file_name: scope.file_name,
     syntax: scope.syntax,
     values: ReadOnlyArray::from_array(values),
     by_name: sorted(values.length(), (a, b) => {

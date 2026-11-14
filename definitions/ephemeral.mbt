@@ -31,6 +31,7 @@ pub fn ephemeral_stub(
     body_files: None,
     env,
     buckets: Map::from_array([(mock, MockBuckets::new(keys))]),
+    sets: no_declared_sets,
   }
   guard json is Object(fields) else {
     file.error("", "must be an object")

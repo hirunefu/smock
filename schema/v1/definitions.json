@@ -472,11 +472,11 @@
       "unevaluatedProperties": false
     },
     "responseFields": {
-      "description": "The fields of a response: its status, its headers, its body or LLM reply, and whether it is a template. This definition does not close itself to other properties so that weightedResponse can add weight; response and weightedResponse each close it with unevaluatedProperties: false.",
+      "description": "The fields of a response: its status, its headers, its body or LLM reply, and whether it is a template. An HTTP Stub's response needs status. A gRPC Stub, whose exact request path names a unary method of its Mock's Descriptor set, answers with json alone, and its response has no status. This definition does not close itself to other properties so that weightedResponse can add weight; response and weightedResponse each close it with unevaluatedProperties: false.",
       "type": "object",
       "properties": {
         "status": {
-          "description": "The response status.",
+          "description": "The response status. An HTTP Stub's response needs it; a gRPC Stub's response has none.",
           "$ref": "#/$defs/status"
         },
         "headers": {
@@ -501,7 +501,7 @@
           "pattern": "^(?!\\.)[^/]+(/(?!\\.)[^/]+)*$"
         },
         "json": {
-          "description": "The body as JSON: any JSON value, sent as compact JSON in UTF-8, with Content-Type: application/json unless headers gives a Content-Type. smock writes every number in its shortest form (9.90 is sent as 9.9); use body when the exact bytes matter. With template true, it is a structured template: a string that is exactly one ${expr} gives the value with its own type, an object with $each gives an array, and an object with $if gives its then or else."
+          "description": "The body as JSON: any JSON value, sent as compact JSON in UTF-8, with Content-Type: application/json unless headers gives a Content-Type. On a gRPC Stub, it is the reply message, an object whose keys name fields of the method's output type, checked when the definitions are loaded unless template is true, and it gets no Content-Type. smock writes every number in its shortest form (9.90 is sent as 9.9); use body when the exact bytes matter. With template true, it is a structured template: a string that is exactly one ${expr} gives the value with its own type, an object with $each gives an array, and an object with $if gives its then or else."
         },
         "template": {
           "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json), the events and, in llm, the text, each chunk, id, model, each tool call's name, id and arguments, and the error's message are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
@@ -515,7 +515,6 @@
         },
         "llm": { "$ref": "#/$defs/llm" }
       },
-      "required": ["status"],
       "dependentSchemas": {
         "body": {
           "properties": { "bodyFile": false, "json": false, "events": false, "llm": false }

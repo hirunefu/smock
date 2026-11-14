@@ -50,7 +50,7 @@ test "a method is found by the path gRPC calls it by, and its input and output t
 }
 
 ///|
-test "messages and enums are found by their full names, nested ones included, and each knows the syntax of its file" {
+test "messages and enums are found by their full names, nested ones included, and each knows its file and that file's syntax" {
   let set = shop()
   let out = []
   for
@@ -60,13 +60,18 @@ test "messages and enums are found by their full names, nested ones included, an
     ] {
     match set.find_message(name) {
       Some(message) =>
-        out.push("\{name}: message, \{syntax_name(message.syntax)}")
+        out.push(
+          "\{name}: message, \{message.file_name}, \{syntax_name(message.syntax)}",
+        )
       None => out.push("\{name}: -")
     }
   }
   for name in ["shop.Status", "shop.v1.Order.Line.Kind", "shop.v1.Order"] {
     match set.find_enum(name) {
-      Some(enum_) => out.push("\{name}: enum, \{syntax_name(enum_.syntax)}")
+      Some(enum_) =>
+        out.push(
+          "\{name}: enum, \{enum_.file_name}, \{syntax_name(enum_.syntax)}",
+        )
       None => out.push("\{name}: -")
     }
   }
@@ -74,15 +79,15 @@ test "messages and enums are found by their full names, nested ones included, an
     out,
     content=(
       #|[
-      #|  "shop.v1.Order: message, proto3",
-      #|  "shop.v1.Order.Line: message, proto3",
-      #|  "shop.Money.Note: message, proto2",
-      #|  "shop.legacy.Item: message, editions",
+      #|  "shop.v1.Order: message, shop/orders.proto, proto3",
+      #|  "shop.v1.Order.Line: message, shop/orders.proto, proto3",
+      #|  "shop.Money.Note: message, shop/common.proto, proto2",
+      #|  "shop.legacy.Item: message, shop/legacy.proto, editions",
       #|  ".shop.v1.Order: -",
       #|  "Order: -",
       #|  "shop.Status: -",
-      #|  "shop.Status: enum, proto2",
-      #|  "shop.v1.Order.Line.Kind: enum, proto3",
+      #|  "shop.Status: enum, shop/common.proto, proto2",
+      #|  "shop.v1.Order.Line.Kind: enum, shop/orders.proto, proto3",
       #|  "shop.v1.Order: -",
       #|]
     ),

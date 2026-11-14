@@ -474,9 +474,11 @@ pub fn Engine::handle(
   }
   let incoming = Incoming::new(request)
   // The Ephemeral Stubs of the Mock and the Session come first, in their
-  // own order, then the Stubs from Definition files. The match index only
-  // narrows the search among the latter. The Near miss of a request that
-  // matched nothing is chosen among every candidate, in that order.
+  // own order, then the Stubs from Definition files: their HTTP Stubs, as
+  // the files load them, since a request never matches a gRPC Stub. The
+  // match index only narrows the search among the latter. The Near miss of
+  // a request that matched nothing is chosen among every candidate, in
+  // that order.
   let ephemeral = match mock {
     Some(mock) => self.ephemeral.of(mock.name, session)
     None => None
@@ -537,7 +539,7 @@ pub fn Engine::handle(
         })
       }
     } else {
-      let stubs = mock.stubs
+      let stubs = mock.http_stubs
       let mut found = None
       for i in 0..<stubs.length() {
         if incoming.matches(stubs[i], current) {
@@ -745,7 +747,7 @@ pub fn Engine::handle(
           }
           near_miss = incoming.near_miss(
             ephemeral.concat(
-              mock.stubs.iter().map(stub => (stub, StubSource::File)),
+              mock.http_stubs.iter().map(stub => (stub, StubSource::File)),
             ),
             states,
           )

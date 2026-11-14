@@ -104,7 +104,11 @@ pub struct Mock {
   /// priority in declaration order, that is file-name order, then position
   /// in the file.
   stubs : ReadOnlyArray[Stub]
-  /// The match index of `stubs`, which `candidates` looks up.
+  /// The Stubs that HTTP requests are matched against: `stubs` without the
+  /// gRPC Stubs, in the same order. It is `stubs` itself when the Mock has
+  /// no gRPC Stub.
+  http_stubs : ReadOnlyArray[Stub]
+  /// The match index of `http_stubs`, which `candidates` looks up.
   priv index : MatchIndex
   /// The Scenarios that the Mock's Stubs name, each with its file states,
   /// in byte-wise order of their names. A Scenario has no declaration: it
@@ -178,6 +182,14 @@ pub enum Serves {
 }
 
 ///|
+/// Whether the Stub is a gRPC Stub: an ordinary Stub whose exact path names
+/// a method of its Mock's Descriptor set. Every other Stub, CRUD Stubs
+/// included, is an HTTP Stub.
+pub fn Stub::is_grpc(self : Stub) -> Bool {
+  self.serves is Ordinary({ grpc_method: Some(_), .. })
+}
+
+///|
 /// The Stub's Scenario clause, if it has one: an ordinary Stub's
 /// `scenario`, and none for a CRUD Stub, which has no Scenario clause.
 pub fn Stub::scenario(self : Stub) -> ScenarioClause? {
@@ -211,6 +223,10 @@ pub struct Ordinary {
   /// The writes to Data buckets the Stub makes when it matches, in the
   /// order written, `dataWrites`: none when it has no `dataWrites`.
   data_writes : ReadOnlyArray[DataWrite]
+  /// The method of its Mock's Descriptor set that the Stub's exact path
+  /// names, when it is a gRPC Stub. HTTP requests never match a gRPC Stub.
+  /// `None` for an HTTP Stub.
+  grpc_method : @protobuf.MethodDescriptor?
 }
 
 ///|
@@ -1182,11 +1198,13 @@ pub fn validate(
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
   })
+  let body_files = Map::from_array(set.body_files)
   let reader = Reader::new(
     declared=declared_mocks(files),
     buckets=declared_buckets(files),
-    body_files=Map::from_array(set.body_files),
+    body_files~,
     env~,
+    sets=declared_sets(files, body_files),
   )
   for file in files {
     reader.read_file(file.0, file.1)
@@ -1221,6 +1239,7 @@ pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
           journal: true,
           descriptor_set: None,
           stubs: ReadOnlyArray::from_array([]),
+          http_stubs: ReadOnlyArray::from_array([]),
           index: MatchIndex::new(ReadOnlyArray::from_array([])),
           scenarios: ReadOnlyArray::from_array([]),
           buckets: ReadOnlyArray::from_array([]),
@@ -1239,6 +1258,13 @@ pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
         reader.stubs.iter().filter(stub => stub.mock == mock.name).collect(),
       ),
     )
+    // HTTP requests never match a gRPC Stub, so they are split off here,
+    // and an HTTP request pays nothing for them.
+    let http_stubs = if stubs.iter().any(stub => stub.is_grpc()) {
+      ReadOnlyArray::from_iter(stubs.iter().filter(stub => !stub.is_grpc()))
+    } else {
+      stubs
+    }
     let buckets = []
     let initial_data = Map([])
     for declared in reader.buckets {
@@ -1255,7 +1281,8 @@ pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
       journal: mock.journal,
       descriptor_set: mock.descriptor_set,
       stubs,
-      index: MatchIndex::new(stubs),
+      http_stubs,
+      index: MatchIndex::new(http_stubs),
       scenarios: scenarios_of(stubs),
       buckets: ReadOnlyArray::from_array(buckets),
       initial_data,

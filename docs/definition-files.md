@@ -79,6 +79,7 @@ in a definitions directory, such as `defs/`, that `smock serve --dir` and
   - [Copies and the state bound](#copies-and-the-state-bound)
 - [gRPC](#grpc)
   - [Descriptor sets](#descriptor-sets)
+  - [gRPC Stubs](#grpc-stubs)
 - [Faults](#faults)
   - [Delays](#delays)
   - [Connection Faults](#connection-faults)
@@ -1035,7 +1036,8 @@ unmatched requests is refused.
 
 A Stub's `response` has a `status`, `headers`, and a body. A Stub can give
 several responses to pick from instead
-([Several responses](#several-responses)).
+([Several responses](#several-responses)). `status` is required, except on a
+[gRPC Stub](#grpc-stubs), whose reply has none.
 
 `headers` maps each header name to a string or to an array of strings.
 An array sends one field per value, in order, where the name stands.
@@ -1386,7 +1388,7 @@ The fields of `llm`:
   seeds and time](#ids-seeds-and-time) says more.
 
 An LLM response is a response like any other. `status` is required, as
-always. `llm` may stand in `response` or in any element of
+on every HTTP Stub. `llm` may stand in `response` or in any element of
 [`responses`](#several-responses), so weighted responses can answer one
 request in ten with an ordinary 429. Request conditions,
 [templates](#templates-in-llm-replies), Faults, Ephemeral Stubs, the
@@ -5778,6 +5780,60 @@ mocks:
   so a large set costs memory in every replica
   ([Memory](grpc.md#memory)).
 
+### gRPC Stubs
+
+A Stub whose exact `path` names a method of its Mock's set is a gRPC Stub.
+The path is `/`, the service's full name, `/` and the method's name, as
+gRPC calls name a method:
+
+```yaml
+stubs:
+  - id: hello
+    mock: greeter
+    request: { path: /helloworld.Greeter/SayHello }
+    response: { json: { message: Hello Tom } }
+```
+
+- Every other Stub is an HTTP Stub: a Stub of a Mock without a set, a Stub
+  without an exact path or whose path names no method of the set, and
+  every [CRUD Stub](#crud-stubs), which has no request path.
+- The method must be unary. A Stub on a client-, server- or
+  bidi-streaming method is a problem at its `path`. Streaming methods are
+  planned for R3, a later release.
+- A gRPC Stub's reply is `json`, the reply message, and it has no
+  `status`. `status` is required on HTTP Stubs only. smock adds no
+  `Content-Type` for a gRPC Stub's `json`.
+- When the files load, each `json` reply without `template` is checked
+  against the method's output type. Each key must name a field of the
+  type, as the `.proto` file spells it, and each value must be of the
+  field's type: a string, `true` or `false`, or an integer that fits an
+  `int32`. Anything else is a problem at its JSON Pointer:
+
+  ```text
+  greeter.yaml: /stubs/0/response/json/mesage: is not a field of helloworld.HelloReply
+  ```
+
+  A reply with `template: true` is checked once it is rendered.
+- HTTP requests never match a gRPC Stub, and a gRPC Stub is never their
+  [Near miss](#when-no-stub-matches). So an HTTP request such as
+  `POST /helloworld.Greeter/SayHello` over HTTP/1.1 goes to the Mock's
+  HTTP Stubs, then gets its `noMatch` answer.
+- A gRPC Stub and an HTTP Stub never [shadow](#a-stub-that-can-never-match)
+  each other.
+
+smock does not serve gRPC calls yet, so what a gRPC Stub can hold is
+limited for now. These are problems that say what is not served yet:
+
+- A method whose input or output type comes from a file that is not
+  proto3, such as a proto2 or an editions file.
+- A method whose input or output type has a field that is not a singular
+  `string`, `bool` or `int32`, or that is in a oneof, a proto3 `optional`
+  field included. Each side is checked on its own.
+- Any field of the Stub other than `id`, `mock`, `priority`, `scenario`,
+  `variables`, `dataWrites`, `fault.seed`, `request.method`,
+  `request.path`, `request.headers`, a `json` body condition, and `json`,
+  `template` and `weight` in a reply.
+
 ## Faults
 
 A Stub can inject Faults, to test how a client handles slow and failing
@@ -6141,6 +6197,9 @@ $ echo $?
 
 A Stub can never match when an earlier Stub of the same Mock always
 matches first. The warning points at that Stub and names the earlier one.
+Only Stubs of one kind are compared: a [gRPC Stub](#grpc-stubs) and an
+HTTP Stub never shadow each other, since HTTP requests never match a gRPC
+Stub.
 
 "Earlier" means earlier in the order Stubs are [tried](#which-stub-answers).
 A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
