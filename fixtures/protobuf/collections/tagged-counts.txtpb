@@ -1,0 +1,5 @@
+# The map entries of the ticket's example, shuffled. The tests send them
+# before tagged-tags.binpb, so the fields come in reverse order.
+counts { key: 10 value: 1 }
+counts { key: 1 value: 3 }
+counts { key: 2 value: 5 }

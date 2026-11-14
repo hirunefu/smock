@@ -282,11 +282,11 @@ fn syntax_name(syntax : @protobuf.Syntax) -> String? {
 ///|
 /// Reports at `pointer`, a gRPC Stub's path, what gRPC Stubs do not serve
 /// yet of `input`, the input type of its method, a message of `set`, and
-/// of each message type it reaches through its fields, each once: a type
-/// of a file that is not proto3, and each field that is repeated, a map
-/// included, in a oneof other than a proto3 `optional` field's, or of a
-/// well-known type. Every other singular field is served: one of any scalar
-/// type, of an enum, or of a message, which is checked in turn.
+/// of each message type it reaches through its fields, a map's values
+/// included, each once: a type of a file that is not proto3, and each
+/// field of a well-known type, or a map whose values have one. Every other
+/// field is served, singular or repeated, a map or in a oneof: one of any
+/// scalar type, of an enum, or of a message, which is checked in turn.
 fn File::check_input(
   self : File,
   pointer : String,
@@ -294,7 +294,7 @@ fn File::check_input(
   input : @protobuf.MessageDescriptor,
 ) -> Unit {
   let not_served = "the input type \{input.full_name} is not served yet"
-  let later = "and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far"
+  let later = "and gRPC Stubs serve no well-known types so far"
   let seen : Set[String] = Set([input.full_name])
   let pending = [input]
   while pending.pop() is Some(message) {
@@ -318,36 +318,38 @@ fn File::check_input(
     }
     let reached_types = []
     for field in message.fields {
-      let type_ = set.message_of(field)
-      let problem = if field.label is Repeated {
-        if type_ is Some({ map_entry: true, .. }) {
-          "is a map, \{later}"
-        } else {
-          "is repeated, \{later}"
-        }
-      } else if field.oneof_index is Some(index) && !field.proto3_optional {
-        "is in the oneof \{message.oneofs[index].name}, \{later}"
-      } else {
-        let name = match (type_, set.enum_of(field)) {
-          (Some(type_), _) => type_.full_name
-          (_, Some(type_)) => type_.full_name
-          _ => continue
-        }
-        if !@protobuf.is_well_known(name) {
-          if type_ is Some(type_) && !seen.contains(name) {
-            seen.add(name)
-            reached_types.push(type_)
+      // A map's values are checked as the field's own values are.
+      let (value, map) = match set.message_of(field) {
+        Some(entry) if field.label is Repeated && entry.map_entry =>
+          match entry.find_field_by_number(2) {
+            Some(value) => (value, true)
+            None => (field, false)
           }
-          continue
+        _ => (field, false)
+      }
+      let name = match (set.message_of(value), set.enum_of(value)) {
+        (Some(type_), _) => type_.full_name
+        (_, Some(type_)) => type_.full_name
+        _ => continue
+      }
+      if !@protobuf.is_well_known(name) {
+        if set.message_of(value) is Some(type_) && !seen.contains(name) {
+          seen.add(name)
+          reached_types.push(type_)
         }
-        "has the well-known type \{name}, and gRPC Stubs serve no well-known types so far"
+        continue
       }
       let field_name = if reached {
         "the field \{field.name} of \{message.full_name}, a type it reaches,"
       } else {
         "its field \{field.name}"
       }
-      self.error(pointer, "\{not_served}: \{field_name} \{problem}")
+      let problem = if map {
+        "is a map whose values have the well-known type \{name}"
+      } else {
+        "has the well-known type \{name}"
+      }
+      self.error(pointer, "\{not_served}: \{field_name} \{problem}, \{later}")
     }
     // The types this one reaches are checked next, in the order of its
     // fields.

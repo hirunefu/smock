@@ -258,7 +258,6 @@ test "a method whose input type has a repeated field, or whose input or output t
     ),
     content=(
       #|a.yaml: /stubs/0/response/json/sku: is not a field of catalog.Item
-      #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field tags is repeated, and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far
       #|a.yaml: /stubs/3/request/path: the input type legacy.LegacyRequest is not served yet: legacy.proto, which defines it, is a proto2 file, and gRPC Stubs serve only types of proto3 files so far
       #|a.yaml: /stubs/4/request/path: the input type edition.EditionRequest is not served yet: edition.proto, which defines it, is an editions file, and gRPC Stubs serve only types of proto3 files so far
     ),
@@ -370,7 +369,7 @@ test "a gRPC Stub and an HTTP Stub never shadow each other: a catch-all HTTP Stu
 }
 
 ///|
-test "a method whose input type has a field in a oneof is not served yet; its output type is served, oneofs and proto3 optional fields included" {
+test "a method whose input and output types have fields in a oneof and proto3 optional fields is served" {
   inspect(
     check_stubs(
       (
@@ -381,8 +380,7 @@ test "a method whose input type has a field in a oneof is not served yet; its ou
       ),
     ),
     content=(
-      #|a.yaml: /stubs/0/request/path: the input type oneofs.Pick is not served yet: its field word is in the oneof choice, and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far
-      #|a.yaml: /stubs/0/request/path: the input type oneofs.Pick is not served yet: its field number is in the oneof choice, and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far
+      #|oneofs: choose: gRPC Stub of Choose
     ),
   )
 }
@@ -458,7 +456,7 @@ test "a static reply is encoded when the files load, with every proto3 field typ
 }
 
 ///|
-test "an input type of singular fields of every scalar type, enums, nested messages and proto3 optional fields is served, a type that nests itself included" {
+test "an input type of fields of every scalar type, enums, nested messages, proto3 optional fields, repeated fields, maps and oneofs is served, a type that nests itself included" {
   inspect(
     check_stubs(
       (
@@ -474,28 +472,9 @@ test "an input type of singular fields of every scalar type, enums, nested messa
         #|    mock: scalars
         #|    request: { path: /scalars.Orders/Walk }
         #|    response: { json: {} }
-      ),
-    ),
-    content=(
-      #|scalars: place: gRPC Stub of Place
-      #|scalars: check: gRPC Stub of Check
-      #|scalars: walk: gRPC Stub of Walk
-    ),
-  )
-}
-
-///|
-test "an input type that has, or reaches, a repeated field, a map, a oneof or a type of a file that is not proto3 is not served yet, each once" {
-  inspect(
-    check_stubs(
-      (
         #|  - id: send
         #|    mock: scalars
         #|    request: { path: /scalars.Orders/Send }
-        #|    response: { json: {} }
-        #|  - id: remember
-        #|    mock: scalars
-        #|    request: { path: /scalars.Orders/Remember }
         #|    response: { json: {} }
         #|  - id: find-items
         #|    mock: catalog
@@ -504,12 +483,28 @@ test "an input type that has, or reaches, a repeated field, a map, a oneof or a 
       ),
     ),
     content=(
-      #|a.yaml: /stubs/0/request/path: the input type scalars.Parcel is not served yet: the field items of scalars.Contents, a type it reaches, is repeated, and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far
-      #|a.yaml: /stubs/0/request/path: the input type scalars.Parcel is not served yet: the field counts of scalars.Contents, a type it reaches, is a map, and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far
-      #|a.yaml: /stubs/0/request/path: the input type scalars.Parcel is not served yet: the field paper of scalars.Contents, a type it reaches, is in the oneof wrapping, and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far
-      #|a.yaml: /stubs/0/request/path: the input type scalars.Parcel is not served yet: the field box of scalars.Contents, a type it reaches, is in the oneof wrapping, and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far
-      #|a.yaml: /stubs/1/request/path: the input type scalars.Memo is not served yet: legacy.proto, which defines legacy.Note, a type it reaches, is a proto2 file, and gRPC Stubs serve only types of proto3 files so far
-      #|a.yaml: /stubs/2/request/path: the input type catalog.Item is not served yet: its field tags is repeated, and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far
+      #|catalog: find-items: gRPC Stub of FindItems
+      #|scalars: place: gRPC Stub of Place
+      #|scalars: check: gRPC Stub of Check
+      #|scalars: walk: gRPC Stub of Walk
+      #|scalars: send: gRPC Stub of Send
+    ),
+  )
+}
+
+///|
+test "an input type that is, or reaches, a type of a file that is not proto3 is not served yet" {
+  inspect(
+    check_stubs(
+      (
+        #|  - id: remember
+        #|    mock: scalars
+        #|    request: { path: /scalars.Orders/Remember }
+        #|    response: { json: {} }
+      ),
+    ),
+    content=(
+      #|a.yaml: /stubs/0/request/path: the input type scalars.Memo is not served yet: legacy.proto, which defines legacy.Note, a type it reaches, is a proto2 file, and gRPC Stubs serve only types of proto3 files so far
     ),
   )
 }

@@ -237,16 +237,26 @@ order, under the field's JSON name, as `json_name` gives it.
 - bytes are standard base64 with padding. An enum value is printed by its
   name, the first one of an alias, or by its number when the enum does not
   define it. A nested message is an object.
+- A repeated field is an array. A map is an object with a member per key,
+  in key order: integer keys by value, bool keys `"false"` then
+  `"true"`, and string keys by their octets; an integer key prints in
+  decimal, as a string.
 - A field without presence that the message leaves out is printed at its
-  default. A proto3 `optional` field and a message field are printed only
-  when the message holds them.
+  default, `[]` and `{}` included. A proto3 `optional` field, a member of
+  a oneof and a message field are printed only when the message holds
+  them.
+
+So a message gives one text, whatever order its records come in.
 
 It reads the message as protobuf's parsers read it: the last value of a
-scalar field wins, the values of a message field are merged, and unknown
-fields are skipped. It raises `DecodeError` when the input is not
-protobuf, a string is not UTF-8, or messages nest deeper than 100. It
-does not decode repeated fields, maps, oneofs, groups and the well-known
-types yet, and raises its error for a message that has one.
+scalar field wins, the values of a message field are merged, a member of
+a oneof replaces the one before it, repeated scalars are read packed or
+not with the records of a packed field joined, and unknown fields are
+skipped. A map entry without a key or a value takes the default, and when
+a key repeats, the last entry wins. It raises `DecodeError` when the input
+is not protobuf, a string is not UTF-8, or messages nest deeper than 100,
+a map entry counting as a message. It does not decode groups and the
+well-known types yet, and raises its error for a message that has one.
 
 `set.encode_json(message, json)` encodes JSON, a message of the type
 `message`, a type of `set`, as ProtoJSON writes it, the way protoc encodes

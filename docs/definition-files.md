@@ -5858,11 +5858,11 @@ what is not served yet:
 - A method whose input or output type comes from a file that is not
   proto3, such as a proto2 or an editions file, or whose input or output
   type reaches a type of such a file.
-- A method whose input type has a repeated field, a map, a field in a
-  oneof other than a proto3 `optional` field's, or a field of a
-  well-known type, such as `google.protobuf.Timestamp`, or reaches a
-  message type that has one. Singular fields of every scalar type, enums,
-  nested messages and proto3 `optional` fields are served.
+- A method whose input type has a field of a well-known type, such as
+  `google.protobuf.Timestamp`, singular, repeated or as a map's values, or
+  reaches a message type that has one. Fields of every scalar type, enums,
+  nested messages, proto3 `optional` fields, repeated fields, maps and
+  oneofs are served.
 - A method whose output type is a well-known type, or has, or reaches, a
   field of one. Every other proto3 output type is served, with fields of
   every type.
