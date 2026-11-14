@@ -331,3 +331,43 @@ test "a gRPC Stub's fields other than those served so far are not served yet, ea
     ),
   )
 }
+
+///|
+test "a gRPC Stub and an HTTP Stub never shadow each other: a catch-all HTTP Stub before a gRPC Stub gets no warning, and a gRPC Stub after an identical one does" {
+  inspect(
+    check_stubs(
+      (
+        #|  - id: catch-all
+        #|    mock: greeter
+        #|    request: {}
+        #|    response: { status: 404 }
+        #|  - id: any-greeter-path
+        #|    mock: greeter
+        #|    request: { method: POST, path: { pattern: "/helloworld[.]Greeter/.*" } }
+        #|    response: { status: 404 }
+        #|  - id: hello
+        #|    mock: greeter
+        #|    request: { path: /helloworld.Greeter/SayHello }
+        #|    response: { json: { message: Hello } }
+        #|  - id: hello-again
+        #|    mock: greeter
+        #|    request: { path: /helloworld.Greeter/SayHello, body: { json: { name: Tom } } }
+        #|    response: { json: { message: Hello Tom } }
+        #|  - id: after-hello
+        #|    mock: greeter
+        #|    request: { path: /hello }
+        #|    response: { status: 200 }
+      ),
+    ),
+    content=(
+      #|greeter: catch-all: HTTP Stub
+      #|greeter: any-greeter-path: HTTP Stub
+      #|greeter: hello: gRPC Stub of SayHello
+      #|greeter: hello-again: gRPC Stub of SayHello
+      #|greeter: after-hello: HTTP Stub
+      #|a.yaml: /stubs/1: warning: the Stub "any-greeter-path" can never match: the Stub "catch-all" at a.yaml: /stubs/0 is tried first and matches every request this one would
+      #|a.yaml: /stubs/3: warning: the Stub "hello-again" can never match: the Stub "hello" at a.yaml: /stubs/2 is tried first and matches every request this one would
+      #|a.yaml: /stubs/4: warning: the Stub "after-hello" can never match: the Stub "catch-all" at a.yaml: /stubs/0 is tried first and matches every request this one would
+    ),
+  )
+}

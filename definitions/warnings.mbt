@@ -1,6 +1,7 @@
 // The `check` warnings: problems that do not make a definition set invalid.
 // There are two: a shadowed Stub, which can never match because an earlier
-// Stub of the same Mock always matches first; and a Stub that requires a
+// Stub of the same Mock and of the same kind, gRPC or HTTP, always matches
+// first; and a Stub that requires a
 // state of a Scenario that no Stub in the files moves to. A warning is only
 // reported when it can be proven, so it is never a false positive.
 
@@ -108,7 +109,14 @@ fn moves_of(stubs : ReadOnlyArray[Stub]) -> Map[String, Set[String]] {
 /// A partial overlap is not reported: an ordinary Stub with no method
 /// condition after a CRUD Stub still matches the methods the CRUD Stub
 /// does not serve.
+///
+/// Only Stubs of one kind shadow each other: a gRPC Stub and an HTTP Stub
+/// never do, since gRPC calls match only gRPC Stubs, and HTTP requests
+/// only HTTP Stubs.
 fn shadows(t : Stub, s : Stub) -> Bool {
+  if t.is_grpc() != s.is_grpc() {
+    return false
+  }
   match (t.serves, s.serves) {
     (Ordinary(t), Ordinary(s)) =>
       in_states_of(t, s) && request_shadows(t.request, s.request)
