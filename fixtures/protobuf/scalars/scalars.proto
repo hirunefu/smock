@@ -1,15 +1,19 @@
 // Written for smock's tests of request messages: every scalar type, an
 // enum with an alias, nested messages and proto3 optional fields, which
-// smock decodes, and types that reach fields it does not decode yet.
+// smock decodes, and types that reach fields it does not decode yet, or a
+// type of legacy.proto, a proto2 file.
 syntax = "proto3";
 
 package scalars;
+
+import "legacy.proto";
 
 service Orders {
   rpc Place (Order) returns (Placed);
   rpc Check (Every) returns (Placed);
   rpc Send (Parcel) returns (Placed);
   rpc Walk (Node) returns (Placed);
+  rpc Remember (Memo) returns (Placed);
 }
 
 // The order of the ticket's example.
@@ -62,11 +66,12 @@ message Placed {
   string id = 1;
 }
 
-// A message that reaches, through a nested message, fields smock does not
-// decode yet.
+// A message that reaches, through two fields of one nested message type,
+// fields smock does not decode yet.
 message Parcel {
   Address to = 1;
   Contents contents = 2;
+  Contents spare = 3;
 }
 
 message Contents {
@@ -82,6 +87,11 @@ message Contents {
 message Node {
   string name = 1;
   Node child = 2;
+}
+
+// A message that reaches a type of a proto2 file.
+message Memo {
+  legacy.Note note = 1;
 }
 
 // What a client may send in place of an Order, which protoc encodes for

@@ -325,9 +325,12 @@ fn DescriptorSet::not_decoded(
 }
 
 ///|
-/// Whether `full_name` is the full name of one of protobuf's well-known
-/// types that ProtoJSON prints in a form of its own, Empty included.
-fn is_well_known(full_name : String) -> Bool {
+/// Whether `full_name`, a full name without a leading dot, is the name of
+/// one of protobuf's well-known types that ProtoJSON prints in a form of
+/// its own: Any, Duration, Timestamp, FieldMask, Struct, Value, ListValue,
+/// NullValue, Empty and the wrappers, such as
+/// `google.protobuf.Timestamp`.
+pub fn is_well_known(full_name : String) -> Bool {
   full_name.has_prefix("google.protobuf.") &&
   full_name
   is ("google.protobuf.Any"
