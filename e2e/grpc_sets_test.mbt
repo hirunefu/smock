@@ -157,7 +157,7 @@ async test "two Mocks whose sets define one package in two versions each decode 
 /// call whose message has the field `version`, which only version 2's set
 /// decodes, and replies with it, which only version 2's set encodes, so
 /// version 1's set refuses this file.
-fn versioned_greeter(version : Int) -> String {
+fn versioned_greeter(version : Int32) -> String {
   let stub = if version == 1 {
     (
       #|  - id: hello-v1
@@ -194,7 +194,8 @@ async fn Smock::swapped(
   let mut last = before
   for _ in 0..<3 {
     let status = self.reloaded(last)
-    if status.get("lastReload") is Some(Object({ "result": String("swapped"), .. })) {
+    if status.get("lastReload")
+      is Some(Object({ "result": String("swapped"), .. })) {
       return status
     }
     last = status
@@ -209,7 +210,7 @@ async fn Smock::swapped(
 /// there, so that no reload serves a set with the Stub of the other
 /// version: to version 2, the Definition file first, then the set; to
 /// version 1, the set first.
-async fn Smock::switch_to(self : Smock, dir : String, version : Int) -> Unit {
+async fn Smock::switch_to(self : Smock, dir : String, version : Int32) -> Unit {
   let before = self.status()
   let set = if version == 1 { greeter_set_path } else { greeter_v2_set_path }
   let write_file = () => {
@@ -276,9 +277,7 @@ async test "a reload between a call's HEADERS and the end of its request: the ca
       )
       let _ = smock.swapped(before)
       client.send_data(second, hello_v2_request())
-      out.push(
-        "HEADERS under version 2, the message once the Mock has no set:",
-      )
+      out.push("HEADERS under version 2, the message once the Mock has no set:")
       out.push(client.reply(second).render())
       out.push("Journal:")
       out.push(answered_by(smock))
@@ -328,7 +327,7 @@ async test "a set swapped by reloads while calls run: each call is decoded and a
       // Each answer as the client got it and as the Journal recorded it:
       // the Stub, the gRPC status, the decoded body, and the reply's
       // message; with how many calls got it.
-      let seen : Map[String, Int] = Map([])
+      let seen : Map[String, Int32] = Map([])
       let stop = Ref(false)
       @async.with_task_group(group => {
         let calls = group.spawn(() => {

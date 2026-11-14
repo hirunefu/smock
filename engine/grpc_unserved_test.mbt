@@ -100,13 +100,10 @@ test "a call to a Mock without a set, to a method the set lacks or to a streamin
     ]
     for call in calls {
       let (authority, path) = call
-      let outcome = h.call(
-        path,
-        "",
-        octets=0,
-        authority~,
-        headers=[("content-type", "application/grpc"), ("x-tenant", "acme")],
-      )
+      let outcome = h.call(path, "", octets=0, authority~, headers=[
+        ("content-type", "application/grpc"),
+        ("x-tenant", "acme"),
+      ])
       out.push("\{authority} \{path}:")
       out.push(response(outcome))
       out.push(grpc_part(outcome))

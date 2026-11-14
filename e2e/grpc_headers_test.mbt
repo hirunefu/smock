@@ -122,7 +122,11 @@ async test "calls that cannot reach a gRPC Stub get Trailers-Only UNIMPLEMENTED 
         headers_frame(
           9,
           raw.block(
-            call_fields("/helloworld.Greeter/SayHello", "greeter.svc", more=tenant),
+            call_fields(
+              "/helloworld.Greeter/SayHello",
+              "greeter.svc",
+              more=tenant,
+            ),
           ),
           end_stream=false,
         ),
