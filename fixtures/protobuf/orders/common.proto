@@ -1,0 +1,9 @@
+// Written for smock's tests: a file that orders.proto imports.
+syntax = "proto3";
+
+package shop;
+
+message Money {
+  string currency = 1;
+  int64 units = 2;
+}

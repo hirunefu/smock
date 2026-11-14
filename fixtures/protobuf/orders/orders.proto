@@ -1,0 +1,16 @@
+// Written for smock's tests: a file that imports another, built into a
+// set without --include_imports, so the set lacks the import.
+syntax = "proto3";
+
+package shop;
+
+import "common.proto";
+
+message Order {
+  uint64 id = 1;
+  Money total = 2;
+}
+
+service Orders {
+  rpc Get(Order) returns (Order);
+}

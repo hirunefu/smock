@@ -1,7 +1,8 @@
 // gRPC Stubs at load: a Stub whose exact path names a unary method of its
 // Mock's Descriptor set. The sets are those scripts/gen-protobuf-fixtures.sh
-// builds with protoc: gRPC's helloworld.proto (greeter_set_test.mbt) and
-// fixtures/protobuf/catalog/catalog.proto (catalog_set_test.mbt).
+// builds with protoc: gRPC's helloworld.proto (greeter_set_test.mbt),
+// fixtures/protobuf/catalog/catalog.proto (catalog_set_test.mbt) and
+// fixtures/protobuf/oneofs/oneofs.proto (oneofs_set_test.mbt).
 
 ///|
 /// The bytes of a set that the fixture script wrote in hex.
@@ -12,14 +13,15 @@ fn set_bytes(hex : String) -> Bytes raise {
 ///|
 /// Loads `a.yaml`, which declares the Mock `greeter`, whose set is gRPC's
 /// helloworld.proto, the Mock `catalog`, whose set is catalog.proto, the
-/// Mock `plain`, with no set, and then `stubs`, the lines of its `stubs`
-/// array. Renders what `smock check` would print: every problem, one per
+/// Mock `oneofs`, whose set is oneofs.proto, the Mock `plain`, with no set,
+/// and then `stubs`, the lines of its `stubs` array. Renders what `smock check` would print: every problem, one per
 /// line; or, for a valid set, each Stub with its kind, then each warning.
 fn check_stubs(stubs : String) -> String raise {
   let yaml =
     #|mocks:
     #|  - { name: greeter, grpc: { descriptorSet: greeter.binpb } }
     #|  - { name: catalog, grpc: { descriptorSet: catalog.binpb } }
+    #|  - { name: oneofs, grpc: { descriptorSet: oneofs.binpb } }
     #|  - { name: plain }
     #|stubs:
     #|
@@ -29,6 +31,7 @@ fn check_stubs(stubs : String) -> String raise {
       body_files: [
         ("greeter.binpb", set_bytes(greeter_set)),
         ("catalog.binpb", set_bytes(catalog_set)),
+        ("oneofs.binpb", set_bytes(oneofs_set)),
       ],
     }) {
     Ok(snapshot) => {
@@ -223,7 +226,7 @@ test "a Stub on a client-, server- or bidi-streaming method is a problem at its 
 }
 
 ///|
-test "a method whose input or output type has a field other than a singular string, bool or int32, or comes from a file that is not proto3, or is nested, is not served yet, each side on its own" {
+test "a method whose input or output type has a field other than a singular string, bool or int32, or comes from a file that is not proto3, is not served yet, each side on its own; a nested type is served" {
   inspect(
     check_stubs(
       (
@@ -261,7 +264,6 @@ test "a method whose input or output type has a field other than a singular stri
       #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field kind has the type catalog.Kind, and gRPC Stubs serve only singular string, bool and int32 fields so far
       #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field stock has the type catalog.CountReply, and gRPC Stubs serve only singular string, bool and int32 fields so far
       #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field picture has the type bytes, and gRPC Stubs serve only singular string, bool and int32 fields so far
-      #|a.yaml: /stubs/2/request/path: the input type catalog.Shelf.Request is not served yet: it is not a top-level message of the Descriptor set, and gRPC Stubs serve only those so far
       #|a.yaml: /stubs/3/request/path: the input type legacy.LegacyRequest is not served yet: legacy.proto, which defines it, is a proto2 file, and gRPC Stubs serve only types of proto3 files so far
       #|a.yaml: /stubs/4/request/path: the input type edition.EditionRequest is not served yet: edition.proto, which defines it, is an editions file, and gRPC Stubs serve only types of proto3 files so far
     ),
@@ -368,6 +370,28 @@ test "a gRPC Stub and an HTTP Stub never shadow each other: a catch-all HTTP Stu
       #|a.yaml: /stubs/1: warning: the Stub "any-greeter-path" can never match: the Stub "catch-all" at a.yaml: /stubs/0 is tried first and matches every request this one would
       #|a.yaml: /stubs/3: warning: the Stub "hello-again" can never match: the Stub "hello" at a.yaml: /stubs/2 is tried first and matches every request this one would
       #|a.yaml: /stubs/4: warning: the Stub "after-hello" can never match: the Stub "catch-all" at a.yaml: /stubs/0 is tried first and matches every request this one would
+    ),
+  )
+}
+
+///|
+test "a method whose input or output type has a field in a oneof, or a proto3 optional field, is not served yet" {
+  inspect(
+    check_stubs(
+      (
+        #|  - id: choose
+        #|    mock: oneofs
+        #|    request: { path: /oneofs.Picker/Choose }
+        #|    response: { json: { name: x } }
+      ),
+    ),
+    content=(
+      #|a.yaml: /stubs/0/request/path: the input type oneofs.Pick is not served yet: its field word is in the oneof choice, and gRPC Stubs serve no optional or oneof fields so far
+      #|a.yaml: /stubs/0/request/path: the input type oneofs.Pick is not served yet: its field number is in the oneof choice, and gRPC Stubs serve no optional or oneof fields so far
+      #|a.yaml: /stubs/0/request/path: the input type oneofs.Pick is not served yet: its field exact is a proto3 optional field, and gRPC Stubs serve no optional or oneof fields so far
+      #|a.yaml: /stubs/0/request/path: the output type oneofs.Pick is not served yet: its field word is in the oneof choice, and gRPC Stubs serve no optional or oneof fields so far
+      #|a.yaml: /stubs/0/request/path: the output type oneofs.Pick is not served yet: its field number is in the oneof choice, and gRPC Stubs serve no optional or oneof fields so far
+      #|a.yaml: /stubs/0/request/path: the output type oneofs.Pick is not served yet: its field exact is a proto3 optional field, and gRPC Stubs serve no optional or oneof fields so far
     ),
   )
 }

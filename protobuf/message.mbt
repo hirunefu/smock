@@ -2,9 +2,8 @@
 // into smock's decoded form, the JSON text the engine, the Journal and
 // templates see, and encoded from JSON as ProtoJSON reads it
 // (https://protobuf.dev/programming-guides/json/). For now both serve
-// types whose fields are singular string, bool and int32 fields, each
-// named by its JSON name: the field's name in lowerCamelCase, as protoc
-// computes it.
+// types whose fields are singular string, bool and int32 fields without
+// presence.
 
 ///|
 /// Why JSON is not a message of the type it is encoded as. `pointer` is the
@@ -28,72 +27,55 @@ pub impl Show for EncodeError with fn output(self, logger) {
 }
 
 ///|
-/// The JSON name of a field named `name`: its name in lowerCamelCase, each
-/// `_` dropped and the letter after it in upper case, as protoc computes
-/// the `json_name` it writes in a set.
-fn json_name(name : String) -> String {
-  guard name.contains_char('_') else { return name }
-  let out = StringBuilder()
-  let mut upper = false
-  for c in name {
-    if c == '_' {
-      upper = true
-    } else if upper {
-      out.write_char(
-        if c >= 'a' && c <= 'z' {
-          (c.to_int() - 32).unsafe_to_char()
-        } else {
-          c
-        },
-      )
-      upper = false
-    } else {
-      out.write_char(c)
-    }
-  }
-  out.to_string()
+/// Whether the codec serves `field`: a singular string, bool or int32
+/// field, outside any oneof, so without presence, as a proto3 `optional`
+/// field is in its own oneof.
+fn is_served(field : FieldDescriptor) -> Bool {
+  field.label is (Optional | Required) &&
+  field.type_ is (String | Bool | Int32) &&
+  field.oneof_index is None
 }
 
 ///|
-/// The type of `field` when it is one the codec serves: a singular string,
-/// bool or int32 field.
-fn served_type(field : FieldDescriptor) -> FieldType? {
-  match (field.label, field.type_) {
-    (Repeated, _) => None
-    (_, Some(String | Bool | Int32) as type_) => type_
-    _ => None
-  }
-}
-
-///|
-/// Why the codec does not serve `field` yet, for a field that `served_type`
+/// Why the codec does not serve `field` yet, for a field that `is_served`
 /// does not serve: `done` is what it does not do, such as `decode`.
 fn not_served(field : FieldDescriptor, done : String) -> String {
-  let what = match (field.label, field.type_) {
-    (Repeated, _) => "is repeated"
-    (_, Some(type_)) if field.type_name == "" => "has the type \{type_}"
-    (_, _) => {
-      let name = field.type_name
-      "has the type \{if name.has_prefix(".") { name[1:].to_owned() } else { name }}"
-    }
+  let what = if field.label is Repeated {
+    "is repeated"
+  } else if field.type_name != "" {
+    let name = field.type_name
+    "has the type \{if name.has_prefix(".") { name[1:].to_owned() } else { name }}"
+  } else if field.type_ is (String | Bool | Int32) {
+    "is in a oneof or optional"
+  } else {
+    "has the type \{field.type_}"
   }
   "the field \{field.name} \{what}, which smock does not \{done} yet"
 }
 
 ///|
-/// The indices of `fields` in field-number order.
-fn by_number(fields : ReadOnlyArray[FieldDescriptor]) -> FixedArray[Int32] {
-  let order = FixedArray::make(fields.length(), 0)
-  for i in 0..<fields.length() {
-    // Insertion sort: a message has few fields.
-    let mut j = i
-    while j > 0 && fields[order[j - 1]].number > fields[i].number {
-      order[j] = order[j - 1]
-      j = j - 1
+/// The index in `fields` of the message's field numbered `number`, or -1,
+/// found by binary search in the index of its fields by number.
+fn MessageDescriptor::field_index(
+  self : MessageDescriptor,
+  number : Int32,
+) -> Int32 {
+  let order = self.by_number
+  let mut low = 0
+  let mut high = order.length()
+  while low < high {
+    let middle = (low + high) / 2
+    if self.fields[order[middle]].number < number {
+      low = middle + 1
+    } else {
+      high = middle
     }
-    order[j] = i
   }
-  order
+  if low < order.length() && self.fields[order[low]].number == number {
+    order[low]
+  } else {
+    -1
+  }
 }
 
 ///|
@@ -116,7 +98,7 @@ pub fn decode_json(
 ) -> Bytes raise DecodeError {
   let fields = message.fields
   for field in fields {
-    if served_type(field) is None {
+    if !is_served(field) {
       raise DecodeError(
         position=input.start_offset(),
         message=not_served(field, "decode"),
@@ -128,20 +110,13 @@ pub fn decode_json(
   let varints = FixedArray::make(fields.length(), 0UL)
   let reader = Reader(input)
   while !reader.at_end() {
-    let number = reader.tag()
-    let mut index = -1
-    for i in 0..<fields.length() {
-      if fields[i].number == number {
-        index = i
-        break
-      }
-    }
+    let index = message.field_index(reader.tag())
     guard index >= 0 else {
       reader.skip()
       continue
     }
     match (fields[index].type_, reader.wire_type()) {
-      (Some(String), Len) => {
+      (String, Len) => {
         let at = reader.pos
         let value = reader.length_delimited()
         if !is_utf8(value) {
@@ -152,27 +127,27 @@ pub fn decode_json(
         }
         strings[index] = Some(value)
       }
-      (Some(Bool | Int32), Varint) => varints[index] = reader.varint()
+      (Bool | Int32, Varint) => varints[index] = reader.varint()
       _ => reader.skip()
     }
   }
   let out = @buffer.Buffer(size_hint=input.length() + 16 * fields.length())
   out.write_byte(b'{')
-  let order = by_number(fields)
+  let order = message.by_number
   for n in 0..<order.length() {
     let i = order[n]
     if n > 0 {
       out.write_byte(b',')
     }
-    write_json_string(out, @utf8.encode(json_name(fields[i].name)))
+    write_json_string(out, @utf8.encode(fields[i].json_name))
     out.write_byte(b':')
     match fields[i].type_ {
-      Some(String) =>
+      String =>
         match strings[i] {
           Some(value) => write_json_string(out, value)
           None => out.write_bytes(b"\"\"")
         }
-      Some(Bool) =>
+      Bool =>
         out.write_bytes(if varints[i] != 0UL { b"true" } else { b"false" })
       _ => {
         let value = (varints[i] & 0xFFFF_FFFFUL).to_uint().reinterpret_as_int()
@@ -245,71 +220,72 @@ pub fn encode_json(
 ) -> Bytes raise EncodeError {
   let fields = message.fields
   for field in fields {
-    if served_type(field) is None {
+    if !is_served(field) {
       raise EncodeError(pointer="", message=not_served(field, "encode"))
     }
   }
   guard json is Object(members) else {
     raise EncodeError(
       pointer="",
-      message="must be an object: the message is a \{message.name}",
+      message="must be an object: the message is a \{message.full_name}",
     )
   }
-  let values : FixedArray[Json?] = FixedArray::make(fields.length(), None)
   for key, value in members {
-    let mut index = -1
-    for i in 0..<fields.length() {
-      if fields[i].name == key || json_name(fields[i].name) == key {
-        index = i
-        break
-      }
-    }
     let pointer = "/" +
       key.replace_all(old="~", new="~0").replace_all(old="/", new="~1")
-    guard index >= 0 else {
-      raise EncodeError(pointer~, message="is not a field of \{message.name}")
+    let field = match message.find_field_by_json_name(key) {
+      Some(field) => field
+      None =>
+        match message.find_field_by_name(key) {
+          Some(field) => field
+          None =>
+            raise EncodeError(
+              pointer~,
+              message="is not a field of \{message.full_name}",
+            )
+        }
     }
-    let field = fields[index]
     let fits = match (field.type_, value) {
-      (Some(String), String(_)) | (Some(Bool), True | False) => true
-      (Some(Int32), Number(n, ..)) =>
+      (String, String(_)) | (Bool, True | False) => true
+      (Int32, Number(n, ..)) =>
         n == n.floor() && n >= -2147483648.0 && n <= 2147483647.0
       _ => false
     }
     if !fits {
-      let wanted = match field.type_ {
-        Some(String) => "a string"
-        Some(Bool) => "true or false"
-        _ => "an integer from -2147483648 to 2147483647"
-      }
-      let type_ = match field.type_ {
-        Some(String) => "a string"
-        Some(Bool) => "a bool"
-        _ => "an int32"
+      let (wanted, type_) = match field.type_ {
+        String => ("a string", "a string")
+        Bool => ("true or false", "a bool")
+        _ => ("an integer from -2147483648 to 2147483647", "an int32")
       }
       raise EncodeError(
         pointer~,
         message="must be \{wanted}: the field \{field.name} is \{type_}",
       )
     }
-    values[index] = Some(value)
   }
   let writer = Writer()
-  let order = by_number(fields)
+  let order = message.by_number
   for n in 0..<order.length() {
-    let i = order[n]
-    let number = fields[i].number
-    match values[i] {
-      Some(String(text)) if text != "" => {
-        writer.tag(number, Len)
+    let field = fields[order[n]]
+    let value = match members.get(field.json_name) {
+      Some(value) => value
+      None =>
+        match members.get(field.name) {
+          Some(value) => value
+          None => continue
+        }
+    }
+    match value {
+      String(text) if text != "" => {
+        writer.tag(field.number, Len)
         writer.length_delimited(@utf8.encode(text))
       }
-      Some(True) => {
-        writer.tag(number, Varint)
+      True => {
+        writer.tag(field.number, Varint)
         writer.varint(1)
       }
-      Some(Number(n, ..)) if n != 0.0 => {
-        writer.tag(number, Varint)
+      Number(n, ..) if n != 0.0 => {
+        writer.tag(field.number, Varint)
         // A negative int32 is sign-extended to 64 bits, as protobuf
         // encodes it.
         writer.varint(n.to_int().to_int64().reinterpret_as_uint64())

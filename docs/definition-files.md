@@ -5720,7 +5720,8 @@ Nothing expires a copy, so plan for growth:
 A Mock can stand in for a gRPC service. It names the service's
 Descriptor set, the compiled form of its `.proto` files, with `grpc`.
 smock reads and checks the set with the Definition files. It does not
-serve gRPC calls yet.
+serve gRPC calls yet. The [gRPC guide](grpc.md) says how to build a set,
+what smock checks in it and what it keeps.
 
 ### Descriptor sets
 
@@ -5763,9 +5764,21 @@ mocks:
   greeter.json: /mocks/0/grpc/descriptorSet: "greeter.binpb": not a Descriptor set, a FileDescriptorSet in protobuf's binary encoding: octet 8: a length of 80 runs past the end of the input, which has 23 octets left
   ```
 
+- The set must be self-contained: it holds every file its files import.
+  A file it lacks is a problem at `descriptorSet` too, as are a file
+  that the set holds twice, a name defined twice, and a type that the
+  set names but does not define. Each problem is reported on its own
+  ([What smock checks](grpc.md#what-smock-checks)):
+
+  ```text
+  greeter.json: /mocks/0/grpc/descriptorSet: "orders.binpb": orders.proto imports common.proto, which is not in the set; build the set with protoc --include_imports, or with buf build
+  ```
+
   A reload with such a problem keeps serving the current definition set.
 - Each Mock names its own set, so two Mocks can hold two versions of one
-  service. A Mock without `grpc` holds no set.
+  service. A Mock without `grpc` holds no set. Each set is held decoded,
+  so a large set costs memory in every replica
+  ([Memory](grpc.md#memory)).
 
 ### gRPC Stubs
 
@@ -5811,10 +5824,11 @@ stubs:
 smock does not serve gRPC calls yet, so what a gRPC Stub can hold is
 limited for now. These are problems that say what is not served yet:
 
-- A method whose input or output type is a nested message, or comes from a
-  file that is not proto3, such as a proto2 or an editions file.
+- A method whose input or output type comes from a file that is not
+  proto3, such as a proto2 or an editions file.
 - A method whose input or output type has a field that is not a singular
-  `string`, `bool` or `int32`. Each side is checked on its own.
+  `string`, `bool` or `int32`, or that is in a oneof, a proto3 `optional`
+  field included. Each side is checked on its own.
 - Any field of the Stub other than `id`, `mock`, `priority`, `scenario`,
   `variables`, `dataWrites`, `fault.seed`, `request.method`,
   `request.path`, `request.headers`, a `json` body condition, and `json`,

@@ -1,0 +1,43 @@
+// Written for smock's tests: the proto3 parts of the descriptor model.
+syntax = "proto3";
+
+package shop.v1;
+
+import "shop/common.proto";
+import "shop/legacy.proto";
+
+message Order {
+  uint64 order_id = 1;
+  shop.Money total = 2;
+  repeated Line lines = 3;
+  map<string, int32> labels = 4;
+  optional string note = 5;
+  oneof payer {
+    string user_name = 6;
+    Company company = 7;
+  }
+  repeated int32 codes = 8 [packed = false];
+  string display_name = 9 [json_name = "title"];
+  shop.legacy.Item item = 10;
+
+  message Line {
+    string sku = 1;
+    Kind kind = 2;
+
+    enum Kind {
+      KIND_UNSPECIFIED = 0;
+      GOODS = 1;
+    }
+  }
+
+  message Company {
+    string name = 1;
+  }
+}
+
+service Orders {
+  rpc Get(Order) returns (Order);
+  rpc Watch(Order) returns (stream Order);
+  rpc Upload(stream Order) returns (Order);
+  rpc Chat(stream Order) returns (stream Order);
+}

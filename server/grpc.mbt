@@ -57,23 +57,21 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
     self.refuse_call(stream, "no Mock for this Host")
     return
   }
-  if mock.descriptor_set is None {
+  guard mock.descriptor_set is Some(set) else {
     self.refuse_call(stream, "the Mock has no Descriptor set")
     return
   }
-  guard mock.grpc_method(incoming.target) is Some(found) else {
+  guard set.find_method(incoming.target) is Some(rpc) else {
     self.refuse_call(stream, "unknown method")
     return
   }
-  if found.rpc.client_streaming || found.rpc.server_streaming {
+  if rpc.client_streaming || rpc.server_streaming {
     self.refuse_call(stream, "streaming methods are not served yet")
     return
   }
-  guard found.input is Some(input) && found.output is Some(output) else {
-    self.refuse_call(stream, "the method's types are not served yet")
-    return
-  }
-  let json = @protobuf.decode_json(input, message) catch {
+  // A message that does not parse, or whose type has a field that smock
+  // does not decode yet, does not decode.
+  let json = @protobuf.decode_json(set.input_of(rpc), message) catch {
     _ => {
       self.refuse_call(stream, "the request message cannot be decoded")
       return
@@ -106,7 +104,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
   }
   // A static reply was checked against the output type at load; a
   // templated one is checked here, once rendered.
-  let reply = encode_reply(output, plan.body) catch {
+  let reply = encode_reply(set.output_of(rpc), plan.body) catch {
     _ => {
       let fields = trailers_only(
         @grpc.Internal,

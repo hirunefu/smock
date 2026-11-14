@@ -111,18 +111,43 @@ test "errors say at which octet the input breaks" {
 
 ## Descriptor sets
 
-`@protobuf.read_descriptor_set(input)` reads a FileDescriptorSet. It keeps
-each file's name, package, syntax and dependencies; its top-level messages,
-with their fields (name, number, label, type and type name) and whether
-they set `message_set_wire_format`; and its services and methods, with
-their input and output types and streaming flags. It skips every other
-field of the set, such as source info, options and Buf's image extensions.
+`@protobuf.read_descriptor_set(input)` reads a FileDescriptorSet, as
+`protoc --include_imports -o` and `buf build -o` write it, and checks
+that it is self-contained. It keeps the descriptor model:
 
-It raises `DecodeError` when the input is not protobuf, when a field it
-keeps has another wire type than `descriptor.proto` gives it, when a string
-it keeps is not UTF-8, and when a syntax, a label or a type is not one that
-`descriptor.proto` defines. It checks nothing more: files may repeat, and
-type names need not resolve.
+- each file's name, package, syntax (proto2, proto3 or editions) and
+  dependencies;
+- its messages, nested ones included, with their full names, fields,
+  oneofs and extension ranges, and the options `map_entry` and
+  `message_set_wire_format`;
+- its enums and their values, aliases included;
+- its extensions, top-level and nested, and its services and methods,
+  with their streaming flags;
+- of a field: its number, label, type, type name, extendee, JSON name,
+  oneof, proto3 `optional` and the option `packed`.
+
+A field's JSON name is its `json_name`, or else its name in
+lowerCamelCase, as protoc computes it. The reader skips every other field
+of the set, such as source info, other options and Buf's image
+extensions, so a set built with `buf build`'s defaults reads as it is.
+
+It raises `DescriptorSetError`:
+
+- `NotDecoded(DecodeError)` when the input is not protobuf, when a field
+  it keeps has another wire type than `descriptor.proto` gives it, when a
+  string it keeps is not UTF-8, when a syntax, a label or a type is not
+  one that `descriptor.proto` defines, and when messages nest deeper than
+  100;
+- `Invalid(problems)`, with every problem, when a file is in the set more
+  than once or imports one that is not in it, when a full name is defined
+  twice, when a message uses a field number twice or names a oneof it
+  does not have, when a type that a field, a method or an extension names
+  is not in the set, and when an extension's number is not one its
+  message declares for extensions, or is taken by another extension.
+  Types are checked once every import is in the set and every name is
+  defined once, so a missing import gives no other problem. A set whose
+  full names would take more than 16 MiB is refused too, as soon as they
+  do.
 
 ```mbt check
 ///|
@@ -135,6 +160,64 @@ test "read a Descriptor set" {
   inspect(
     "\{file.name} \{file.package_name} \{file.syntax == Proto3}",
     content="a.proto demo true",
+  )
+}
+
+///|
+test "a set that lacks an import is refused" {
+  // The file a.proto, which imports b.proto.
+  let input = b"\x0a\x12\x0a\x07a.proto\x1a\x07b.proto"
+  let problems = try @protobuf.read_descriptor_set(input[:]) catch {
+    Invalid(problems) => problems.join("\n")
+    NotDecoded(err) => "\{err}"
+  } noraise {
+    _ => "read"
+  }
+  inspect(
+    problems,
+    content="a.proto imports b.proto, which is not in the set; build the set with protoc --include_imports, or with buf build",
+  )
+}
+```
+
+## Lookups
+
+Decoding, encoding and conditions share these lookups. Each reads an
+index built when the set is read, so none walks the set.
+
+- `set.find_method(path)`: a method by the path gRPC calls it by, such as
+  `/helloworld.Greeter/SayHello`; `set.input_of(method)` and
+  `set.output_of(method)` give its types.
+- `set.find_message(full_name)`, `set.find_enum(full_name)` and
+  `set.find_extension(full_name)`: by a full name without a leading dot,
+  such as `helloworld.HelloRequest` or `shop.priority`.
+- `set.message_of(field)` and `set.enum_of(field)`: a field's message,
+  group or enum type.
+- `message.find_field_by_name(name)`,
+  `message.find_field_by_json_name(name)` and
+  `message.find_field_by_number(number)`: a field by its proto name, its
+  JSON name or its number. `message.find_extension(number)`: the extension
+  of the set that extends the message with that number.
+- `enum.find_value_by_name(name)` and `enum.find_value_by_number(number)`:
+  a value by its name, or by its number, which gives its first name when
+  aliases share the number.
+
+```mbt check
+///|
+test "find a method, its input type and a field" {
+  // greeter.proto: package g, a message Req with the field user_name, and
+  // a service Greeter with the method Hi from Req to Req.
+  let set = @protobuf.read_descriptor_set(
+    b"\x0a\x53\x0a\x0dgreeter.proto\x12\x01g\x22\x16\x0a\x03Req\x12\x0f\x0a\x09user_name\x18\x01\x28\x09\x32\x1f\x0a\x07Greeter\x12\x14\x0a\x02Hi\x12\x06.g.Req\x1a\x06.g.Req\x62\x06proto3"[:],
+  )
+  guard set.find_method("/g.Greeter/Hi") is Some(hi) else { fail("no Hi") }
+  let input = set.input_of(hi)
+  guard input.find_field_by_json_name("userName") is Some(field) else {
+    fail("no userName")
+  }
+  inspect(
+    "\{input.full_name}: \{field.name} = \{field.number}",
+    content="g.Req: user_name = 1",
   )
 }
 ```

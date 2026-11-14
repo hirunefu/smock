@@ -212,11 +212,11 @@ test "JSON that is not a message of the type is an error at its JSON Pointer" {
   let count = message_type(catalog_set, "CountReply")
   inspect(
     encoded(count, [1]),
-    content="error: must be an object: the message is a CountReply",
+    content="error: must be an object: the message is a catalog.CountReply",
   )
   inspect(
     encoded(count, { "cuont": 1 }),
-    content="error: /cuont: is not a field of CountReply",
+    content="error: /cuont: is not a field of catalog.CountReply",
   )
   inspect(
     encoded(count, { "shelf": 1 }),

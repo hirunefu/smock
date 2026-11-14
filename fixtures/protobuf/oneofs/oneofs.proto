@@ -1,0 +1,18 @@
+// Written for smock's tests: a method whose types hold a oneof and a
+// proto3 optional field, which gRPC Stubs do not serve yet.
+syntax = "proto3";
+
+package oneofs;
+
+message Pick {
+  string name = 1;
+  oneof choice {
+    string word = 2;
+    int32 number = 3;
+  }
+  optional bool exact = 4;
+}
+
+service Picker {
+  rpc Choose(Pick) returns (Pick);
+}

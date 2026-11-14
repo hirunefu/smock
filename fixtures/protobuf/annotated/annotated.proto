@@ -1,0 +1,40 @@
+// Written for smock's tests: a file with comments and custom options,
+// which smock skips.
+syntax = "proto3";
+
+package annotated;
+
+import "google/protobuf/descriptor.proto";
+
+// A note on a field.
+extend google.protobuf.FieldOptions {
+  string note = 50000;
+}
+
+// Whether a message is audited.
+extend google.protobuf.MessageOptions {
+  bool audited = 50001;
+}
+
+// An account.
+message Account {
+  option (audited) = true;
+
+  // The account's ID.
+  string id = 1 [(note) = "primary key"];
+  // The account's owner.
+  string owner = 2 [
+    (note) = "a user's name",
+    deprecated = true
+  ];
+}
+
+// The accounts service.
+service Accounts {
+  option deprecated = true;
+
+  // Gets an account.
+  rpc Get(Account) returns (Account) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}

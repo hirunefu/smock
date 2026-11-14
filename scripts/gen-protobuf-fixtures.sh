@@ -70,15 +70,25 @@ target() {
 
 fixtures=fixtures/protobuf
 
-# descriptor_set <directory> <set> <file>...: builds the Descriptor set of
-# the .proto files of fixtures/protobuf/<directory>, named relative to it,
-# with every file they import, into fixtures/protobuf/<directory>/<set>.
-descriptor_set() {
-  dir=$fixtures/$1
-  path=$dir/$2
-  shift 2
-  "$protoc" -I "$dir" --include_imports --descriptor_set_out="$(target "$path")" "$@"
+# build_set <flags> <directory> <set> <file>...: builds the Descriptor set
+# of the .proto files of fixtures/protobuf/<directory>, named relative to
+# it, with protoc's <flags>, a list split on spaces, into
+# fixtures/protobuf/<directory>/<set>.
+build_set() {
+  flags=$1
+  dir=$fixtures/$2
+  path=$dir/$3
+  shift 3
+  # shellcheck disable=SC2086 # the flags are split on purpose
+  "$protoc" -I "$dir" $flags --descriptor_set_out="$(target "$path")" "$@"
   wrote "$path"
+}
+
+# descriptor_set <directory> <set> <file>...: builds the Descriptor set of
+# the .proto files, with every file they import, into
+# fixtures/protobuf/<directory>/<set>.
+descriptor_set() {
+  build_set --include_imports "$@"
 }
 
 # message <directory> <proto file> <type> <name>: encodes the message in
@@ -128,6 +138,34 @@ hex_test helloworld/greeter.binpb greeter_set "The Descriptor set of gRPC's hell
 # they do not serve yet, from a proto3, a proto2 and an editions file.
 descriptor_set catalog catalog.binpb catalog.proto
 hex_test catalog/catalog.binpb catalog_set "The Descriptor set of fixtures/protobuf/catalog/catalog.proto, fixtures/protobuf/catalog/catalog.binpb, in hex." definitions
+
+# Every part of the descriptor model: proto2, proto3 and an edition, nested
+# types, enums with an alias, groups, extensions, maps, oneofs and streaming.
+descriptor_set model shop.binpb shop/orders.proto
+hex_test model/shop.binpb shop_set "The Descriptor set of fixtures/protobuf/model/shop/orders.proto and its imports, fixtures/protobuf/model/shop.binpb, in hex." protobuf
+
+# A set built without --include_imports, which lacks the file that
+# orders.proto imports.
+build_set "" orders orders-without-imports.binpb orders.proto
+copy orders/orders-without-imports.binpb schema/v1/fixtures/body-files/orders-without-imports.binpb
+
+# A set with source info and custom options, which smock skips.
+build_set "--include_imports --include_source_info" annotated annotated.binpb annotated.proto
+
+# The image that buf build -o writes for helloworld.proto with its defaults:
+# source info, and Buf's field 8042 in each file.
+message buf-image buf/alpha/image/v1/image.proto buf.alpha.image.v1.Image greeter
+
+# Sets that protoc would never write, written as text: a file twice, a name
+# defined twice, and types that do not resolve.
+message invalid google/protobuf/descriptor.proto google.protobuf.FileDescriptorSet twice
+message invalid google/protobuf/descriptor.proto google.protobuf.FileDescriptorSet duplicate-name
+message invalid google/protobuf/descriptor.proto google.protobuf.FileDescriptorSet unresolved
+copy invalid/duplicate-name.binpb schema/v1/fixtures/body-files/duplicate-name.binpb
+
+# A method whose types hold a oneof and a proto3 optional field.
+descriptor_set oneofs oneofs.binpb oneofs.proto
+hex_test oneofs/oneofs.binpb oneofs_set "The Descriptor set of fixtures/protobuf/oneofs/oneofs.proto, fixtures/protobuf/oneofs/oneofs.binpb, in hex." definitions
 
 # The request and reply of a call to SayHello, and messages of catalog.proto
 # with string, bool and int32 fields, which smock/protobuf decodes and
