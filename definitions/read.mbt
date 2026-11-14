@@ -467,7 +467,8 @@ fn File::read_descriptor_set(
     @protobuf.read_descriptor_set(bytes) catch {
       err => {
         self.error(
-          pointer, "\{path.escape()}: not a Descriptor set, a FileDescriptorSet in protobuf's binary encoding: \{err}",
+          pointer,
+          "\{path.escape()}: not a Descriptor set, a FileDescriptorSet in protobuf's binary encoding: \{err}",
         )
         return None
       }
