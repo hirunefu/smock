@@ -1090,7 +1090,7 @@ The repository is a MoonBit workspace (`moon.work`) of seven modules:
 | Directory | Module | What it is |
 |---|---|---|
 | `.` | `smock/smock` | smock itself. Its parts are packages of this module. |
-| `grpc/` | `smock/grpc` | gRPC's wire rules: the content type, the 5-octet prefix that frames each message, and the seventeen status codes with their names. |
+| `grpc/` | `smock/grpc` | gRPC's wire rules: the content type, the 5-octet prefix that frames each message, the seventeen status codes with their names, and the percent-encoding of a status message. |
 | `http1/` | `smock/http1` | The HTTP/1.1 codec. |
 | `protobuf/` | `smock/protobuf` | Protobuf's wire format, a reader of Descriptor sets (FileDescriptorSets) that checks them and indexes their messages, fields, enums and methods for lookups, messages decoded into JSON and encoded from it, and JSON values checked against a field's type as smock prints it (documented in `protobuf/README.mbt.md`). |
 | `re2/` | `smock/re2` | RE2-syntax regular expressions. |

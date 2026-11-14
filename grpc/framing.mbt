@@ -4,10 +4,6 @@
 // (https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md).
 
 ///|
-/// The content type of gRPC calls and of their replies.
-pub let content_type : String = "application/grpc"
-
-///|
 /// The length of a message's prefix, in octets.
 pub let prefix_length : Int32 = 5
 

@@ -3,15 +3,19 @@
 A Mock can stand in for a gRPC service. It names the service's
 Descriptor set, the compiled form of its `.proto` files, and smock reads
 and checks the set when it loads the Definition files. Its gRPC Stubs then
-answer unary calls, on the plain port over h2c. This guide shows a first
-call, says how a call reaches a Stub and how smock answers it, and how to
-build a set that smock reads. The
+answer unary calls, on the plain port over h2c and on the TLS port over
+h2. This guide shows a first call, says which requests are gRPC calls, how
+a call reaches a Stub and how smock answers it, and how to build a set
+that smock reads. The
 [Definition-file reference](definition-files.md#grpc) describes the
 Mock's `grpc` field and gRPC Stubs.
 
 ## Contents
 
 - [Quick start](#quick-start)
+- [Ports and detection](#ports-and-detection)
+  - [Other subtypes](#other-subtypes)
+  - [Requests that are not gRPC calls](#requests-that-are-not-grpc-calls)
 - [How smock serves a call](#how-smock-serves-a-call)
   - [The call's Mock](#the-calls-mock)
   - [Reloads](#reloads)
@@ -21,6 +25,10 @@ Mock's `grpc` field and gRPC Stubs.
   - [Printed forms](#printed-forms)
   - [The reply](#the-reply)
   - [The Journal and the metrics](#the-journal-and-the-metrics)
+- [Status and message](#status-and-message)
+  - [The status](#the-status)
+  - [The message](#the-message)
+  - [Trailers-Only](#trailers-only)
 - [Unmatched calls](#unmatched-calls)
   - [Calls answered from their HEADERS](#calls-answered-from-their-headers)
   - [The Near miss trailer](#the-near-miss-trailer)
@@ -77,6 +85,14 @@ grpcurl -plaintext -protoset defs/files/greeter.binpb \
 }
 ```
 
+The same call goes to the TLS port over h2. Leave out `-plaintext`, and
+add `-insecure` while smock serves its self-signed certificate:
+
+```sh
+grpcurl -insecure -protoset defs/files/greeter.binpb \
+  -d '{"name": "Tom"}' localhost:8443 helloworld.Greeter/SayHello
+```
+
 The Journal records the call, with the request message as JSON:
 
 ```sh
@@ -91,14 +107,77 @@ reports `Code: Unimplemented` and `Message: no Stub matched`, and the
 Journal records the call as unmatched
 ([Unmatched calls](#unmatched-calls)).
 
+## Ports and detection
+
+smock serves gRPC on the ports that serve HTTP, beside HTTP. gRPC has no
+port of its own:
+
+- the plain port, over h2c: HTTP/2 without TLS, which grpcurl's
+  `-plaintext` and a channel without credentials send;
+- the TLS port, over h2: ALPN chooses HTTP/2 when the client offers `h2`,
+  as gRPC clients do ([h2 on the TLS port](http2.md#h2-on-the-tls-port)).
+
+`--tls-http2 off` also turns off gRPC over TLS. The TLS port then offers
+`http/1.1` alone, so a gRPC client, which offers only `h2`, fails the
+handshake with the `no_application_protocol` alert: grpcurl reports
+`remote error: tls: no application protocol`. The plain port still serves
+gRPC. The admin port never serves gRPC: it serves HTTP/1.1 only.
+
+An HTTP/2 request is a gRPC call when its `content-type` is
+`application/grpc`, alone or followed by `+` or `;`. The text after `+`,
+up to any `;`, is the call's subtype. It names how the call's messages
+are encoded, and no subtype means protobuf:
+
+| `content-type` | The request |
+|---|---|
+| `application/grpc`, `application/grpc;v=1` | a gRPC call that smock serves |
+| `application/grpc+proto`, `application/grpc+proto;v=1` | a gRPC call that smock serves |
+| `application/grpc+json`, or any other subtype | a gRPC call that smock refuses ([Other subtypes](#other-subtypes)) |
+| any other, such as `application/grpc-web` or `application/json`, or none | an HTTP request ([Requests that are not gRPC calls](#requests-that-are-not-grpc-calls)) |
+
+smock compares the content type as sent, in its case, as grpc-go does.
+
+smock's HTTP/2 checks of a request come first, whatever its content type
+([Requests smock refuses](http2.md#requests-smock-refuses)). A request that
+HTTP/1.1's rules refuse gets 400, and a header list over
+`--header-size-limit` gets 431, with no gRPC status. A gRPC client reports
+400 as INTERNAL and 431 as UNKNOWN, as gRPC reads answers that are not
+gRPC.
+
+### Other subtypes
+
+smock encodes messages with protobuf only. A call with another subtype,
+such as `application/grpc+json`, gets UNIMPLEMENTED as soon as its HEADERS
+arrive. smock sends it as [Trailers-Only](#trailers-only): one HEADERS
+block that ends the stream, with `:status` 200, `content-type: application/grpc`,
+`grpc-status: 12` and the fixed `grpc-message`
+`only the proto content subtype is served`. When the client is still
+sending its request, RST_STREAM `NO_ERROR` follows and tells it to stop.
+
+The call never reaches the Stubs. It is not in the Journal, and the
+request metrics count it as a rejected request, with `mock=""` and
+`stub=""`. A call whose method is not `POST` gets that method's answer
+instead ([Calls smock does not serve yet](#calls-smock-does-not-serve-yet)).
+
+### Requests that are not gRPC calls
+
+Every other request is an HTTP request. The Mock's HTTP Stubs answer it,
+or its `noMatch` answer when none matches, as before:
+
+- an HTTP/2 request with another content type, gRPC-Web's
+  `application/grpc-web` included, or with none;
+- every HTTP/1.1 request, one with `content-type: application/grpc`
+  included. gRPC needs HTTP/2's trailers, so smock serves no gRPC over
+  HTTP/1.1.
+
+Such a request never matches a gRPC Stub, even on the path of a gRPC
+method.
+
 ## How smock serves a call
 
-An HTTP/2 request on the plain port whose `content-type` is
-`application/grpc` is a gRPC call. Every other request, an HTTP/1.1
-request with that content type included, is an HTTP request, which the
-Mock's HTTP Stubs answer as before.
-
-When the call's HEADERS arrive, smock finds the call's Mock
+smock tells a gRPC call by its content type
+([Ports and detection](#ports-and-detection)). When the call's HEADERS
+arrive, smock finds the call's Mock
 ([The call's Mock](#the-calls-mock)) and the method that the call's
 `:path`, such as `/helloworld.Greeter/SayHello`, names in the Mock's set.
 A call that cannot reach a gRPC Stub, since there is no such Mock, set or
@@ -448,7 +527,9 @@ its value. It sends what a gRPC server sends:
 - HEADERS with `:status` 200, `content-type: application/grpc`,
   `smock-mock` when the Default Mock answered, and `date`;
 - one DATA frame with the reply message, framed;
-- trailers with `grpc-status: 0`, which end the stream.
+- trailers with `grpc-status: 0`, and `grpc-message` when the Stub gives
+  a message ([Status and message](#status-and-message)), which end the
+  stream.
 
 A reply larger than the client's flow-control windows goes out as the
 client widens them, and the trailers follow it.
@@ -465,8 +546,9 @@ brought, as received, and `truncated` says whether the JSON was cut at
 `--journal-body-limit`.
 
 The entry's `grpcStatus` is the name of the gRPC status the call got:
-`OK` for a reply, or the status smock answered with instead, such as
-`UNIMPLEMENTED` for an unmatched call, or `INTERNAL`. Its `status` stays
+the status of the Stub's reply, `OK` unless its `grpc` names another, or
+the status smock answered with instead, such as `UNIMPLEMENTED` for an
+unmatched call, or `INTERNAL`. Its `status` stays
 the HTTP status, 200 for a reply and for an unmatched call, as gRPC sends
 them: a client learns of an error from `grpc-status`, not from
 `:status`. The entry of an HTTP request has no `grpcStatus`.
@@ -490,13 +572,136 @@ The request metrics count a call that a Stub answered under its Mock and
 Stub, as they count an HTTP request, and a call that no Stub matched as
 an unmatched request of its Mock.
 
+## Status and message
+
+A gRPC Stub's reply ends with a gRPC status, `OK` unless its `grpc` gives
+another, and may carry a status message. A Stub's reply, or each of its
+`responses`, gives them in `grpc`
+([The status of a gRPC reply](definition-files.md#the-status-of-a-grpc-reply)).
+With weighted `responses`, a dependency can fail one call in ten:
+
+```yaml
+stubs:
+  - id: hello-flaky
+    mock: greeter
+    request: { path: /helloworld.Greeter/SayHello }
+    responses:
+      - { weight: 9, json: { message: Hello } }
+      - { weight: 1, grpc: { status: UNAVAILABLE, message: "try again ☺" } }
+```
+
+About one call in ten then gets UNAVAILABLE, and a gRPC client reports it
+with the message `try again ☺`. The others get `{"message": "Hello"}`.
+grpcurl prints such an error as:
+
+```text
+ERROR:
+  Code: Unavailable
+  Message: try again ☺
+```
+
+The Journal records each call with the status it got, `OK` or
+`UNAVAILABLE`, as its `grpcStatus`, and the HTTP status 200.
+
+### The status
+
+`status` is a name of one of gRPC's seventeen status codes. smock sends
+its code in `grpc-status`:
+
+| Name | Code | Name | Code |
+|---|---|---|---|
+| `OK` | 0 | `RESOURCE_EXHAUSTED` | 8 |
+| `CANCELLED` | 1 | `FAILED_PRECONDITION` | 9 |
+| `UNKNOWN` | 2 | `ABORTED` | 10 |
+| `INVALID_ARGUMENT` | 3 | `OUT_OF_RANGE` | 11 |
+| `DEADLINE_EXCEEDED` | 4 | `UNIMPLEMENTED` | 12 |
+| `NOT_FOUND` | 5 | `INTERNAL` | 13 |
+| `ALREADY_EXISTS` | 6 | `UNAVAILABLE` | 14 |
+| `PERMISSION_DENIED` | 7 | `DATA_LOSS` | 15 |
+| | | `UNAUTHENTICATED` | 16 |
+
+The name is written in upper case, as gRPC writes it. Any other text is a
+problem at `status`, which lists the names. The status is never a
+template, even with `template: true`.
+
+A status other than `OK` is an error. A unary call gets a reply message or
+an error, never both, so an error that also gives `json` is a problem at
+its `json`. A gRPC Stub cannot set an HTTP status: every answer to a gRPC
+call has `:status` 200, and the client reads the outcome from
+`grpc-status`.
+
+### The message
+
+`message` is any Unicode text. smock sends it in `grpc-message`,
+percent-encoded, as gRPC's protocol requires, and a gRPC client decodes it
+back. smock encodes the text's UTF-8:
+
+- each octet from 0x20 to 0x7E, other than `%`, stays as it is;
+- every other octet becomes `%` and two upper-case hex digits;
+- a space at either end becomes `%20`, since HTTP/2 refuses a field value
+  with a space at either end.
+
+So `try again ☺` goes out as `try again %E2%98%BA`, and gRPC's own test
+message, `"\t\ntest with whitespace\r\nand Unicode BMP ☺ and non-BMP 😈\t\n"`,
+as:
+
+```text
+grpc-message: %09%0Atest with whitespace%0D%0Aand Unicode BMP %E2%98%BA and non-BMP %F0%9F%98%88%09%0A
+```
+
+With `template: true`, the message is a text template, rendered after the
+reply message, in the same rendering, so it can name what the call asked
+for:
+
+```yaml
+response:
+  template: true
+  grpc: { status: NOT_FOUND, message: "no user called ${body.name}" }
+```
+
+The control characters it renders, such as a line break, are kept, then
+percent-encoded, unlike a header value's, which become spaces. A message
+that fails to render gets INTERNAL `template failed`, like any template
+failure, and the Journal entry's `templateError` points at
+`/response/grpc/message`.
+
+A reply with `OK` may give a message too. It goes in the trailers, after
+`grpc-status: 0`, though most clients ignore the message of a call that
+succeeded.
+
+### Trailers-Only
+
+An error goes out as Trailers-Only, as gRPC servers send it: one HEADERS
+block that ends the stream, with no DATA and no trailers after it. Its
+fields are, in order:
+
+- `:status: 200`;
+- `content-type: application/grpc`;
+- `grpc-status`, the status's code;
+- `grpc-message`, when the reply gives a message;
+- smock's own fields: `smock-mock` when the Default Mock answered, and
+  `smock-near-miss` for an [unmatched call](#unmatched-calls);
+- `date`.
+
+```text
+:status: 200
+content-type: application/grpc
+grpc-status: 14
+grpc-message: try again %E2%98%BA
+date: Sat, 14 Nov 2026 07:00:00 GMT
+```
+
+No gRPC reply carries `content-length` or `grpc-encoding`: smock never
+compresses a reply. A gRPC client reads every field of a Trailers-Only
+answer as trailing metadata.
+
 ## Unmatched calls
 
 A call that no gRPC Stub on its method matches gets UNIMPLEMENTED, the
 status gRPC servers give a method they do not serve. smock sends it as
-Trailers-Only: one HEADERS block that ends the stream, with `:status` 200,
-`content-type: application/grpc`, `grpc-status: 12` and the fixed
-`grpc-message` `no Stub matched`. With the quick start's Stub, a call with
+[Trailers-Only](#trailers-only): one HEADERS block that ends the stream,
+with `:status` 200, `content-type: application/grpc`, `grpc-status: 12`
+and the fixed `grpc-message` `no Stub matched`. With the quick start's Stub, a call with
 `{"name": "Ann"}` gets:
 
 ```text
@@ -624,7 +829,7 @@ fit the output type, whose `templateError` says why:
 
 | The call | `grpc-message` |
 |---|---|
-| The Stub's reply, a `variables` value or a `dataWrites` value fails to render, or the rendered reply does not fit the output type | `template failed` |
+| The Stub's reply, its message, a `variables` value or a `dataWrites` value fails to render, or the rendered reply does not fit the output type | `template failed` |
 | A write of the Stub's `dataWrites` cannot be applied | `data write failed` |
 | The Stub's writes do not fit the bound on per-Session state | `state limit reached` |
 

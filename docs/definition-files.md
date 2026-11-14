@@ -80,6 +80,7 @@ in a definitions directory, such as `defs/`, that `smock serve --dir` and
 - [gRPC](#grpc)
   - [Descriptor sets](#descriptor-sets)
   - [gRPC Stubs](#grpc-stubs)
+  - [The status of a gRPC reply](#the-status-of-a-grpc-reply)
   - [gRPC Stub conditions](#grpc-stub-conditions)
 - [Faults](#faults)
   - [Delays](#delays)
@@ -1043,7 +1044,9 @@ unmatched requests is refused.
 A Stub's `response` has a `status`, `headers`, and a body. A Stub can give
 several responses to pick from instead
 ([Several responses](#several-responses)). `status` is required, except on a
-[gRPC Stub](#grpc-stubs), whose reply has none.
+[gRPC Stub](#grpc-stubs), whose reply has none: it gives `grpc` instead,
+the gRPC status and message its reply ends with
+([The status of a gRPC reply](#the-status-of-a-grpc-reply)).
 
 `headers` maps each header name to a string or to an array of strings.
 An array sends one field per value, in order, where the name stands.
@@ -1276,7 +1279,10 @@ Stub answers about one request in ten with a 503:
 - A Stub gives exactly one of `response` and `responses`.
 - `responses` holds 1 to 100 responses, in the order written. Each is a
   response as `response` gives it, with its own status, headers, body,
-  body file, `json`, events or `llm`, and `template`, plus `weight`.
+  body file, `json`, events or `llm`, `grpc` and `template`, plus
+  `weight`. On a gRPC Stub, `responses` can mix replies and errors, so
+  that one call in ten fails
+  ([The status of a gRPC reply](#the-status-of-a-grpc-reply)).
 - `weight` is an integer from 1 to 1,000,000, by default 1. A response is
   picked with the probability of its weight over the sum of the weights:
   9 and 1 give the 200 to nine requests in ten.
@@ -3606,7 +3612,11 @@ What is a template with `template: true`:
 - In `llm`, the text, each chunk, `id`, `model` and each tool call's
   `name`, `id` and `arguments` are templates, as
   [Templates in LLM replies](#templates-in-llm-replies) says.
-- `status` and an event's `delay` are never templated.
+- A gRPC Stub's `grpc.message` is a text template. The control characters
+  it renders are kept, then percent-encoded
+  ([The status of a gRPC reply](#the-status-of-a-grpc-reply)).
+- `status`, a gRPC Stub's `grpc.status` and an event's `delay` are never
+  templated.
 
 With `template` off, nothing is parsed or rendered: `${` is plain text and
 `$each` a plain key.
@@ -5726,9 +5736,10 @@ Nothing expires a copy, so plan for growth:
 A Mock can stand in for a gRPC service. It names the service's
 Descriptor set, the compiled form of its `.proto` files, with `grpc`.
 smock reads and checks the set with the Definition files, and its
-[gRPC Stubs](#grpc-stubs) answer unary calls. The [gRPC guide](grpc.md)
-shows a first call, says how smock serves a call, and how to build a set,
-what smock checks in it and what it keeps.
+[gRPC Stubs](#grpc-stubs) answer unary calls, on the plain port over h2c
+and on the TLS port over h2. The [gRPC guide](grpc.md) shows a first call,
+says which requests are gRPC calls and how smock serves a call, and how to
+build a set, what smock checks in it and what it keeps.
 
 ### Descriptor sets
 
@@ -5807,7 +5818,9 @@ stubs:
 - The method must be unary. A Stub on a client-, server- or
   bidi-streaming method is a problem at its `path`. Streaming methods are
   planned for R3, a later release.
-- A gRPC Stub's reply is `json`, the reply message, and it has no
+- A gRPC Stub's reply is `json`, the reply message, and `grpc`, the gRPC
+  status and message it ends with
+  ([The status of a gRPC reply](#the-status-of-a-grpc-reply)). It has no
   `status`: every gRPC reply has the HTTP status 200. `status` is
   required on HTTP Stubs only. smock adds no `Content-Type` for a gRPC
   Stub's `json`.
@@ -5833,9 +5846,13 @@ stubs:
   is rendered. One that is not a message of the type gets INTERNAL, and
   the call's Journal entry says why in `templateError`.
 - HTTP requests never match a gRPC Stub, and a gRPC Stub is never their
-  [Near miss](#when-no-stub-matches). So an HTTP request such as
-  `POST /helloworld.Greeter/SayHello` over HTTP/1.1 goes to the Mock's
-  HTTP Stubs, then gets its `noMatch` answer.
+  [Near miss](#when-no-stub-matches). An HTTP request is every request
+  but a gRPC call, an HTTP/2 request whose `content-type` is
+  `application/grpc`, alone or followed by `+` or `;`
+  ([Ports and detection](grpc.md#ports-and-detection)). So
+  `POST /helloworld.Greeter/SayHello` over HTTP/1.1, or over HTTP/2 with
+  `content-type: application/grpc-web`, goes to the Mock's HTTP Stubs,
+  then gets its `noMatch` answer.
 - A gRPC Stub and an HTTP Stub never [shadow](#a-stub-that-can-never-match)
   each other.
 - gRPC calls match gRPC Stubs only. A call sees the Stub as a `POST` to
@@ -5872,7 +5889,58 @@ what is not served yet:
 - Any field of the Stub other than `id`, `mock`, `priority`, `scenario`,
   `variables`, `dataWrites`, `fault.seed`, `request.method`,
   `request.path`, `request.headers`, a `json` body condition, and `json`,
-  `template` and `weight` in a reply.
+  `grpc`, `template` and `weight` in a reply.
+
+### The status of a gRPC reply
+
+A gRPC Stub's reply, or each of its `responses`, may give `grpc`: the gRPC
+status the reply ends with, and a status message. This Stub fails about
+one call in ten with UNAVAILABLE:
+
+```yaml
+stubs:
+  - id: hello-flaky
+    mock: greeter
+    request: { path: /helloworld.Greeter/SayHello }
+    responses:
+      - { weight: 9, json: { message: Hello } }
+      - { weight: 1, grpc: { status: UNAVAILABLE, message: "try again ☺" } }
+```
+
+- `grpc` is an object with two fields, `status` and `message`, both
+  optional. A reply without it ends with `OK` and no message.
+- `status` is a name of one of gRPC's seventeen status codes, from `OK`,
+  0, to `UNAUTHENTICATED`, 16, as gRPC writes them: `OK`, `CANCELLED`,
+  `UNKNOWN`, `INVALID_ARGUMENT`, `DEADLINE_EXCEEDED`, `NOT_FOUND`,
+  `ALREADY_EXISTS`, `PERMISSION_DENIED`, `RESOURCE_EXHAUSTED`,
+  `FAILED_PRECONDITION`, `ABORTED`, `OUT_OF_RANGE`, `UNIMPLEMENTED`,
+  `INTERNAL`, `UNAVAILABLE`, `DATA_LOSS` and `UNAUTHENTICATED`. Another
+  name, a lower-case one included, is a problem at `status`. It is `OK`
+  when left out, and never a template.
+- `message` is any Unicode text, which smock sends in `grpc-message`,
+  percent-encoded, and which a gRPC client decodes back. With
+  `template: true`, it is a text template, rendered after the reply
+  message. The control characters it renders, such as a line break, are
+  kept, not turned into spaces as in a header value.
+- A status other than `OK` is an error, and a gRPC call gets a reply
+  message or an error, never both. So an error that also gives `json` is a
+  problem at its `json`:
+
+  ```text
+  greeter.yaml: /stubs/0/response/json: is not allowed with the gRPC status NOT_FOUND: a gRPC call gets a reply message or an error, never both
+  ```
+
+- An error goes out as Trailers-Only, one HEADERS block that ends the
+  stream, as gRPC servers send it. A reply with `OK` goes out as HEADERS,
+  the reply message in one DATA frame, then the trailers, which carry the
+  status message, if it has one.
+- An HTTP Stub's response cannot give `grpc`: it is a problem at `grpc`,
+  which says that the Stub's exact path names no method of its Mock's set.
+- The Journal records the status a call got as its `grpcStatus`, while its
+  HTTP status stays 200.
+
+The [gRPC guide](grpc.md#status-and-message) shows what goes out on the
+wire and how smock percent-encodes a message.
 
 ### gRPC Stub conditions
 

@@ -156,7 +156,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       no_work_frames: NoWorkFrames::new(),
       settings_acked: false,
       refused: 0,
-      refused_status: 0,
+      refusal: Status(0),
       continuing: 0,
       connect: 0,
       call_begun: 0,
@@ -247,17 +247,18 @@ priv struct H2Connection {
   /// Whether the client has acknowledged smock's SETTINGS, and so knows
   /// the concurrent-streams limit.
   mut settings_acked : Bool
-  /// The stream whose request smock refuses with `refused_status` for the
-  /// frame being handled, or 0: 400 for a request HTTP/1.1's rules refuse,
-  /// 413 for a body over `--body-limit`, 431 for a header list over
-  /// `--header-size-limit` or with more fields than `--header-count-limit`.
-  /// It gets that status once it is known whether that frame ended the
-  /// stream: on its `End` event, or else once the frame's events are all
-  /// taken. One frame brings at most one such stream. Both are set
-  /// together (`will_refuse`).
+  /// The stream whose request smock refuses with `refusal` for the frame
+  /// being handled, or 0: 400 for a request HTTP/1.1's rules refuse, 413
+  /// for a body over `--body-limit`, 431 for a header list over
+  /// `--header-size-limit` or with more fields than `--header-count-limit`,
+  /// and a gRPC status for a gRPC call smock refuses. It gets that answer
+  /// once it is known whether that frame ended the stream: on its `End`
+  /// event, or else once the frame's events are all taken. One frame brings
+  /// at most one such stream. Both are set together (`will_refuse`,
+  /// `will_refuse_call`).
   mut refused : Int32
-  /// The status `refused` gets.
-  mut refused_status : Int32
+  /// The answer `refused` gets.
+  mut refusal : Refusal
   /// The stream whose request, begun by the frame being handled, asks for
   /// `100 Continue`, or 0. It gets it once the frame's events are all taken,
   /// unless that frame ended the stream, since then no body is to come.
@@ -497,7 +498,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         if self.refused != 0 {
           let stream = self.refused
           self.refused = 0
-          self.refuse(stream, self.refused_status, ended=false)
+          self.refuse(stream, self.refusal, ended=false)
         }
         // The gRPC call this frame began is looked up now that its events
         // brought no reset. HEADERS that also ended its stream had it
@@ -579,6 +580,18 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           self.will_refuse(stream, 413)
           continue
         }
+        // A gRPC call whose content subtype smock does not serve, such as
+        // `json`, is refused from its HEADERS, after spec E's checks. A
+        // method other than POST is refused before that, when the request
+        // ends.
+        if request.unserved_subtype && request.meth == "POST" {
+          self.will_refuse_call(
+            stream,
+            @grpc.Unimplemented,
+            unserved_subtype_message,
+          )
+          continue
+        }
         if request.continues {
           self.continuing = stream
         }
@@ -624,7 +637,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         }
         if stream == self.refused {
           self.refused = 0
-          self.refuse(stream, self.refused_status, ended=true)
+          self.refuse(stream, self.refusal, ended=true)
         } else if self.requests.get(stream) is Some(request) {
           self.requests.remove(stream)
           self.respond(stream, request, out)
@@ -1465,6 +1478,17 @@ fn H2Connection::headers_only(
 }
 
 ///|
+/// What smock answers a request it refuses, with no Journal entry
+/// (`H2Connection::refuse`).
+priv enum Refusal {
+  /// The status, with no body, as HTTP/1.1 answers such a request.
+  Status(Int32)
+  /// Trailers-Only with `:status` 200, the gRPC status and its fixed ASCII
+  /// `grpc-message`, for a gRPC call smock refuses.
+  Call(@grpc.Status, String)
+}
+
+///|
 /// The request on `stream` is refused with `status` once it is known
 /// whether the frame being handled ended the stream (`refused`): on its
 /// `End` event, or else once the frame's events are all taken.
@@ -1474,49 +1498,70 @@ fn H2Connection::will_refuse(
   status : Int32,
 ) -> Unit {
   self.refused = stream
-  self.refused_status = status
+  self.refusal = Status(status)
 }
 
 ///|
-/// Answers `stream`, whose request smock refuses, with `status` and no
-/// body, as HTTP/1.1 answers such a request, and counts it as rejected
-/// traffic: 400 for a request HTTP/1.1's rules refuse, 413 for a body over
-/// `--body-limit`, 431 for a header list over `--header-size-limit` or with
-/// more fields than `--header-count-limit`. The request never reaches the
-/// engine, so it has no Journal entry. A request that has not `ended` is
-/// then reset, so that the client stops sending it: with PROTOCOL_ERROR
-/// after a 400, as a malformed request (RFC 9113, section 8.1.1), and with
-/// NO_ERROR after a 413 or a 431 (section 8.1). One that has ended gets its
-/// status alone. No `connection` field is sent: the response ends only its
-/// stream.
+/// The gRPC call on `stream` is refused with Trailers-Only, the gRPC status
+/// `status` and the fixed ASCII `message`, once it is known whether the
+/// frame being handled ended the stream, as `will_refuse` refuses a
+/// request.
+fn H2Connection::will_refuse_call(
+  self : H2Connection,
+  stream : Int32,
+  status : @grpc.Status,
+  message : String,
+) -> Unit {
+  self.refused = stream
+  self.refusal = Call(status, message)
+}
+
+///|
+/// Answers `stream`, whose request smock refuses, with `refusal`, and
+/// counts it as rejected traffic. The request never reaches the engine, so
+/// it has no Journal entry. A refusal that is a status has no body, as
+/// HTTP/1.1 answers such a request: 400 for a request HTTP/1.1's rules
+/// refuse, 413 for a body over `--body-limit`, 431 for a header list over
+/// `--header-size-limit` or with more fields than `--header-count-limit`.
+/// A request that has not `ended` is then reset, so that the client stops
+/// sending it: with PROTOCOL_ERROR after a 400, as a malformed request (RFC
+/// 9113, section 8.1.1), and with NO_ERROR after a 413 or a 431 (section
+/// 8.1). One that has ended gets its status alone. No `connection` field is
+/// sent: the response ends only its stream. A refusal that is a gRPC
+/// status is sent as `refuse_call` sends it.
 fn H2Connection::refuse(
   self : H2Connection,
   stream : Int32,
-  status : Int32,
+  refusal : Refusal,
   ended~ : Bool,
 ) -> Unit {
-  let fields = response_fields(
-    status,
-    [],
-    0,
-    date=self.ports.dates.at(self.now),
-  )
-  self.conn.headers(stream, fields, end=true) catch {
-    _ => {
-      self.reset(stream, @http2.error_internal_error)
-      return
+  match refusal {
+    Status(status) => {
+      let fields = response_fields(
+        status,
+        [],
+        0,
+        date=self.ports.dates.at(self.now),
+      )
+      self.conn.headers(stream, fields, end=true) catch {
+        _ => {
+          self.reset(stream, @http2.error_internal_error)
+          return
+        }
+      }
+      self.streams.ended_by_smock(stream)
+      if !ended {
+        let code = if status == 400 {
+          @http2.error_protocol_error
+        } else {
+          @http2.error_no_error
+        }
+        self.reset(stream, code)
+      }
+      self.ports.rejected(self.last_read)
     }
+    Call(status, message) => self.refuse_call(stream, status, message, ended~)
   }
-  self.streams.ended_by_smock(stream)
-  if !ended {
-    let code = if status == 400 {
-      @http2.error_protocol_error
-    } else {
-      @http2.error_no_error
-    }
-    self.reset(stream, code)
-  }
-  self.ports.rejected(self.last_read)
   self.end_stream()
 }
 

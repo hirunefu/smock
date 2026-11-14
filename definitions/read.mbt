@@ -612,6 +612,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     reads_variables: false,
     reads_data: false,
     encoded: None,
+    grpc: None,
   }
   let mut weighted = None
   let mut variables = no_variable_writes
@@ -687,8 +688,9 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     )
   }
   if grpc is Some(named) && served.output is Some(output) {
-    // Its static replies, encoded with its output type, are kept.
-    if stub.get("response") is Some(json) {
+    // Its static replies, encoded with its output type, are kept. An
+    // error has no reply message.
+    if stub.get("response") is Some(json) && !response.is_grpc_error() {
       response = {
         ..response,
         encoded: self.encode_reply(
@@ -703,7 +705,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       stub.get("responses") is Some(Array(items)) {
       let at = child_pointer(pointer, "responses")
       for i, item in items {
-        if i < responses.length() {
+        if i < responses.length() && !responses[i].response.is_grpc_error() {
           let weighted = responses[i]
           responses[i] = {
             ..weighted,

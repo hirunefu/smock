@@ -841,6 +841,9 @@ stubs:
                   type: string
                   code: string
                   message: string
+              grpc:
+                status: OK
+                message: string
             responses:
               - weight: 1
                 status: 200
@@ -893,6 +896,9 @@ stubs:
                     type: string
                     code: string
                     message: string
+                grpc:
+                  status: OK
+                  message: string
             variables: {}
             dataWrites:
               - op: set
@@ -1076,6 +1082,9 @@ stubs:
                 type: string
                 code: string
                 message: string
+            grpc:
+              status: OK
+              message: string
           responses:
             - weight: 1
               status: 200
@@ -1128,6 +1137,9 @@ stubs:
                   type: string
                   code: string
                   message: string
+              grpc:
+                status: OK
+                message: string
           variables: {}
           dataWrites:
             - op: set

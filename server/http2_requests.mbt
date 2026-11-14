@@ -38,8 +38,13 @@ priv struct H2Request {
   /// When the read timeout ends it, in `@async.now()` milliseconds: the
   /// read timeout after the read that brought its first frame.
   deadline : Int64
-  /// Whether it is a gRPC call: its `content-type` is `application/grpc`.
+  /// Whether it is a gRPC call: its `content-type` is `application/grpc`,
+  /// alone or followed by `+` or `;`.
   grpc : Bool
+  /// Whether it is a gRPC call whose content subtype smock does not serve:
+  /// any but none or `proto`, such as `json`. Of several `content-type`
+  /// fields that make it a call, the last decides, as in grpc-go.
+  unserved_subtype : Bool
 }
 
 ///|
@@ -134,6 +139,7 @@ fn H2Request::new(
   let mut declared = -1L
   let mut expects = false
   let mut grpc = false
+  let mut unserved_subtype = false
   for place in 0..<fields.length() {
     let field = fields[place]
     let name = field.name
@@ -172,8 +178,10 @@ fn H2Request::new(
         }
       } else if name == b"expect" && @http1.expects_continue(value) {
         expects = true
-      } else if name == b"content-type" && is_grpc_content_type(field.value) {
+      } else if name == b"content-type" &&
+        @grpc.content_subtype(field.value[:]) is Some(subtype) {
         grpc = true
+        unserved_subtype = !is_served_subtype(subtype)
       }
       headers.push(text)
     }
@@ -198,6 +206,7 @@ fn H2Request::new(
     parts: None,
     deadline,
     grpc,
+    unserved_subtype,
   }
 }
 

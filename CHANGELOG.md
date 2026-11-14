@@ -167,8 +167,15 @@ of each GitHub release include its section
   `map_entry`, `packed` and `message_set_wire_format`, and unknown fields
   such as Buf's image extensions cost nothing. Each Mock holds its own
   set. A new guide, [gRPC](docs/grpc.md), says how to build a set.
-- gRPC unary calls, on the plain port over h2c. An HTTP/2 request whose
-  `content-type` is `application/grpc` is a gRPC call: smock takes its one
+- gRPC unary calls, on the plain port over h2c and on the TLS port over
+  h2; `--tls-http2 off` turns gRPC over TLS off too, and the admin port
+  never serves it. An HTTP/2 request whose `content-type` is
+  `application/grpc`, alone or followed by `+` or `;`, is a gRPC call.
+  One with no subtype, `+proto` or `;` parameters is served; one with
+  another subtype, such as `+json`, gets Trailers-Only UNIMPLEMENTED as
+  soon as its HEADERS arrive, and counts as rejected traffic. Every other
+  content type, gRPC-Web's included, and every HTTP/1.1 request go to the
+  HTTP Stubs. smock takes a call's one
   message, decodes it into JSON with the input type of the method its
   `:path` names in its Mock's set, and matches it against the Mock's gRPC
   Stubs on that method, as a `POST` with the metadata as headers and the
@@ -193,9 +200,9 @@ of each GitHub release include its section
   one version of a set and answered with another. For now smock serves
   replies of every proto3 type but the well-known types, and answers the
   calls it does not serve yet with Trailers-Only INTERNAL and a fixed
-  message. The new `smock/grpc` module frames messages and names gRPC's
-  status codes, and `smock/protobuf` decodes and encodes messages. See
-  [gRPC](docs/grpc.md).
+  message. The new `smock/grpc` module frames messages, names gRPC's
+  status codes and percent-encodes status messages, and `smock/protobuf`
+  decodes and encodes messages. See [gRPC](docs/grpc.md).
 - `grpcStatus` in the Journal. A gRPC call's entry records the name of the
   gRPC status the call got, such as `OK` or `UNIMPLEMENTED`, beside its
   HTTP status, which is 200 for a reply and for an unmatched call. An HTTP
@@ -219,6 +226,15 @@ of each GitHub release include its section
   and counts as rejected traffic. The well-known types are not served
   yet. See
   [The request message as JSON](docs/grpc.md#the-request-message-as-json).
+- `response.grpc`: a gRPC Stub's reply, or each of its `responses`, gives
+  the gRPC status it ends with by name, from `OK` to `UNAUTHENTICATED`,
+  `OK` when left out, and a status message in any Unicode text, which
+  smock percent-encodes into `grpc-message` and which may be a text
+  template. An error goes out as Trailers-Only, as gRPC servers send it,
+  and its Journal entry's `grpcStatus` names it. With weighted `responses`,
+  a dependency can fail one call in ten. An error that also gives `json`,
+  and `grpc` on an HTTP Stub, are load errors. See
+  [Status and message](docs/grpc.md#status-and-message).
 - A gRPC Stub's `json` condition is checked against its method's input
   type when the files load, and rewritten into the form in which smock
   prints a call's message, so matching costs nothing more per call. A key
