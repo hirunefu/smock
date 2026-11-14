@@ -1,8 +1,8 @@
 # smock/grpc
 
 gRPC's wire rules for MoonBit: the content type of gRPC calls, the 5-octet
-prefix that frames each message, and gRPC's seventeen status codes with
-their names. smock serves gRPC unary calls with it, beside
+prefix that frames each message, gRPC's seventeen status codes with their
+names, and the percent-encoding of a status message. smock serves gRPC unary calls with it, beside
 `smock/protobuf`, which encodes the messages. The module does no I/O and
 depends only on `moonbitlang/core`. It builds for every MoonBit target and
 is tested on native and `wasm-gc`.
@@ -68,5 +68,24 @@ test "a status by its number and by its name" {
   inspect(status.name(), content="NOT_FOUND")
   debug_inspect(@grpc.Status::from_name("INTERNAL"), content="Some(Internal)")
   debug_inspect(@grpc.Status::from_code(17), content="None")
+}
+```
+
+## Status messages
+
+A reply's status message goes in `grpc-message`, percent-encoded, so that
+any Unicode text fits in an HTTP/2 field value.
+`@grpc.percent_encode(text)` gives that value: the text's UTF-8 octets,
+each from 0x20 to 0x7E other than `%` as it is, and every other octet as
+`%` and two upper-case hex digits. A space at either end becomes `%20`
+too, since HTTP/2 refuses a field value with a space at either end.
+
+```mbt check
+///|
+test "percent-encode a status message" {
+  inspect(
+    @grpc.percent_encode(" try again ☺ ") == b"%20try again %E2%98%BA%20",
+    content="true",
+  )
 }
 ```
