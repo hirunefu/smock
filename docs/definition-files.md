@@ -5857,9 +5857,12 @@ stubs:
   ([The request message as JSON](grpc.md#the-request-message-as-json)),
   and how smock answers it.
 - A call that no gRPC Stub on its method matches gets UNIMPLEMENTED, with
-  the gRPC Stub that came closest in a `smock-near-miss` trailer, never
-  the Mock's `noMatch` answer
-  ([Unmatched calls](grpc.md#unmatched-calls)).
+  the Mock's gRPC Stub that came closest in a `smock-near-miss` trailer,
+  never the Mock's `noMatch` answer
+  ([Unmatched calls](grpc.md#unmatched-calls)). So does a call to a
+  method that the set lacks or that streams, and a call to a Mock without
+  a set, as soon as its HEADERS arrive
+  ([Calls answered from their HEADERS](grpc.md#calls-answered-from-their-headers)).
 
 What a gRPC Stub can hold is limited for now. These are problems that say
 what is not served yet:

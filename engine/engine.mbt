@@ -516,11 +516,12 @@ pub fn Engine::reload(
 /// - `grpc`, when given, marks the request as a gRPC call, made with the
 ///   method it names. A gRPC call is matched only against the Mock's gRPC
 ///   Stubs on that method, in matching order, and its Near miss is chosen
-///   among them; the Ephemeral Stubs, which are never gRPC Stubs, are not
-///   tried. A call that none matches is planned UNIMPLEMENTED, with its
-///   Near miss in a trailer, never with the Mock's `noMatch`. Its Journal
-///   entry records the call's octets as the body's size. HTTP never gives
-///   it.
+///   among every gRPC Stub of the Mock; the Ephemeral Stubs, which are
+///   never gRPC Stubs, are not tried. A call that none matches is planned
+///   UNIMPLEMENTED, with a fixed message that says why and its Near miss in
+///   a trailer, never with the Mock's `noMatch`, and so is a call whose
+///   Host reaches no Mock. Its Journal entry records the call's octets as
+///   the body's size. HTTP never gives it.
 /// - `session` is the request's Session key, or `None` without a Session.
 /// - `now` is the time the request was received, in milliseconds since the
 ///   Unix epoch.
@@ -823,6 +824,10 @@ pub fn Engine::handle(
     }
     None =>
       match mock {
+        // A gRPC call gets UNIMPLEMENTED in gRPC's form, never the 404 of
+        // an HTTP request.
+        None if grpc is Some(_) =>
+          grpc_unimplemented("no Mock for this Host", None)
         None => no_mock(host, self.snapshot.hosts())
         Some(mock) => {
           // Only now, when every candidate has failed, are conditions
@@ -842,16 +847,19 @@ pub fn Engine::handle(
             Some(list) => list.iter().map(e => (e.stub, StubSource::Ephemeral))
             None => Iter::empty()
           }
+          // A gRPC call's Near miss is chosen among every gRPC Stub of its
+          // Mock, as an HTTP request's is among every HTTP Stub, so a call
+          // to a method that no Stub is on has one too.
           let stubs = match grpc {
-            Some(call) => mock.grpc_candidates(call.path)
-            None => mock.http_stubs
+            Some(_) => mock.stubs.iter().filter(stub => stub.is_grpc())
+            None => mock.http_stubs.iter()
           }
           near_miss = incoming.near_miss(
-            ephemeral.concat(stubs.iter().map(stub => (stub, StubSource::File))),
+            ephemeral.concat(stubs.map(stub => (stub, StubSource::File))),
             states,
           )
-          if grpc is Some(_) {
-            grpc_no_match(near_miss)
+          if grpc is Some(call) {
+            grpc_unimplemented(unmatched_call(mock, call.path), near_miss)
           } else {
             no_match(mock, near_miss)
           }
@@ -986,13 +994,32 @@ fn no_match(mock : @definitions.Mock, near_miss : NearMiss?) -> ResponsePlan {
 }
 
 ///|
+/// The fixed message of the UNIMPLEMENTED answer to a gRPC call to `path`
+/// that `mock` answers and that no gRPC Stub matched: why the call can
+/// reach no gRPC Stub, when the Mock has no Descriptor set, or the set no
+/// method at `path`, or the method streams, and `no Stub matched`
+/// otherwise. The server answers the first three as soon as the call's
+/// HEADERS arrive.
+fn unmatched_call(mock : @definitions.Mock, path : String) -> String {
+  guard mock.descriptor_set is Some(set) else {
+    return "the Mock has no Descriptor set"
+  }
+  guard set.find_method(path) is Some(rpc) else { return "unknown method" }
+  if rpc.client_streaming || rpc.server_streaming {
+    "streaming methods are not served yet"
+  } else {
+    "no Stub matched"
+  }
+}
+
+///|
 /// The response to a gRPC call that no gRPC Stub matches: Trailers-Only
-/// UNIMPLEMENTED with the fixed message `no Stub matched`, and the Near
-/// miss, if any, in the `smock-near-miss` trailer, in the form of the
-/// `Smock-Near-Miss` header. Its HTTP status is 200, as gRPC sends every
-/// answer. The Mock's `noMatch` applies to HTTP requests only, so neither
-/// its status nor its headers reach the call.
-fn grpc_no_match(near_miss : NearMiss?) -> ResponsePlan {
+/// UNIMPLEMENTED with the fixed message `message`, such as `no Stub
+/// matched`, and the Near miss, if any, in the `smock-near-miss` trailer,
+/// in the form of the `Smock-Near-Miss` header. Its HTTP status is 200, as
+/// gRPC sends every answer. The Mock's `noMatch` applies to HTTP requests
+/// only, so neither its status nor its headers reach the call.
+fn grpc_unimplemented(message : String, near_miss : NearMiss?) -> ResponsePlan {
   {
     status: 200,
     // Room for the Smock-Mock field the Default Mock adds.
@@ -1002,7 +1029,7 @@ fn grpc_no_match(near_miss : NearMiss?) -> ResponsePlan {
     fault: None,
     grpc: Some({
       status: Unimplemented,
-      message: Some("no Stub matched"),
+      message: Some(message),
       trailers: match near_miss {
         Some(near_miss) => [("smock-near-miss", near_miss.header_value())]
         None => []

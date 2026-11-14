@@ -13,6 +13,8 @@ Mock's `grpc` field and gRPC Stubs.
 
 - [Quick start](#quick-start)
 - [How smock serves a call](#how-smock-serves-a-call)
+  - [The call's Mock](#the-calls-mock)
+  - [Reloads](#reloads)
   - [The call the Stubs see](#the-call-the-stubs-see)
   - [The request message as JSON](#the-request-message-as-json)
   - [The reply](#the-reply)
@@ -22,6 +24,7 @@ Mock's `grpc` field and gRPC Stubs.
   - [The message](#the-message)
   - [Trailers-Only](#trailers-only)
 - [Unmatched calls](#unmatched-calls)
+  - [Calls answered from their HEADERS](#calls-answered-from-their-headers)
   - [The Near miss trailer](#the-near-miss-trailer)
 - [Calls smock does not serve yet](#calls-smock-does-not-serve-yet)
 - [Building a set](#building-a-set)
@@ -97,19 +100,67 @@ An HTTP/2 request on the plain port whose `content-type` is
 request with that content type included, is an HTTP request, which the
 Mock's HTTP Stubs answer as before.
 
+When the call's HEADERS arrive, smock finds the call's Mock
+([The call's Mock](#the-calls-mock)) and the method that the call's
+`:path`, such as `/helloworld.Greeter/SayHello`, names in the Mock's set.
+A call that cannot reach a gRPC Stub, since there is no such Mock, set or
+unary method, is answered at once, without waiting for its message
+([Calls answered from their HEADERS](#calls-answered-from-their-headers)).
+
 When the call's request has ended, smock:
 
-1. takes the call's one message from its body;
-2. finds the call's Mock, the Mock whose Hosts include the call's
-   `:authority`, or else the Default Mock;
-3. finds the method that the call's `:path`, such as
-   `/helloworld.Greeter/SayHello`, names in the Mock's set;
-4. decodes the message into JSON with the method's input type;
-5. matches the call against the Mock's gRPC Stubs on that method;
-6. encodes the reply with the method's output type, and sends it.
+1. finds the call's Mock and its method again, from the Definition files
+   it serves then;
+2. takes the call's one message from its body;
+3. decodes the message into JSON with the method's input type;
+4. matches the call against the Mock's gRPC Stubs on that method;
+5. encodes the reply with the method's output type, and sends it.
 
-Steps 2 to 6 use one version of the Definition files, so a reload never
-decodes a call with one version of a set and answers it with another.
+### The call's Mock
+
+A call's `:authority` is its Host, and chooses its Mock, as it does for
+any HTTP/2 request ([What a Stub sees](http2.md#what-a-stub-sees)): the
+Mock whose `hosts` include it. grpcurl's `-authority` sets it, and so does
+the target a gRPC channel is made for. When no Mock lists the Host, the
+Default Mock answers the call, with its own set, and the answer carries
+`smock-mock` with the Mock's name and `via=default`, as on HTTP. With
+neither, the call gets UNIMPLEMENTED `no Mock for this Host`.
+
+Each Mock decodes and answers its calls with its own set. So two Mocks
+whose sets hold two versions of one package each serve their own version
+([One set per Mock](#one-set-per-mock)):
+
+```yaml
+mocks:
+  - name: greeter-v1
+    default: true
+    grpc:
+      descriptorSet: v1/greeter.binpb
+  - name: greeter-v2
+    hosts: [v2.greeter.svc]
+    grpc:
+      descriptorSet: v2/greeter.binpb
+```
+
+A call with `-authority v2.greeter.svc` is decoded and answered with
+version 2. A call to any other Host is decoded and answered with version
+1, by the Default Mock.
+
+### Reloads
+
+A changed set is reloaded with the Definition files, in one swap
+([Building a set](#building-a-set)). A call is decoded, matched and
+answered with the set served when its request ends. Steps 1 to 5 above
+run with nothing in between, so a reload never decodes a call with one
+version of a set and answers it with another.
+
+A reload may come between a call's HEADERS and the end of its request.
+The call is looked up again at the end, so it is served with the new
+Definition files. When the reload has left the call without a gRPC Stub
+to reach, such as a Mock whose set is gone or no longer has the method,
+the call gets the answer its HEADERS would get then
+([Calls answered from their HEADERS](#calls-answered-from-their-headers)).
+A set that fails to load keeps the whole current definition set served.
 
 ### The call the Stubs see
 
@@ -264,8 +315,10 @@ client widens them, and the trailers follow it.
 
 ### The Journal and the metrics
 
-The Journal records each call that reaches the Stubs, matched or not. Its
-entry shows the method `POST`, the call's `:path` as its target, the
+The Journal records each call that reaches the Stubs, matched or not, and
+each call answered from its HEADERS, with an empty body
+([Calls answered from their HEADERS](#calls-answered-from-their-headers)).
+Its entry shows the method `POST`, the call's `:path` as its target, the
 version `HTTP/2`, the metadata as headers, and the request message as JSON
 as its body. The body's `size` counts the octets the call's DATA frames
 brought, as received, and `truncated` says whether the JSON was cut at
@@ -452,11 +505,56 @@ the closest Stub failed, with what it expects and what the call sent. The
 call is in the unmatched list, `GET /v1/journal/unmatched`, and the
 request metrics count it as an unmatched request of its Mock.
 
+### Calls answered from their HEADERS
+
+A call that cannot reach a gRPC Stub gets UNIMPLEMENTED as soon as its
+HEADERS arrive, without waiting for its message, so the client does not
+wait for a timeout. Each case has its own fixed `grpc-message`:
+
+| The call | `grpc-message` |
+|---|---|
+| No Mock lists its Host, and there is no Default Mock | `no Mock for this Host` |
+| Its Mock has no set | `the Mock has no Descriptor set` |
+| Its `:path` is not `/service/method`, or names no method of the set | `unknown method` |
+| Its method streams | `streaming methods are not served yet` |
+
+The answer is Trailers-Only, as for a call that no Stub matched. When the
+client is still sending its request, RST_STREAM `NO_ERROR` follows the
+answer and tells it to stop. So with the quick start's Mock and Stub, a
+call to `/helloworld.Greeter/SayGoodbye`, a method that helloworld.proto
+lacks, gets:
+
+```text
+:status: 200
+content-type: application/grpc
+grpc-status: 12
+grpc-message: unknown method
+smock-mock: greeter; via=default
+smock-near-miss: hello; failed=path,body
+date: Sat, 14 Nov 2026 07:00:00 GMT
+```
+
+then RST_STREAM `NO_ERROR` if the call has not ended. A client reports
+`Code: Unimplemented` with the message.
+
+The call is still an unmatched call of its Mock. The Journal records it
+with an empty body, whose `size` counts the octets that had arrived, and
+with its Near miss when it has one. It is in the unmatched list, and the
+request metrics count it as unmatched. A call whose Host reaches no Mock
+is counted under `mock=""`.
+
+smock looks the call up again when its request ends. A call that a reload
+has left without a gRPC Stub to reach by then gets the same answer, then,
+with the octets of its message as its body's `size`
+([Reloads](#reloads)).
+
 ### The Near miss trailer
 
-The Near miss is the gRPC Stub on the call's method that failed the fewest
+The Near miss is the gRPC Stub of the call's Mock that failed the fewest
 conditions, the one tried first on a tie, as on HTTP
-([When no Stub matches](definition-files.md#when-no-stub-matches)). smock
+([When no Stub matches](definition-files.md#when-no-stub-matches)). A
+Stub on another method fails the `path` condition, so a call to a method
+that no Stub is on, or that the set lacks, has a Near miss too. smock
 sends it in the `smock-near-miss` field of the answer, in the form of the
 HTTP `Smock-Near-Miss` header: the Stub's ID, then the conditions it
 failed. With a Stub that requires the metadata `x-tenant: acme`, a call
@@ -476,8 +574,9 @@ of a Trailers-Only answer. grpcurl prints it with `-v`, among the response
 trailers.
 
 A call has no Near miss, and its answer no `smock-near-miss` field, when
-no gRPC Stub is on its method. An HTTP Stub is never a call's Near miss,
-even one whose path pattern takes the call's path.
+its Host reaches no Mock, or its Mock has no gRPC Stub, which a Mock
+without a set never has. An HTTP Stub is never a call's Near miss, even one whose
+path pattern takes the call's path.
 
 ## Calls smock does not serve yet
 
@@ -494,10 +593,6 @@ request metrics count them as rejected requests, with `mock=""` and
 |---|---|
 | Its method is not `POST` | `the method must be POST` |
 | Its body is not one uncompressed message | `the request is not one uncompressed message` |
-| No Mock lists its Host, and there is no Default Mock | `no Mock for this Host` |
-| Its Mock has no set | `the Mock has no Descriptor set` |
-| Its `:path` names no method of the set | `unknown method` |
-| Its method streams | `streaming methods are not served yet` |
 | Its message does not parse, or its type has a field that smock does not decode yet | `the request message cannot be decoded` |
 
 A message does not parse, as protobuf's parsers refuse it, when it holds a
