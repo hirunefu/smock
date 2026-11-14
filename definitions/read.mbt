@@ -672,8 +672,22 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   }
   self.require(stub, pointer, "id")
   self.require(stub, pointer, "mock")
-  if grpc is Some(named) &&
-    self.check_grpc_stub(pointer, stub, named) is Some(output) {
+  let served = match grpc {
+    Some(named) => self.check_grpc_stub(pointer, stub, named)
+    None => { input: None, output: None, }
+  }
+  if grpc is Some(named) && served.input is Some(input) {
+    // Its `json` condition is checked against its input type, and matched
+    // as smock prints a call's message.
+    request = self.grpc_conditions(
+      child_pointer(pointer, "request"),
+      stub,
+      request,
+      named.set,
+      input,
+    )
+  }
+  if grpc is Some(named) && served.output is Some(output) {
     // Its static replies, encoded with its output type, are kept. An
     // error has no reply message.
     if stub.get("response") is Some(json) && !response.is_grpc_error() {

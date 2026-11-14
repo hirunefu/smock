@@ -249,6 +249,15 @@ hex_test collections/tagged.binpb tagged "The Tagged of the ticket's example, as
 hex_test collections/lists.binpb lists "A Lists with its scalars packed, as protoc encodes it: fixtures/protobuf/collections/lists.binpb, in hex." protobuf
 hex_test collections/lists-on-the-wire.binpb lists_on_the_wire "The values of lists.binpb with its scalars unpacked, as protoc encodes them: fixtures/protobuf/collections/lists-on-the-wire.binpb, in hex." protobuf
 
+# A method whose input type has the fields that gRPC Stubs' conditions are
+# checked and normalised against, and requests with floats that conditions
+# meet once normalised.
+descriptor_set users users.binpb users.proto
+message users users.proto users.Query query
+message users users.proto users.Query ratio-9-99
+message users users.proto users.Query ratio-16777217
+hex_test users/users.binpb users_set "The Descriptor set of fixtures/protobuf/users/users.proto, fixtures/protobuf/users/users.binpb, in hex." definitions
+
 # The end of the list of fixtures. With --check: every file the script
 # wrote, compared with the committed one.
 if [ -n "$check" ]; then
