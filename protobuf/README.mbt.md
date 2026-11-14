@@ -227,8 +227,8 @@ test "find a method, its input type and a field" {
 `@protobuf.decode_json(message, input)` decodes a message of the type
 `message`, a `MessageDescriptor` of a set, into smock's decoded form:
 compact JSON text in UTF-8, with one member per field, in field-number
-order, under the field's JSON name, its name in lowerCamelCase as protoc
-computes it. A field the message leaves out is printed at its default. It
+order, under the field's JSON name, as `json_name` gives it. A field the
+message leaves out is printed at its default. It
 reads the message as protobuf's parsers read it: the last value of a field
 wins, and unknown fields are skipped. It raises `DecodeError` when the
 input is not protobuf, or a string is not UTF-8.
@@ -240,7 +240,8 @@ It raises `EncodeError`, which names the JSON Pointer of the value at
 fault, for JSON that is not a message of the type.
 
 Both serve types whose fields are singular `string`, `bool` and `int32`
-fields for now, and raise their error for a type with any other field.
+fields outside any oneof for now, and raise their error for a type with
+any other field, a proto3 `optional` field included.
 
 ```mbt check
 ///|

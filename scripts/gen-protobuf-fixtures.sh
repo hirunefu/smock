@@ -179,6 +179,7 @@ hex_test helloworld/hello-request.binpb hello_request "HelloRequest { name: \"To
 hex_test helloworld/hello-reply.binpb hello_reply "HelloReply { message: \"Hello Tom\" }, as protoc encodes it: fixtures/protobuf/helloworld/hello-reply.binpb, in hex." protobuf
 hex_test catalog/count-request.binpb count_request "A CountRequest with a shelf that JSON escapes, and in_stock true, as protoc encodes it: fixtures/protobuf/catalog/count-request.binpb, in hex." protobuf
 hex_test catalog/count-reply.binpb count_reply "CountReply { count: -5, exact: true, shelf: \"A1\" }, as protoc encodes it: fixtures/protobuf/catalog/count-reply.binpb, in hex." protobuf
+hex_test oneofs/oneofs.binpb oneofs_set "The Descriptor set of fixtures/protobuf/oneofs/oneofs.proto, fixtures/protobuf/oneofs/oneofs.binpb, in hex." protobuf
 
 # The end of the list of fixtures. With --check: every file the script
 # wrote, compared with the committed one.

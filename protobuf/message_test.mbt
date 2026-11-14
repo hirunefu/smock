@@ -162,6 +162,19 @@ test "a type with a field that is not a singular string, bool or int32 is not de
 }
 
 ///|
+test "a type with a oneof or a proto3 optional field, which have presence, is not decoded or encoded yet" {
+  let pick = message_type(oneofs_set, "Pick")
+  inspect(
+    decoded(pick, b""),
+    content="error: octet 0: the field word is in a oneof or optional, which smock does not decode yet",
+  )
+  inspect(
+    encoded(pick, {}),
+    content="error: the field word is in a oneof or optional, which smock does not encode yet",
+  )
+}
+
+///|
 /// `json` encoded as a message of the type `message`, in hex, or the error
 /// that stops it.
 fn encoded(message : @protobuf.MessageDescriptor, json : Json) -> String {

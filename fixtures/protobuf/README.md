@@ -56,7 +56,7 @@ working tree; CI runs it in the same job.
 | `orders/` | `orders.proto`, which imports `common.proto` | `orders-without-imports.binpb`, the set of `orders.proto` built without `--include_imports`, which lacks `common.proto`. The script copies it to `schema/v1/fixtures/body-files/`. |
 | `annotated/` | `annotated.proto`, with comments and custom options, which imports protobuf's `descriptor.proto` | `annotated.binpb`, their set with source info, as `protoc --include_imports --include_source_info` writes it |
 | `buf-image/` | Buf's `buf/alpha/image/v1/image.proto`, as it is at bufbuild/buf tag `v1.75.0` (commit `1a3a05a3e0fa350c4b814b7f48aa0e64e9a906bd`), and `greeter.txtpb`, the image that `buf build -o` (1.75.0) writes with its defaults for `helloworld/helloworld.proto`, decoded as text | `greeter.binpb`: that image, with source info and Buf's field 8042 in each file, byte for byte as buf writes it |
-| `oneofs/` | `oneofs.proto`, written for smock's tests: a method whose types hold a oneof and a proto3 `optional` field | `oneofs.binpb`, its set. The script writes it in hex to `definitions/oneofs_set_test.mbt`. |
+| `oneofs/` | `oneofs.proto`, written for smock's tests: a method whose types hold a oneof and a proto3 `optional` field | `oneofs.binpb`, its set. The script writes it in hex to `oneofs_set_test.mbt` in `definitions/` and `protobuf/`. |
 | `invalid/` | FileDescriptorSets written as text, which protoc would never write: `twice.txtpb` holds a file twice, `duplicate-name.txtpb` defines a message in two files, and `unresolved.txtpb` names types it does not define | A `.binpb` of each. The script copies `duplicate-name.binpb` to `schema/v1/fixtures/body-files/`. |
 
 ## Adding a set
