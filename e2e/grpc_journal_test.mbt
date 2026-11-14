@@ -9,7 +9,8 @@
 ///|
 /// The entries of `page`, a Journal page, one per line: the Stub, the HTTP
 /// status and the gRPC status, each as JSON, `-` for a member the entry
-/// does not have, then the `x-tenant` metadata the call sent, if any.
+/// does not have, then the `x-tenant` metadata the call sent, if any, and
+/// the template error, if any.
 fn answers(page : Json) -> String raise {
   guard page is Object({ "entries": Array(entries), .. }) else {
     fail("not a Journal page: \{page.stringify()}")
@@ -29,8 +30,12 @@ fn answers(page : Json) -> String raise {
         }
       }
     }
+    let error = match members.get("templateError") {
+      Some(Null) | None => ""
+      Some(error) => " templateError=\{error.stringify()}"
+    }
     lines.push(
-      "\{shown("stub")} \{shown("status")} \{shown("grpcStatus")}\{tenant}",
+      "\{shown("stub")} \{shown("status")} \{shown("grpcStatus")}\{tenant}\{error}",
     )
   }
   lines.join("\n")
@@ -107,5 +112,77 @@ async test "a call's entry records grpcStatus OK beside its HTTP status 200, an 
         ),
       )
     })
+  })
+}
+
+///|
+async test "smock's INTERNAL answers to calls that reached the Stubs are journaled with grpcStatus INTERNAL: a template that fails, and a rendered reply that does not fit the output type" {
+  let yaml =
+    #|mocks:
+    #|  - name: greeter
+    #|    grpc: { descriptorSet: greeter.binpb }
+    #|stubs:
+    #|  - id: fails
+    #|    mock: greeter
+    #|    request: { path: /helloworld.Greeter/SayHello, headers: { x-tenant: fails } }
+    #|    response: { template: true, json: { message: "${body.missing.name}" } }
+    #|  - id: misfit
+    #|    mock: greeter
+    #|    request: { path: /helloworld.Greeter/SayHello, headers: { x-tenant: misfit } }
+    #|    response: { template: true, json: { mesage: "${body.name}" } }
+  with_greeter_set([("greeter.yaml", yaml)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      for tenant in ["fails", "misfit"] {
+        let reply = client.call("/helloworld.Greeter/SayHello", headers=[
+          ("x-tenant", tenant),
+        ])
+        guard reply.head.contains(("grpc-message", "template failed")) else {
+          fail("not template failed: \{reply.render()}")
+        }
+      }
+      let (_, page) = smock.journal()
+      inspect(
+        answers(page),
+        content=(
+          #|"fails" 500 "INTERNAL" x-tenant=fails templateError={"at":"/response/json/message","message":"body.missing.name is missing"}
+          #|"misfit" 200 "INTERNAL" x-tenant=misfit
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "a call's decoded body longer than --journal-body-limit is cut at it, truncated, and its size still counts the octets received" {
+  with_greeter_set([("greeter.yaml", greeter_example)], dir => {
+    let _ = with_smock(
+      ["--dir", dir, "--port", "0", "--journal-body-limit", "5"],
+      smock => {
+        let client = smock.h2c()
+        defer client.close()
+        let _ = client.call("/helloworld.Greeter/SayHello")
+        let (_, page) = smock.journal()
+        guard page
+          is Object(
+            {
+              "entries": [
+                Object({ "request": Object({ "body": body, .. }), .. }),
+              ],
+              ..
+            }
+          ) else {
+          fail("not one entry: \{page.stringify()}")
+        }
+        // HelloRequest {name: "Tom"} takes 5 octets, framed in 10.
+        json_inspect(body, content={
+          "encoding": "utf-8",
+          "data": "{\"nam",
+          "size": 10,
+          "truncated": true,
+        })
+      },
+    )
   })
 }
