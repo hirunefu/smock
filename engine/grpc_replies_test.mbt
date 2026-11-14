@@ -20,18 +20,20 @@ test "a static reply's plan carries the message encoded when the files were load
     #|    request: { path: /helloworld.Greeter/SayHello }
     #|    response: { json: { message: Hi } }
   let h = harness([("greeter.yaml", yaml)], body_files=greeter_body_files())
-  let static = h.call(
+  let written = h.call(
     "/helloworld.Greeter/SayHello",
     "{\"name\":\"Tom\"}",
     octets=10,
   )
   // HelloReply { message: "Hi" }: field 1, length-delimited, 2 octets.
   debug_inspect(
-    static.plan.grpc,
+    written.plan.grpc,
     content=(
       #|Some(
       #|  {
       #|    status: Ok,
+      #|    message: None,
+      #|    trailers: <ReadOnlyArray: []>,
       #|    encoded: Some(
       #|      EncodedMessage(
       #|        output="helloworld.HelloReply",
@@ -51,7 +53,14 @@ test "a static reply's plan carries the message encoded when the files were load
   debug_inspect(
     templated.plan.grpc,
     content=(
-      #|Some({ status: Ok, encoded: None })
+      #|Some(
+      #|  {
+      #|    status: Ok,
+      #|    message: None,
+      #|    trailers: <ReadOnlyArray: []>,
+      #|    encoded: None,
+      #|  },
+      #|)
     ),
   )
   guard templated.plan.body is Bytes(body) else { fail("events") }

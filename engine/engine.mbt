@@ -125,16 +125,6 @@ pub fn ContentFailure::message(self : ContentFailure) -> String {
 }
 
 ///|
-/// Whether the plan is the reply of the gRPC Stub that matched, for an
-/// outcome of a gRPC call: the plan has its gRPC part. Otherwise, when no
-/// Stub matched, or when the plan is smock's own answer to a Stub that
-/// could not serve its content, a 500 or a 507, the plan is an HTTP answer,
-/// which is not a gRPC reply.
-pub fn Outcome::is_grpc_reply(self : Outcome) -> Bool {
-  self.plan.grpc is Some(_)
-}
-
-///|
 /// The content error of `stub`, which failed with `failure`.
 fn ContentError::new(
   stub : @definitions.Stub,
@@ -206,9 +196,11 @@ pub(all) struct ResponsePlan {
   delay_ms : Int32
   /// A connection Fault to inject instead of a normal response.
   fault : @definitions.ConnectionKind?
-  /// The gRPC part of the plan of a gRPC call's reply: how the reply ends.
-  /// `None` for an HTTP request, and for a call that smock answers in its
-  /// own way, as when no Stub matched.
+  /// The gRPC part of the plan of a gRPC call: how its answer ends, a gRPC
+  /// Stub's reply or the UNIMPLEMENTED of a call that no Stub matched. The
+  /// server sends the reply's message only when its status is `OK`. `None`
+  /// for an HTTP request, and for smock's own answers to a gRPC Stub that
+  /// could not serve its content.
   grpc : GrpcPart?
 }
 
@@ -220,10 +212,25 @@ pub(all) struct ResponsePlan {
 pub(all) struct GrpcPart {
   /// The gRPC status the reply ends with.
   status : @grpc.Status
+  /// The text of its `grpc-message`, if it has one.
+  message : String?
+  /// Its trailing metadata, after the status and the message, such as the
+  /// `smock-near-miss` field of a call that no Stub matched.
+  trailers : ReadOnlyArray[(String, String)]
   /// The reply message, encoded when the files were loaded, for a reply
   /// without templates; `None` for one that the server encodes from the
-  /// plan's body, once rendered.
+  /// plan's body, once rendered, and for an answer without a message.
   encoded : @definitions.EncodedMessage?
+}
+
+///|
+/// The gRPC part of every reply that a gRPC Stub serves, but for its
+/// `encoded`: the status `OK`, with no message and no trailing metadata.
+let grpc_ok : GrpcPart = {
+  status: Ok,
+  message: None,
+  trailers: [],
+  encoded: None,
 }
 
 ///|
@@ -509,8 +516,10 @@ pub fn Engine::reload(
 ///   method it names. A gRPC call is matched only against the Mock's gRPC
 ///   Stubs on that method, in matching order, and its Near miss is chosen
 ///   among them; the Ephemeral Stubs, which are never gRPC Stubs, are not
-///   tried. Its Journal entry records the call's octets as the body's size.
-///   HTTP never gives it.
+///   tried. A call that none matches is planned UNIMPLEMENTED, with its
+///   Near miss in a trailer, never with the Mock's `noMatch`. Its Journal
+///   entry records the call's octets as the body's size. HTTP never gives
+///   it.
 /// - `session` is the request's Session key, or `None` without a Session.
 /// - `now` is the time the request was received, in milliseconds since the
 ///   Unix epoch.
@@ -787,7 +796,7 @@ pub fn Engine::handle(
                   if grpc is Some(_) {
                     {
                       ..plan,
-                      grpc: Some({ status: Ok, encoded: response.encoded, }),
+                      grpc: Some({ ..grpc_ok, encoded: response.encoded, }),
                     }
                   } else {
                     plan
@@ -851,7 +860,11 @@ pub fn Engine::handle(
             ephemeral.concat(stubs.iter().map(stub => (stub, StubSource::File))),
             states,
           )
-          no_match(mock, near_miss)
+          if grpc is Some(_) {
+            grpc_no_match(near_miss)
+          } else {
+            no_match(mock, near_miss)
+          }
         }
       }
   }
@@ -979,6 +992,33 @@ fn no_match(mock : @definitions.Mock, near_miss : NearMiss?) -> ResponsePlan {
     delay_ms: 0,
     fault: None,
     grpc: None,
+  }
+}
+
+///|
+/// The response to a gRPC call that no gRPC Stub matches: Trailers-Only
+/// UNIMPLEMENTED with the fixed message `no Stub matched`, and the Near
+/// miss, if any, in the `smock-near-miss` trailer, in the form of the
+/// `Smock-Near-Miss` header. Its HTTP status is 200, as gRPC sends every
+/// answer. The Mock's `noMatch` applies to HTTP requests only, so neither
+/// its status nor its headers reach the call.
+fn grpc_no_match(near_miss : NearMiss?) -> ResponsePlan {
+  {
+    status: 200,
+    // Room for the Smock-Mock field the Default Mock adds.
+    headers: Array(capacity=1),
+    body: Bytes(b""),
+    delay_ms: 0,
+    fault: None,
+    grpc: Some({
+      status: Unimplemented,
+      message: Some("no Stub matched"),
+      trailers: match near_miss {
+        Some(near_miss) => [("smock-near-miss", near_miss.header_value())]
+        None => []
+      },
+      encoded: None,
+    }),
   }
 }
 

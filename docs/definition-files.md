@@ -891,6 +891,11 @@ Mock the status its real service returns for unknown requests:
 { "mocks": [{ "name": "users", "noMatch": { "status": 501 } }] }
 ```
 
+`noMatch` applies to HTTP requests only. A gRPC call that no gRPC Stub
+matches gets UNIMPLEMENTED instead, with its Near miss in a
+`smock-near-miss` trailer
+([Unmatched calls](grpc.md#unmatched-calls)).
+
 The response also names the *Near miss*: the Stub that came closest, and
 the conditions it failed, in a `Smock-Near-Miss` header. With this Stub:
 
@@ -5837,6 +5842,10 @@ stubs:
   JSON, so `headers` and `json` body conditions match it. The
   [gRPC guide](grpc.md#how-smock-serves-a-call) says how a call reaches a
   Stub, and how smock answers it.
+- A call that no gRPC Stub on its method matches gets UNIMPLEMENTED, with
+  the gRPC Stub that came closest in a `smock-near-miss` trailer, never
+  the Mock's `noMatch` answer
+  ([Unmatched calls](grpc.md#unmatched-calls)).
 
 What a gRPC Stub can hold is limited for now. These are problems that say
 what is not served yet:

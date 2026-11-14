@@ -179,16 +179,20 @@ of each GitHub release include its section
   load; a templated one is encoded on each call, and gets INTERNAL
   `template failed` when it does not fit the output type. The Journal
   records the call with its decoded body, whose size counts the octets
-  received, and the request metrics count it under its Mock and Stub. For
-  now smock decodes messages of singular `string`, `bool` and `int32`
-  fields, answers with replies of every proto3 type but the well-known
-  types, and answers the calls it does not serve yet with Trailers-Only
-  INTERNAL and a fixed message. The new `smock/grpc` module
-  frames messages and names gRPC's status codes, and `smock/protobuf`
-  decodes and encodes messages. See [gRPC](docs/grpc.md).
+  received, and the request metrics count it under its Mock and Stub. A
+  call that no Stub matches gets Trailers-Only UNIMPLEMENTED
+  `no Stub matched`, with its Near miss in a `smock-near-miss` trailer, in
+  the form of the `Smock-Near-Miss` header; the Mock's `noMatch` applies
+  to HTTP requests only. For now smock decodes messages of singular
+  `string`, `bool` and `int32` fields, answers with replies of every
+  proto3 type but the well-known types, and answers the calls it does not
+  serve yet with Trailers-Only INTERNAL and a fixed message. The new
+  `smock/grpc` module frames messages and names gRPC's status codes, and
+  `smock/protobuf` decodes and encodes messages. See [gRPC](docs/grpc.md).
 - `grpcStatus` in the Journal. A gRPC call's entry records the name of the
-  gRPC status the call got, such as `OK`, beside its HTTP status, which is
-  200 for a reply. An HTTP request's entry has none. Queries,
+  gRPC status the call got, such as `OK` or `UNIMPLEMENTED`, beside its
+  HTTP status, which is 200 for a reply and for an unmatched call. An HTTP
+  request's entry has none. Queries,
   verification and the unmatched list take calls by their Mock, `POST`,
   the method's path and their metadata as headers. See
   [The Journal and the metrics](docs/grpc.md#the-journal-and-the-metrics).

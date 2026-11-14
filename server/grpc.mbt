@@ -12,9 +12,12 @@
 // the encoding run with no await between them, so a reload never splits
 // them.
 //
-// What the layer cannot serve yet gets Trailers-Only, one HEADERS block
-// that ends the stream, with `:status` 200, `grpc-status` INTERNAL and a
-// fixed ASCII `grpc-message`. A call that does not reach the engine is
+// A plan whose gRPC status is not OK, such as the UNIMPLEMENTED of a call
+// that no Stub matched, is sent as Trailers-Only, one HEADERS block that
+// ends the stream, with `:status` 200, its `grpc-status`, its fixed ASCII
+// `grpc-message` and its trailers, such as the Near miss. What the layer
+// cannot serve yet gets Trailers-Only too, with `grpc-status` INTERNAL and
+// a fixed ASCII `grpc-message`. A call that does not reach the engine is
 // counted as rejected traffic and is not journaled; one that does is
 // journaled as the engine planned it, with the gRPC status INTERNAL, which
 // the entry records before it is committed.
@@ -33,10 +36,11 @@ fn is_grpc_content_type(value : Bytes) -> Bool {
 ///|
 /// Answers the gRPC call that has arrived in full on `stream`: through the
 /// engine, when the call can be served, or else with Trailers-Only
-/// INTERNAL, as `refuse_call` sends it. A reply whose framed message fits
-/// the windows is queued at once; the rest of a larger one is sent in a
-/// task of its own (`write_slowly`), which writes to `out`, with the
-/// trailers after it.
+/// INTERNAL, as `refuse_call` sends it. A plan whose gRPC status is not OK
+/// is sent as Trailers-Only, with its gRPC part. A reply whose framed
+/// message fits the windows is queued at once; the rest of a larger one is
+/// sent in a task of its own (`write_slowly`), which writes to `out`, with
+/// the trailers after it.
 fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
   self : H2Connection,
   stream : Int32,
@@ -88,9 +92,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
   )
   let plan = outcome.plan
   let date = ports.dates.at(self.now)
-  guard outcome.is_grpc_reply() else {
+  // A plan without a gRPC part is smock's own answer to a gRPC Stub that
+  // could not serve its content.
+  guard plan.grpc is Some(part) else {
     let message = match outcome.content_error {
-      _ if outcome.matched is None => "no Stub matched"
       Some({ failure: Template(_), .. }) => "template failed"
       Some({ failure: Data(_), .. }) => "data write failed"
       None => "state limit reached"
@@ -98,15 +103,26 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
     self.answer_internal(stream, request, outcome, message, date~)
     return
   }
+  // Any status but OK, such as the UNIMPLEMENTED of a call that no Stub
+  // matched, ends the call without a message.
+  guard part.status is Ok else {
+    let fields = trailers_only(
+      part.status,
+      part.message,
+      smock_mock_of(plan.headers),
+      date~,
+      trailers=part.trailers,
+    )
+    self.headers_only(stream, fields, outcome.journal, partial=false)
+    self.ended_in_place(request, outcome)
+    return
+  }
   // A static reply was encoded when the files were loaded, with the output
   // type of the set served then, which is this one unless the Stub outlived
   // a reload. A templated one is encoded here, once rendered.
   let output = set.output_of(rpc)
-  let reply = match plan.grpc {
-    Some({ encoded: Some(encoded), .. }) if physical_equal(
-        encoded.output,
-        output,
-      ) => encoded.message
+  let reply = match part.encoded {
+    Some(encoded) if physical_equal(encoded.output, output) => encoded.message
     _ =>
       encode_reply(set, output, plan.body) catch {
         EncodeError(pointer~, message~) => {
@@ -168,7 +184,7 @@ fn H2Connection::answer_internal(
 ) -> Unit {
   let fields = trailers_only(
     @grpc.Internal,
-    message,
+    Some(message),
     smock_mock_of(outcome.plan.headers),
     date~,
   )
@@ -283,7 +299,7 @@ fn H2Connection::refuse_call(
 ) -> Unit {
   let fields = trailers_only(
     @grpc.Internal,
-    message,
+    Some(message),
     None,
     date=self.ports.dates.at(self.now),
   )
@@ -335,23 +351,33 @@ fn ok_trailers() -> Array[@header.Header] {
 ///|
 /// The fields of a Trailers-Only answer, one HEADERS block that ends the
 /// stream: `:status` 200, `content-type: application/grpc`, `grpc-status`
-/// with the code of `status`, `grpc-message` with `message`, fixed ASCII
-/// text, then `smock-mock` when `mock` gives its value, and `date` with the
-/// value `date`.
+/// with the code of `status`, `grpc-message` when `message` gives its
+/// fixed ASCII text, then `smock-mock` when `mock` gives its value, each of
+/// `trailers`, such as `smock-near-miss`, as `reply_head` sends a header
+/// field, and `date` with the value `date`.
 fn trailers_only(
   status : @grpc.Status,
-  message : String,
+  message : String?,
   mock : String?,
   date~ : String,
+  trailers~ : ReadOnlyArray[(String, String)] = [],
 ) -> Array[@header.Header] {
-  let fields = [
-    @header.Header::{ name: b":status", value: b"200", },
-    { name: b"content-type", value: grpc_content_type, },
-    { name: b"grpc-status", value: decimal(status.code()), },
-    { name: b"grpc-message", value: @http1.field_octets(message), },
-  ]
+  let fields = Array(capacity=trailers.length() + 6)
+  fields.push(@header.Header::{ name: b":status", value: b"200", })
+  fields.push({ name: b"content-type", value: grpc_content_type, })
+  fields.push({ name: b"grpc-status", value: decimal(status.code()), })
+  if message is Some(text) {
+    fields.push({ name: b"grpc-message", value: @http1.field_octets(text), })
+  }
   if mock is Some(value) {
     fields.push({ name: b"smock-mock", value: @http1.field_octets(value), })
+  }
+  for i in 0..<trailers.length() {
+    let (name, value) = trailers[i]
+    fields.push({
+      name: lower_case(name),
+      value: @http1.field_octets(trimmed(value)),
+    })
   }
   fields.push({ name: b"date", value: @http1.field_octets(date), })
   fields
