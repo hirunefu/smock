@@ -70,8 +70,11 @@ pub struct JournalEntry {
   /// The request as it was received, except that its body is only the
   /// first bytes, as many as the Journal keeps.
   request : Request
-  /// The length of the whole body, in bytes.
+  /// The length of the whole body, in bytes: for a gRPC call, the octets
+  /// its DATA frames brought, whose message the body holds decoded.
   body_size : Int32
+  /// Whether the body is cut at the Journal's body limit.
+  body_truncated : Bool
   /// The ID of the Stub that matched, if any.
   stub : String?
   /// Where the Stub that matched comes from, if one did.
@@ -175,6 +178,7 @@ fn Journal::entry(
   content_error~ : ContentError?,
   crud~ : CrudCall?,
   near_miss~ : NearMiss?,
+  body_size~ : Int32,
   plan~ : ResponsePlan,
   digest~ : String,
   now~ : Int64,
@@ -275,7 +279,8 @@ fn Journal::entry(
     } else {
       request
     },
-    body_size: request.body.length(),
+    body_size,
+    body_truncated: truncated,
     stub,
     stub_source,
     scenario,
@@ -463,6 +468,7 @@ let vacated : JournalEntry = {
   digest: "",
   request: { meth: "", target: "", version: "", headers: [], body: b"", },
   body_size: 0,
+  body_truncated: false,
   stub: None,
   stub_source: None,
   scenario: None,
@@ -938,7 +944,11 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
           "value": Json::string(header.1),
         }),
       ),
-      "body": body_json(self.request.body, size=self.body_size),
+      "body": body_json(
+        self.request.body,
+        size=self.body_size,
+        truncated=self.body_truncated,
+      ),
     },
     "stub": optional(self.stub),
     "stubSource": optional(self.stub_source.map(source => source.name())),

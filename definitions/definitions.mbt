@@ -110,6 +110,9 @@ pub struct Mock {
   http_stubs : ReadOnlyArray[Stub]
   /// The match index of `http_stubs`, which `candidates` looks up.
   priv index : MatchIndex
+  /// The gRPC Stubs of the Mock by their exact path, each list in matching
+  /// order, which `grpc_candidates` looks up.
+  priv grpc_stubs : Map[String, ReadOnlyArray[Stub]]
   /// The Scenarios that the Mock's Stubs name, each with its file states,
   /// in byte-wise order of their names. A Scenario has no declaration: it
   /// exists because Stubs name it.
@@ -1241,6 +1244,7 @@ pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
           stubs: ReadOnlyArray::from_array([]),
           http_stubs: ReadOnlyArray::from_array([]),
           index: MatchIndex::new(ReadOnlyArray::from_array([])),
+          grpc_stubs: no_grpc_stubs,
           scenarios: ReadOnlyArray::from_array([]),
           buckets: ReadOnlyArray::from_array([]),
           initial_data: Map([]),
@@ -1283,6 +1287,11 @@ pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
       stubs,
       http_stubs,
       index: MatchIndex::new(http_stubs),
+      grpc_stubs: if http_stubs.length() == stubs.length() {
+        no_grpc_stubs
+      } else {
+        grpc_stubs_by_path(stubs)
+      },
       scenarios: scenarios_of(stubs),
       buckets: ReadOnlyArray::from_array(buckets),
       initial_data,
