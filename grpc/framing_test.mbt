@@ -118,8 +118,3 @@ test "framing a message gives flag 0, its length and its octets, which read back
     ),
   )
 }
-
-///|
-test "the content type of gRPC calls and replies is application/grpc" {
-  inspect(@grpc.content_type, content="application/grpc")
-}

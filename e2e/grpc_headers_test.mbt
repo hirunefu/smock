@@ -27,14 +27,16 @@ let unserved_example : String =
 
 ///|
 /// The fields of a gRPC call to `path` at `authority`, as gRPC clients send
-/// them, then `more`.
+/// them, with `content-type: <content_type>`, by default
+/// `application/grpc`, then `more`.
 fn call_fields(
   path : String,
   authority : String,
+  content_type~ : String = "application/grpc",
   more~ : Array[(String, String)] = [],
 ) -> Array[(String, String)] {
   let fields = request_fields("POST", path, authority)
-  fields.push(("content-type", "application/grpc"))
+  fields.push(("content-type", content_type))
   fields.push(("te", "trailers"))
   fields.append(more)
   fields

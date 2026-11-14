@@ -1,5 +1,9 @@
-// The gRPC layer of the HTTP/2 mapping: an HTTP/2 stream whose
-// `content-type` is `application/grpc` is a gRPC unary call. The call's
+// The gRPC layer of the HTTP/2 mapping, on the plain and TLS ports alike: an
+// HTTP/2 stream whose `content-type` is `application/grpc`, alone or
+// followed by `+` or `;`, is a gRPC unary call (`@grpc.content_subtype`).
+// One whose content subtype is neither none nor `proto`, such as `json`, is
+// refused from its HEADERS, after spec E's checks, with Trailers-Only
+// UNIMPLEMENTED. Every other stream is an HTTP request. The call's
 // Mock and its Descriptor set are looked up twice, from the definition set
 // served at the time. When the call's HEADERS arrive, a call that cannot
 // reach a gRPC Stub, since its Host reaches no Mock, its Mock has no set,
@@ -27,22 +31,27 @@
 // is the status message percent-encoded, so any Unicode text fits in the
 // field (`@grpc.percent_encode`). An answer sent before the client has
 // ended its request is followed by RST_STREAM NO_ERROR (`end_early`). What
-// the layer cannot serve yet gets Trailers-Only too, with `grpc-status`
-// INTERNAL and a fixed ASCII `grpc-message`. A call that does not reach the
-// engine is counted as rejected traffic and is not journaled; one that does
-// is journaled as the engine planned it, with the gRPC status INTERNAL,
-// which the entry records before it is committed.
+// the layer refuses, or cannot serve yet, gets Trailers-Only too, with its
+// `grpc-status` and a fixed ASCII `grpc-message`. A call that does not
+// reach the engine is counted as rejected traffic and is not journaled; one
+// that does is journaled as the engine planned it, with the gRPC status
+// INTERNAL, which the entry records before it is committed.
 
 ///|
 /// The content type of gRPC calls, as the octets of a field value.
 let grpc_content_type : Bytes = @utf8.encode(@grpc.content_type)
 
 ///|
-/// Whether `value`, the value of a request's `content-type` field, makes
-/// its stream a gRPC call: it is `application/grpc` exactly.
-fn is_grpc_content_type(value : Bytes) -> Bool {
-  value == grpc_content_type
+/// Whether `subtype`, the content subtype of a gRPC call, is one smock
+/// serves: none, or `proto`, the subtypes of protobuf messages.
+fn is_served_subtype(subtype : BytesView) -> Bool {
+  subtype.length() == 0 || subtype == b"proto"[:]
 }
+
+///|
+/// The fixed `grpc-message` of the UNIMPLEMENTED answer to a gRPC call
+/// whose content subtype smock does not serve, such as `json`.
+let unserved_subtype_message : String = "only the proto content subtype is served"
 
 ///|
 /// The unary method that a gRPC call to `path` calls in `set`, the
@@ -150,7 +159,12 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
   let ports = self.ports
   let incoming = request.to_engine()
   if incoming.meth != "POST" {
-    self.refuse_call(stream, "the method must be POST")
+    self.refuse_call(
+      stream,
+      @grpc.Internal,
+      "the method must be POST",
+      ended=true,
+    )
     return
   }
   // The second lookup, from the definition set served now: a reload since
@@ -164,14 +178,24 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
   guard @grpc.next_message(incoming.body)
     is Message(flag=b'\x00', message~, rest~) &&
     @grpc.next_message(rest) is Done else {
-    self.refuse_call(stream, "the request is not one uncompressed message")
+    self.refuse_call(
+      stream,
+      @grpc.Internal,
+      "the request is not one uncompressed message",
+      ended=true,
+    )
     return
   }
   // A message that does not parse, or whose type has a field that smock
   // does not decode yet, does not decode.
   let json = @protobuf.decode_json(set, set.input_of(rpc), message) catch {
     _ => {
-      self.refuse_call(stream, "the request message cannot be decoded")
+      self.refuse_call(
+        stream,
+        @grpc.Internal,
+        "the request message cannot be decoded",
+        ended=true,
+      )
       return
     }
   }
@@ -392,17 +416,22 @@ fn H2Connection::end_with_trailers(
 }
 
 ///|
-/// Answers `stream`, a gRPC call whose request has ended and that this
-/// layer cannot serve, with Trailers-Only INTERNAL and the fixed ASCII
-/// `message`, and counts it as rejected traffic. It never reached the
-/// engine, so it has no Journal entry.
+/// Answers `stream`, a gRPC call that this layer refuses, with Trailers-Only,
+/// the gRPC status `status` and the fixed ASCII `message`, and counts it as
+/// rejected traffic, with `mock=""` and `stub=""`: one whose content
+/// subtype smock does not serve, from its HEADERS, or one that this layer
+/// cannot serve, once its request has ended. It never reached the engine,
+/// so it has no Journal entry. A call whose request has not `ended` then
+/// gets RST_STREAM NO_ERROR (`end_early`).
 fn H2Connection::refuse_call(
   self : H2Connection,
   stream : Int32,
+  status : @grpc.Status,
   message : String,
+  ended~ : Bool,
 ) -> Unit {
   let fields = trailers_only(
-    @grpc.Internal,
+    status,
     Some(message),
     None,
     date=self.ports.dates.at(self.now),
@@ -414,6 +443,9 @@ fn H2Connection::refuse_call(
     }
   }
   self.streams.ended_by_smock(stream)
+  if !ended {
+    self.end_early(stream)
+  }
   self.ports.rejected(self.last_read)
 }
 

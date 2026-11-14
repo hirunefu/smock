@@ -3,15 +3,19 @@
 A Mock can stand in for a gRPC service. It names the service's
 Descriptor set, the compiled form of its `.proto` files, and smock reads
 and checks the set when it loads the Definition files. Its gRPC Stubs then
-answer unary calls, on the plain port over h2c. This guide shows a first
-call, says how a call reaches a Stub and how smock answers it, and how to
-build a set that smock reads. The
+answer unary calls, on the plain port over h2c and on the TLS port over
+h2. This guide shows a first call, says which requests are gRPC calls, how
+a call reaches a Stub and how smock answers it, and how to build a set
+that smock reads. The
 [Definition-file reference](definition-files.md#grpc) describes the
 Mock's `grpc` field and gRPC Stubs.
 
 ## Contents
 
 - [Quick start](#quick-start)
+- [Ports and detection](#ports-and-detection)
+  - [Other subtypes](#other-subtypes)
+  - [Requests that are not gRPC calls](#requests-that-are-not-grpc-calls)
 - [How smock serves a call](#how-smock-serves-a-call)
   - [The call's Mock](#the-calls-mock)
   - [Reloads](#reloads)
@@ -79,6 +83,14 @@ grpcurl -plaintext -protoset defs/files/greeter.binpb \
 }
 ```
 
+The same call goes to the TLS port over h2. Leave out `-plaintext`, and
+add `-insecure` while smock serves its self-signed certificate:
+
+```sh
+grpcurl -insecure -protoset defs/files/greeter.binpb \
+  -d '{"name": "Tom"}' localhost:8443 helloworld.Greeter/SayHello
+```
+
 The Journal records the call, with the request message as JSON:
 
 ```sh
@@ -93,14 +105,77 @@ reports `Code: Unimplemented` and `Message: no Stub matched`, and the
 Journal records the call as unmatched
 ([Unmatched calls](#unmatched-calls)).
 
+## Ports and detection
+
+smock serves gRPC on the ports that serve HTTP, beside HTTP. gRPC has no
+port of its own:
+
+- the plain port, over h2c: HTTP/2 without TLS, which grpcurl's
+  `-plaintext` and a channel without credentials send;
+- the TLS port, over h2: ALPN chooses HTTP/2 when the client offers `h2`,
+  as gRPC clients do ([h2 on the TLS port](http2.md#h2-on-the-tls-port)).
+
+`--tls-http2 off` also turns off gRPC over TLS. The TLS port then offers
+`http/1.1` alone, so a gRPC client, which offers only `h2`, fails the
+handshake with the `no_application_protocol` alert: grpcurl reports
+`remote error: tls: no application protocol`. The plain port still serves
+gRPC. The admin port never serves gRPC: it serves HTTP/1.1 only.
+
+An HTTP/2 request is a gRPC call when its `content-type` is
+`application/grpc`, alone or followed by `+` or `;`. The text after `+`,
+up to any `;`, is the call's subtype. It names how the call's messages
+are encoded, and no subtype means protobuf:
+
+| `content-type` | The request |
+|---|---|
+| `application/grpc`, `application/grpc;v=1` | a gRPC call that smock serves |
+| `application/grpc+proto`, `application/grpc+proto;v=1` | a gRPC call that smock serves |
+| `application/grpc+json`, or any other subtype | a gRPC call that smock refuses ([Other subtypes](#other-subtypes)) |
+| any other, such as `application/grpc-web` or `application/json`, or none | an HTTP request ([Requests that are not gRPC calls](#requests-that-are-not-grpc-calls)) |
+
+smock compares the content type as sent, in its case, as grpc-go does.
+
+smock's HTTP/2 checks of a request come first, whatever its content type
+([Requests smock refuses](http2.md#requests-smock-refuses)). A request that
+HTTP/1.1's rules refuse gets 400, and a header list over
+`--header-size-limit` gets 431, with no gRPC status. A gRPC client reports
+400 as INTERNAL and 431 as UNKNOWN, as gRPC reads answers that are not
+gRPC.
+
+### Other subtypes
+
+smock encodes messages with protobuf only. A call with another subtype,
+such as `application/grpc+json`, gets UNIMPLEMENTED as soon as its HEADERS
+arrive. smock sends it as [Trailers-Only](#trailers-only): one HEADERS
+block that ends the stream, with `:status` 200, `content-type: application/grpc`,
+`grpc-status: 12` and the fixed `grpc-message`
+`only the proto content subtype is served`. When the client is still
+sending its request, RST_STREAM `NO_ERROR` follows and tells it to stop.
+
+The call never reaches the Stubs. It is not in the Journal, and the
+request metrics count it as a rejected request, with `mock=""` and
+`stub=""`. A call whose method is not `POST` gets that method's answer
+instead ([Calls smock does not serve yet](#calls-smock-does-not-serve-yet)).
+
+### Requests that are not gRPC calls
+
+Every other request is an HTTP request. The Mock's HTTP Stubs answer it,
+or its `noMatch` answer when none matches, as before:
+
+- an HTTP/2 request with another content type, gRPC-Web's
+  `application/grpc-web` included, or with none;
+- every HTTP/1.1 request, one with `content-type: application/grpc`
+  included. gRPC needs HTTP/2's trailers, so smock serves no gRPC over
+  HTTP/1.1.
+
+Such a request never matches a gRPC Stub, even on the path of a gRPC
+method.
+
 ## How smock serves a call
 
-An HTTP/2 request on the plain port whose `content-type` is
-`application/grpc` is a gRPC call. Every other request, an HTTP/1.1
-request with that content type included, is an HTTP request, which the
-Mock's HTTP Stubs answer as before.
-
-When the call's HEADERS arrive, smock finds the call's Mock
+smock tells a gRPC call by its content type
+([Ports and detection](#ports-and-detection)). When the call's HEADERS
+arrive, smock finds the call's Mock
 ([The call's Mock](#the-calls-mock)) and the method that the call's
 `:path`, such as `/helloworld.Greeter/SayHello`, names in the Mock's set.
 A call that cannot reach a gRPC Stub, since there is no such Mock, set or
