@@ -240,14 +240,62 @@ pub fn Reader::expect(
 }
 
 ///|
-/// Skips the value of the last tag read, as its wire type says. Raises
-/// `DecodeError` when the input ends inside it.
+/// How deep groups may nest, as protobuf's C++ and Java parsers bound
+/// messages by default.
+let max_depth : Int32 = 100
+
+///|
+/// Skips the value of the last tag read, as its wire type says. A group is
+/// skipped with every record in it, up to the end of the group with its
+/// field number, groups inside it included.
+///
+/// Raises `DecodeError` when the input ends inside the value, when a group
+/// ends with the tag of another field number, when a group ends where none
+/// started, and when groups nest deeper than 100.
 pub fn Reader::skip(self : Reader) -> Unit raise DecodeError {
   match self.wire_type {
     Varint => ignore(self.varint())
     I64 => ignore(self.fixed64())
     Len => ignore(self.length_delimited())
     I32 => ignore(self.fixed32())
-    StartGroup | EndGroup => ()
+    StartGroup => self.skip_group(self.field, self.tag_at, 1)
+    EndGroup =>
+      raise self.error(
+        self.tag_at,
+        "the group of field \{self.field} ends where none started",
+      )
+  }
+}
+
+///|
+/// Skips the rest of the group of field `field`, whose start tag is at
+/// `at`, `depth` groups deep, up to and including its end tag.
+fn Reader::skip_group(
+  self : Reader,
+  field : Int32,
+  at : Int32,
+  depth : Int32,
+) -> Unit raise DecodeError {
+  if depth > max_depth {
+    raise self.error(at, "groups nest deeper than \{max_depth}")
+  }
+  for ;; {
+    if self.at_end() {
+      raise self.error(
+        at,
+        "the input ends inside the group of field \{field}",
+      )
+    }
+    let inner = self.tag()
+    match self.wire_type {
+      EndGroup if inner == field => return
+      EndGroup =>
+        raise self.error(
+          self.tag_at,
+          "the group of field \{field} ends with the tag of field \{inner}",
+        )
+      StartGroup => self.skip_group(inner, self.tag_at, depth + 1)
+      _ => self.skip()
+    }
   }
 }

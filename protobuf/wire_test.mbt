@@ -188,3 +188,77 @@ test "expecting a wire type other than the tag's is an error at the tag" {
     content="error: octet 0: field 2 has wire type I32, not LEN",
   )
 }
+
+///|
+test "skipping a group skips every record up to the end of the group with its field number, nested groups included" {
+  let read = (reader : @protobuf.Reader) => {
+    let out = []
+    while !reader.at_end() {
+      let field = reader.tag()
+      out.push("\{field} \{reader.wire_type()}")
+      reader.skip()
+    }
+    out.join(", ")
+  }
+  // Field 1, a group holding a varint and a group of field 2, then field 3.
+  inspect(
+    outcome(b"\x0b\x08\x01\x13\x10\x05\x14\x0c\x18\x07", read),
+    content="1 SGROUP, 3 VARINT",
+  )
+  inspect(outcome(b"\x0b\x0c", read), content="1 SGROUP")
+}
+
+///|
+test "a group that the input ends inside, that ends with another field number or that was never started is an error" {
+  let read = (reader : @protobuf.Reader) => {
+    while !reader.at_end() {
+      reader.tag() |> ignore
+      reader.skip()
+    }
+    "read"
+  }
+  inspect(
+    outcome(b"\x0b\x08\x01", read),
+    content="error: octet 0: the input ends inside the group of field 1",
+  )
+  inspect(
+    outcome(b"\x0b\x14", read),
+    content="error: octet 1: the group of field 1 ends with the tag of field 2",
+  )
+  inspect(
+    outcome(b"\x0b\x13\x0c", read),
+    content="error: octet 2: the group of field 2 ends with the tag of field 1",
+  )
+  inspect(
+    outcome(b"\x08\x01\x0c", read),
+    content="error: octet 2: the group of field 1 ends where none started",
+  )
+  inspect(
+    outcome(b"\x0b\x08", read),
+    content="error: octet 2: the input ends inside a varint",
+  )
+}
+
+///|
+test "groups nested deeper than 100 are an error, and 100 deep are skipped" {
+  let read = (reader : @protobuf.Reader) => {
+    reader.tag() |> ignore
+    reader.skip()
+    "skipped"
+  }
+  let nested = (depth : Int) => {
+    let out = @buffer.new()
+    for _ in 0..<depth {
+      out.write_byte(b'\x0b')
+    }
+    for _ in 0..<depth {
+      out.write_byte(b'\x0c')
+    }
+    out.to_bytes()
+  }
+  inspect(outcome(nested(100), read), content="skipped")
+  inspect(
+    outcome(nested(101), read),
+    content="error: octet 100: groups nest deeper than 100",
+  )
+}
