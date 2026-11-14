@@ -14,7 +14,8 @@
 // that ends the stream, with `:status` 200, `grpc-status` INTERNAL and a
 // fixed ASCII `grpc-message`. A call that does not reach the engine is
 // counted as rejected traffic and is not journaled; one that does is
-// journaled as the engine planned it.
+// journaled as the engine planned it, with the gRPC status INTERNAL, which
+// the entry records before it is committed.
 
 ///|
 /// The content type of gRPC calls, as the octets of a field value.
@@ -92,28 +93,14 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
       Some({ failure: Data(_), .. }) => "data write failed"
       None => "state limit reached"
     }
-    let fields = trailers_only(
-      @grpc.Internal,
-      message,
-      smock_mock_of(plan.headers),
-      date~,
-    )
-    self.headers_only(stream, fields, outcome.journal, partial=false)
-    self.ended_in_place(request, outcome)
+    self.answer_internal(stream, request, outcome, message, date~)
     return
   }
   // A static reply was checked against the output type at load; a
   // templated one is checked here, once rendered.
   let reply = encode_reply(set.output_of(rpc), plan.body) catch {
     _ => {
-      let fields = trailers_only(
-        @grpc.Internal,
-        "template failed",
-        smock_mock_of(plan.headers),
-        date~,
-      )
-      self.headers_only(stream, fields, outcome.journal, partial=false)
-      self.ended_in_place(request, outcome)
+      self.answer_internal(stream, request, outcome, "template failed", date~)
       return
     }
   }
@@ -134,6 +121,33 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
     )
     return
   }
+  self.ended_in_place(request, outcome)
+}
+
+///|
+/// Answers `stream`, a gRPC call that the engine decided `outcome` for, with
+/// Trailers-Only INTERNAL and the fixed ASCII `message` instead of the
+/// plan's reply, which it cannot send, and records INTERNAL as the call's
+/// gRPC status in its Journal entry, which is then committed. `date` is the
+/// value of the answer's `date` field.
+fn H2Connection::answer_internal(
+  self : H2Connection,
+  stream : Int32,
+  request : H2Request,
+  outcome : @engine.Outcome,
+  message : String,
+  date~ : String,
+) -> Unit {
+  let fields = trailers_only(
+    @grpc.Internal,
+    message,
+    smock_mock_of(outcome.plan.headers),
+    date~,
+  )
+  if outcome.journal is Some(entry) {
+    entry.set_grpc_status(@grpc.Internal)
+  }
+  self.headers_only(stream, fields, outcome.journal, partial=false)
   self.ended_in_place(request, outcome)
 }
 
