@@ -1,7 +1,8 @@
 // Repeated fields, maps and oneofs decoded into smock's decoded form,
-// through the public interface. The set is
-// fixtures/protobuf/collections/collections.proto; some messages are what
-// protoc encodes from the .txtpb files beside it, and others are written
+// through the public interface. The sets are
+// fixtures/protobuf/collections/collections.proto and
+// fixtures/protobuf/oneofs/oneofs.proto; some messages are what protoc
+// encodes from the .txtpb files beside them, and others are written
 // record by record, in orders protoc never writes.
 
 ///|
@@ -704,6 +705,29 @@ test "a repeated field and a map of a well-known type are not decoded yet" {
     content=(
       #|octet 0: the field at has the well-known type google.protobuf.Timestamp, which smock does not decode yet
       #|octet 0: the field at is a map whose values have the well-known type google.protobuf.Timestamp, which smock does not decode yet
+    ),
+  )
+}
+
+///|
+test "a oneof and a proto3 optional field of one message, as protoc builds them: each prints only when set, and the oneof's later member wins" {
+  let pick = (write : (@protobuf.Writer) -> Unit) => {
+    decoded(oneofs_set, "oneofs.Pick", nested(write))
+  }
+  inspect(
+    pick(_ => ()),
+    content=(
+      #|{"name":""}
+    ),
+  )
+  inspect(
+    pick(w => {
+      string_field(w, 2, "w")
+      varint_field(w, 4, 0)
+      varint_field(w, 3, 5)
+    }),
+    content=(
+      #|{"name":"","number":5,"exact":false}
     ),
   )
 }
