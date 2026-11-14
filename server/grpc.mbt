@@ -330,10 +330,11 @@ fn trailers_only(
   if mock is Some(value) {
     fields.push({ name: b"smock-mock", value: @http1.field_octets(value), })
   }
-  for trailer in trailers {
+  for i in 0..<trailers.length() {
+    let (name, value) = trailers[i]
     fields.push({
-      name: lower_case(trailer.0),
-      value: @http1.field_octets(trimmed(trailer.1)),
+      name: lower_case(name),
+      value: @http1.field_octets(trimmed(value)),
     })
   }
   fields.push({ name: b"date", value: @http1.field_octets(date), })
