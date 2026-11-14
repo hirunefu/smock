@@ -1,58 +1,7 @@
-// Messages decoded and encoded from their descriptors. A message is decoded
-// into smock's decoded form, the JSON text the engine, the Journal and
-// templates see, and encoded from JSON as ProtoJSON reads it
-// (https://protobuf.dev/programming-guides/json/). For now the decoder
-// serves every field but groups and those of the well-known types, and
-// the encoder types whose fields are singular string, bool and int32
-// fields without presence.
-
-///|
-/// Why JSON is not a message of the type it is encoded as. `pointer` is the
-/// JSON Pointer of the value at fault, `""` for the whole message, and
-/// `message` says what is wrong with it.
-#derive(Eq, Debug)
-pub(all) suberror EncodeError {
-  EncodeError(pointer~ : String, message~ : String)
-}
-
-///|
-/// Shows the error as `<pointer>: <message>`, or as the message alone for
-/// the whole message.
-pub impl Show for EncodeError with fn output(self, logger) {
-  let EncodeError(pointer~, message~) = self
-  if pointer != "" {
-    logger.write_string(pointer)
-    logger.write_string(": ")
-  }
-  logger.write_string(message)
-}
-
-///|
-/// Whether the codec serves `field`: a singular string, bool or int32
-/// field, outside any oneof, so without presence, as a proto3 `optional`
-/// field is in its own oneof.
-fn is_served(field : FieldDescriptor) -> Bool {
-  field.label is (Optional | Required) &&
-  field.type_ is (String | Bool | Int32) &&
-  field.oneof_index is None
-}
-
-///|
-/// Why the codec does not serve `field` yet, for a field that `is_served`
-/// does not serve: `done` is what it does not do, such as `decode`.
-fn not_served(field : FieldDescriptor, done : String) -> String {
-  let what = if field.label is Repeated {
-    "is repeated"
-  } else if field.type_name != "" {
-    let name = field.type_name
-    "has the type \{if name.has_prefix(".") { name[1:].to_owned() } else { name }}"
-  } else if field.type_ is (String | Bool | Int32) {
-    "is in a oneof or optional"
-  } else {
-    "has the type \{field.type_}"
-  }
-  "the field \{field.name} \{what}, which smock does not \{done} yet"
-}
+// Messages decoded from their descriptors into smock's decoded form, the
+// JSON text the engine, the Journal and templates see. For now the decoder
+// serves every field but groups and those of the well-known types.
+// encode.mbt encodes messages from JSON.
 
 ///|
 /// The index in `fields` of the message's field numbered `number`, or -1,
@@ -97,10 +46,6 @@ priv enum Value {
   /// string, bytes or message; or one entry of a map.
   Elements(Array[BytesView])
 }
-
-///|
-/// The oneofs of a message without oneofs.
-let no_oneofs : FixedArray[Int32] = []
 
 ///|
 /// The records of a repeated field that a message leaves out.
@@ -971,99 +916,4 @@ fn hex_digit(n : Int32) -> Byte {
   } else {
     (0x61 + n - 10).to_byte()
   }
-}
-
-///|
-/// Encodes `json`, a message of the type `message` as ProtoJSON writes it,
-/// in protobuf's binary encoding, as protoc encodes it: its fields in
-/// field-number order, each left out at its default, as a proto3 field
-/// without presence is. A member's key is the field's proto name or its
-/// JSON name. A string field takes a JSON string, a bool field `true` or
-/// `false`, and an int32 field a number with an integral value from
-/// -2147483648 to 2147483647.
-///
-/// Raises `EncodeError` for JSON that is not such a message: not an
-/// object, a key that names no field, or a value of the wrong type or out
-/// of its type's range; and when the type has a field that the codec does
-/// not encode yet.
-pub fn encode_json(
-  message : MessageDescriptor,
-  json : Json,
-) -> Bytes raise EncodeError {
-  let fields = message.fields
-  for field in fields {
-    if !is_served(field) {
-      raise EncodeError(pointer="", message=not_served(field, "encode"))
-    }
-  }
-  guard json is Object(members) else {
-    raise EncodeError(
-      pointer="",
-      message="must be an object: the message is a \{message.full_name}",
-    )
-  }
-  for key, value in members {
-    let pointer = "/" +
-      key.replace_all(old="~", new="~0").replace_all(old="/", new="~1")
-    let field = match message.find_field_by_json_name(key) {
-      Some(field) => field
-      None =>
-        match message.find_field_by_name(key) {
-          Some(field) => field
-          None =>
-            raise EncodeError(
-              pointer~,
-              message="is not a field of \{message.full_name}",
-            )
-        }
-    }
-    let fits = match (field.type_, value) {
-      (String, String(_)) | (Bool, True | False) => true
-      (Int32, Number(n, ..)) =>
-        n == n.floor() && n >= -2147483648.0 && n <= 2147483647.0
-      _ => false
-    }
-    if !fits {
-      let (wanted, type_) = match field.type_ {
-        String => ("a string", "a string")
-        Bool => ("true or false", "a bool")
-        _ => ("an integer from -2147483648 to 2147483647", "an int32")
-      }
-      raise EncodeError(
-        pointer~,
-        message="must be \{wanted}: the field \{field.name} is \{type_}",
-      )
-    }
-  }
-  let writer = Writer()
-  let order = message.by_number
-  for n in 0..<order.length() {
-    let field = fields[order[n]]
-    let value = match members.get(field.json_name) {
-      Some(value) => value
-      None =>
-        match members.get(field.name) {
-          Some(value) => value
-          None => continue
-        }
-    }
-    match value {
-      String(text) if text != "" => {
-        writer.tag(field.number, Len)
-        writer.length_delimited(@utf8.encode(text))
-      }
-      True => {
-        writer.tag(field.number, Varint)
-        writer.varint(1)
-      }
-      Number(n, ..) if n != 0.0 => {
-        writer.tag(field.number, Varint)
-        // A negative int32 is sign-extended to 64 bits, as protobuf
-        // encodes it.
-        writer.varint(n.to_int().to_int64().reinterpret_as_uint64())
-      }
-      _ => ()
-    }
-  }
-  writer.to_bytes()
 }

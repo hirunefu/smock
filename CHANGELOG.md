@@ -172,18 +172,30 @@ of each GitHub release include its section
   message, decodes it into JSON with the input type of the method its
   `:path` names in its Mock's set, and matches it against the Mock's gRPC
   Stubs on that method, as a `POST` with the metadata as headers and the
-  JSON as the body. The reply JSON is encoded with the output type and
-  sent as HEADERS, one DATA frame and trailers with `grpc-status: 0`. The
-  Journal records the call with its decoded body, whose size counts the
-  octets received, and the request metrics count it under its Mock and
-  Stub. A call that no Stub matches gets Trailers-Only UNIMPLEMENTED
-  `no Stub matched`, with its Near miss in a `smock-near-miss` trailer, in
-  the form of the `Smock-Near-Miss` header; the Mock's `noMatch` applies
-  to HTTP requests only. For now smock serves replies of singular
-  `string`, `bool` and `int32` fields, and answers the calls it does not
-  serve yet with Trailers-Only INTERNAL and a fixed message. The new
-  `smock/grpc` module frames messages and names gRPC's status codes, and
-  `smock/protobuf` decodes and encodes messages. See [gRPC](docs/grpc.md).
+  JSON as the body. The reply JSON is read as ProtoJSON reads it, so a
+  reply pasted from any tool works, encoded with the output type as protoc
+  encodes it, and sent as HEADERS, one DATA frame and trailers with
+  `grpc-status: 0`. A static reply is checked and encoded when the files
+  load; a templated one is encoded on each call, and gets INTERNAL
+  `template failed` when it does not fit the output type. The Journal
+  records the call with its decoded body, whose size counts the octets
+  received, and the request metrics count it under its Mock and Stub. A
+  call that no Stub matches gets Trailers-Only UNIMPLEMENTED
+  `no Stub matched`, with its Near miss among the Mock's gRPC Stubs in a
+  `smock-near-miss` trailer, in the form of the `Smock-Near-Miss` header;
+  the Mock's `noMatch` applies to HTTP requests only. A call whose Host
+  reaches no Mock, whose Mock has no set, or whose method the set lacks or
+  streams gets UNIMPLEMENTED with a fixed message as soon as its HEADERS
+  arrive, then RST_STREAM `NO_ERROR` while the client still sends, and is
+  journaled as unmatched with an empty body. `:authority` chooses the
+  Mock, and the Default Mock answers with its own set. A call is looked up
+  again when its request ends, so a reload never makes a call decoded with
+  one version of a set and answered with another. For now smock serves
+  replies of every proto3 type but the well-known types, and answers the
+  calls it does not serve yet with Trailers-Only INTERNAL and a fixed
+  message. The new `smock/grpc` module frames messages and names gRPC's
+  status codes, and `smock/protobuf` decodes and encodes messages. See
+  [gRPC](docs/grpc.md).
 - `grpcStatus` in the Journal. A gRPC call's entry records the name of the
   gRPC status the call got, such as `OK` or `UNIMPLEMENTED`, beside its
   HTTP status, which is 200 for a reply and for an unmatched call. An HTTP
@@ -284,6 +296,10 @@ of each GitHub release include its section
   holds: in `data` the decoded JSON, in `size` the octets of the DATA
   frames received, and in `truncated` whether the JSON was cut at
   `--journal-body-limit`.
+- The Admin API document's description of a Journal entry's
+  `templateError` says that a gRPC call got INTERNAL instead of 500, and
+  that, for a gRPC call, it also says why a templated reply, once
+  rendered, is not a message of the method's output type.
 
 ### Fixed
 

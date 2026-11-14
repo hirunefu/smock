@@ -1,0 +1,6 @@
+# The special values of double and float, and -0, which differs from the
+# default 0 in its sign bit, so it is written.
+a_double: -0.0
+a_float: nan
+doubles: [inf, nan, -inf]
+floats: [-inf, 0.1, -0.0, inf]

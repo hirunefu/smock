@@ -321,6 +321,20 @@ fn H2Request::receive(self : H2Request, data : Bytes) -> Unit {
 }
 
 ///|
+/// The engine's view of the request as `to_engine` gives it, with an empty
+/// body: how a gRPC call that cannot reach a gRPC Stub goes to the engine,
+/// from its HEADERS or once it has ended.
+fn H2Request::without_body(self : H2Request) -> @engine.Request {
+  {
+    meth: self.meth,
+    target: self.target,
+    version: "HTTP/2",
+    headers: self.headers,
+    body: b"",
+  }
+}
+
+///|
 /// The engine's view of the request, once it has ended, or for a CONNECT
 /// once its HEADERS have arrived: `:method` is the method, `:path` the
 /// target as sent (`:authority` for a CONNECT), the version `HTTP/2`, and

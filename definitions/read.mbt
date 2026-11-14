@@ -611,6 +611,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     serves_ranges: false,
     reads_variables: false,
     reads_data: false,
+    encoded: None,
   }
   let mut weighted = None
   let mut variables = no_variable_writes
@@ -670,8 +671,41 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   }
   self.require(stub, pointer, "id")
   self.require(stub, pointer, "mock")
-  if grpc is Some(named) {
-    self.check_grpc_stub(pointer, stub, named)
+  if grpc is Some(named) &&
+    self.check_grpc_stub(pointer, stub, named) is Some(output) {
+    // Its static replies, encoded with its output type, are kept.
+    if stub.get("response") is Some(json) {
+      response = {
+        ..response,
+        encoded: self.encode_reply(
+          child_pointer(pointer, "response"),
+          json,
+          named.set,
+          output,
+        ),
+      }
+    }
+    if weighted is Some((responses, _)) &&
+      stub.get("responses") is Some(Array(items)) {
+      let at = child_pointer(pointer, "responses")
+      for i, item in items {
+        if i < responses.length() {
+          let weighted = responses[i]
+          responses[i] = {
+            ..weighted,
+            response: {
+              ..weighted.response,
+              encoded: self.encode_reply(
+                child_pointer(at, i.to_string()),
+                item,
+                named.set,
+                output,
+              ),
+            },
+          }
+        }
+      }
+    }
   }
   if stub.contains("crud") {
     // A CRUD Stub has `crud` in place of conditions, responses, a Scenario

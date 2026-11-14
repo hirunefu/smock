@@ -1,0 +1,5 @@
+# Fields with presence at their defaults, which are written: a message, a
+# proto3 optional field and a member of a oneof.
+nested {}
+maybe: 0
+word: ""

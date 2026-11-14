@@ -1,0 +1,18 @@
+# Repeated fields of each kind: packed scalars, a field with packed =
+# false, an enum with a number it does not name, strings, bytes and
+# messages.
+int32s: [1, -1, 300]
+unpacked_int32s: [1, -2]
+doubles: [0.5, 1e100]
+floats: [0.1, 9.99]
+int64s: [9223372036854775807, -1]
+uint64s: [18446744073709551615, 0]
+sint32s: [-1, 1, -2147483648]
+sint64s: [-9223372036854775808]
+fixed32s: [1, 4294967295]
+sfixed64s: [-1]
+bools: [true, false, true]
+statuses: [ACTIVE, STATUS_UNSPECIFIED, SUSPENDED, 7]
+strings: ["", "x"]
+byte_strings: ["\377", ""]
+nesteds: [{label: "a"}, {}]
