@@ -377,22 +377,22 @@ fn DescriptorSet::write_list(
   let packed = !(field.type_ is (String | Bytes | Message | Group)) &&
     field.packed is (None | Some(true))
   let out = if packed { Writer() } else { writer }
+  // An element's JSON Pointer is made only for an error.
   for i, item in items {
-    let at = "/\{i}"
     if item is Null {
       raise EncodeError(
-        pointer=at,
+        pointer="/\{i}",
         message="cannot be null: it is an element of the repeated field \{field.name} of \{message.full_name}",
       )
     }
     if packed {
       out.scalar(field.type_, self.scalar_bits(field, item)) catch {
-        _ => raise self.unfit_element(message, field, at)
+        _ => raise self.unfit_element(message, field, "/\{i}")
       }
     } else {
       self.write_value(out, field, item, depth, present=true) catch {
-        Unfit => raise self.unfit_element(message, field, at)
-        error => raise nested(error, at)
+        Unfit => raise self.unfit_element(message, field, "/\{i}")
+        error => raise nested(error, "/\{i}")
       }
     }
   }
@@ -478,14 +478,14 @@ fn DescriptorSet::write_map(
     0
   }
   sort_entries(order, keys, numbers, by_text=key_type is String, flip~)
+  // An entry's JSON Pointer is made only for an error.
   for i in 0..<count {
     let index = order[i]
     let key = keys[index]
-    let at = pointer_of(key)
     let value = values[index]
     if value is Null {
       raise EncodeError(
-        pointer=at,
+        pointer=pointer_of(key),
         message="cannot be null: it is a value of the map field \{field.name} of \{message.full_name}",
       )
     }
@@ -495,7 +495,7 @@ fn DescriptorSet::write_map(
       pair.utf8(key) catch {
         _ =>
           raise EncodeError(
-            pointer=at,
+            pointer=pointer_of(key),
             message="must be \{self.wanted(key_field)}: the keys of the map field \{field.name} of \{message.full_name} have the type \{type_of(key_field)}",
           )
       }
@@ -506,10 +506,10 @@ fn DescriptorSet::write_map(
     self.write_value(pair, value_field, value, depth, present=true) catch {
       Unfit =>
         raise EncodeError(
-          pointer=at,
+          pointer=pointer_of(key),
           message="must be \{self.wanted(value_field)}: the values of the map field \{field.name} of \{message.full_name} have the type \{type_of(value_field)}",
         )
-      error => raise nested(error, at)
+      error => raise nested(error, pointer_of(key))
     }
     writer.tag(field.number, Len)
     writer.length_delimited(pair.to_bytes())
