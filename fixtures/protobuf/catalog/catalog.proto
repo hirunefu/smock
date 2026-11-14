@@ -1,0 +1,55 @@
+// A service for smock's tests of gRPC Stubs. smock serves the types of
+// CountItems. The other methods stream, or reach types that gRPC Stubs do
+// not serve yet.
+syntax = "proto3";
+
+package catalog;
+
+import "legacy.proto";
+import "edition.proto";
+
+service Catalog {
+  rpc CountItems (CountRequest) returns (CountReply);
+  rpc GetItem (GetItemRequest) returns (Item);
+  rpc FindItems (Item) returns (CountReply);
+  rpc GetShelf (Shelf.Request) returns (CountReply);
+  rpc UploadItems (stream CountRequest) returns (CountReply);
+  rpc GetLegacyItem (legacy.LegacyRequest) returns (CountReply);
+  rpc GetEditionItem (edition.EditionRequest) returns (CountReply);
+}
+
+message CountRequest {
+  string shelf = 1;
+  bool in_stock = 2;
+}
+
+message CountReply {
+  int32 count = 1;
+  bool exact = 2;
+  string shelf = 3;
+}
+
+message GetItemRequest {
+  string id = 1;
+}
+
+// Each field of an item has a type that gRPC Stubs do not serve yet.
+message Item {
+  int64 price = 1;
+  repeated string tags = 2;
+  Kind kind = 3;
+  CountReply stock = 4;
+  bytes picture = 5;
+}
+
+enum Kind {
+  KIND_UNSPECIFIED = 0;
+  BOOK = 1;
+}
+
+message Shelf {
+  // A nested message.
+  message Request {
+    string name = 1;
+  }
+}

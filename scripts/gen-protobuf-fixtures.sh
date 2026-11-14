@@ -121,6 +121,13 @@ descriptor_set helloworld greeter.binpb helloworld.proto
 descriptor_set helloworld-v2 greeter.binpb helloworld.proto
 copy helloworld/greeter.binpb schema/v1/fixtures/body-files/greeter.binpb
 hex_test helloworld/greeter.binpb greeter_set "The Descriptor set of gRPC's helloworld.proto, fixtures/protobuf/helloworld/greeter.binpb, in hex." protobuf
+hex_test helloworld/greeter.binpb greeter_set "The Descriptor set of gRPC's helloworld.proto, fixtures/protobuf/helloworld/greeter.binpb, in hex." definitions
+hex_test helloworld/greeter.binpb greeter_set "The Descriptor set of gRPC's helloworld.proto, fixtures/protobuf/helloworld/greeter.binpb, in hex." engine
+
+# A service whose methods reach types that gRPC Stubs serve, and types
+# they do not serve yet, from a proto3, a proto2 and an editions file.
+descriptor_set catalog catalog.binpb catalog.proto
+hex_test catalog/catalog.binpb catalog_set "The Descriptor set of fixtures/protobuf/catalog/catalog.proto, fixtures/protobuf/catalog/catalog.binpb, in hex." definitions
 
 # The end of the list of fixtures. With --check: every file the script
 # wrote, compared with the committed one.

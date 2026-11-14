@@ -224,6 +224,11 @@ of each GitHub release include its section
   directory or a certificate directory cannot be watched and is only
   polled is gone, and the inotify limits no longer matter. See
   [Reloading](docs/definition-files.md#reloading).
+- The Definition-file Schema no longer requires a response's `status`,
+  since a gRPC Stub's response has none. The loader still requires it on
+  HTTP Stubs, so `smock check` still reports an HTTP Stub's response
+  without `status`. The format version stays 1. See
+  [gRPC Stubs](docs/definition-files.md#grpc-stubs).
 
 ### Fixed
 

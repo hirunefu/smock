@@ -81,6 +81,7 @@ fn File::read_responses(
   pointer : String,
   json : Json,
   buckets~ : @template.Buckets,
+  grpc~ : Bool,
 ) -> (Array[WeightedResponse], Int32) {
   let items = self.array(pointer, json)
   if json is Array(_) && (items.length() < 1 || items.length() > max_responses) {
@@ -108,7 +109,7 @@ fn File::read_responses(
     }
     responses.push({
       weight,
-      response: self.read_response(stub_pointer, at, item, buckets~),
+      response: self.read_response(stub_pointer, at, item, buckets~, grpc~),
     })
     total += weight
   }
@@ -117,13 +118,16 @@ fn File::read_responses(
 
 ///|
 /// Reads the response of the Stub at `stub_pointer`: the value `json` at
-/// `pointer`. Its templates may read the Data buckets `buckets`.
+/// `pointer`. Its templates may read the Data buckets `buckets`. A gRPC
+/// Stub's response, when `grpc` is true, needs no status, and its `json`
+/// gets no Content-Type.
 fn File::read_response(
   self : File,
   stub_pointer : String,
   pointer : String,
   json : Json,
   buckets~ : @template.Buckets,
+  grpc~ : Bool,
 ) -> Response {
   let mut status = 0
   let headers : Array[(String, String, String)] = []
@@ -166,7 +170,9 @@ fn File::read_response(
       _ => self.unknown_field(field)
     }
   }
-  self.require(response, pointer, "status")
+  if !grpc {
+    self.require(response, pointer, "status")
+  }
   let bodies = ["body", "bodyFile", "json", "events", "llm"].filter(key => {
     response.contains(key)
   })
@@ -177,8 +183,10 @@ fn File::read_response(
       "has \{given}; give at most one of \"body\", \"bodyFile\", \"json\", \"events\" and \"llm\"",
     )
   }
-  // A JSON body is sent as JSON unless the Stub says otherwise.
-  if body is JsonBody(_, _) &&
+  // A JSON body is sent as JSON unless the Stub says otherwise. A gRPC
+  // Stub's reply is a message, encoded from it.
+  if !grpc &&
+    body is JsonBody(_, _) &&
     !headers.iter().any(header => header.0.to_lower() == "content-type") {
     headers.push(("Content-Type", "application/json", pointer))
   }

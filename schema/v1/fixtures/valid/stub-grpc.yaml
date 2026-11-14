@@ -1,0 +1,22 @@
+mocks:
+  - name: greeter
+    hosts: [greeter.svc]
+    grpc:
+      descriptorSet: greeter.binpb
+stubs:
+  - id: hello-tom
+    mock: greeter
+    request:
+      path: /helloworld.Greeter/SayHello
+      headers: { x-tenant: acme }
+      body: { json: { name: Tom } }
+    response:
+      json: { message: Hello Tom }
+  - id: hello
+    mock: greeter
+    request:
+      method: POST
+      path: /helloworld.Greeter/SayHello
+    responses:
+      - { weight: 9, template: true, json: { message: "Hello ${body.name}" } }
+      - { json: {} }

@@ -1,6 +1,7 @@
-// The match index of a Mock: its Stubs grouped by the method and the exact
-// path a request needs for them to match, so that finding the Stub that
-// answers a request does not try every Stub of the Mock.
+// The match index of a Mock: its HTTP Stubs grouped by the method and the
+// exact path a request needs for them to match, so that finding the Stub
+// that answers a request does not try every Stub of the Mock. gRPC Stubs
+// are not in it: HTTP requests never match them.
 //
 // The index never changes which Stub answers. A lookup gives every Stub
 // the request could match, in matching order; it leaves out only Stubs
@@ -86,14 +87,14 @@ fn add_position(
 }
 
 ///|
-/// The Stubs of this Mock that a request with the method `meth` and the
-/// path `path` can match, in matching order. `path` is percent-decoded and
+/// The HTTP Stubs of this Mock that a request with the method `meth` and
+/// the path `path` can match, in matching order. `path` is percent-decoded and
 /// without the query, as path conditions compare it.
 ///
 /// They are found through the Mock's match index, built with the snapshot.
 /// Every Stub left out has an exact method or an exact path condition that
 /// the request does not meet, so the first of them that the request
-/// matches is the first Stub of `stubs` that it matches.
+/// matches is the first Stub of `http_stubs` that it matches.
 pub fn Mock::candidates(
   self : Mock,
   meth : String,
@@ -124,7 +125,7 @@ pub fn Mock::candidates(
     guard first >= 0 else { None }
     let position = lists[first][next[first]]
     next[first] += 1
-    Some(self.stubs[position])
+    Some(self.http_stubs[position])
   })
 }
 
@@ -189,7 +190,7 @@ pub fn Mock::first_candidate(
       3 => d += 1
       _ => return None
     }
-    let stub = self.stubs[position]
+    let stub = self.http_stubs[position]
     if accepts(stub) {
       return Some(stub)
     }
