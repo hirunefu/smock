@@ -472,7 +472,7 @@
       "unevaluatedProperties": false
     },
     "responseFields": {
-      "description": "The fields of a response: its status, its headers, its body or LLM reply, and whether it is a template. An HTTP Stub's response needs status. A gRPC Stub, whose exact request path names a unary method of its Mock's Descriptor set, answers with json alone, and its response has no status. This definition does not close itself to other properties so that weightedResponse can add weight; response and weightedResponse each close it with unevaluatedProperties: false.",
+      "description": "The fields of a response: its status, its headers, its body or LLM reply, and whether it is a template. An HTTP Stub's response needs status. A gRPC Stub, whose exact request path names a unary method of its Mock's Descriptor set, answers with json, the reply message, and grpc, the gRPC status and message its reply ends with; its response has no status. This definition does not close itself to other properties so that weightedResponse can add weight; response and weightedResponse each close it with unevaluatedProperties: false.",
       "type": "object",
       "properties": {
         "status": {
@@ -504,7 +504,7 @@
           "description": "The body as JSON: any JSON value, sent as compact JSON in UTF-8, with Content-Type: application/json unless headers gives a Content-Type. On a gRPC Stub, it is the reply message as ProtoJSON writes it, an object whose keys name fields of the method's output type by their proto names or JSON names, read and encoded when the definitions are loaded, or on each call once rendered when template is true, and it gets no Content-Type. smock writes every number in its shortest form (9.90 is sent as 9.9); use body when the exact bytes matter. With template true, it is a structured template: a string that is exactly one ${expr} gives the value with its own type, an object with $each gives an array, and an object with $if gives its then or else."
         },
         "template": {
-          "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json), the events and, in llm, the text, each chunk, id, model, each tool call's name, id and arguments, and the error's message are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
+          "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json), the events, in llm, the text, each chunk, id, model, each tool call's name, id and arguments, and the error's message, and in grpc, the message, are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
           "type": "boolean",
           "default": false
         },
@@ -513,7 +513,23 @@
           "type": "array",
           "items": { "$ref": "#/$defs/event" }
         },
-        "llm": { "$ref": "#/$defs/llm" }
+        "llm": { "$ref": "#/$defs/llm" },
+        "grpc": {
+          "description": "How a gRPC Stub's reply ends: its gRPC status and status message. Only a gRPC Stub's response gives it; an HTTP Stub that gives it is refused. Without it, the reply ends with OK and no message. An error, a status other than OK, gives no json: a gRPC call gets a reply message or an error, never both.",
+          "type": "object",
+          "properties": {
+            "status": {
+              "description": "The gRPC status, by the name gRPC gives it, from OK to UNAUTHENTICATED. Never a template. Default OK.",
+              "enum": ["OK", "CANCELLED", "UNKNOWN", "INVALID_ARGUMENT", "DEADLINE_EXCEEDED", "NOT_FOUND", "ALREADY_EXISTS", "PERMISSION_DENIED", "RESOURCE_EXHAUSTED", "FAILED_PRECONDITION", "ABORTED", "OUT_OF_RANGE", "UNIMPLEMENTED", "INTERNAL", "UNAVAILABLE", "DATA_LOSS", "UNAUTHENTICATED"],
+              "default": "OK"
+            },
+            "message": {
+              "description": "The status message, any Unicode text, sent in grpc-message: smock percent-encodes its UTF-8, so octets 0x20 to 0x7E other than % stay as they are, every other octet becomes %XX, and a space at either end becomes %20. With template true, it is a text template, and the control characters it renders are kept, then percent-encoded.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
       },
       "dependentSchemas": {
         "body": {
@@ -527,6 +543,23 @@
         },
         "events": {
           "properties": { "llm": false }
+        },
+        "grpc": {
+          "properties": { "status": false },
+          "if": {
+            "properties": {
+              "grpc": {
+                "description": "An error: a status other than OK.",
+                "properties": {
+                  "status": { "description": "Not OK.", "not": { "const": "OK" } }
+                },
+                "required": ["status"]
+              }
+            }
+          },
+          "then": {
+            "properties": { "json": false }
+          }
         }
       }
     },

@@ -12,17 +12,20 @@
 // when the files were loaded, or else the rendered reply JSON, encoded here
 // with the method's output type. It is written as gRPC writes it: HEADERS,
 // one DATA frame with the framed message, then trailers with
-// `grpc-status: 0`. The second lookup, the decoding, `handle` and the
-// encoding run with no await between them, so a reload never splits them,
-// and a call that the reload leaves without a gRPC Stub to reach gets the
-// answer it would have got from its HEADERS.
+// `grpc-status: 0` and the reply's `grpc-message`, if it gives one. The
+// second lookup, the decoding, `handle` and the encoding run with no await
+// between them, so a reload never splits them, and a call that the reload
+// leaves without a gRPC Stub to reach gets the answer it would have got
+// from its HEADERS.
 //
 // A call that cannot reach a gRPC Stub still goes to the engine, with an
 // empty body, which plans its UNIMPLEMENTED answer and journals it as
-// unmatched. A plan whose gRPC status is not OK, such as that UNIMPLEMENTED,
-// is sent as Trailers-Only, one HEADERS block that ends the stream, with
-// `:status` 200, its `grpc-status`, its fixed ASCII `grpc-message` and its
-// trailers, such as the Near miss. An answer sent before the client has
+// unmatched. A plan whose gRPC status is not OK, such as a gRPC Stub's
+// error or that UNIMPLEMENTED, is sent as Trailers-Only, one HEADERS block
+// that ends the stream, with `:status` 200, its `grpc-status`, its
+// `grpc-message` and its trailers, such as the Near miss. A `grpc-message`
+// is the status message percent-encoded, so any Unicode text fits in the
+// field (`@grpc.percent_encode`). An answer sent before the client has
 // ended its request is followed by RST_STREAM NO_ERROR (`end_early`). What
 // the layer cannot serve yet gets Trailers-Only too, with `grpc-status`
 // INTERNAL and a fixed ASCII `grpc-message`. A call that does not reach the
@@ -226,21 +229,16 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
         }
       }
   }
+  let trailers = ok_trailers(part.message)
   let rest = self.queue_reply(
     stream,
     reply_head(plan.headers, date~),
     @grpc.frame(reply),
+    trailers,
     outcome.journal,
   )
   if rest.length() > 0 {
-    self.write_slowly(
-      stream,
-      request,
-      rest,
-      outcome,
-      out,
-      trailers=ok_trailers(),
-    )
+    self.write_slowly(stream, request, rest, outcome, out, trailers~)
     return
   }
   self.ended_in_place(request, outcome)
@@ -333,20 +331,21 @@ fn reply_pointer(index : Int32?) -> String {
 }
 
 ///|
-/// Queues on `stream` the reply whose HEADERS are `head` and whose framed
-/// message is `framed`, and commits the Journal entry `entry` just before
-/// the trailers that end the stream. A message that fits the windows is
-/// queued whole, in one DATA frame that does not end the stream, then the
-/// trailers. One that does not fit gets as much as the windows allow; the
-/// rest is returned, which the caller sends in the stream's task, with the
-/// trailers after it and the entry still to commit. HEADERS or trailers the
-/// `Conn` refuses get RST_STREAM INTERNAL_ERROR, the entry committed just
-/// before (`reset_after`).
+/// Queues on `stream` the reply whose HEADERS are `head`, whose framed
+/// message is `framed` and whose trailers are `trailers`, and commits the
+/// Journal entry `entry` just before the trailers, which end the stream. A
+/// message that fits the windows is queued whole, in one DATA frame that
+/// does not end the stream, then the trailers. One that does not fit gets
+/// as much as the windows allow; the rest is returned, which the caller
+/// sends in the stream's task, with the trailers after it and the entry
+/// still to commit. HEADERS or trailers the `Conn` refuses get RST_STREAM
+/// INTERNAL_ERROR, the entry committed just before (`reset_after`).
 fn H2Connection::queue_reply(
   self : H2Connection,
   stream : Int32,
   head : Array[@header.Header],
   framed : Bytes,
+  trailers : Array[@header.Header],
   entry : @engine.JournalEntry?,
 ) -> BytesView {
   self.conn.headers(stream, head) catch {
@@ -369,7 +368,7 @@ fn H2Connection::queue_reply(
     _ => return framed[0:0]
   }
   self.ports.commit(entry)
-  self.end_with_trailers(stream, ok_trailers())
+  self.end_with_trailers(stream, trailers)
   framed[0:0]
 }
 
@@ -448,16 +447,25 @@ fn reply_head(
 }
 
 ///|
-/// The trailers of a reply that succeeded: `grpc-status: 0`.
-fn ok_trailers() -> Array[@header.Header] {
-  [{ name: b"grpc-status", value: b"0", }]
+/// The trailers of a reply that succeeded: `grpc-status: 0`, then
+/// `grpc-message` with `message`, percent-encoded, when the reply gives
+/// one.
+fn ok_trailers(message : String?) -> Array[@header.Header] {
+  match message {
+    None => [{ name: b"grpc-status", value: b"0", }]
+    Some(text) =>
+      [
+        { name: b"grpc-status", value: b"0", },
+        { name: b"grpc-message", value: @grpc.percent_encode(text), },
+      ]
+  }
 }
 
 ///|
 /// The fields of a Trailers-Only answer, one HEADERS block that ends the
 /// stream: `:status` 200, `content-type: application/grpc`, `grpc-status`
-/// with the code of `status`, `grpc-message` when `message` gives its
-/// fixed ASCII text, then `smock-mock` when `mock` gives its value, each of
+/// with the code of `status`, `grpc-message` when `message` gives its text,
+/// percent-encoded, then `smock-mock` when `mock` gives its value, each of
 /// `trailers`, such as `smock-near-miss`, as `reply_head` sends a header
 /// field, and `date` with the value `date`.
 fn trailers_only(
@@ -472,7 +480,7 @@ fn trailers_only(
   fields.push({ name: b"content-type", value: grpc_content_type, })
   fields.push({ name: b"grpc-status", value: decimal(status.code()), })
   if message is Some(text) {
-    fields.push({ name: b"grpc-message", value: @http1.field_octets(text), })
+    fields.push({ name: b"grpc-message", value: @grpc.percent_encode(text), })
   }
   if mock is Some(value) {
     fields.push({ name: b"smock-mock", value: @http1.field_octets(value), })

@@ -813,9 +813,43 @@ pub struct Response {
   /// The reply message of a gRPC Stub's response without templates: its
   /// `json`, or an empty message without one, encoded with the method's
   /// output type when the files were loaded. `None` for an HTTP Stub's
-  /// response, and for a templated one, whose message is encoded once
-  /// rendered.
+  /// response, for a templated one, whose message is encoded once rendered,
+  /// and for an error, whose reply has no message.
   encoded : EncodedMessage?
+  /// A gRPC Stub's `grpc`: the status its reply ends with, and its status
+  /// message. `None` without one, so for every HTTP Stub's response: a
+  /// gRPC Stub's reply then ends with `OK` and no message.
+  grpc : GrpcReply?
+}
+
+///|
+/// What a gRPC Stub's response gives in `grpc`: how its reply ends.
+#derive(Debug, Eq)
+pub struct GrpcReply {
+  /// The status, `OK` unless `status` names another. Never a template.
+  status : @grpc.Status
+  /// The status message, which the server percent-encodes into
+  /// `grpc-message`; `None` without `message`.
+  message : GrpcMessage?
+}
+
+///|
+/// The status message of a gRPC Stub's reply.
+#derive(Debug, Eq)
+pub enum GrpcMessage {
+  /// As written.
+  Written(String)
+  /// With `template` on: a text template, parsed when the definition set
+  /// was loaded or the Stub was added, and rendered for each call after the
+  /// reply message. The control characters it renders are kept.
+  Templated(@template.Text)
+}
+
+///|
+/// Whether the reply ends with a status other than `OK`: an error, which
+/// has no reply message.
+pub fn Response::is_grpc_error(self : Response) -> Bool {
+  self.grpc is Some({ status, .. }) && !(status is Ok)
 }
 
 ///|

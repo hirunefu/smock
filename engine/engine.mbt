@@ -224,8 +224,9 @@ pub(all) struct GrpcPart {
 }
 
 ///|
-/// The gRPC part of every reply that a gRPC Stub serves, but for its
-/// `encoded`: the status `OK`, with no message and no trailing metadata.
+/// The gRPC part that a gRPC Stub's reply starts from: the status `OK`,
+/// with no message, no trailing metadata and no encoded message. Each reply
+/// gets its own status, message and encoded message (`plan_response`).
 let grpc_ok : GrpcPart = {
   status: Ok,
   message: None,
@@ -767,41 +768,30 @@ pub fn Engine::handle(
               //    reads Variables, and does not continue from their values,
               //    looks them up. The reply to a gRPC call, which only a
               //    gRPC Stub matches, gets its gRPC part.
-              try
-                plan_response(
-                  response,
-                  incoming,
-                  context,
-                  now~,
-                  draw~,
-                  vars=if context is None && response.reads_variables {
-                    self.store.variables_of(stub.mock, session)
-                  } else {
-                    None
-                  },
-                  data~,
-                  copies=if context is None && response.reads_data {
-                    self.store.copy_values(stub.mock, session)
-                  } else {
-                    None
-                  },
-                )
-              catch {
+              plan_response(
+                response,
+                incoming,
+                context,
+                now~,
+                draw~,
+                vars=if context is None && response.reads_variables {
+                  self.store.variables_of(stub.mock, session)
+                } else {
+                  None
+                },
+                data~,
+                copies=if context is None && response.reads_data {
+                  self.store.copy_values(stub.mock, session)
+                } else {
+                  None
+                },
+                grpc=grpc is Some(_),
+              ) catch {
                 RenderError(at~, message~) => {
                   let error = TemplateError::{ at, message, }
                   content_error = Some(ContentError::new(stub, Template(error)))
                   template_failed(stub.id, error)
                 }
-              } noraise {
-                plan =>
-                  if grpc is Some(_) {
-                    {
-                      ..plan,
-                      grpc: Some({ ..grpc_ok, encoded: response.encoded, }),
-                    }
-                  } else {
-                    plan
-                  }
               }
             }
           }
