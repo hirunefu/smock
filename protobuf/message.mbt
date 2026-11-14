@@ -1,6 +1,6 @@
 // Messages decoded from their descriptors into smock's decoded form, the
 // JSON text the engine, the Journal and templates see. For now the decoder
-// serves singular fields of every scalar type, enums and nested messages.
+// serves every field but groups and those of the well-known types.
 // encode.mbt encodes messages from JSON.
 
 ///|
@@ -40,13 +40,24 @@ priv enum Value {
   /// The octets of each value of a message field, in order. protobuf's
   /// parsers merge them into one message.
   Messages(Array[BytesView])
+  /// The records of a repeated field, tags included, in order, as runs:
+  /// each view holds one or more records of the field that follow each
+  /// other in the message, so a field whose records come together costs
+  /// one view. A record holds a value, a packed record of values of a
+  /// scalar or an enum, or an entry of a map.
+  Elements(Array[BytesView])
 }
+
+///|
+/// The runs of records of a repeated field that a message leaves out.
+let no_runs : Array[BytesView] = []
 
 ///|
 /// Decodes `input`, a message of the type `message` of `set` in protobuf's
 /// binary encoding, into smock's decoded form: compact JSON text in UTF-8,
 /// an object with one member per field, in field-number order, under the
-/// field's JSON name.
+/// field's JSON name. A message gives one text, whatever order its records
+/// come in.
 ///
 /// - 64-bit integers are numbers, exact at any size; 32-bit integers are
 ///   numbers too.
@@ -59,21 +70,28 @@ priv enum Value {
 /// - An enum value is printed by its name, the first one of an alias, or
 ///   by its number when the enum does not define it.
 /// - A nested message is an object in the same form.
+/// - A repeated field is an array of its values, in order, and a map an
+///   object with a member per key, in key order: integer keys by value,
+///   bool keys `"false"` then `"true"`, and string keys by their octets.
+///   An integer key prints in decimal, as a string.
 /// - A field without presence that the message leaves out is printed at
-///   its default: `0`, `false`, `""`, or an enum's value 0. A proto3
-///   `optional` field and a message field are printed only when the
-///   message holds them.
+///   its default: `0`, `false`, `""`, an enum's value 0, `[]` or `{}`. A
+///   proto3 `optional` field, a member of a oneof and a message field are
+///   printed only when the message holds them.
 ///
 /// It reads the message as protobuf's parsers read it: the last value of a
 /// scalar or an enum field wins, the values of a message field are merged,
-/// and unknown fields, and fields sent with another wire type than their
-/// type's, are skipped.
+/// a member of a oneof replaces the one before it, repeated scalars are
+/// read packed or not, and the records of a packed field are joined. A map
+/// entry without a key or a value takes the default, and when a key
+/// repeats, the last entry wins. Unknown fields, and fields sent with
+/// another wire type than their type's, are skipped.
 ///
 /// Raises `DecodeError` when the input is not protobuf, when a string is
 /// not UTF-8, as a proto3 string must be, when messages nest deeper than
-/// 100, and when a message it prints has a field that it does not decode
-/// yet: a repeated field, a map, a field in a oneof other than a proto3
-/// `optional` field's, a group, or a field of a well-known type.
+/// 100, a map entry counting as a message, and when a message it prints
+/// has a field that it does not decode yet: a group, or a field of a
+/// well-known type, a map's values included.
 pub fn decode_json(
   set : DescriptorSet,
   message : MessageDescriptor,
@@ -85,20 +103,25 @@ pub fn decode_json(
 }
 
 ///|
-/// Prints to `out` the message of the type `message` whose values are
-/// `records`, merged in order, `depth` messages deep in the message that
-/// `decode_json` decodes, as `decode_json` prints it.
-fn DescriptorSet::print_message(
-  self : DescriptorSet,
-  out : @buffer.Buffer,
+/// The values of the fields of the message of the type `message` whose
+/// records are `records`, merged in order, by the index of each field in
+/// `message.fields`; `None` for a field the message leaves out.
+fn scan(
   message : MessageDescriptor,
   records : Array[BytesView],
-  depth : Int32,
-) -> Unit raise DecodeError {
+) -> FixedArray[Value?] raise DecodeError {
   let fields = message.fields
   let values : FixedArray[Value?] = FixedArray::make(fields.length(), None)
+  // The index of the member of each oneof that the message holds, by the
+  // oneof's index, or -1.
+  let chosen = if message.oneofs.length() == 0 {
+    no_oneofs
+  } else {
+    FixedArray::make(message.oneofs.length(), -1)
+  }
   for r in 0..<records.length() {
-    let reader = Reader(records[r])
+    let record = records[r]
+    let reader = Reader(record)
     while !reader.at_end() {
       let index = message.field_index(reader.tag())
       guard index >= 0 else {
@@ -106,6 +129,73 @@ fn DescriptorSet::print_message(
         continue
       }
       let field = fields[index]
+      if field.label is Repeated {
+        let at = reader.pos
+        match (field.type_, reader.wire_type()) {
+          (String, Len) => {
+            let value = reader.length_delimited()
+            if !is_utf8(value) {
+              raise reader.error(
+                at,
+                "the field \{field.name} holds octets that are not UTF-8",
+              )
+            }
+          }
+          // A string, bytes, a message or a map entry; or a packed record
+          // of values.
+          (
+            Bytes
+            | Message
+            | Int32
+            | Int64
+            | UInt32
+            | UInt64
+            | SInt32
+            | SInt64
+            | Bool
+            | Enum
+            | Fixed64
+            | SFixed64
+            | Double
+            | Fixed32
+            | SFixed32
+            | Float,
+            Len,
+          ) => ignore(reader.length_delimited())
+          (
+            Int32
+            | Int64
+            | UInt32
+            | UInt64
+            | SInt32
+            | SInt64
+            | Bool
+            | Enum,
+            Varint,
+          ) => ignore(reader.varint())
+          (Fixed64 | SFixed64 | Double, I64) => ignore(reader.fixed64())
+          (Fixed32 | SFixed32 | Float, I32) => ignore(reader.fixed32())
+          _ => {
+            reader.skip()
+            continue
+          }
+        }
+        // The record joins the field's last run when it follows it.
+        let start = reader.tag_at
+        match values[index] {
+          Some(Elements(runs)) => {
+            let last = runs[runs.length() - 1]
+            let from = last.start_offset() - record.start_offset()
+            if from >= 0 && from + last.length() == start {
+              runs[runs.length() - 1] = record[from:reader.pos]
+            } else {
+              runs.push(record[start:reader.pos])
+            }
+          }
+          _ => values[index] = Some(Elements([record[start:reader.pos]]))
+        }
+        continue
+      }
       match (field.type_, reader.wire_type()) {
         (Int32 | Int64 | UInt32 | UInt64 | SInt32 | SInt64 | Bool | Enum, Varint
         ) => values[index] = Some(Number(reader.varint()))
@@ -132,10 +222,36 @@ fn DescriptorSet::print_message(
             _ => values[index] = Some(Messages([value]))
           }
         }
-        _ => reader.skip()
+        _ => {
+          reader.skip()
+          continue
+        }
+      }
+      // A member of a oneof replaces the member the message held before.
+      if field.oneof_index is Some(oneof) && chosen[oneof] != index {
+        if chosen[oneof] >= 0 {
+          values[chosen[oneof]] = None
+        }
+        chosen[oneof] = index
       }
     }
   }
+  values
+}
+
+///|
+/// Prints to `out` the message of the type `message` whose values are
+/// `records`, merged in order, `depth` messages deep in the message that
+/// `decode_json` decodes, as `decode_json` prints it.
+fn DescriptorSet::print_message(
+  self : DescriptorSet,
+  out : @buffer.Buffer,
+  message : MessageDescriptor,
+  records : Array[BytesView],
+  depth : Int32,
+) -> Unit raise DecodeError {
+  let fields = message.fields
+  let values = scan(message, records)
   out.write_byte(b'{')
   let order = message.by_number
   let mut first = true
@@ -149,7 +265,9 @@ fn DescriptorSet::print_message(
       )
     }
     let value = values[index]
-    if value is None && (field.proto3_optional || field.type_ is Message) {
+    if value is None &&
+      !(field.label is Repeated) &&
+      (field.oneof_index is Some(_) || field.type_ is Message) {
       continue
     }
     if !first {
@@ -158,35 +276,411 @@ fn DescriptorSet::print_message(
     first = false
     write_json_name(out, field.json_name)
     out.write_byte(b':')
-    match value {
-      Some(Messages(list)) => {
-        if depth >= max_depth {
-          raise DecodeError(
-            position=list[0].start_offset(),
-            message="messages nest deeper than \{max_depth}",
-          )
-        }
-        match self.message_of(field) {
-          Some(type_) => self.print_message(out, type_, list, depth + 1)
-          // Never: a message field's type is a message of its set.
-          None => out.write_bytes(b"{}")
-        }
+    if field.label is Repeated {
+      let runs = match value {
+        Some(Elements(runs)) => runs
+        _ => no_runs
       }
-      Some(Octets(octets)) =>
-        if field.type_ is Bytes {
-          write_base64(out, octets)
-        } else {
-          write_json_string(out, octets)
-        }
-      Some(Number(bits)) => self.print_number(out, field, bits)
-      None =>
-        match field.type_ {
-          String | Bytes => out.write_bytes(b"\"\"")
-          _ => self.print_number(out, field, 0)
-        }
+      match self.message_of(field) {
+        Some(entry) if entry.map_entry && is_map_entry(entry) =>
+          self.print_map(out, entry, runs, depth)
+        _ => self.print_list(out, field, runs, depth)
+      }
+    } else {
+      self.print_value(out, field, value, depth)
     }
   }
   out.write_byte(b'}')
+}
+
+///|
+/// Prints to `out` the value `value` of `field`, a singular field of a
+/// message `depth` messages deep, or its default when it is `None`.
+fn DescriptorSet::print_value(
+  self : DescriptorSet,
+  out : @buffer.Buffer,
+  field : FieldDescriptor,
+  value : Value?,
+  depth : Int32,
+) -> Unit raise DecodeError {
+  match value {
+    Some(Messages(list)) => {
+      if depth >= max_depth {
+        raise DecodeError(
+          position=list[0].start_offset(),
+          message="messages nest deeper than \{max_depth}",
+        )
+      }
+      match self.message_of(field) {
+        Some(type_) => self.print_message(out, type_, list, depth + 1)
+        // Never: a message field's type is a message of its set.
+        None => out.write_bytes(b"{}")
+      }
+    }
+    Some(Octets(octets)) =>
+      if field.type_ is Bytes {
+        write_base64(out, octets)
+      } else {
+        write_json_string(out, octets)
+      }
+    Some(Number(bits)) => self.print_number(out, field, bits)
+    None | Some(Elements(_)) =>
+      match field.type_ {
+        String | Bytes => out.write_bytes(b"\"\"")
+        // Never: a message field the message leaves out is not printed,
+        // and a map value is given.
+        Message | Group => out.write_bytes(b"{}")
+        _ => self.print_number(out, field, 0)
+      }
+  }
+}
+
+///|
+/// Prints to `out` the values of `field`, a repeated field other than a
+/// map of a message `depth` messages deep, whose records are in `runs`,
+/// as an array.
+fn DescriptorSet::print_list(
+  self : DescriptorSet,
+  out : @buffer.Buffer,
+  field : FieldDescriptor,
+  runs : Array[BytesView],
+  depth : Int32,
+) -> Unit raise DecodeError {
+  out.write_byte(b'[')
+  let mut first = true
+  for r in 0..<runs.length() {
+    let reader = Reader(runs[r])
+    while !reader.at_end() {
+      ignore(reader.tag())
+      match (field.type_, reader.wire_type()) {
+        (String | Bytes | Message | Group, _) => {
+          let element = reader.length_delimited()
+          if !first {
+            out.write_byte(b',')
+          }
+          first = false
+          match self.message_of(field) {
+            Some(type_) => {
+              if depth >= max_depth {
+                raise DecodeError(
+                  position=element.start_offset(),
+                  message="messages nest deeper than \{max_depth}",
+                )
+              }
+              self.print_message(out, type_, [element], depth + 1)
+            }
+            None if field.type_ is Bytes => write_base64(out, element)
+            None => write_json_string(out, element)
+          }
+        }
+        // A packed record of values.
+        (_, Len) => {
+          let values = Reader(reader.length_delimited())
+          while !values.at_end() {
+            let bits = values.number(field.type_)
+            if !first {
+              out.write_byte(b',')
+            }
+            first = false
+            self.print_number(out, field, bits)
+          }
+        }
+        _ => {
+          let bits = reader.number(field.type_)
+          if !first {
+            out.write_byte(b',')
+          }
+          first = false
+          self.print_number(out, field, bits)
+        }
+      }
+    }
+  }
+  out.write_byte(b']')
+}
+
+///|
+/// Reads a value of the scalar or enum type `type_`, other than a string
+/// or bytes, as its type is encoded: a fixed 64-bit or 32-bit value, or a
+/// varint, as its bits.
+fn Reader::number(self : Reader, type_ : FieldType) -> UInt64 raise DecodeError {
+  match type_ {
+    Fixed64 | SFixed64 | Double => self.fixed64()
+    Fixed32 | SFixed32 | Float => self.fixed32().to_uint64()
+    _ => self.varint()
+  }
+}
+
+///|
+/// Whether `entry`, a message with the option `map_entry`, is a map entry
+/// that ProtoJSON prints as an object: its key, field 1, is an integer, a
+/// bool or a string, and its value is field 2. protoc writes no other.
+fn is_map_entry(entry : MessageDescriptor) -> Bool {
+  let key = entry.field_index(1)
+  key >= 0 &&
+  entry.field_index(2) >= 0 &&
+  entry.fields[key].label is (Optional | Required) &&
+  entry.fields[key].type_
+  is (Int32
+  | Int64
+  | UInt32
+  | UInt64
+  | SInt32
+  | SInt64
+  | Fixed32
+  | Fixed64
+  | SFixed32
+  | SFixed64
+  | Bool
+  | String)
+}
+
+///|
+/// Prints to `out` the map whose entries, of the type `entry`, are the
+/// records in `runs`, a field of a message `depth` messages deep, as an
+/// object with a member per key, in key order. An entry without a key or a
+/// value takes the default, and of the entries with one key, the last
+/// wins.
+fn DescriptorSet::print_map(
+  self : DescriptorSet,
+  out : @buffer.Buffer,
+  entry : MessageDescriptor,
+  runs : Array[BytesView],
+  depth : Int32,
+) -> Unit raise DecodeError {
+  let entries : Array[BytesView] = []
+  for r in 0..<runs.length() {
+    let reader = Reader(runs[r])
+    while !reader.at_end() {
+      ignore(reader.tag())
+      entries.push(reader.length_delimited())
+    }
+  }
+  let count = entries.length()
+  if count == 0 {
+    out.write_bytes(b"{}")
+    return
+  }
+  // An entry is a message nested in the map's.
+  if depth >= max_depth {
+    raise DecodeError(
+      position=entries[0].start_offset(),
+      message="messages nest deeper than \{max_depth}",
+    )
+  }
+  let key_index = entry.field_index(1)
+  let value_index = entry.field_index(2)
+  let key_field = entry.fields[key_index]
+  let value_field = entry.fields[value_index]
+  let textual = key_field.type_ is String
+  // Each entry's key: its text for a string key, or else a number whose
+  // unsigned order is the key's order, the default's until the entry
+  // gives one.
+  let keys : FixedArray[UInt64] = FixedArray::make(
+    count,
+    key_order(key_field.type_, 0),
+  )
+  let texts : FixedArray[BytesView] = FixedArray::make(
+    if textual {
+      count
+    } else {
+      0
+    },
+    b""[:],
+  )
+  for i in 0..<count {
+    let reader = Reader(entries[i])
+    while !reader.at_end() {
+      let number = reader.tag()
+      let at = reader.pos
+      match (number, key_field.type_, reader.wire_type()) {
+        (1, String, Len) => {
+          let text = reader.length_delimited()
+          if !is_utf8(text) {
+            raise reader.error(
+              at,
+              "the field \{key_field.name} holds octets that are not UTF-8",
+            )
+          }
+          texts[i] = text
+        }
+        (1, Int32 | Int64 | UInt32 | UInt64 | SInt32 | SInt64 | Bool, Varint)
+        | (1, Fixed64 | SFixed64, I64)
+        | (1, Fixed32 | SFixed32, I32) =>
+          keys[i] = key_order(
+            key_field.type_,
+            match reader.wire_type() {
+              I64 => reader.fixed64()
+              I32 => reader.fixed32().to_uint64()
+              _ => reader.varint()
+            },
+          )
+        (2, _, Len) if value_field.type_ is String => {
+          // Checked here, since only the last entry of a key is printed.
+          let text = reader.length_delimited()
+          if !is_utf8(text) {
+            raise reader.error(
+              at,
+              "the field \{value_field.name} holds octets that are not UTF-8",
+            )
+          }
+        }
+        _ => reader.skip()
+      }
+    }
+  }
+  let order = sorted_entries(keys, texts)
+  out.write_byte(b'{')
+  let mut first = true
+  for n in 0..<count {
+    let i = order[n]
+    // Of the entries with one key, the last wins.
+    if n + 1 < count && same_key(keys, texts, i, order[n + 1]) {
+      continue
+    }
+    if !first {
+      out.write_byte(b',')
+    }
+    first = false
+    let values = scan(entry, [entries[i]])
+    match values[key_index] {
+      Some(Octets(text)) => write_json_string(out, text)
+      Some(Number(bits)) => {
+        out.write_byte(b'"')
+        self.print_number(out, key_field, bits)
+        out.write_byte(b'"')
+      }
+      _ =>
+        if textual {
+          out.write_bytes(b"\"\"")
+        } else {
+          out.write_byte(b'"')
+          self.print_number(out, key_field, 0)
+          out.write_byte(b'"')
+        }
+    }
+    out.write_byte(b':')
+    let value = match values[value_index] {
+      // A message value that the entry leaves out is an empty message.
+      None if value_field.type_ is (Message | Group) =>
+        Some(Messages([entries[i][0:0]]))
+      value => value
+    }
+    self.print_value(out, value_field, value, depth + 1)
+  }
+  out.write_byte(b'}')
+}
+
+///|
+/// A number whose unsigned order is the order of the map key of the type
+/// `type_`, an integer or a bool, whose bits are `bits`.
+fn key_order(type_ : FieldType, bits : UInt64) -> UInt64 {
+  // A signed key with its sign bit flipped orders as an unsigned number.
+  let sign = 0x8000_0000_0000_0000UL
+  match type_ {
+    Int32 | SFixed32 =>
+      bits.to_uint().reinterpret_as_int().to_int64().reinterpret_as_uint64() ^
+      sign
+    SInt32 => {
+      let n = bits.to_uint()
+      let value = (n >> 1).reinterpret_as_int() ^ -(n & 1).reinterpret_as_int()
+      value.to_int64().reinterpret_as_uint64() ^ sign
+    }
+    Int64 | SFixed64 => bits ^ sign
+    SInt64 =>
+      ((bits >> 1).reinterpret_as_int64() ^ -(bits & 1).reinterpret_as_int64()).reinterpret_as_uint64() ^
+      sign
+    UInt32 | Fixed32 => bits & 0xFFFF_FFFFUL
+    Bool => if bits != 0 { 1 } else { 0 }
+    _ => bits
+  }
+}
+
+///|
+/// How the keys of the entries `a` and `b` of a map compare: by `texts`
+/// when it holds the keys, or else by `keys`. Negative when `a`'s comes
+/// first, 0 when they are one key.
+fn compare_keys(
+  keys : FixedArray[UInt64],
+  texts : FixedArray[BytesView],
+  a : Int32,
+  b : Int32,
+) -> Int32 {
+  if texts.length() == 0 {
+    return if keys[a] < keys[b] {
+      -1
+    } else if keys[a] > keys[b] {
+      1
+    } else {
+      0
+    }
+  }
+  let x = texts[a]
+  let y = texts[b]
+  let length = if x.length() < y.length() { x.length() } else { y.length() }
+  for i in 0..<length {
+    if x[i] != y[i] {
+      return if x[i] < y[i] { -1 } else { 1 }
+    }
+  }
+  x.length() - y.length()
+}
+
+///|
+/// Whether the entries `a` and `b` of a map have one key.
+fn same_key(
+  keys : FixedArray[UInt64],
+  texts : FixedArray[BytesView],
+  a : Int32,
+  b : Int32,
+) -> Bool {
+  compare_keys(keys, texts, a, b) == 0
+}
+
+///|
+/// The indexes of a map's entries, whose keys are `keys` or `texts`, as
+/// `compare_keys` says, in key order, entries with one key in their order:
+/// a merge sort, a run at a time, with plain loops.
+fn sorted_entries(
+  keys : FixedArray[UInt64],
+  texts : FixedArray[BytesView],
+) -> FixedArray[Int32] {
+  let count = keys.length()
+  let mut from : FixedArray[Int32] = FixedArray::make(count, 0)
+  for i in 0..<count {
+    from[i] = i
+  }
+  let mut into : FixedArray[Int32] = FixedArray::make(count, 0)
+  let mut width = 1
+  while width < count {
+    let mut low = 0
+    while low < count {
+      let middle = if low + width < count { low + width } else { count }
+      let high = if middle + width < count { middle + width } else { count }
+      let mut left = low
+      let mut right = middle
+      for k in low..<high {
+        // Ties take the left run's entry first, so the order is stable.
+        if left < middle &&
+          (
+            right >= high ||
+            compare_keys(keys, texts, from[left], from[right]) <= 0
+          ) {
+          into[k] = from[left]
+          left = left + 1
+        } else {
+          into[k] = from[right]
+          right = right + 1
+        }
+      }
+      low = high
+    }
+    let swap = from
+    from = into
+    into = swap
+    width = width * 2
+  }
+  from
 }
 
 ///|
@@ -242,35 +736,46 @@ fn DescriptorSet::print_number(
 
 ///|
 /// Why `decode_json` does not decode `field` yet, a field of a message of
-/// this set, or `None` when it does: it is repeated, as a map is, in a
-/// oneof other than a proto3 `optional` field's, a group, or of a
-/// well-known type, which ProtoJSON prints in a form of its own.
+/// this set, or `None` when it does: it is a group, or of a well-known
+/// type, which ProtoJSON prints in a form of its own, or a map whose
+/// values are.
 fn DescriptorSet::not_decoded(
   self : DescriptorSet,
   field : FieldDescriptor,
 ) -> String? {
-  if field.label is Repeated {
-    return Some("is repeated")
+  if field.type_ is Group {
+    return Some("is a group")
   }
-  if field.oneof_index is Some(_) && !field.proto3_optional {
-    return Some("is in a oneof")
+  if field.label is Repeated &&
+    self.message_of(field) is Some(entry) &&
+    entry.map_entry &&
+    is_map_entry(entry) {
+    return match self.well_known_of(entry.fields[entry.field_index(2)]) {
+      Some(name) =>
+        Some("is a map whose values have the well-known type \{name}")
+      None => None
+    }
   }
-  let name = match field.type_ {
-    Group => return Some("is a group")
-    Message =>
-      match self.message_of(field) {
-        Some(type_) => type_.full_name
-        None => return None
-      }
-    Enum =>
-      match self.enum_of(field) {
-        Some(type_) => type_.full_name
-        None => return None
-      }
+  match self.well_known_of(field) {
+    Some(name) => Some("has the well-known type \{name}")
+    None => None
+  }
+}
+
+///|
+/// The full name of the type of `field`, a field of a message of this set,
+/// when it is a well-known type, as `is_well_known` says.
+fn DescriptorSet::well_known_of(
+  self : DescriptorSet,
+  field : FieldDescriptor,
+) -> String? {
+  let name = match (self.message_of(field), self.enum_of(field)) {
+    (Some(type_), _) => type_.full_name
+    (_, Some(type_)) => type_.full_name
     _ => return None
   }
   if is_well_known(name) {
-    Some("has the well-known type \{name}")
+    Some(name)
   } else {
     None
   }

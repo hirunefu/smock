@@ -237,7 +237,7 @@ async test "a request message that does not parse, such as one whose string is n
 }
 
 ///|
-async test "smock check refuses a gRPC Stub whose input type has a field of a well-known type, which is not served yet" {
+async test "smock check refuses a gRPC Stub whose input type has fields of a well-known type, singular, repeated or as a map's values, which are not served yet" {
   let yaml =
     #|mocks:
     #|  - name: clock
@@ -259,6 +259,8 @@ async test "smock check refuses a gRPC Stub whose input type has a field of a we
       content=(
         #|status 1
         #|clock.yaml: /stubs/0/request/path: the input type stamped.Stamped is not served yet: its field at has the well-known type google.protobuf.Timestamp, and gRPC Stubs serve no well-known types so far
+        #|clock.yaml: /stubs/0/request/path: the input type stamped.Stamped is not served yet: its field history has the well-known type google.protobuf.Timestamp, and gRPC Stubs serve no well-known types so far
+        #|clock.yaml: /stubs/0/request/path: the input type stamped.Stamped is not served yet: its field by_name is a map whose values have the well-known type google.protobuf.Timestamp, and gRPC Stubs serve no well-known types so far
         #|
       ),
     )

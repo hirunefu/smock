@@ -279,6 +279,9 @@ the `.proto` file gives it a `json_name`. Each type prints as follows:
 | `bytes` | a string of standard base64, with padding | `"AAH7/w=="` |
 | an enum | the name of its value, the first name when aliases share the number, or the number of a value the enum does not define | `"ACTIVE"`, `7` |
 | a message | an object in the same form | `{"city":"Kyoto"}` |
+| a repeated field | an array of its values, in order | `["a","b"]` |
+| a map | an object with a member per key, in key order; integer keys in decimal and bool keys as `"true"` and `"false"`, as strings | `{"1":3,"2":5,"10":1}` |
+| a oneof | the member the message holds, under its own JSON name, and no other | `"word":"w"` |
 
 So the message `id: 9223372036854775807 price: 9.99 status: ACTIVE
 address { city: "Kyoto" }` is:
@@ -295,22 +298,44 @@ Which fields print depends on whether a field has presence:
 
 - A field without presence, such as a plain proto3 `string` or `int32`,
   prints even when the message leaves it out, at its default: `0`,
-  `false`, `""`, or an enum's value numbered 0. So `{count: 0}` and
-  `{name: ""}` match a message that leaves `count` or `name` out.
-- A proto3 `optional` field and a message field print only when the
-  message holds them, even at their default. So the condition
-  `{maybeCount: {$exists: false}}` tells a message that leaves
+  `false`, `""`, or an enum's value numbered 0. A repeated field prints
+  `[]` and a map `{}`. So `{count: 0}`, `{name: ""}` and `{tags: []}`
+  match a message that leaves `count`, `name` or `tags` out.
+- A proto3 `optional` field, a member of a oneof and a message field
+  print only when the message holds them, even at their default. So the
+  condition `{maybeCount: {$exists: false}}` tells a message that leaves
   `maybe_count` out from one that holds 0.
 
-smock reads a message as protobuf's parsers read it: the last value of a
-field wins, two values of a message field are merged, and fields the type
-does not have, such as those a newer client sends, are skipped.
+smock reads a message as protobuf's parsers read it:
 
-For now, smock decodes messages whose fields are singular: repeated
-fields, maps, oneofs other than a proto3 `optional` field's, and the
-well-known types, such as `google.protobuf.Timestamp`, are not decoded
-yet. It answers with replies of every proto3 type but the well-known
-types ([The reply](#the-reply)). The
+- The last value of a field wins.
+- The values of a message field are merged: the last value of each of
+  its fields wins, its repeated fields are joined, and its maps are
+  merged.
+- A member of a oneof replaces the member that came before it, so the
+  JSON never holds two.
+- A repeated number, bool or enum may come packed or not, and the records
+  of a packed field are joined.
+- A map entry without a key or a value takes the default. When a key
+  comes twice, the last entry wins.
+- Fields the type does not have, such as those a newer client sends, are
+  skipped.
+
+Each message gives one text. Its fields come in field-number order, and
+its map entries in key order: integer keys by their value, bool keys
+`false` then `true`, and string keys by their text, in the order of
+Unicode code points. Neither depends on the order in which a client
+encodes them. So a message reads the same in `bodyText`, the Journal and
+the Near miss, whichever client sent it. The message
+`tags: ["a", "b"] counts: {10: 1, 1: 3, 2: 5}` is always:
+
+```json
+{"tags":["a","b"],"counts":{"1":3,"2":5,"10":1}}
+```
+
+For now, smock does not decode the well-known types, such as
+`google.protobuf.Timestamp`. It answers with replies of every proto3 type
+but the well-known types ([The reply](#the-reply)). The
 [Definition-file reference](definition-files.md#grpc-stubs) lists what a
 gRPC Stub cannot hold yet.
 
@@ -542,8 +567,9 @@ request metrics count them as rejected requests, with `mock=""` and
 
 A message does not parse, as protobuf's parsers refuse it, when it holds a
 proto3 string that is not UTF-8, field number 0 or one above 2^29-1, wire
-type 6 or 7, a varint or a length cut short, or messages nested deeper
-than 100.
+type 6 or 7, a varint, a fixed-size value or a length cut short, a packed
+field included, or messages nested deeper than 100, each map entry
+counting as a message.
 
 These calls reach the Stubs. The Journal records each with the
 `grpcStatus` `INTERNAL`, and with the HTTP status planned for it: 500 or

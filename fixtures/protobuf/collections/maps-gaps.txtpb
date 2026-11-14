@@ -1,0 +1,11 @@
+# Entries without a key, without a value, or with neither, which take the
+# defaults, and the key 7 twice, whose later entry wins. protoc leaves out
+# a field at its default, so `key: 0` is no key.
+by_id { value: "no key" }
+by_id { key: 5 }
+by_id { key: 7 value: "first" }
+by_id { key: 7 value: "second" }
+by_offset { }
+by_flag { value: 3 }
+by_name { key: "pen" }
+by_name { value { name: "no key" } }

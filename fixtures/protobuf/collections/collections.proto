@@ -1,0 +1,139 @@
+// Written for smock's tests of request messages: repeated fields of each
+// kind of value, maps with keys of each kind, a oneof, and a message field
+// whose values a parser merges. The types whose names end in OnTheWire
+// stand in for a real type, with what protoc never writes for it: map
+// entries in any order, without a key or a value, or with a key twice;
+// repeated scalars unpacked; and every member of a oneof.
+syntax = "proto3";
+
+package collections;
+
+service Shelf {
+  rpc Tag (Tagged) returns (Done);
+  rpc Fill (Lists) returns (Done);
+  rpc Count (Maps) returns (Done);
+  rpc Choose (Choice) returns (Done);
+}
+
+// The message of the ticket's example.
+message Tagged {
+  repeated string tags = 1;
+  map<int32, int32> counts = 2;
+}
+
+// A Tagged with its map entries as repeated messages.
+message TaggedOnTheWire {
+  repeated string tags = 1;
+  repeated Int32Entry counts = 2;
+}
+
+message Int32Entry {
+  int32 key = 1;
+  int32 value = 2;
+}
+
+enum Kind {
+  KIND_UNSPECIFIED = 0;
+  BOOK = 1;
+  DISC = 2;
+}
+
+message Item {
+  string name = 1;
+  repeated int32 sizes = 2;
+  map<string, int32> stock = 3;
+}
+
+// A repeated field of each kind of value. proto3 packs the repeated
+// scalars.
+message Lists {
+  repeated int32 numbers = 1;
+  repeated sint64 offsets = 2;
+  repeated fixed32 codes = 3;
+  repeated double ratios = 4;
+  repeated float weights = 5;
+  repeated bool flags = 6;
+  repeated Kind kinds = 7;
+  repeated string words = 8;
+  repeated bytes blobs = 9;
+  repeated Item items = 10;
+}
+
+// A Lists with its repeated scalars unpacked, one record a value.
+message ListsOnTheWire {
+  repeated int32 numbers = 1 [packed = false];
+  repeated sint64 offsets = 2 [packed = false];
+  repeated fixed32 codes = 3 [packed = false];
+  repeated double ratios = 4 [packed = false];
+  repeated float weights = 5 [packed = false];
+  repeated bool flags = 6 [packed = false];
+  repeated Kind kinds = 7 [packed = false];
+  repeated string words = 8;
+  repeated bytes blobs = 9;
+  repeated Item items = 10;
+}
+
+// A map with keys of each kind: signed, unsigned, zigzag, bool and string.
+message Maps {
+  map<int64, string> by_id = 1;
+  map<uint32, bool> by_code = 2;
+  map<sint32, Kind> by_offset = 3;
+  map<bool, int32> by_flag = 4;
+  map<string, Item> by_name = 5;
+}
+
+// A Maps with its map entries as repeated messages.
+message MapsOnTheWire {
+  repeated Int64Entry by_id = 1;
+  repeated UInt32Entry by_code = 2;
+  repeated SInt32Entry by_offset = 3;
+  repeated BoolEntry by_flag = 4;
+  repeated StringEntry by_name = 5;
+}
+
+message Int64Entry {
+  int64 key = 1;
+  string value = 2;
+}
+
+message UInt32Entry {
+  uint32 key = 1;
+  bool value = 2;
+}
+
+message SInt32Entry {
+  sint32 key = 1;
+  Kind value = 2;
+}
+
+message BoolEntry {
+  bool key = 1;
+  int32 value = 2;
+}
+
+message StringEntry {
+  string key = 1;
+  Item value = 2;
+}
+
+// A oneof of a string, an int32 and a message, and a message field.
+message Choice {
+  string label = 1;
+  oneof pick {
+    string word = 2;
+    int32 number = 3;
+    Item item = 4;
+  }
+  Item box = 5;
+}
+
+// A Choice with each member of the oneof a field of its own.
+message ChoiceOnTheWire {
+  string label = 1;
+  string word = 2;
+  int32 number = 3;
+  Item item = 4;
+  Item box = 5;
+}
+
+message Done {}

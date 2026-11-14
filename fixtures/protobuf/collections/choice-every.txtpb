@@ -1,0 +1,6 @@
+# Every member of the oneof, in field-number order, so the message comes
+# last.
+label: "every"
+word: "w"
+number: 3
+item { name: "pen" }

@@ -1,0 +1,2 @@
+# More of the box: another size, another value for "a" and a new key.
+box { sizes: [2] stock { key: "a" value: 2 } stock { key: "b" value: 5 } }

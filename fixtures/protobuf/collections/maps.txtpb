@@ -1,0 +1,19 @@
+# Map entries in no order, so that key order shows: signed, unsigned and
+# zigzag integers, bools and strings.
+by_id { key: 10 value: "ten" }
+by_id { key: -1 value: "minus one" }
+by_id { key: 9223372036854775807 value: "largest" }
+by_id { key: 2 value: "two" }
+by_id { key: -9223372036854775808 value: "smallest" }
+by_code { key: 4294967295 value: true }
+by_code { key: 10 value: true }
+by_code { key: 7 value: true }
+by_offset { key: 3 value: BOOK }
+by_offset { key: -20 value: DISC }
+by_offset { key: -5 value: BOOK }
+by_flag { key: true value: 1 }
+by_flag { key: false value: 2 }
+by_name { key: "b" value { name: "bee" } }
+by_name { key: "é" value { name: "e acute" } }
+by_name { key: "a" value { name: "ay" } }
+by_name { key: "B" value { name: "big bee" } }
