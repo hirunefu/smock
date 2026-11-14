@@ -2151,7 +2151,7 @@
             "enum": ["reset", "close", "partial", null]
           },
           "templateError": {
-            "description": "Why the Stub's template could not be rendered for the request, when it could not: the client then got status 500 and the error in the body. Otherwise null.",
+            "description": "Why the Stub's template could not be rendered for the request, when it could not: the client then got status 500 and the error in the body, or, for a gRPC call, INTERNAL instead of 500, with the message `template failed`. For a gRPC call, it also says why a templated reply, once rendered, is not a message of the method's output type, which gets INTERNAL too. Otherwise null.",
             "oneOf": [{ "$ref": "#/components/schemas/TemplateError" }, { "type": "null" }]
           }
         },

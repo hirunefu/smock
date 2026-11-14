@@ -4,11 +4,13 @@
 // Mock and the method its `:path` names are looked up, the message is
 // decoded into JSON, and the engine decides the call as a POST to the
 // method's path, with the metadata as headers, the JSON as the body and
-// the gRPC call marker. The reply JSON is then encoded with the method's
-// output type and written as gRPC writes it: HEADERS, one DATA frame with
-// the framed message, then trailers with `grpc-status: 0`. The lookup, the
-// decoding, `handle` and the encoding run with no await between them, so a
-// reload never splits them.
+// the gRPC call marker. The reply is the message that a static reply was
+// encoded into when the files were loaded, or else the rendered reply JSON,
+// encoded here with the method's output type. It is written as gRPC
+// writes it: HEADERS, one DATA frame with the framed message, then
+// trailers with `grpc-status: 0`. The lookup, the decoding, `handle` and
+// the encoding run with no await between them, so a reload never splits
+// them.
 //
 // What the layer cannot serve yet gets Trailers-Only, one HEADERS block
 // that ends the stream, with `:status` 200, `grpc-status` INTERNAL and a

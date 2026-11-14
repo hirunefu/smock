@@ -57,6 +57,8 @@ working tree; CI runs it in the same job.
 | `annotated/` | `annotated.proto`, with comments and custom options, which imports protobuf's `descriptor.proto` | `annotated.binpb`, their set with source info, as `protoc --include_imports --include_source_info` writes it |
 | `buf-image/` | Buf's `buf/alpha/image/v1/image.proto`, as it is at bufbuild/buf tag `v1.75.0` (commit `1a3a05a3e0fa350c4b814b7f48aa0e64e9a906bd`), and `greeter.txtpb`, the image that `buf build -o` (1.75.0) writes with its defaults for `helloworld/helloworld.proto`, decoded as text | `greeter.binpb`: that image, with source info and Buf's field 8042 in each file, byte for byte as buf writes it |
 | `oneofs/` | `oneofs.proto`, written for smock's tests: a method whose types hold a oneof and a proto3 `optional` field | `oneofs.binpb`, its set. The script writes it in hex to `oneofs_set_test.mbt` in `definitions/` and `protobuf/`. |
+| `replies/` | `replies.proto`, written for smock's tests of gRPC replies: output types that hold every proto3 field type but the well-known types, and replies of them in text, `user.txtpb` for `GetUser`, and `maxima`, `minima`, `specials`, `lists`, `maps`, `choice` and `inner` for `GetEverything` | `replies.binpb`, its set, which the script writes in hex to `replies_set_test.mbt` in `protobuf/`. A `.binpb` of each reply, which the script writes in hex to `protobuf/`, as `user_reply_test.mbt` and `everything_<name>_test.mbt`. |
+| `unserved/` | `unserved.proto`, written for smock's tests: methods whose output types reach types that gRPC Stubs do not serve yet, protobuf's well-known `google.protobuf.Timestamp` and a type of `old.proto`, a proto2 file | `unserved.binpb`, its set, which holds protobuf's `timestamp.proto`, so protobuf's `LICENSE` is beside it |
 | `invalid/` | FileDescriptorSets written as text, which protoc would never write: `twice.txtpb` holds a file twice, `duplicate-name.txtpb` defines a message in two files, and `unresolved.txtpb` names types it does not define | A `.binpb` of each. The script copies `duplicate-name.binpb` to `schema/v1/fixtures/body-files/`. |
 
 ## Adding a set
@@ -129,4 +131,5 @@ Take protobuf's `LICENSE` from the release that protoc comes from:
 32 lines, SHA-256
 `6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d`.
 `annotated/` holds one, since its set holds protobuf's
-`descriptor.proto`, comments included.
+`descriptor.proto`, comments included, and so does `unserved/`, whose set
+holds protobuf's `timestamp.proto`.
