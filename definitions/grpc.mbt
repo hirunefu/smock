@@ -177,7 +177,8 @@ fn find_message(
 
 ///|
 /// Checks the gRPC Stub `stub`, at `pointer`, against `named`, the method
-/// its exact path names. The method must be unary. Its input and output
+/// its exact path names. Its fields must be served, as
+/// `File::refuse_unserved` says. The method must be unary. Its input and output
 /// types must be served, each on its own, as `File::check_served` says.
 /// Each static `json` reply is checked against the output type.
 fn File::check_grpc_stub(
@@ -186,6 +187,7 @@ fn File::check_grpc_stub(
   stub : Map[String, Json],
   named : NamedMethod,
 ) -> Unit {
+  self.refuse_unserved(pointer, stub)
   let rpc = named.rpc
   let path = child_pointer(child_pointer(pointer, "request"), "path")
   let streaming = match (rpc.client_streaming, rpc.server_streaming) {
@@ -369,4 +371,80 @@ fn without_dot(name : String) -> String {
   } else {
     name
   }
+}
+
+///|
+/// Reports each member of the gRPC Stub `stub`, at `pointer`, that gRPC
+/// Stubs do not serve yet. They serve `id`, `mock`, `priority`, `scenario`,
+/// `variables`, `dataWrites`, `fault.seed`, `request.method`,
+/// `request.path`, `request.headers`, a `json` body condition, and `json`,
+/// `template` and `weight` in a reply. A member that no Stub has is
+/// reported as unknown where it is read.
+fn File::refuse_unserved(
+  self : File,
+  pointer : String,
+  stub : Map[String, Json],
+) -> Unit {
+  for key, value in stub {
+    let at = child_pointer(pointer, key)
+    match (key, value) {
+      ("fault", Object(fault)) =>
+        for name, _ in fault {
+          if name is ("delay" | "connection") {
+            self.not_served(child_pointer(at, name))
+          }
+        }
+      ("request", Object(request)) =>
+        for name, condition in request {
+          let field = child_pointer(at, name)
+          match (name, condition) {
+            ("query" | "cookies", _) => self.not_served(field)
+            ("body", String(_)) =>
+              self.error(
+                field, "an exact-text condition is not served on gRPC Stubs yet",
+              )
+            ("body", Object(body)) =>
+              for kind, _ in body {
+                if kind is ("pattern" | "form" | "xml") {
+                  self.not_served(child_pointer(field, kind))
+                }
+              }
+            _ => ()
+          }
+        }
+      ("response", Object(response)) => self.refuse_unserved_reply(at, response)
+      ("responses", Array(responses)) =>
+        for i, response in responses {
+          if response is Object(response) {
+            self.refuse_unserved_reply(
+              child_pointer(at, i.to_string()),
+              response,
+            )
+          }
+        }
+      _ => ()
+    }
+  }
+}
+
+///|
+/// Reports each member of `response`, a reply of a gRPC Stub at `pointer`,
+/// that gRPC Stubs do not serve yet: all but `json`, `template` and
+/// `weight`.
+fn File::refuse_unserved_reply(
+  self : File,
+  pointer : String,
+  response : Map[String, Json],
+) -> Unit {
+  for name, _ in response {
+    if name is ("status" | "headers" | "body" | "bodyFile" | "events" | "llm") {
+      self.not_served(child_pointer(pointer, name))
+    }
+  }
+}
+
+///|
+/// Reports that the member at `pointer` is not served on gRPC Stubs yet.
+fn File::not_served(self : File, pointer : String) -> Unit {
+  self.error(pointer, "is not served on gRPC Stubs yet")
 }

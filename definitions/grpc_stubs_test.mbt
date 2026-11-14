@@ -267,3 +267,67 @@ test "a method whose input or output type has a field other than a singular stri
     ),
   )
 }
+
+///|
+test "a gRPC Stub's fields other than those served so far are not served yet, each at its pointer" {
+  inspect(
+    check_stubs(
+      (
+        #|  - id: served
+        #|    mock: greeter
+        #|    priority: 1
+        #|    scenario: { name: greeting, requires: Started, moveTo: Greeted }
+        #|    variables: { name: "${body.name}" }
+        #|    fault: { seed: 7 }
+        #|    request:
+        #|      method: POST
+        #|      path: /helloworld.Greeter/SayHello
+        #|      headers: { x-tenant: acme }
+        #|      body: { json: { name: Tom } }
+        #|    responses:
+        #|      - { weight: 2, template: true, json: { message: "Hello ${body.name}" } }
+        #|      - { json: {} }
+        #|  - id: not-served
+        #|    mock: greeter
+        #|    fault: { delay: { fixed: 50 }, connection: { kind: reset, probability: 1 } }
+        #|    request:
+        #|      path: /helloworld.Greeter/SayHello
+        #|      query: { page: "1" }
+        #|      cookies: { session: abc }
+        #|      body: Tom
+        #|    response: { status: 200, headers: { x-served-by: smock }, body: hi }
+        #|  - id: body-pattern
+        #|    mock: greeter
+        #|    request: { path: /helloworld.Greeter/SayHello, body: { pattern: ".*" } }
+        #|    responses:
+        #|      - { bodyFile: greeter.binpb }
+        #|      - { events: [{ data: hi }] }
+        #|      - { llm: { api: openai-chat, text: hi } }
+        #|  - id: body-form
+        #|    mock: greeter
+        #|    request: { path: /helloworld.Greeter/SayHello, body: { form: {} } }
+        #|    response: {}
+        #|  - id: body-xml
+        #|    mock: greeter
+        #|    request: { path: /helloworld.Greeter/SayHello, body: { xml: {} } }
+        #|    response: {}
+      ),
+    ),
+    content=(
+      #|a.yaml: /stubs/1/fault/delay: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/1/fault/connection: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/1/request/query: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/1/request/cookies: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/1/request/body: an exact-text condition is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/1/response/status: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/1/response/headers: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/1/response/body: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/2/request/body/pattern: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/2/responses/0/bodyFile: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/2/responses/1/events: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/2/responses/2/llm: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/3/request/body/form: is not served on gRPC Stubs yet
+      #|a.yaml: /stubs/4/request/body/xml: is not served on gRPC Stubs yet
+    ),
+  )
+}
