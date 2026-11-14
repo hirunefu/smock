@@ -126,7 +126,8 @@ hex_test() {
 # The fixtures. A new one goes at the end of this list, and a copy or a
 # hex_test after the fixture it takes.
 
-# gRPC's helloworld.proto, and the same rebuilt with one more field.
+# gRPC's helloworld.proto, and the same rebuilt with one more field in each
+# message.
 descriptor_set helloworld greeter.binpb helloworld.proto
 descriptor_set helloworld-v2 greeter.binpb helloworld.proto
 copy helloworld/greeter.binpb schema/v1/fixtures/body-files/greeter.binpb
@@ -221,6 +222,10 @@ done
 # Output types that gRPC Stubs do not serve yet: a well-known type, and a
 # type of a proto2 file, at the top or through nested messages.
 descriptor_set unserved unserved.binpb unserved.proto
+
+# A request of version 2 of helloworld.proto, which carries the field
+# version that version 1 lacks.
+message helloworld-v2 helloworld.proto helloworld.HelloRequest hello-request
 
 # The end of the list of fixtures. With --check: every file the script
 # wrote, compared with the committed one.

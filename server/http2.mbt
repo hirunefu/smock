@@ -159,6 +159,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       refused_status: 0,
       continuing: 0,
       connect: 0,
+      call_begun: 0,
       waiting: Map([]),
       blocked: Map([]),
       claimed: 0,
@@ -267,6 +268,12 @@ priv struct H2Connection {
   /// stream, its `End` answers it, and when it resets the stream, it never
   /// reaches the engine.
   mut connect : Int32
+  /// The stream whose gRPC call, begun by the frame being handled, is looked
+  /// up once that frame's events are all taken, or 0: a call that cannot
+  /// reach a gRPC Stub is answered then, without waiting for its message
+  /// (`answer_from_headers`). When the frame also ends the stream, its `End`
+  /// answers the call, and when it resets the stream, the call is dropped.
+  mut call_begun : Int32
   /// The tasks of the streams whose response waits, by stream: from the end
   /// of the request until the response is queued in full, its body or its
   /// last event included, or the stream is reset. A task then lives on only
@@ -492,6 +499,21 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           self.refused = 0
           self.refuse(stream, self.refused_status, ended=false)
         }
+        // The gRPC call this frame began is looked up now that its events
+        // brought no reset. HEADERS that also ended its stream had it
+        // answered on its `End`, and a reset dropped it: either way it is no
+        // longer among the requests.
+        if self.call_begun != 0 {
+          let stream = self.call_begun
+          self.call_begun = 0
+          if self.requests.get(stream) is Some(request) &&
+            self.answer_from_headers(stream, request) {
+            // Answered, so it gets no `100 Continue`.
+            if self.continuing == stream {
+              self.continuing = 0
+            }
+          }
+        }
         if self.continuing != 0 {
           let stream = self.continuing
           self.continuing = 0
@@ -568,6 +590,13 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         // gRPC call waits for its request to end, whatever its method.
         if request.meth == "CONNECT" && !request.grpc {
           self.connect = stream
+        }
+        // A gRPC call is looked up as soon as its HEADERS are known to bring
+        // no reset, and answered then when it cannot reach a gRPC Stub. A
+        // method other than POST is refused before that, when the request
+        // ends.
+        if request.grpc && request.meth == "POST" {
+          self.call_begun = stream
         }
       }
       Data(stream~, data~) => {

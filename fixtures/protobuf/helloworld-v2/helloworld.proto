@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Changed for smock's tests: HelloReply gains the field version, so that
-// this set is the one in helloworld/ rebuilt with one more field.
+// Changed for smock's tests: HelloRequest and HelloReply gain the field
+// version, so that this set is the one in helloworld/ rebuilt with one more
+// field in each message.
 
 syntax = "proto3";
 
@@ -37,6 +38,7 @@ service Greeter {
 // The request message containing the user's name.
 message HelloRequest {
   string name = 1;
+  int32 version = 2;
 }
 
 // The response message containing the greetings

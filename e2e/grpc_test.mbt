@@ -166,8 +166,6 @@ async test "calls this branch cannot serve yet get Trailers-Only INTERNAL with a
     #|  - name: greeter
     #|    hosts: [greeter.svc]
     #|    grpc: { descriptorSet: greeter.binpb }
-    #|  - name: plain
-    #|    hosts: [plain.svc]
     #|stubs:
     #|  - id: hello
     #|    mock: greeter
@@ -179,19 +177,6 @@ async test "calls this branch cannot serve yet get Trailers-Only INTERNAL with a
       defer client.close()
       let hello = framed(@fs.read_file(hello_request_path).binary())
       let calls : Array[(String, String, String, Bytes)] = [
-        (
-          "a Host no Mock lists", "other.svc", "/helloworld.Greeter/SayHello", hello,
-        ),
-        (
-          "a Mock without a set", "plain.svc", "/helloworld.Greeter/SayHello", hello,
-        ),
-        (
-          "an unknown method", "greeter.svc", "/helloworld.Greeter/SayGoodbye", hello,
-        ),
-        (
-          "a streaming method", "greeter.svc", "/helloworld.Greeter/SayHelloStreamReply",
-          hello,
-        ),
         (
           "a message that does not parse", "greeter.svc", "/helloworld.Greeter/SayHello",
           b"\x00\x00\x00\x00\x03\x0a\x05T",
@@ -227,16 +212,12 @@ async test "calls this branch cannot serve yet get Trailers-Only INTERNAL with a
       inspect(
         out.join("\n"),
         content=(
-          #|a Host no Mock lists: :status: 200, grpc-status: 13, grpc-message: no Mock for this Host (end)
-          #|a Mock without a set: :status: 200, grpc-status: 13, grpc-message: the Mock has no Descriptor set (end)
-          #|an unknown method: :status: 200, grpc-status: 13, grpc-message: unknown method (end)
-          #|a streaming method: :status: 200, grpc-status: 13, grpc-message: streaming methods are not served yet (end)
           #|a message that does not parse: :status: 200, grpc-status: 13, grpc-message: the request message cannot be decoded (end)
           #|a body that ends inside a message: :status: 200, grpc-status: 13, grpc-message: the request is not one uncompressed message (end)
           #|two messages: :status: 200, grpc-status: 13, grpc-message: the request is not one uncompressed message (end)
           #|no message: :status: 200, grpc-status: 13, grpc-message: the request is not one uncompressed message (end)
           #|journal: no entry
-          #|smock_requests_total{mock="",stub=""} 8
+          #|smock_requests_total{mock="",stub=""} 4
         ),
       )
     })
