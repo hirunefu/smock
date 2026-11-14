@@ -267,3 +267,36 @@ async test "weighted responses that mix OK and an error fail about one call in t
     })
   })
 }
+
+///|
+async test "smock check reports an error reply that also gives json, grpc on an HTTP Stub and an unknown status name, each at its pointer" {
+  let yaml =
+    #|mocks:
+    #|  - name: greeter
+    #|    grpc: { descriptorSet: greeter.binpb }
+    #|stubs:
+    #|  - id: not-found
+    #|    mock: greeter
+    #|    request: { path: /helloworld.Greeter/SayHello }
+    #|    response: { grpc: { status: NOT_FOUND, message: no such user }, json: { message: Hello } }
+    #|  - id: greet
+    #|    mock: greeter
+    #|    request: { method: GET, path: /hello }
+    #|    response: { status: 503, grpc: { status: UNAVAILABLE } }
+    #|  - id: missing
+    #|    mock: greeter
+    #|    request: { path: /helloworld.Greeter/SayHello }
+    #|    response: { grpc: { status: NOTFOUND } }
+  with_greeter(yaml, dir => {
+    inspect(
+      check([dir]),
+      content=(
+        #|status 1
+        #|greeter.yaml: /stubs/0/response/json: is not allowed with the gRPC status NOT_FOUND: a gRPC call gets a reply message or an error, never both
+        #|greeter.yaml: /stubs/1/response/grpc: is only for gRPC Stubs, and this is an HTTP Stub: its exact path names no method of its Mock's Descriptor set
+        #|greeter.yaml: /stubs/2/response/grpc/status: must be a gRPC status name: OK, CANCELLED, UNKNOWN, INVALID_ARGUMENT, DEADLINE_EXCEEDED, NOT_FOUND, ALREADY_EXISTS, PERMISSION_DENIED, RESOURCE_EXHAUSTED, FAILED_PRECONDITION, ABORTED, OUT_OF_RANGE, UNIMPLEMENTED, INTERNAL, UNAVAILABLE, DATA_LOSS or UNAUTHENTICATED
+        #|
+      ),
+    )
+  })
+}
