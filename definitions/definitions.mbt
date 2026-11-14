@@ -96,6 +96,9 @@ pub struct Mock {
   /// Whether the Journal records the requests the Mock answers: the Mock's
   /// `journal`, true by default.
   journal : Bool
+  /// The Descriptor set that the Mock's `grpc.descriptorSet` names,
+  /// decoded, or `None` when it names none.
+  descriptor_set : @protobuf.DescriptorSet?
   /// The Stubs of this Mock, in the order they are tried: by priority,
   /// lower numbers first and Stubs without a priority last; Stubs of equal
   /// priority in declaration order, that is file-name order, then position
@@ -1216,6 +1219,7 @@ pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
           no_match_status: 404,
           no_match_headers: ReadOnlyArray::from_array([]),
           journal: true,
+          descriptor_set: None,
           stubs: ReadOnlyArray::from_array([]),
           index: MatchIndex::new(ReadOnlyArray::from_array([])),
           scenarios: ReadOnlyArray::from_array([]),
@@ -1249,6 +1253,7 @@ pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
       no_match_status: mock.no_match_status,
       no_match_headers: ReadOnlyArray::from_array(mock.no_match_headers),
       journal: mock.journal,
+      descriptor_set: mock.descriptor_set,
       stubs,
       index: MatchIndex::new(stubs),
       scenarios: scenarios_of(stubs),
