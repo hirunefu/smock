@@ -181,6 +181,29 @@ hex_test catalog/count-request.binpb count_request "A CountRequest with a shelf 
 hex_test catalog/count-reply.binpb count_reply "CountReply { count: -5, exact: true, shelf: \"A1\" }, as protoc encodes it: fixtures/protobuf/catalog/count-reply.binpb, in hex." protobuf
 hex_test oneofs/oneofs.binpb oneofs_set "The Descriptor set of fixtures/protobuf/oneofs/oneofs.proto, fixtures/protobuf/oneofs/oneofs.binpb, in hex." protobuf
 
+# Request messages of every scalar type, an enum with an alias, nested
+# messages and proto3 optional fields, and what a client may send in place
+# of an Order.
+descriptor_set scalars scalars.binpb scalars.proto
+message scalars scalars.proto scalars.Order order
+message scalars scalars.proto scalars.Every every-max
+message scalars scalars.proto scalars.Every every-min
+message scalars scalars.proto scalars.Every every-floats
+message scalars scalars.proto scalars.Every every-specials
+message scalars scalars.proto scalars.Every every-infinity
+message scalars scalars.proto scalars.Every every-presence
+message scalars scalars.proto scalars.OrderOnTheWire order-twice
+message scalars scalars.proto scalars.OrderOnTheWire order-newer
+message scalars scalars.proto scalars.OrderOnTheWire order-not-utf8
+hex_test scalars/scalars.binpb scalars_set "The Descriptor set of fixtures/protobuf/scalars/scalars.proto, fixtures/protobuf/scalars/scalars.binpb, in hex." protobuf
+hex_test scalars/scalars.binpb scalars_set "The Descriptor set of fixtures/protobuf/scalars/scalars.proto, fixtures/protobuf/scalars/scalars.binpb, in hex." definitions
+hex_test scalars/order.binpb order "The order of the ticket's example, as protoc encodes it: fixtures/protobuf/scalars/order.binpb, in hex." protobuf
+hex_test scalars/every-max.binpb every_max "An Every with each scalar field at its largest value, as protoc encodes it: fixtures/protobuf/scalars/every-max.binpb, in hex." protobuf
+hex_test scalars/every-min.binpb every_min "An Every with each signed scalar field at its smallest value, as protoc encodes it: fixtures/protobuf/scalars/every-min.binpb, in hex." protobuf
+
+# A method whose input type has a field of a well-known type.
+descriptor_set stamped stamped.binpb stamped.proto
+
 # The end of the list of fixtures. With --check: every file the script
 # wrote, compared with the committed one.
 if [ -n "$check" ]; then

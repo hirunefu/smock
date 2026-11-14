@@ -1,0 +1,19 @@
+// Written for smock's tests: a method whose input type has a field of a
+// well-known type, which gRPC Stubs do not serve yet.
+syntax = "proto3";
+
+package stamped;
+
+import "google/protobuf/timestamp.proto";
+
+service Clock {
+  rpc Stamp (Stamped) returns (Ack);
+}
+
+message Stamped {
+  google.protobuf.Timestamp at = 1;
+}
+
+message Ack {
+  bool ok = 1;
+}

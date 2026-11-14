@@ -1,0 +1,7 @@
+# The ticket's example: the largest int64, a float of 9.99, the status
+# ACTIVE, an empty note, which protoc leaves out, and a nested address.
+id: 9223372036854775807
+price: 9.99
+status: ACTIVE
+note: ""
+address { city: "Kyoto" }
