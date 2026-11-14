@@ -178,6 +178,14 @@ pub enum Serves {
 }
 
 ///|
+/// Whether the Stub is a gRPC Stub: an ordinary Stub whose exact path names
+/// a method of its Mock's Descriptor set. Every other Stub, CRUD Stubs
+/// included, is an HTTP Stub.
+pub fn Stub::is_grpc(self : Stub) -> Bool {
+  self.serves is Ordinary({ grpc_method: Some(_), .. })
+}
+
+///|
 /// The Stub's Scenario clause, if it has one: an ordinary Stub's
 /// `scenario`, and none for a CRUD Stub, which has no Scenario clause.
 pub fn Stub::scenario(self : Stub) -> ScenarioClause? {
@@ -211,6 +219,10 @@ pub struct Ordinary {
   /// The writes to Data buckets the Stub makes when it matches, in the
   /// order written, `dataWrites`: none when it has no `dataWrites`.
   data_writes : ReadOnlyArray[DataWrite]
+  /// The method of its Mock's Descriptor set that the Stub's exact path
+  /// names, when it is a gRPC Stub. HTTP requests never match a gRPC Stub.
+  /// `None` for an HTTP Stub.
+  grpc_method : @protobuf.MethodDescriptor?
 }
 
 ///|
@@ -1182,11 +1194,13 @@ pub fn validate(
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
   })
+  let body_files = Map::from_array(set.body_files)
   let reader = Reader::new(
     declared=declared_mocks(files),
     buckets=declared_buckets(files),
-    body_files=Map::from_array(set.body_files),
+    body_files~,
     env~,
+    sets=declared_sets(files, body_files),
   )
   for file in files {
     reader.read_file(file.0, file.1)

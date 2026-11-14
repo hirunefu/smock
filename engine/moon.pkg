@@ -21,6 +21,7 @@ import {
   "smock/yaml",
   "moonbitlang/core/bench",
   "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/hex",
   "moonbitlang/core/random",
 } for "test"
 

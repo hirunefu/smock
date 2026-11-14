@@ -1,0 +1,8 @@
+// A proto2 file, for smock's tests of gRPC Stubs.
+syntax = "proto2";
+
+package legacy;
+
+message LegacyRequest {
+  optional string id = 1;
+}

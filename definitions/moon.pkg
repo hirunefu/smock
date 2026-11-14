@@ -13,5 +13,9 @@ import {
 }
 
 import {
+  "moonbitlang/core/encoding/hex",
+} for "test"
+
+import {
   "moonbitlang/core/random",
 } for "wbtest"

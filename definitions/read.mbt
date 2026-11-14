@@ -133,6 +133,8 @@ priv struct Reader {
   /// The Data buckets Stubs may read and write, by the name of their Mock:
   /// those any file of the set declares.
   mock_buckets : Map[String, MockBuckets]
+  /// The Descriptor sets that the Mocks of any file of the set name.
+  sets : DeclaredSets
 }
 
 ///|
@@ -141,6 +143,7 @@ fn Reader::new(
   buckets~ : Map[String, Map[String, BucketKey]],
   body_files~ : Map[String, Bytes],
   env~ : @template.Env,
+  sets~ : DeclaredSets,
 ) -> Reader {
   let mock_buckets = Map([])
   for mock, keys in buckets {
@@ -152,6 +155,7 @@ fn Reader::new(
     body_files,
     env,
     mock_buckets,
+    sets,
     mocks: [],
     mock_names: Map([]),
     hosts: Map([]),
@@ -279,6 +283,7 @@ fn Reader::read_file(
     body_files: Some(self.body_files),
     env: self.env,
     buckets: self.mock_buckets,
+    sets: self.sets,
   }
   let top = match parsed {
     Ok(top) => top
@@ -343,6 +348,8 @@ priv struct File {
   /// The Data buckets a Stub may read and write, by the name of the Mock
   /// that declares them. A Mock that declares none is not listed.
   buckets : Map[String, MockBuckets]
+  /// The Descriptor sets that the Mocks name, which tell a gRPC Stub.
+  sets : DeclaredSets
 }
 
 ///|
@@ -463,17 +470,21 @@ fn File::read_descriptor_set(
 ) -> @protobuf.DescriptorSet? {
   guard self.string(pointer, json) is Some(path) else { return None }
   guard self.body_file(pointer, path) is Some(bytes) else { return None }
-  Some(
-    @protobuf.read_descriptor_set(bytes) catch {
-      err => {
-        self.error(
-          pointer,
-          "\{path.escape()}: not a Descriptor set, a FileDescriptorSet in protobuf's binary encoding: \{err}",
-        )
-        return None
-      }
-    },
-  )
+  // `declared_sets` has decoded it already.
+  let decoded = match self.sets.by_path.get(path) {
+    Some(decoded) => decoded
+    None => decode_set(bytes)
+  }
+  match decoded {
+    Decoded(set) => Some(set)
+    NotASet(err) => {
+      self.error(
+        pointer,
+        "\{path.escape()}: not a Descriptor set, a FileDescriptorSet in protobuf's binary encoding: \{err}",
+      )
+      None
+    }
+  }
 }
 
 ///|
@@ -607,6 +618,9 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     _ => no_mock_buckets
   }
   let buckets = mock_buckets.templates
+  // Whether it is a gRPC Stub, wherever `mock` and `request` are among its
+  // members, which decides how its responses are read.
+  let grpc = self.grpc_method_of(stub)
   for key, value in stub {
     let field = child_pointer(pointer, key)
     match key {
@@ -614,9 +628,23 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       "mock" => mock = self.name(field, value).unwrap_or("")
       "request" => request = self.read_conditions(field, value)
       "response" =>
-        response = self.read_response(pointer, field, value, buckets~)
+        response = self.read_response(
+          pointer,
+          field,
+          value,
+          buckets~,
+          grpc=grpc is Some(_),
+        )
       "responses" =>
-        weighted = Some(self.read_responses(pointer, field, value, buckets~))
+        weighted = Some(
+          self.read_responses(
+            pointer,
+            field,
+            value,
+            buckets~,
+            grpc=grpc is Some(_),
+          ),
+        )
       "variables" =>
         variables = self.read_variables(pointer, field, value, buckets~)
       "dataWrites" =>
@@ -681,6 +709,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       total_weight,
       variables,
       data_writes,
+      grpc_method: grpc.map(grpc => grpc.rpc),
     }),
     fault,
   })
@@ -1545,10 +1574,7 @@ fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
 /// the body-file subdirectory and stays inside it: its names are not empty,
 /// and none starts with `.`, as smock skips such files.
 fn File::body_file(self : File, pointer : String, path : String) -> Bytes? {
-  let inside = path
-    .split("/")
-    .all(name => !name.is_empty() && !name.has_prefix("."))
-  if !inside {
+  if !is_inside(path) {
     self.error(
       pointer, "must be a path inside the body-file subdirectory, such as users/1.json, with no name starting with .",
     )
