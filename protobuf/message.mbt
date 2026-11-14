@@ -40,16 +40,17 @@ priv enum Value {
   /// The octets of each value of a message field, in order. protobuf's
   /// parsers merge them into one message.
   Messages(Array[BytesView])
-  /// The octets of each record of a repeated field, in order: one or more
-  /// values of a scalar or an enum, as a packed record holds them, so a
-  /// value in a record of its own is a packed record of one value; one
-  /// string, bytes or message; or one entry of a map.
+  /// The records of a repeated field, tags included, in order, as runs:
+  /// each view holds one or more records of the field that follow each
+  /// other in the message, so a field whose records come together costs
+  /// one view. A record holds a value, a packed record of values of a
+  /// scalar or an enum, or an entry of a map.
   Elements(Array[BytesView])
 }
 
 ///|
-/// The records of a repeated field that a message leaves out.
-let no_elements : Array[BytesView] = []
+/// The runs of records of a repeated field that a message leaves out.
+let no_runs : Array[BytesView] = []
 
 ///|
 /// Decodes `input`, a message of the type `message` of `set` in protobuf's
@@ -130,7 +131,7 @@ fn scan(
       let field = fields[index]
       if field.label is Repeated {
         let at = reader.pos
-        let element = match (field.type_, reader.wire_type()) {
+        match (field.type_, reader.wire_type()) {
           (String, Len) => {
             let value = reader.length_delimited()
             if !is_utf8(value) {
@@ -139,12 +140,13 @@ fn scan(
                 "the field \{field.name} holds octets that are not UTF-8",
               )
             }
-            value
           }
-          (Bytes | Message, Len) => reader.length_delimited()
-          // A packed record of values.
+          // A string, bytes, a message or a map entry; or a packed record
+          // of values.
           (
-            Int32
+            Bytes
+            | Message
+            | Int32
             | Int64
             | UInt32
             | UInt64
@@ -159,9 +161,7 @@ fn scan(
             | SFixed32
             | Float,
             Len,
-          ) => reader.length_delimited()
-          // A value in a record of its own, which is a packed record of
-          // one value.
+          ) => ignore(reader.length_delimited())
           (
             Int32
             | Int64
@@ -172,26 +172,27 @@ fn scan(
             | Bool
             | Enum,
             Varint,
-          ) => {
-            ignore(reader.varint())
-            record[at:reader.pos]
-          }
-          (Fixed64 | SFixed64 | Double, I64) => {
-            ignore(reader.fixed64())
-            record[at:reader.pos]
-          }
-          (Fixed32 | SFixed32 | Float, I32) => {
-            ignore(reader.fixed32())
-            record[at:reader.pos]
-          }
+          ) => ignore(reader.varint())
+          (Fixed64 | SFixed64 | Double, I64) => ignore(reader.fixed64())
+          (Fixed32 | SFixed32 | Float, I32) => ignore(reader.fixed32())
           _ => {
             reader.skip()
             continue
           }
         }
+        // The record joins the field's last run when it follows it.
+        let start = reader.tag_at
         match values[index] {
-          Some(Elements(list)) => list.push(element)
-          _ => values[index] = Some(Elements([element]))
+          Some(Elements(runs)) => {
+            let last = runs[runs.length() - 1]
+            let from = last.start_offset() - record.start_offset()
+            if from >= 0 && from + last.length() == start {
+              runs[runs.length() - 1] = record[from:reader.pos]
+            } else {
+              runs.push(record[start:reader.pos])
+            }
+          }
+          _ => values[index] = Some(Elements([record[start:reader.pos]]))
         }
         continue
       }
@@ -276,14 +277,14 @@ fn DescriptorSet::print_message(
     write_json_name(out, field.json_name)
     out.write_byte(b':')
     if field.label is Repeated {
-      let elements = match value {
-        Some(Elements(list)) => list
-        _ => no_elements
+      let runs = match value {
+        Some(Elements(runs)) => runs
+        _ => no_runs
       }
       match self.message_of(field) {
         Some(entry) if entry.map_entry && is_map_entry(entry) =>
-          self.print_map(out, entry, elements, depth)
-        _ => self.print_list(out, field, elements, depth)
+          self.print_map(out, entry, runs, depth)
+        _ => self.print_list(out, field, runs, depth)
       }
     } else {
       self.print_value(out, field, value, depth)
@@ -336,47 +337,56 @@ fn DescriptorSet::print_value(
 
 ///|
 /// Prints to `out` the values of `field`, a repeated field other than a
-/// map of a message `depth` messages deep, whose records are `elements`,
+/// map of a message `depth` messages deep, whose records are in `runs`,
 /// as an array.
 fn DescriptorSet::print_list(
   self : DescriptorSet,
   out : @buffer.Buffer,
   field : FieldDescriptor,
-  elements : Array[BytesView],
+  runs : Array[BytesView],
   depth : Int32,
 ) -> Unit raise DecodeError {
   out.write_byte(b'[')
   let mut first = true
-  for e in 0..<elements.length() {
-    let element = elements[e]
-    match field.type_ {
-      String | Bytes | Message | Group => {
-        if !first {
-          out.write_byte(b',')
-        }
-        first = false
-        match self.message_of(field) {
-          Some(type_) => {
-            if depth >= max_depth {
-              raise DecodeError(
-                position=element.start_offset(),
-                message="messages nest deeper than \{max_depth}",
-              )
+  for r in 0..<runs.length() {
+    let reader = Reader(runs[r])
+    while !reader.at_end() {
+      ignore(reader.tag())
+      match (field.type_, reader.wire_type()) {
+        (String | Bytes | Message | Group, _) => {
+          let element = reader.length_delimited()
+          if !first {
+            out.write_byte(b',')
+          }
+          first = false
+          match self.message_of(field) {
+            Some(type_) => {
+              if depth >= max_depth {
+                raise DecodeError(
+                  position=element.start_offset(),
+                  message="messages nest deeper than \{max_depth}",
+                )
+              }
+              self.print_message(out, type_, [element], depth + 1)
             }
-            self.print_message(out, type_, [element], depth + 1)
+            None if field.type_ is Bytes => write_base64(out, element)
+            None => write_json_string(out, element)
           }
-          None if field.type_ is Bytes => write_base64(out, element)
-          None => write_json_string(out, element)
         }
-      }
-      _ => {
-        let reader = Reader(element)
-        while !reader.at_end() {
-          let bits = match field.type_ {
-            Fixed64 | SFixed64 | Double => reader.fixed64()
-            Fixed32 | SFixed32 | Float => reader.fixed32().to_uint64()
-            _ => reader.varint()
+        // A packed record of values.
+        (_, Len) => {
+          let values = Reader(reader.length_delimited())
+          while !values.at_end() {
+            let bits = values.number(field.type_)
+            if !first {
+              out.write_byte(b',')
+            }
+            first = false
+            self.print_number(out, field, bits)
           }
+        }
+        _ => {
+          let bits = reader.number(field.type_)
           if !first {
             out.write_byte(b',')
           }
@@ -387,6 +397,18 @@ fn DescriptorSet::print_list(
     }
   }
   out.write_byte(b']')
+}
+
+///|
+/// Reads a value of the scalar or enum type `type_`, other than a string
+/// or bytes, as its type is encoded: a fixed 64-bit or 32-bit value, or a
+/// varint, as its bits.
+fn Reader::number(self : Reader, type_ : FieldType) -> UInt64 raise DecodeError {
+  match type_ {
+    Fixed64 | SFixed64 | Double => self.fixed64()
+    Fixed32 | SFixed32 | Float => self.fixed32().to_uint64()
+    _ => self.varint()
+  }
 }
 
 ///|
@@ -414,17 +436,26 @@ fn is_map_entry(entry : MessageDescriptor) -> Bool {
 }
 
 ///|
-/// Prints to `out` the map whose entries, of the type `entry`, are
-/// `entries`, a field of a message `depth` messages deep, as an object
-/// with a member per key, in key order. An entry without a key or a value
-/// takes the default, and of the entries with one key, the last wins.
+/// Prints to `out` the map whose entries, of the type `entry`, are the
+/// records in `runs`, a field of a message `depth` messages deep, as an
+/// object with a member per key, in key order. An entry without a key or a
+/// value takes the default, and of the entries with one key, the last
+/// wins.
 fn DescriptorSet::print_map(
   self : DescriptorSet,
   out : @buffer.Buffer,
   entry : MessageDescriptor,
-  entries : Array[BytesView],
+  runs : Array[BytesView],
   depth : Int32,
 ) -> Unit raise DecodeError {
+  let entries : Array[BytesView] = []
+  for r in 0..<runs.length() {
+    let reader = Reader(runs[r])
+    while !reader.at_end() {
+      ignore(reader.tag())
+      entries.push(reader.length_delimited())
+    }
+  }
   let count = entries.length()
   if count == 0 {
     out.write_bytes(b"{}")
