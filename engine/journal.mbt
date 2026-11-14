@@ -107,12 +107,16 @@ pub struct JournalEntry {
   /// The Near miss, when no Stub matched and the Mock had candidates.
   near_miss : NearMiss?
   /// The response status, or `None` when a connection Fault ended the
-  /// request before a status was written.
+  /// request before a status was written. A gRPC reply's is 200.
   status : Int32?
+  /// The gRPC status a gRPC call got: its plan's, or the one the server
+  /// sets with `set_grpc_status` before it commits the entry. `None` for an
+  /// HTTP request.
+  grpc_status : @grpc.Status?
   /// The connection Fault injected instead of the response, if any.
   fault : @definitions.ConnectionKind?
   /// Why the Stub's template could not be rendered, when it could not: the
-  /// client then got a 500.
+  /// client then got a 500, or, for a gRPC call, INTERNAL.
   template_error : TemplateError?
   /// The bytes the entry counts against the Journal's byte bound.
   priv size : Int32
@@ -291,6 +295,10 @@ fn Journal::entry(
     crud,
     near_miss,
     status,
+    grpc_status: match plan.grpc {
+      Some(part) => Some(part.status)
+      None => None
+    },
     fault: plan.fault,
     template_error,
     size: 256 + 2 * text + body.length() + value_overhead * values,
@@ -479,6 +487,7 @@ let vacated : JournalEntry = {
   crud: None,
   near_miss: None,
   status: None,
+  grpc_status: None,
   fault: None,
   template_error: None,
   size: 0,
@@ -923,7 +932,7 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
   let optional = (value : String?) => {
     value.map_or(Json::null(), value => Json::string(value))
   }
-  {
+  let members : Map[String, Json] = {
     "seq": Json::number(self.seq.to_double()),
     "receivedAt": Json::string(@log.format_time(self.received_at)),
     "durationMs": self.duration_ms.map_or(Json::null(), ms => {
@@ -974,9 +983,17 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     "status": self.status.map_or(Json::null(), status => {
       Json::number(status.to_double())
     }),
-    "fault": self.fault.map_or(Json::null(), kind => Json::string(kind.name())),
-    "templateError": self.template_error.map_or(Json::null(), error => {
-      ToJson::to_json(error)
-    }),
   }
+  // Only a gRPC call's entry has it, after its HTTP status: an HTTP
+  // request's entry is as it was before gRPC.
+  if self.grpc_status is Some(status) {
+    members["grpcStatus"] = Json::string(status.name())
+  }
+  members["fault"] = self.fault.map_or(Json::null(), kind => {
+    Json::string(kind.name())
+  })
+  members["templateError"] = self.template_error.map_or(Json::null(), error => {
+    ToJson::to_json(error)
+  })
+  Json::object(members)
 }

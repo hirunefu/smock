@@ -136,11 +136,25 @@ fn plan_response(
       if response.serves_ranges {
         range_response(status, headers, bytes, incoming.request)
       } else {
-        { status, headers, body: Bytes(bytes), delay_ms: 0, fault: None, }
+        {
+          status,
+          headers,
+          body: Bytes(bytes),
+          delay_ms: 0,
+          fault: None,
+          grpc: None,
+        }
       }
     Events(events) => {
       set_content_type(headers, "text/event-stream")
-      { status, headers, body: Events(events), delay_ms: 0, fault: None, }
+      {
+        status,
+        headers,
+        body: Events(events),
+        delay_ms: 0,
+        fault: None,
+        grpc: None,
+      }
     }
     Template(template) => {
       let rendering = rendering_for(
@@ -190,7 +204,7 @@ fn plan_response(
           Events(sse_events(events, waits))
         }
       }
-      { status, headers, body, delay_ms: 0, fault: None, }
+      { status, headers, body, delay_ms: 0, fault: None, grpc: None, }
     }
   }
 }
@@ -484,7 +498,7 @@ fn render_body(
       Events(ReadOnlyArray::from_array(rendered))
     }
   }
-  { status, headers, body, delay_ms: 0, fault: None, }
+  { status, headers, body, delay_ms: 0, fault: None, grpc: None, }
 }
 
 ///|
@@ -509,5 +523,6 @@ fn json_failure(status : Int32, body : Json) -> ResponsePlan {
     body: Bytes(@template.compact_json_bytes(body)),
     delay_ms: 0,
     fault: None,
+    grpc: None,
   }
 }
