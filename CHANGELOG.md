@@ -177,11 +177,19 @@ of each GitHub release include its section
   Journal records the call with its decoded body, whose size counts the
   octets received, and the request metrics count it under its Mock and
   Stub. A call that no Stub matches gets Trailers-Only UNIMPLEMENTED
-  `no Stub matched`, with its Near miss in a `smock-near-miss` trailer, in
-  the form of the `Smock-Near-Miss` header; the Mock's `noMatch` applies
-  to HTTP requests only. For now smock serves messages of singular
-  `string`, `bool` and `int32` fields, and answers the calls it does not
-  serve yet with Trailers-Only INTERNAL and a fixed message. The new
+  `no Stub matched`, with its Near miss among the Mock's gRPC Stubs in a
+  `smock-near-miss` trailer, in the form of the `Smock-Near-Miss` header;
+  the Mock's `noMatch` applies to HTTP requests only. A call whose Host
+  reaches no Mock, whose Mock has no set, or whose method the set lacks or
+  streams gets UNIMPLEMENTED with a fixed message as soon as its HEADERS
+  arrive, then RST_STREAM `NO_ERROR` while the client still sends, and is
+  journaled as unmatched with an empty body. `:authority` chooses the
+  Mock, and the Default Mock answers with its own set. A call is looked up
+  again when its request ends, so a reload never makes a call decoded with
+  one version of a set and answered with another. For now smock serves
+  messages of singular `string`, `bool` and `int32` fields, and answers
+  the calls it does not serve yet with Trailers-Only INTERNAL and a fixed
+  message. The new
   `smock/grpc` module frames messages and names gRPC's status codes, and
   `smock/protobuf` decodes and encodes messages. See [gRPC](docs/grpc.md).
 - `grpcStatus` in the Journal. A gRPC call's entry records the name of the
