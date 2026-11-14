@@ -83,7 +83,7 @@ pub struct Reader {
 ///|
 /// A reader of `input`, from its start.
 pub fn Reader::Reader(input : BytesView) -> Reader {
-  { input, pos: 0, tag_at: 0, field: 0, wire_type: Varint }
+  { input, pos: 0, tag_at: 0, field: 0, wire_type: Varint, }
 }
 
 ///|
@@ -148,7 +148,7 @@ fn Reader::little_endian(
 /// Reads a fixed 32-bit value: 4 octets, little-endian, as protobuf
 /// encodes `fixed32`, `sfixed32` and `float`. Raises `DecodeError` when the
 /// input ends first.
-pub fn Reader::fixed32(self : Reader) -> UInt raise DecodeError {
+pub fn Reader::fixed32(self : Reader) -> UInt32 raise DecodeError {
   self.little_endian(4, "a fixed 32-bit value").to_uint()
 }
 
@@ -208,10 +208,7 @@ pub fn Reader::tag(self : Reader) -> Int32 raise DecodeError {
     4 => EndGroup
     5 => I32
     other =>
-      raise self.error(
-        start,
-        "wire type \{other} is not a protobuf wire type",
-      )
+      raise self.error(start, "wire type \{other} is not a protobuf wire type")
   }
   self.tag_at = start
   self.field = field.to_int()
@@ -281,10 +278,7 @@ fn Reader::skip_group(
   }
   for ;; {
     if self.at_end() {
-      raise self.error(
-        at,
-        "the input ends inside the group of field \{field}",
-      )
+      raise self.error(at, "the input ends inside the group of field \{field}")
     }
     let inner = self.tag()
     match self.wire_type {
@@ -312,7 +306,7 @@ pub struct Writer {
 ///|
 /// A writer with nothing written yet.
 pub fn Writer::Writer() -> Writer {
-  { out: @buffer.new() }
+  { out: @buffer.Buffer(), }
 }
 
 ///|
@@ -335,7 +329,7 @@ pub fn Writer::tag(self : Writer, field : Int32, wire_type : WireType) -> Unit {
 pub fn Writer::varint(self : Writer, value : UInt64) -> Unit {
   let mut rest = value
   while rest >= 0x80 {
-    self.out.write_byte((rest & 0x7f | 0x80).to_byte())
+    self.out.write_byte(((rest & 0x7f) | 0x80).to_byte())
     rest = rest >> 7
   }
   self.out.write_byte(rest.to_byte())
@@ -343,7 +337,7 @@ pub fn Writer::varint(self : Writer, value : UInt64) -> Unit {
 
 ///|
 /// Writes `value` as 4 octets, little-endian.
-pub fn Writer::fixed32(self : Writer, value : UInt) -> Unit {
+pub fn Writer::fixed32(self : Writer, value : UInt32) -> Unit {
   self.out.write_uint_le(value)
 }
 

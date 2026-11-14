@@ -30,8 +30,14 @@ test "a varint is read from its 7-bit groups, least significant first" {
 ///|
 test "a varint that the input ends inside, or that runs past 10 octets, is an error at its first octet" {
   let read = (reader : @protobuf.Reader) => reader.varint().to_string()
-  inspect(outcome(b"", read), content="error: octet 0: the input ends inside a varint")
-  inspect(outcome(b"\x96", read), content="error: octet 0: the input ends inside a varint")
+  inspect(
+    outcome(b"", read),
+    content="error: octet 0: the input ends inside a varint",
+  )
+  inspect(
+    outcome(b"\x96", read),
+    content="error: octet 0: the input ends inside a varint",
+  )
   inspect(
     outcome(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x81\x00", read),
     content="error: octet 0: a varint is longer than 10 octets",
@@ -139,7 +145,10 @@ test "a tag gives the field number, and the wire type for the value that follows
     content="1 VARINT, 2 I64, 3 LEN, 4 I32",
   )
   // The largest field number, 2^29 - 1.
-  inspect(outcome(b"\xf8\xff\xff\xff\x0f\x00", read), content="536870911 VARINT")
+  inspect(
+    outcome(b"\xf8\xff\xff\xff\x0f\x00", read),
+    content="536870911 VARINT",
+  )
 }
 
 ///|
@@ -246,8 +255,8 @@ test "groups nested deeper than 100 are an error, and 100 deep are skipped" {
     reader.skip()
     "skipped"
   }
-  let nested = (depth : Int) => {
-    let out = @buffer.new()
+  let nested = (depth : Int32) => {
+    let out = @buffer.Buffer()
     for _ in 0..<depth {
       out.write_byte(b'\x0b')
     }
@@ -281,7 +290,6 @@ test "a writer encodes tags and values as protobuf's documentation shows them" {
     writer.to_bytes(),
     content=(
       #|b"\x08\x96\x01\x12\x07testing\x1d\x01\x02\x03\x04!\x01\x02\x03\x04\x05\x06\x07\x08\xf8\xff\xff\xff\x0f\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01"
-
     ),
   )
 }
