@@ -1571,6 +1571,54 @@ async test "the contract checker rejects responses that break the document" {
       },
     ),
     (
+      "a Journal entry for a gRPC call, with its gRPC status",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":"localhost","mock":"greeter","viaDefault":false,"digest":"0123456789ab","request":{"method":"POST","target":"/helloworld.Greeter/SayHello","version":"HTTP/2","headers":[{"name":"content-type","value":"application/grpc"},{"name":"te","value":"trailers"}],"body":{"encoding":"utf-8","data":"{\"name\":\"Tom\"}","size":10,"truncated":false}},"stub":"hello","stubSource":"file","scenario":null,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null,"status":200,"grpcStatus":"OK","fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a gRPC status the document does not list",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":"localhost","mock":"greeter","viaDefault":false,"digest":"0123456789ab","request":{"method":"POST","target":"/helloworld.Greeter/SayHello","version":"HTTP/2","headers":[{"name":"content-type","value":"application/grpc"},{"name":"te","value":"trailers"}],"body":{"encoding":"utf-8","data":"{\"name\":\"Tom\"}","size":10,"truncated":false}},"stub":"hello","stubSource":"file","scenario":null,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null,"status":200,"grpcStatus":"NOPE","fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a gRPC status as a number",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":"localhost","mock":"greeter","viaDefault":false,"digest":"0123456789ab","request":{"method":"POST","target":"/helloworld.Greeter/SayHello","version":"HTTP/2","headers":[{"name":"content-type","value":"application/grpc"},{"name":"te","value":"trailers"}],"body":{"encoding":"utf-8","data":"{\"name\":\"Tom\"}","size":10,"truncated":false}},"stub":"hello","stubSource":"file","scenario":null,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null,"status":200,"grpcStatus":5,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a gRPC status of null",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":"localhost","mock":"greeter","viaDefault":false,"digest":"0123456789ab","request":{"method":"POST","target":"/helloworld.Greeter/SayHello","version":"HTTP/2","headers":[{"name":"content-type","value":"application/grpc"},{"name":"te","value":"trailers"}],"body":{"encoding":"utf-8","data":"{\"name\":\"Tom\"}","size":10,"truncated":false}},"stub":"hello","stubSource":"file","scenario":null,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null,"status":200,"grpcStatus":null,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
       "a Journal entry without its sequence number",
       "POST",
       "/v1/journal/query",
@@ -1846,6 +1894,10 @@ async test "the contract checker rejects responses that break the document" {
       #|a Near miss that failed a Scenario state: conforms
       #|a Near miss that failed a Scenario state without its name: /entries/0/nearMiss: {"stub":"pay","stubSource":"file","failed":[{"condition":... matches 0 of oneOf, not 1
       #|a Near miss without its Stub source: /entries/0/nearMiss: {"stub":"get-user","failed":[]} matches 0 of oneOf, not 1
+      #|a Journal entry for a gRPC call, with its gRPC status: conforms
+      #|a gRPC status the document does not list: /entries/0/grpcStatus: "NOPE" is not one of ["OK","CANCELLED","UNKNOWN","INVALID_ARGUMENT","DEADLINE_EXCEEDED","NOT_FOUND","ALREADY_EXISTS","PERMISSION_DENIED","RESOURCE_EXHAUSTED","FAILED_PRECONDITION","ABORTED","OUT_OF_RANGE","UNIMPLEMENTED","INTERNAL","UNAVAILABLE","DATA_LOSS","UNAUTHENTICATED"]
+      #|a gRPC status as a number: /entries/0/grpcStatus: 5 is not one of ["OK","CANCELLED","UNKNOWN","INVALID_ARGUMENT","DEADLINE_EXCEEDED","NOT_FOUND","ALREADY_EXISTS","PERMISSION_DENIED","RESOURCE_EXHAUSTED","FAILED_PRECONDITION","ABORTED","OUT_OF_RANGE","UNIMPLEMENTED","INTERNAL","UNAVAILABLE","DATA_LOSS","UNAUTHENTICATED"]
+      #|a gRPC status of null: /entries/0/grpcStatus: null is not one of ["OK","CANCELLED","UNKNOWN","INVALID_ARGUMENT","DEADLINE_EXCEEDED","NOT_FOUND","ALREADY_EXISTS","PERMISSION_DENIED","RESOURCE_EXHAUSTED","FAILED_PRECONDITION","ABORTED","OUT_OF_RANGE","UNIMPLEMENTED","INTERNAL","UNAVAILABLE","DATA_LOSS","UNAUTHENTICATED"]
       #|a Journal entry without its sequence number: /entries/0: seq is missing
       #|a Journal entry with the sequence number 0: /entries/0/seq: 0 is below 1
       #|a Journal entry without its timing: /entries/0: durationMs is missing

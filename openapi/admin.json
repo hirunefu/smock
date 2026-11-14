@@ -2142,6 +2142,10 @@
             "minimum": 100,
             "maximum": 599
           },
+          "grpcStatus": {
+            "description": "For a gRPC call, the name of the gRPC status the call got, such as `OK` or `NOT_FOUND`: the status its reply ended with, or the one smock answered with instead. `status` stays the HTTP status. Absent for an HTTP request.",
+            "enum": ["OK", "CANCELLED", "UNKNOWN", "INVALID_ARGUMENT", "DEADLINE_EXCEEDED", "NOT_FOUND", "ALREADY_EXISTS", "PERMISSION_DENIED", "RESOURCE_EXHAUSTED", "FAILED_PRECONDITION", "ABORTED", "OUT_OF_RANGE", "UNIMPLEMENTED", "INTERNAL", "UNAVAILABLE", "DATA_LOSS", "UNAUTHENTICATED"]
+          },
           "fault": {
             "description": "The connection Fault injected instead of the response, or null.",
             "enum": ["reset", "close", "partial", null]
@@ -2232,16 +2236,16 @@
             "enum": ["utf-8", "base64"]
           },
           "data": {
-            "description": "The bytes, possibly truncated.",
+            "description": "The bytes, possibly truncated. In the recorded request of a gRPC call, the request message decoded into JSON.",
             "type": "string"
           },
           "size": {
-            "description": "The length of the whole body, in bytes.",
+            "description": "The length of the whole body, in bytes. In the recorded request of a gRPC call, the octets of the DATA frames received.",
             "type": "integer",
             "minimum": 0
           },
           "truncated": {
-            "description": "Whether `data` holds only the first bytes of the body, as the Journal keeps them.",
+            "description": "Whether `data` holds only the first bytes of the body, as the Journal keeps them, cut at `--journal-body-limit`. In the recorded request of a gRPC call, whether the JSON was cut.",
             "type": "boolean"
           }
         },

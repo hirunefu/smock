@@ -462,6 +462,7 @@ stubs:
                   actual:
                     - string
             status: 100
+            grpcStatus: OK
             fault: reset
             templateError:
               at: string
@@ -693,6 +694,7 @@ stubs:
                   actual:
                     - string
             status: 100
+            grpcStatus: OK
             fault: reset
             templateError:
               at: string

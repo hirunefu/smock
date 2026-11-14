@@ -126,15 +126,12 @@ pub fn ContentFailure::message(self : ContentFailure) -> String {
 
 ///|
 /// Whether the plan is the reply of the gRPC Stub that matched, for an
-/// outcome of a gRPC call, whose candidates are all gRPC Stubs: a Stub
-/// matched, and its response was planned, with the HTTP status 200 of
-/// every gRPC reply. Otherwise, when no Stub matched, or when the plan is
-/// smock's own answer to a Stub that could not serve its content, a 500 or
-/// a 507, the plan is an HTTP answer, which is not a gRPC reply.
+/// outcome of a gRPC call: the plan has its gRPC part. Otherwise, when no
+/// Stub matched, or when the plan is smock's own answer to a Stub that
+/// could not serve its content, a 500 or a 507, the plan is an HTTP answer,
+/// which is not a gRPC reply.
 pub fn Outcome::is_grpc_reply(self : Outcome) -> Bool {
-  self.matched is Some(_) &&
-  self.content_error is None &&
-  self.plan.status == 200
+  self.plan.grpc is Some(_)
 }
 
 ///|
@@ -209,7 +206,24 @@ pub(all) struct ResponsePlan {
   delay_ms : Int32
   /// A connection Fault to inject instead of a normal response.
   fault : @definitions.ConnectionKind?
+  /// The gRPC part of the plan of a gRPC call's reply: how the reply ends.
+  /// `None` for an HTTP request, and for a call that smock answers in its
+  /// own way, as when no Stub matched.
+  grpc : GrpcPart?
 }
+
+///|
+/// The gRPC part of a plan: what a gRPC call's reply carries beside its
+/// message, which is the plan's body.
+#derive(Debug)
+pub(all) struct GrpcPart {
+  /// The gRPC status the reply ends with.
+  status : @grpc.Status
+}
+
+///|
+/// The gRPC part of every reply that a gRPC Stub serves: the status `OK`.
+let grpc_ok : GrpcPart = { status: Ok, }
 
 ///|
 /// A response body: bytes sent at once, or a stream of Server-Sent Events,
@@ -740,30 +754,40 @@ pub fn Engine::handle(
               //    rendered from its templates. One that serves byte ranges
               //    answers the request's Range field. Only a response that
               //    reads Variables, and does not continue from their values,
-              //    looks them up.
-              plan_response(
-                response,
-                incoming,
-                context,
-                now~,
-                draw~,
-                vars=if context is None && response.reads_variables {
-                  self.store.variables_of(stub.mock, session)
-                } else {
-                  None
-                },
-                data~,
-                copies=if context is None && response.reads_data {
-                  self.store.copy_values(stub.mock, session)
-                } else {
-                  None
-                },
-              ) catch {
+              //    looks them up. The reply to a gRPC call, which only a
+              //    gRPC Stub matches, gets its gRPC part.
+              try
+                plan_response(
+                  response,
+                  incoming,
+                  context,
+                  now~,
+                  draw~,
+                  vars=if context is None && response.reads_variables {
+                    self.store.variables_of(stub.mock, session)
+                  } else {
+                    None
+                  },
+                  data~,
+                  copies=if context is None && response.reads_data {
+                    self.store.copy_values(stub.mock, session)
+                  } else {
+                    None
+                  },
+                )
+              catch {
                 RenderError(at~, message~) => {
                   let error = TemplateError::{ at, message, }
                   content_error = Some(ContentError::new(stub, Template(error)))
                   template_failed(stub.id, error)
                 }
+              } noraise {
+                plan =>
+                  if grpc is Some(_) {
+                    { ..plan, grpc: Some(grpc_ok), }
+                  } else {
+                    plan
+                  }
               }
             }
           }
@@ -950,6 +974,7 @@ fn no_match(mock : @definitions.Mock, near_miss : NearMiss?) -> ResponsePlan {
     body: Bytes(b"{\"error\":\"no Stub matched\"}"),
     delay_ms: 0,
     fault: None,
+    grpc: None,
   }
 }
 
@@ -969,6 +994,7 @@ fn no_mock(host : String?, hosts : Array[String]) -> ResponsePlan {
     body: Bytes(@utf8.encode(body.stringify())),
     delay_ms: 0,
     fault: None,
+    grpc: None,
   }
 }
 

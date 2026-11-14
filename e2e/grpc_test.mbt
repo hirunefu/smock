@@ -47,7 +47,7 @@ async test "a call over h2c gets HEADERS, one DATA frame with the framed reply p
       inspect(
         smock.last_entry(),
         content=(
-          #|{"seq":1,"receivedAt":"<time>","durationMs":"<ms>","session":null,"host":"localhost","mock":"greeter","viaDefault":true,"digest":"<digest>","request":{"method":"POST","target":"/helloworld.Greeter/SayHello","version":"HTTP/2","headers":[{"name":"content-type","value":"application/grpc"},{"name":"te","value":"trailers"}],"body":{"encoding":"utf-8","data":"{\"name\":\"Tom\"}","size":10,"truncated":false}},"stub":"hello","stubSource":"file","scenario":null,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null,"status":200,"fault":null,"templateError":null}
+          #|{"seq":1,"receivedAt":"<time>","durationMs":"<ms>","session":null,"host":"localhost","mock":"greeter","viaDefault":true,"digest":"<digest>","request":{"method":"POST","target":"/helloworld.Greeter/SayHello","version":"HTTP/2","headers":[{"name":"content-type","value":"application/grpc"},{"name":"te","value":"trailers"}],"body":{"encoding":"utf-8","data":"{\"name\":\"Tom\"}","size":10,"truncated":false}},"stub":"hello","stubSource":"file","scenario":null,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null,"status":200,"grpcStatus":"OK","fault":null,"templateError":null}
         ),
       )
       inspect(
