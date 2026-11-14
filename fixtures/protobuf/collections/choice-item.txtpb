@@ -1,0 +1,2 @@
+# The oneof's message.
+item { name: "pen" sizes: [1] }

@@ -1,7 +1,7 @@
 // Written for smock's tests of request messages: every scalar type, an
 // enum with an alias, nested messages and proto3 optional fields, which
-// smock decodes, and types that reach fields it does not decode yet, or a
-// type of legacy.proto, a proto2 file.
+// smock decodes, types that reach a repeated field, a map and a oneof, and
+// a type that reaches a type of legacy.proto, a proto2 file.
 syntax = "proto3";
 
 package scalars;
@@ -67,7 +67,7 @@ message Placed {
 }
 
 // A message that reaches, through two fields of one nested message type,
-// fields smock does not decode yet.
+// a repeated field, a map and a oneof.
 message Parcel {
   Address to = 1;
   Contents contents = 2;

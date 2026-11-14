@@ -1,0 +1,2 @@
+# A box, for the tests to send before box-second.binpb.
+box { name: "pen" sizes: [1] stock { key: "a" value: 1 } stock { key: "c" value: 3 } }

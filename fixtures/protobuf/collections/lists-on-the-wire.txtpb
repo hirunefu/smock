@@ -1,0 +1,12 @@
+# The values of lists.txtpb, with each scalar in a record of its own.
+numbers: [1, -2, 300]
+offsets: [-1, 64]
+codes: [7, 4294967295]
+ratios: [0.5, -1e+300]
+weights: [0.1, 9.99]
+flags: [true, false, true]
+kinds: [BOOK, DISC, 9]
+words: ["x", "Kyōto"]
+blobs: ["\000\377"]
+items { name: "pen" sizes: [1, 2] stock { key: "a" value: 1 } }
+items { }

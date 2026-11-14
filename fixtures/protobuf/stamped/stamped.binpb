@@ -5,10 +5,15 @@
 seconds (Rseconds
 nanos (RnanosB…
 com.google.protobufBTimestampProtoPZ2google.golang.org/protobuf/types/known/timestamppbø¢GPBªGoogle.Protobuf.WellKnownTypesbproto3
-Á
-stamped.protostampedgoogle/protobuf/timestamp.proto"5
+†
+stamped.protostampedgoogle/protobuf/timestamp.proto"ù
 Stamped*
-at (2.google.protobuf.TimestampRat"
+at (2.google.protobuf.TimestampRat4
+history (2.google.protobuf.TimestampRhistory5
+by_name (2.stamped.Stamped.ByNameEntryRbyNameU
+ByNameEntry
+key (	Rkey0
+value (2.google.protobuf.TimestampRvalue:8"
 Ack
 ok (Rok20
 Clock'

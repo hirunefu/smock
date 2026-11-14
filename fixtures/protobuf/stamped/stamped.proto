@@ -1,5 +1,6 @@
-// Written for smock's tests: a method whose input type has a field of a
-// well-known type, which gRPC Stubs do not serve yet.
+// Written for smock's tests: a method whose input type has fields of a
+// well-known type, singular, repeated and as map values, which gRPC Stubs
+// do not serve yet.
 syntax = "proto3";
 
 package stamped;
@@ -12,6 +13,8 @@ service Clock {
 
 message Stamped {
   google.protobuf.Timestamp at = 1;
+  repeated google.protobuf.Timestamp history = 2;
+  map<string, google.protobuf.Timestamp> by_name = 3;
 }
 
 message Ack {

@@ -426,19 +426,3 @@ test "a message that does not parse is an error at the octet where it breaks" {
     content="error: octet 0: wire type 7 is not a protobuf wire type",
   )
 }
-
-///|
-test "a type with a repeated field is not decoded yet" {
-  inspect(
-    decoded(catalog_set, "catalog.Item", b""),
-    content="error: octet 0: the field tags is repeated, which smock does not decode yet",
-  )
-}
-
-///|
-test "a type with a oneof is not decoded yet" {
-  inspect(
-    decoded(oneofs_set, "oneofs.Pick", b""),
-    content="error: octet 0: the field word is in a oneof, which smock does not decode yet",
-  )
-}

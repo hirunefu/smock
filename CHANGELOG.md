@@ -203,16 +203,21 @@ of each GitHub release include its section
   verification and the unmatched list take calls by their Mock, `POST`,
   the method's path and their metadata as headers. See
   [The Journal and the metrics](docs/grpc.md#the-journal-and-the-metrics).
-- Request messages with singular fields of every protobuf scalar type,
-  enums and nested messages, decoded into one JSON form that the Journal,
-  conditions, templates and the Near miss see: fields in field-number
-  order under their JSON names, 64-bit integers as exact numbers, floats
-  in their shortest form, NaN and the infinities as strings, bytes in
-  base64 and enums by name. Fields without presence print at their
-  defaults, and proto3 `optional` and message fields only when set, so
-  `$exists` tells them apart. A message that does not parse gets INTERNAL
-  and counts as rejected traffic. Repeated fields, maps, oneofs and the
-  well-known types are not served yet. See
+- Request messages with fields of every protobuf scalar type, enums,
+  nested messages, repeated fields, maps and oneofs, decoded into one JSON
+  form that the Journal, conditions, templates and the Near miss see:
+  fields in field-number order under their JSON names, 64-bit integers as
+  exact numbers, floats in their shortest form, NaN and the infinities as
+  strings, bytes in base64, enums by name, repeated fields as arrays and
+  maps as objects in key order. Fields without presence print at their
+  defaults, `[]` and `{}` included, and proto3 `optional` fields, oneof
+  members and message fields only when set, so `$exists` tells them
+  apart. Messages are read as protobuf's parsers read them: packed or
+  unpacked, a later oneof member replacing an earlier one, and the values
+  of a message field merged. So a message gives one text, whatever order
+  its client encoded it in. A message that does not parse gets INTERNAL
+  and counts as rejected traffic. The well-known types are not served
+  yet. See
   [The request message as JSON](docs/grpc.md#the-request-message-as-json).
 - `response.grpc`: a gRPC Stub's reply, or each of its `responses`, gives
   the gRPC status it ends with by name, from `OK` to `UNAUTHENTICATED`,
