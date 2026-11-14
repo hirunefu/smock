@@ -119,3 +119,72 @@ test "a length that runs past the input, or that the input ends inside, is an er
     content="error: octet 0: the input ends inside a varint",
   )
 }
+
+///|
+test "a tag gives the field number, and the wire type for the value that follows" {
+  let read = (reader : @protobuf.Reader) => {
+    let out = []
+    while !reader.at_end() {
+      let field = reader.tag()
+      out.push("\{field} \{reader.wire_type()}")
+      reader.skip()
+    }
+    out.join(", ")
+  }
+  inspect(
+    outcome(
+      b"\x08\x96\x01\x11\x01\x02\x03\x04\x05\x06\x07\x08\x1a\x03Tom\x25\x01\x02\x03\x04",
+      read,
+    ),
+    content="1 VARINT, 2 I64, 3 LEN, 4 I32",
+  )
+  // The largest field number, 2^29 - 1.
+  inspect(outcome(b"\xf8\xff\xff\xff\x0f\x00", read), content="536870911 VARINT")
+}
+
+///|
+test "field number 0, a field number past 2^29 - 1 and wire types 6 and 7 are errors at the tag" {
+  let read = (reader : @protobuf.Reader) => reader.tag().to_string()
+  inspect(
+    outcome(b"\x00", read),
+    content="error: octet 0: field number 0 is not a field number",
+  )
+  inspect(
+    outcome(b"\x80\x80\x80\x80\x10", read),
+    content="error: octet 0: field number 536870912 is over the largest, 536870911",
+  )
+  inspect(
+    outcome(b"\x80\x80\x80\x80\x80\x01", read),
+    content="error: octet 0: a tag is longer than 5 octets",
+  )
+  inspect(
+    outcome(b"\x0e", read),
+    content="error: octet 0: wire type 6 is not a protobuf wire type",
+  )
+  inspect(
+    outcome(b"\x0f", read),
+    content="error: octet 0: wire type 7 is not a protobuf wire type",
+  )
+  inspect(
+    outcome(b"\x80", read),
+    content="error: octet 0: the input ends inside a varint",
+  )
+}
+
+///|
+test "expecting a wire type other than the tag's is an error at the tag" {
+  let read = (reader : @protobuf.Reader) => {
+    let field = reader.tag()
+    reader.expect(Len)
+    reader.length_delimited().length().to_string() + " octets in field \{field}"
+  }
+  inspect(outcome(b"\x0a\x01x", read), content="1 octets in field 1")
+  inspect(
+    outcome(b"\x10\x01", read),
+    content="error: octet 0: field 2 has wire type VARINT, not LEN",
+  )
+  inspect(
+    outcome(b"\x15\x01\x02\x03\x04", read),
+    content="error: octet 0: field 2 has wire type I32, not LEN",
+  )
+}

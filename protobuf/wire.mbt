@@ -20,19 +20,70 @@ pub impl Show for DecodeError with fn output(self, logger) {
 }
 
 ///|
+/// How a record's value is encoded, as its tag says.
+#derive(Eq, Debug)
+pub(all) enum WireType {
+  /// A varint: `int32`, `int64`, `uint32`, `uint64`, `sint32`, `sint64`,
+  /// `bool` and enums.
+  Varint
+  /// 8 octets: `fixed64`, `sfixed64` and `double`.
+  I64
+  /// A length, then that many octets: strings, bytes, messages and packed
+  /// repeated fields.
+  Len
+  /// The start of a group, a deprecated proto2 form of a message field.
+  StartGroup
+  /// The end of a group.
+  EndGroup
+  /// 4 octets: `fixed32`, `sfixed32` and `float`.
+  I32
+}
+
+///|
+/// Shows the wire type by its name in protobuf's documentation: `VARINT`,
+/// `I64`, `LEN`, `SGROUP`, `EGROUP` or `I32`.
+pub impl Show for WireType with fn output(self, logger) {
+  logger.write_string(
+    match self {
+      Varint => "VARINT"
+      I64 => "I64"
+      Len => "LEN"
+      StartGroup => "SGROUP"
+      EndGroup => "EGROUP"
+      I32 => "I32"
+    },
+  )
+}
+
+///|
+/// The largest field number, 2^29 - 1.
+let max_field_number : Int32 = 536870911
+
+///|
 /// Reads protobuf's wire format from bytes, one value at a time. It reads
 /// in place: a length-delimited value is a view of the input, not a copy.
+///
+/// A message is read a record at a time: `tag` reads the record's tag and
+/// returns its field number, then one of `varint`, `fixed64`,
+/// `length_delimited` or `fixed32` reads its value, as `wire_type` says, or
+/// `skip` skips it.
 pub struct Reader {
   /// The bytes being read.
   priv input : BytesView
   /// Where the next value starts in `input`.
   priv mut pos : Int32
+  /// Where the last tag read starts in `input`.
+  priv mut tag_at : Int32
+  /// The field number of the last tag read, or 0 before the first.
+  priv mut field : Int32
+  /// The wire type of the last tag read.
+  priv mut wire_type : WireType
 }
 
 ///|
 /// A reader of `input`, from its start.
 pub fn Reader::Reader(input : BytesView) -> Reader {
-  { input, pos: 0 }
+  { input, pos: 0, tag_at: 0, field: 0, wire_type: Varint }
 }
 
 ///|
@@ -126,4 +177,77 @@ pub fn Reader::length_delimited(self : Reader) -> BytesView raise DecodeError {
   let value = self.input[self.pos:self.pos + length.to_int()]
   self.pos = self.pos + length.to_int()
   value
+}
+
+///|
+/// Reads a record's tag, a varint of at most 5 octets that holds the field
+/// number and the wire type, and returns the field number. `wire_type` then
+/// gives the wire type. Raises `DecodeError` for field number 0, one past
+/// 2^29 - 1, and wire types 6 and 7, which protobuf does not define.
+pub fn Reader::tag(self : Reader) -> Int32 raise DecodeError {
+  let start = self.pos
+  let tag = self.varint()
+  if self.pos - start > 5 {
+    raise self.error(start, "a tag is longer than 5 octets")
+  }
+  let field = tag >> 3
+  if field == 0 {
+    raise self.error(start, "field number 0 is not a field number")
+  }
+  if field > max_field_number.to_uint64() {
+    raise self.error(
+      start,
+      "field number \{field} is over the largest, \{max_field_number}",
+    )
+  }
+  self.wire_type = match tag & 7 {
+    0 => Varint
+    1 => I64
+    2 => Len
+    3 => StartGroup
+    4 => EndGroup
+    5 => I32
+    other =>
+      raise self.error(
+        start,
+        "wire type \{other} is not a protobuf wire type",
+      )
+  }
+  self.tag_at = start
+  self.field = field.to_int()
+  self.field
+}
+
+///|
+/// The wire type of the last tag read.
+pub fn Reader::wire_type(self : Reader) -> WireType {
+  self.wire_type
+}
+
+///|
+/// Raises `DecodeError` unless the last tag read has the wire type
+/// `wire_type`, as a field of a known type must.
+pub fn Reader::expect(
+  self : Reader,
+  wire_type : WireType,
+) -> Unit raise DecodeError {
+  if self.wire_type != wire_type {
+    raise self.error(
+      self.tag_at,
+      "field \{self.field} has wire type \{self.wire_type}, not \{wire_type}",
+    )
+  }
+}
+
+///|
+/// Skips the value of the last tag read, as its wire type says. Raises
+/// `DecodeError` when the input ends inside it.
+pub fn Reader::skip(self : Reader) -> Unit raise DecodeError {
+  match self.wire_type {
+    Varint => ignore(self.varint())
+    I64 => ignore(self.fixed64())
+    Len => ignore(self.length_delimited())
+    I32 => ignore(self.fixed32())
+    StartGroup | EndGroup => ()
+  }
 }
