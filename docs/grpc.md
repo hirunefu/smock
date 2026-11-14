@@ -17,6 +17,8 @@ Mock's `grpc` field and gRPC Stubs.
   - [Reloads](#reloads)
   - [The call the Stubs see](#the-call-the-stubs-see)
   - [The request message as JSON](#the-request-message-as-json)
+  - [Conditions on the message](#conditions-on-the-message)
+  - [Printed forms](#printed-forms)
   - [The reply](#the-reply)
   - [The Journal and the metrics](#the-journal-and-the-metrics)
 - [Unmatched calls](#unmatched-calls)
@@ -174,7 +176,9 @@ A call is matched only against the gRPC Stubs on its method, in the order
 Stubs are tried, never against an HTTP Stub, even one whose conditions it
 meets. A call that none of them matches gets UNIMPLEMENTED
 ([Unmatched calls](#unmatched-calls)). A `json` body condition matches the
-decoded message, as it matches a JSON body:
+decoded message, as it matches a JSON body, once smock has checked it
+against the input type and rewritten it into the same form
+([Conditions on the message](#conditions-on-the-message)):
 
 ```yaml
 request:
@@ -263,6 +267,123 @@ For now, smock does not decode the well-known types, such as
 but the well-known types ([The reply](#the-reply)). The
 [Definition-file reference](definition-files.md#grpc-stubs) lists what a
 gRPC Stub cannot hold yet.
+
+### Conditions on the message
+
+When the files load, smock checks each gRPC Stub's `json` condition
+against the input type of its method, and rewrites it into the form in
+which it prints a call's message. Matching a call then costs no more than
+matching a JSON body. With this input type:
+
+```proto
+message Query {
+  int64 user_id = 1;
+  Status status = 2;
+  float ratio = 3;
+  map<int32, string> labels = 5;
+  Profile profile = 7;
+}
+
+enum Status {
+  option allow_alias = true;
+  STATUS_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  ENABLED = 1;
+  SUSPENDED = 2;
+}
+
+message Profile {
+  string display_name = 1;
+  map<string, int32> scores = 2;
+}
+```
+
+the condition `{user_id: 42, status: 1}` is matched as
+`{"userId":42,"status":"ACTIVE"}`, so the call `user_id: 42 status: ACTIVE`
+meets it. A Near miss in the Journal shows the condition in that form.
+
+smock rewrites:
+
+- a field's name in the `.proto` file into its JSON name: `user_id` into
+  `userId`, at every depth;
+- an enum's number, or an alias, into the first name of its number:
+  `status: 1` and `status: ENABLED` into `status: ACTIVE`. A number that no
+  value has stays a number, as smock prints it for an open enum;
+- a `float` into the nearest 32-bit float, in the form smock prints it:
+
+  | Written | Matched as | Meets a call of |
+  |---|---|---|
+  | `ratio: 0.1` | `0.1` | `0.1` |
+  | `ratio: 9.99` | `9.99` | `9.99` |
+  | `ratio: 16777217` | `16777216` | `16777217`, which a float holds as 16777216 |
+
+- an integer written with an exponent or a fraction of zeros, such as
+  `1e3`, into its digits, `1000`.
+
+Map keys are data, never rewritten: `profile: {scores: {math_score: 90}}`
+matches the key `math_score` as written, while `profile` and its field
+`display_name` become `profile` and `displayName`. A key that starts with
+`$` is written `$$`, as in any `json` condition.
+
+smock refuses, as a problem at the JSON Pointer of the value at fault:
+
+- a key that names no field of the type at its place, and a field given
+  by both its names in one object;
+- a literal that is not a value of its field's type as smock prints it,
+  and so can never match: an integer out of its type's range or with a
+  fraction, an enum name the enum lacks, a `float` outside the float range,
+  a string for a number or a number for a string, an array for a field
+  that is not repeated, a map or a message that is not an object, and
+  `null`, which smock never prints;
+- a literal that ProtoJSON reads but smock never prints
+  ([Printed forms](#printed-forms)).
+
+Patterns and operators are allowed in any place. An operator's condition
+is checked as the value in its place, and that of `$includes` and `$last`
+on a repeated field as one of its elements, so
+`history: {$includes: ENABLED}` becomes `history: {$includes: ACTIVE}`.
+
+```text
+users.yaml: /stubs/0/request/body/json/usr_id: is not a field of users.Query
+users.yaml: /stubs/1/request/body/json/history/1: must be the name of a value of users.Status, or an integer from -2147483648 to 2147483647: the elements of the field history of users.Query have the type users.Status
+```
+
+Templates, `find`, `$each`, Variables and data writes read the call's
+message as smock prints it, so they see JSON names only: `${body.userId}`
+reads 42, and `${body.user_id}` is missing.
+
+Two gRPC Stubs are compared once rewritten for the
+[warning about a Stub that can never match](definition-files.md#a-stub-that-can-never-match).
+So a gRPC Stub whose conditions include all of an earlier one's gets the
+warning, however each spells them:
+
+```text
+users.yaml: /stubs/1: warning: the Stub "by-json-name" can never match: the Stub "by-proto-name" at users.yaml: /stubs/0 is tried first and matches every request this one would
+```
+
+### Printed forms
+
+ProtoJSON reads some values in several forms, as smock reads a
+[reply](#the-reply). smock prints each value in one form, so a condition
+written in another form could never match. Rather than rewrite these, smock
+refuses them when the files load, with the form to write:
+
+| Field | Written | The problem suggests |
+|---|---|---|
+| An integer of any size, such as `int64` | `user_id: "42"` | `42` |
+| `float` or `double` | `ratio: "0.1"` | `0.1` |
+| `bytes`, in base64 without its padding | `token: "+/8"` | `"+/8="` |
+| `bytes`, in URL-safe base64 | `token: "-_8="` | `"+/8="` |
+| An integer map key not in decimal | `labels: {"007": seven}` | `"7"` |
+
+```text
+users.yaml: /stubs/0/request/body/json/user_id: must be written 42, as smock prints it: the field user_id of users.Query has the type int64
+users.yaml: /stubs/1/request/body/json/labels/007: must be written "7", as smock prints it: the keys of the map field labels of users.Query have the type int32
+```
+
+The same holds for bytes whose base64 has bits after its last octet, such
+as `"QR=="`, which smock prints `"QQ=="`, and for an integer key such as
+`"-0"` or `"1e3"`.
 
 ### The reply
 

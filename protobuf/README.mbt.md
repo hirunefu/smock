@@ -290,3 +290,40 @@ test "decode a message, and encode one" {
   )
 }
 ```
+
+## Printed values
+
+`set.printed_value(field, json)` checks a JSON value against a field's type
+as `decode_json` prints it, and gives it in that form. smock checks its
+gRPC Stubs' conditions with it. An enum number or alias becomes the first
+name of its number, a float is rounded to 32 bits and given in its shortest
+form, and an integer written with an exponent is given in its digits. It
+raises `NotPrinted`, with the printed form, for a value that ProtoJSON
+reads but `decode_json` never prints, such as a 64-bit integer written as
+a string or bytes in URL-safe base64, and `NotOfType`, saying what the
+field takes, for any other value that is not one of the type.
+`key_field.check_printed_key(key)` checks a map key the same way: an
+integer key such as `"007"` gives `NotPrinted` with `"7"`.
+
+```mbt check
+///|
+test "check values as decode_json prints them" {
+  // message Q { int64 id = 1; float ratio = 2; }
+  let set = @protobuf.read_descriptor_set(
+    b"\x0a\x37\x0a\x07a.proto\x12\x04demo\x22\x1e\x0a\x01Q\x12\x0a\x0a\x02id\x18\x01\x20\x01\x28\x03\x12\x0d\x0a\x05ratio\x18\x02\x20\x01\x28\x02\x62\x06proto3"[:],
+  )
+  let q = set.files[0].messages[0]
+  guard q.find_field_by_name("id") is Some(id) &&
+    q.find_field_by_name("ratio") is Some(ratio) else {
+    fail("no fields")
+  }
+  inspect(set.printed_value(ratio, 16777217).stringify(), content="16777216")
+  let suggested = try set.printed_value(id, "42") catch {
+    NotPrinted(printed~) => "write \{printed}"
+    NotOfType(wanted~) => "must be \{wanted}"
+  } noraise {
+    _ => "kept"
+  }
+  inspect(suggested, content="write 42")
+}
+```

@@ -219,6 +219,20 @@ of each GitHub release include its section
   and counts as rejected traffic. The well-known types are not served
   yet. See
   [The request message as JSON](docs/grpc.md#the-request-message-as-json).
+- A gRPC Stub's `json` condition is checked against its method's input
+  type when the files load, and rewritten into the form in which smock
+  prints a call's message, so matching costs nothing more per call. A key
+  may name a field by its proto name or its JSON name, and becomes the
+  JSON name; an enum number or alias becomes the enum's first name; a
+  `float` is rounded to the nearest 32-bit float, so `{ratio: 0.1}`
+  matches 0.1. Map keys are data and stay as written. A key that names no
+  field, and a literal that is not a value of its field's type, are load
+  errors at their JSON Pointer; one that ProtoJSON reads but smock never
+  prints, such as a 64-bit integer as a string, base64 without its padding
+  or URL-safe, or an integer map key such as `"007"`, names the form to
+  write. gRPC Stubs are compared once rewritten for the warning about a
+  Stub that can never match. See
+  [Conditions on the message](docs/grpc.md#conditions-on-the-message).
 
 ### Changed
 

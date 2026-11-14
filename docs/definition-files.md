@@ -80,6 +80,7 @@ in a definitions directory, such as `defs/`, that `smock serve --dir` and
 - [gRPC](#grpc)
   - [Descriptor sets](#descriptor-sets)
   - [gRPC Stubs](#grpc-stubs)
+  - [gRPC Stub conditions](#grpc-stub-conditions)
 - [Faults](#faults)
   - [Delays](#delays)
   - [Connection Faults](#connection-faults)
@@ -5839,7 +5840,9 @@ stubs:
   each other.
 - gRPC calls match gRPC Stubs only. A call sees the Stub as a `POST` to
   the method's path, with its metadata as headers and its message as
-  JSON, so `headers` and `json` body conditions match it. The
+  JSON, so `headers` and `json` body conditions match it. A `json`
+  condition is checked against the method's input type when the files
+  load ([gRPC Stub conditions](#grpc-stub-conditions)). The
   [gRPC guide](grpc.md#how-smock-serves-a-call) says how a call reaches a
   Stub, how smock prints the message as JSON
   ([The request message as JSON](grpc.md#the-request-message-as-json)),
@@ -5870,6 +5873,63 @@ what is not served yet:
   `variables`, `dataWrites`, `fault.seed`, `request.method`,
   `request.path`, `request.headers`, a `json` body condition, and `json`,
   `template` and `weight` in a reply.
+
+### gRPC Stub conditions
+
+A gRPC Stub's `json` body condition is checked against the method's input
+type when the files load, and rewritten into the form in which smock
+prints a call's message, its decoded form
+([The request message as JSON](grpc.md#the-request-message-as-json)). So
+matching a call costs nothing more than matching a JSON body:
+
+```yaml
+request:
+  path: /users.Users/Find
+  body: { json: { user_id: 42, status: 1 } }   # matched as { userId: 42, status: ACTIVE }
+```
+
+- Each key must name a field of the type at its place, by its name in the
+  `.proto` file or its JSON name, and becomes its JSON name. A key that
+  names no field is a problem, as is a field given by both its names in
+  one object.
+- Each literal must be a value of its field's type as smock prints it. A
+  value that can never match is a problem: a number out of its type's
+  range or with a fraction for an integer field, an enum name the enum
+  lacks, a string for a number or a number for a string, an array for a
+  field that is not repeated, and `null`, which a printed message never
+  holds.
+- An enum number or alias becomes the enum's first name for that number,
+  such as `ACTIVE` for `1` or for its alias `ENABLED`. A number that no
+  value has stays a number, as smock prints it for an open enum.
+- A `float` literal is rounded to the nearest 32-bit float and kept in the
+  form smock prints it, so `{ratio: 0.1}` matches a float of 0.1, and
+  `16777217` becomes `16777216`, which is what a call of 16777217 prints. A
+  `float` literal outside the float range is a problem.
+- A value that ProtoJSON reads but smock never prints is a problem that
+  names the printed form: a 64-bit integer written as a string, such as
+  `"42"`, which suggests `42`; any number written as a string; bytes in
+  URL-safe base64, without their padding, or with bits after their last
+  octet; and an integer map key that is not in decimal, such as `"007"`,
+  which suggests `"7"`.
+- Map keys are data: they are never rewritten, `$$` for a key that starts
+  with `$` included.
+- Patterns and operators are allowed in any place. An operator's
+  condition is checked as the value in its place, and the condition of
+  `$includes` or `$last` on a repeated field as one of its elements.
+
+Each problem is reported at the JSON Pointer of the value at fault:
+
+```text
+users.yaml: /stubs/0/request/body/json/usr_id: is not a field of users.Query
+users.yaml: /stubs/1/request/body/json/user_id: must be written 42, as smock prints it: the field user_id of users.Query has the type int64
+```
+
+Templates, `find`, `$each`, Variables and data writes read the call's
+message as smock prints it, so they see JSON names only:
+`${body.userId}`, never `${body.user_id}`. Two gRPC Stubs' conditions are
+compared once rewritten for the
+[warning about a Stub that can never match](#a-stub-that-can-never-match).
+The [gRPC guide](grpc.md#conditions-on-the-message) has more examples.
 
 ## Faults
 
@@ -6236,7 +6296,9 @@ A Stub can never match when an earlier Stub of the same Mock always
 matches first. The warning points at that Stub and names the earlier one.
 Only Stubs of one kind are compared: a [gRPC Stub](#grpc-stubs) and an
 HTTP Stub never shadow each other, since HTTP requests never match a gRPC
-Stub.
+Stub. gRPC Stubs' `json` conditions are compared as they are
+[normalised](#grpc-stub-conditions), so `{user_id: 42, status: 1}` and
+`{userId: 42, status: ACTIVE}` are the same condition.
 
 "Earlier" means earlier in the order Stubs are [tried](#which-stub-answers).
 A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
