@@ -10,6 +10,7 @@ warnings = "-implicit_impl_as_method"
 
 import {
   "smock/http1@0.1.0",
+  "smock/protobuf@0.1.0",
   "smock/re2@0.1.0",
   "smock/xml@0.1.0",
   "smock/yaml@0.1.0",

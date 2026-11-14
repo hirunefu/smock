@@ -55,9 +55,14 @@ lacks.
 
 Each definitions directory also gets the files under `body-files/` as its
 body-file subdirectory (`files/`, the default), so a fixture can refer to
-`users/1.json` with `bodyFile`, or to `orders.json` with a Data bucket's
-`jsonFile`. A fixture whose `bodyFile` or `jsonFile` names a file that is
-not there belongs in `invalid-beyond-schema/`.
+`users/1.json` with `bodyFile`, to `orders.json` with a Data bucket's
+`jsonFile`, or to `greeter.binpb`, the Descriptor set of gRPC's
+`helloworld.proto`, with a Mock's `grpc.descriptorSet`. A fixture whose
+`bodyFile`, `jsonFile` or `descriptorSet` names a file that is not there
+belongs in `invalid-beyond-schema/`, as does one whose `descriptorSet` names
+a file that does not decode as a Descriptor set. `greeter.binpb` is a copy
+that `scripts/gen-protobuf-fixtures.sh` writes
+(`fixtures/protobuf/README.md`).
 
 Adding a fixture is adding a file, named after what it shows and ending in
 `.json`, `.yaml` or `.yml`. `valid/users-from-jsonnet.json` is exported from

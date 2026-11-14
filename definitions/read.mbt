@@ -178,6 +178,8 @@ priv struct MockDecl {
   no_match_headers : Array[(String, String)]
   /// Whether the Journal records the requests the Mock answers.
   journal : Bool
+  /// The Descriptor set that `grpc.descriptorSet` names, decoded, if any.
+  descriptor_set : @protobuf.DescriptorSet?
 }
 
 ///|
@@ -385,6 +387,7 @@ fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
   let mut no_match_status = 404
   let mut no_match_headers = []
   let mut journal = true
+  let mut descriptor_set = None
   for key, value in mock {
     let field = child_pointer(pointer, key)
     match key {
@@ -407,6 +410,7 @@ fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
           False => journal = false
           _ => self.error(field, "must be true or false")
         }
+      "grpc" => descriptor_set = self.read_grpc(field, value)
       _ => self.unknown_field(field)
     }
   }
@@ -418,7 +422,58 @@ fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
     no_match_status,
     no_match_headers,
     journal,
+    descriptor_set,
   })
+}
+
+///|
+/// Reads a Mock's `grpc`, a closed object, and returns the Descriptor set
+/// its `descriptorSet` names, decoded, or `None`, with the problem
+/// reported, when there is none.
+fn File::read_grpc(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> @protobuf.DescriptorSet? {
+  guard json is Object(grpc) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let mut descriptor_set = None
+  for key, value in grpc {
+    let field = child_pointer(pointer, key)
+    match key {
+      "descriptorSet" => descriptor_set = self.read_descriptor_set(field, value)
+      _ => self.unknown_field(field)
+    }
+  }
+  self.require(grpc, pointer, "descriptorSet")
+  descriptor_set
+}
+
+///|
+/// Reads the Descriptor set that `json`, the value at `pointer`, names: a
+/// body file, with the path rules of `bodyFile`, that holds a
+/// FileDescriptorSet in protobuf's binary encoding. It has none, and the
+/// problem is reported, when the file is missing or does not decode.
+fn File::read_descriptor_set(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> @protobuf.DescriptorSet? {
+  guard self.string(pointer, json) is Some(path) else { return None }
+  guard self.body_file(pointer, path) is Some(bytes) else { return None }
+  Some(
+    @protobuf.read_descriptor_set(bytes) catch {
+      err => {
+        self.error(
+          pointer,
+          "\{path.escape()}: not a Descriptor set, a FileDescriptorSet in protobuf's binary encoding: \{err}",
+        )
+        return None
+      }
+    },
+  )
 }
 
 ///|

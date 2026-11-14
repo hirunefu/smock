@@ -1,0 +1,5 @@
+mocks:
+  - name: greeter
+    grpc:
+      descriptorSet: greeter.binpb
+      protoset: greeter.binpb

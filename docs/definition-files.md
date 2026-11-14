@@ -77,6 +77,8 @@ in a definitions directory, such as `defs/`, that `smock serve --dir` and
   - [Data buckets through the Admin API](#data-buckets-through-the-admin-api)
   - [Copies in resets and reloads](#copies-in-resets-and-reloads)
   - [Copies and the state bound](#copies-and-the-state-bound)
+- [gRPC](#grpc)
+  - [Descriptor sets](#descriptor-sets)
 - [Faults](#faults)
   - [Delays](#delays)
   - [Connection Faults](#connection-faults)
@@ -5710,6 +5712,58 @@ Nothing expires a copy, so plan for growth:
   every write whose copy does not fit, such as a write that leaves the
   bucket as large as it started. `smock check` cannot see this, since it
   does not know the bound.
+
+## gRPC
+
+A Mock can stand in for a gRPC service. It names the service's
+Descriptor set, the compiled form of its `.proto` files, with `grpc`.
+smock reads and checks the set with the Definition files. It does not
+serve gRPC calls yet.
+
+### Descriptor sets
+
+A Descriptor set is a FileDescriptorSet in protobuf's binary encoding.
+Build it with protoc or buf, with every file it imports, into the body-file
+subdirectory:
+
+```sh
+protoc --include_imports -o defs/files/greeter.binpb helloworld.proto
+buf build -o defs/files/greeter.binpb
+```
+
+Then name it from the Mock:
+
+```yaml
+mocks:
+  - name: greeter
+    hosts: [greeter.svc]
+    grpc:
+      descriptorSet: greeter.binpb
+```
+
+- `grpc` is an object, and `descriptorSet` is required in it.
+- `descriptorSet` is a path relative to the body-file subdirectory, with
+  the rules of `bodyFile`: it stays inside the subdirectory, symlinks
+  included, and none of its names starts with `.`.
+- smock reads no `.proto` file and runs no protoc. Fields of the set that
+  smock does not use, such as source info, options and Buf's image
+  extensions, are skipped, so a set built with `buf build`'s defaults
+  works as it is.
+- The set is a body file. It is read and decoded when the Definition files
+  load: by `smock check`, at startup and on each
+  [reload](#reloading), which swaps it in together with the files. It
+  counts in the definition set digest, and a change to it reloads the
+  definitions.
+- A set that is missing, or that does not decode, is a problem at
+  `descriptorSet`. The message says where the set breaks:
+
+  ```text
+  greeter.json: /mocks/0/grpc/descriptorSet: "greeter.binpb": not a Descriptor set, a FileDescriptorSet in protobuf's binary encoding: octet 8: a length of 80 runs past the end of the input, which has 23 octets left
+  ```
+
+  A reload with such a problem keeps serving the current definition set.
+- Each Mock names its own set, so two Mocks can hold two versions of one
+  service. A Mock without `grpc` holds no set.
 
 ## Faults
 

@@ -1,0 +1,3 @@
+mocks:
+  - name: greeter
+    grpc: {}
