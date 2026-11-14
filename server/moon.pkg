@@ -1,5 +1,7 @@
 import {
+  "smock/grpc",
   "smock/http1",
+  "smock/protobuf",
   "smock/smock/buildinfo",
   "smock/smock/defdir",
   "smock/smock/definitions",
