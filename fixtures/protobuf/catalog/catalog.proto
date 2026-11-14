@@ -33,7 +33,8 @@ message GetItemRequest {
   string id = 1;
 }
 
-// Each field of an item has a type that gRPC Stubs do not serve yet.
+// Each field of an item has a type that gRPC Stubs do not serve yet in a
+// request message.
 message Item {
   int64 price = 1;
   repeated string tags = 2;

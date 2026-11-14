@@ -2,8 +2,9 @@
 // Descriptor set, as `/helloworld.Greeter/SayHello` names `SayHello` of the
 // service `helloworld.Greeter`. It is an ordinary Stub that carries its
 // method. HTTP requests never match it, and it is shadowed only by gRPC
-// Stubs. It is checked against its method's types when the files load, and
-// what the branch cannot serve yet is refused.
+// Stubs. It is checked against its method's types when the files load,
+// what the branch cannot serve yet is refused, and its static replies are
+// encoded with its output type.
 
 ///|
 /// The Descriptor sets that the Mocks of the parsed files name, each decoded
@@ -121,16 +122,16 @@ fn File::grpc_method_of(self : File, stub : Map[String, Json]) -> NamedMethod? {
 ///|
 /// Checks the gRPC Stub `stub`, at `pointer`, against `named`, the method
 /// its exact path names. Its fields must be served, as
-/// `File::refuse_unserved` says. The method must be unary. Its input and
-/// output types must be served, each on its own, as `File::check_input`
-/// and `File::check_served` say. Each static `json` reply is checked
-/// against the output type.
+/// `File::refuse_unserved` says. The method must be unary. Its input type
+/// must be served, as `File::check_input` says, and its output type, as
+/// `File::check_output` says. Returns the output type when it is served,
+/// so that the Stub's static replies are encoded with it.
 fn File::check_grpc_stub(
   self : File,
   pointer : String,
   stub : Map[String, Json],
   named : NamedMethod,
-) -> Unit {
+) -> @protobuf.MessageDescriptor? {
   self.refuse_unserved(pointer, stub)
   let rpc = named.rpc
   let path = child_pointer(child_pointer(pointer, "request"), "path")
@@ -145,105 +146,136 @@ fn File::check_grpc_stub(
       path,
       "the method \{named.name} is \{streaming}, and smock serves only unary methods: streaming methods are planned for R3",
     )
-    return
+    return None
   }
   self.check_input(path, named.set, named.set.input_of(rpc))
   let output = named.set.output_of(rpc)
-  self.check_served(path, "output", output)
-  if stub.get("response") is Some(Object(response)) {
-    self.check_reply(child_pointer(pointer, "response"), response, output)
-  }
-  if stub.get("responses") is Some(Array(responses)) {
-    let at = child_pointer(pointer, "responses")
-    for i, response in responses {
-      if response is Object(response) {
-        self.check_reply(child_pointer(at, i.to_string()), response, output)
-      }
-    }
+  if self.check_output(path, named.set, output) {
+    Some(output)
+  } else {
+    None
   }
 }
 
 ///|
-/// Checks the `json` of `response`, the reply at `pointer`, against
-/// `output`, unless it is templated: a templated reply is checked once
-/// rendered.
-fn File::check_reply(
-  self : File,
-  pointer : String,
-  response : Map[String, Json],
-  output : @protobuf.MessageDescriptor,
-) -> Unit {
-  if response.get("template") is Some(True) {
-    return
-  }
-  if response.get("json") is Some(json) {
-    self.check_message(child_pointer(pointer, "json"), json, output)
-  }
-}
-
-///|
-/// Checks `json`, the value at `pointer`, as a message of the type
-/// `message`: an object whose keys name its fields, each with a value of
-/// the field's type. A field of a type that gRPC Stubs do not serve yet is
-/// reported where the method is named, so its value is not checked.
-fn File::check_message(
+/// The reply message of `json`, a gRPC Stub's response at `pointer`,
+/// encoded with `output`, a type of `set`: its `json`, read as ProtoJSON,
+/// or an empty message without one. `None` for a templated response, whose
+/// message is encoded once rendered, and for a reply that is not a message
+/// of the type, which is reported at the JSON Pointer of the value at
+/// fault.
+fn File::encode_reply(
   self : File,
   pointer : String,
   json : Json,
-  message : @protobuf.MessageDescriptor,
-) -> Unit {
-  guard json is Object(members) else {
+  set : @protobuf.DescriptorSet,
+  output : @protobuf.MessageDescriptor,
+) -> EncodedMessage? {
+  guard json is Object(response) else { return None }
+  if response.get("template") is Some(True) {
+    return None
+  }
+  let message = match response.get("json") {
+    Some(json) =>
+      set.encode_json(output, json) catch {
+        EncodeError(pointer=at, message~) => {
+          self.error(child_pointer(pointer, "json") + at, message)
+          return None
+        }
+      }
+    None => b""
+  }
+  Some({ output, message, })
+}
+
+///|
+/// Reports at `pointer`, a gRPC Stub's path, what gRPC Stubs do not serve
+/// yet of `output`, the output type of its method, a message of `set`, and
+/// of each message type it reaches through its fields, each once, a map's
+/// values included: a type of a file that is not proto3, and each field of
+/// a well-known type. Every other field is served, as `File::check_input`
+/// words its problems. Returns whether every type it reaches is served.
+fn File::check_output(
+  self : File,
+  pointer : String,
+  set : @protobuf.DescriptorSet,
+  output : @protobuf.MessageDescriptor,
+) -> Bool {
+  let not_served = "the output type \{output.full_name} is not served yet"
+  if @protobuf.is_well_known(output.full_name) {
     self.error(
       pointer,
-      "must be an object: the reply is a \{message.full_name} message",
+      "\{not_served}: it is a well-known type, and gRPC Stubs serve no well-known types so far",
     )
-    return
+    return false
   }
-  for key, value in members {
-    let at = child_pointer(pointer, key)
-    match message.find_field_by_name(key) {
-      Some(field) => self.check_value(at, value, field, message)
-      None => self.error(at, "is not a field of \{message.full_name}")
+  let mut served = true
+  let seen : Set[String] = Set([output.full_name])
+  let pending = [output]
+  while pending.pop() is Some(message) {
+    let reached = message.full_name != output.full_name
+    if syntax_name(message.syntax) is Some(syntax) {
+      let defines = if reached {
+        "\{message.full_name}, a type it reaches"
+      } else {
+        "it"
+      }
+      self.error(
+        pointer,
+        "\{not_served}: \{message.file_name}, which defines \{defines}, is \{syntax}, and gRPC Stubs serve only types of proto3 files so far",
+      )
+      served = false
+      continue
+    }
+    let reached_types = []
+    for field in message.fields {
+      // A map field reaches the type of its values.
+      let value = match set.message_of(field) {
+        Some(entry) if entry.map_entry =>
+          entry.find_field_by_number(2).unwrap_or(field)
+        _ => field
+      }
+      let type_ = set.message_of(value)
+      let name = match (type_, set.enum_of(value)) {
+        (Some(type_), _) => type_.full_name
+        (_, Some(type_)) => type_.full_name
+        _ => continue
+      }
+      if !@protobuf.is_well_known(name) {
+        if type_ is Some(type_) && !seen.contains(name) {
+          seen.add(name)
+          reached_types.push(type_)
+        }
+        continue
+      }
+      let field_name = if reached {
+        "the field \{field.name} of \{message.full_name}, a type it reaches,"
+      } else {
+        "its field \{field.name}"
+      }
+      self.error(
+        pointer,
+        "\{not_served}: \{field_name} has the well-known type \{name}, and gRPC Stubs serve no well-known types so far",
+      )
+      served = false
+    }
+    // The types this one reaches are checked next, in the order of its
+    // fields.
+    for i = reached_types.length() - 1; i >= 0; i = i - 1 {
+      pending.push(reached_types[i])
     }
   }
+  served
 }
 
 ///|
-/// Checks `json`, the value at `pointer`, as a value of `field`, a field of
-/// `message`.
-fn File::check_value(
-  self : File,
-  pointer : String,
-  json : Json,
-  field : @protobuf.FieldDescriptor,
-  message : @protobuf.MessageDescriptor,
-) -> Unit {
-  if field.label is Repeated {
-    return
-  }
-  let wanted = match (field.type_, json) {
-    (String, String(_)) | (Bool, True | False) => return
-    (Int32, Number(n, ..)) if n == n.floor() &&
-      n >= @int.MIN_VALUE.to_double() &&
-      n <= @int.MAX_VALUE.to_double() => return
-    (String, _) => "a string"
-    (Bool, _) => "true or false"
-    (Int32, _) => "an integer from \{@int.MIN_VALUE} to \{@int.MAX_VALUE}"
-    _ => return
-  }
-  let type_ = field.type_.to_string()
-  self.error(
-    pointer,
-    "must be \{wanted}: the field \{field.name} of \{message.full_name} is \{article(type_)} \{type_}",
-  )
-}
-
-///|
-/// The indefinite article of `word`: `an` before a vowel, else `a`.
-fn article(word : String) -> String {
-  match word.get_char(0) {
-    Some('a' | 'e' | 'i' | 'o' | 'u') => "an"
-    _ => "a"
+/// The syntax `syntax` as a problem names it, such as `a proto2 file`, or
+/// `None` for proto3, which gRPC Stubs serve.
+fn syntax_name(syntax : @protobuf.Syntax) -> String? {
+  match syntax {
+    Proto3 => None
+    Proto2 => Some("a proto2 file")
+    Editions => Some("an editions file")
   }
 }
 
@@ -322,71 +354,6 @@ fn File::check_input(
     for i = reached_types.length() - 1; i >= 0; i = i - 1 {
       pending.push(reached_types[i])
     }
-  }
-}
-
-///|
-/// Reports at `pointer`, a gRPC Stub's path, what gRPC Stubs do not serve
-/// yet of `message`, the output type of its method, as `side` says: a
-/// type of a file that is not proto3, each field that is not a singular
-/// string, bool or int32, and each field of those types that is in a
-/// oneof, or is a proto3 `optional` field, in a synthetic one.
-fn File::check_served(
-  self : File,
-  pointer : String,
-  side : String,
-  message : @protobuf.MessageDescriptor,
-) -> Unit {
-  let not_served = "the \{side} type \{message.full_name} is not served yet"
-  let syntax = match message.syntax {
-    Proto3 => None
-    Proto2 => Some("a proto2 file")
-    Editions => Some("an editions file")
-  }
-  if syntax is Some(syntax) {
-    self.error(
-      pointer,
-      "\{not_served}: \{message.file_name}, which defines it, is \{syntax}, and gRPC Stubs serve only types of proto3 files so far",
-    )
-  }
-  for field in message.fields {
-    let problem = match (field.label, field.type_) {
-      (Repeated, _) => "is repeated"
-      (_, String | Bool | Int32) => {
-        match field.oneof_index {
-          Some(_) if field.proto3_optional =>
-            self.error(
-              pointer,
-              "\{not_served}: its field \{field.name} is a proto3 optional field, and gRPC Stubs serve no optional or oneof fields so far",
-            )
-          Some(index) =>
-            self.error(
-              pointer,
-              "\{not_served}: its field \{field.name} is in the oneof \{message.oneofs[index].name}, and gRPC Stubs serve no optional or oneof fields so far",
-            )
-          None => ()
-        }
-        continue
-      }
-      (_, Message | Group | Enum) =>
-        "has the type \{without_dot(field.type_name)}"
-      (_, type_) => "has the type \{type_}"
-    }
-    self.error(
-      pointer,
-      "\{not_served}: its field \{field.name} \{problem}, and gRPC Stubs serve only singular string, bool and int32 fields so far",
-    )
-  }
-}
-
-///|
-/// A full name as a Descriptor set writes it, such as `.helloworld.Hello`,
-/// without its leading dot.
-fn without_dot(name : String) -> String {
-  if name.has_prefix(".") {
-    name[1:].to_owned()
-  } else {
-    name
   }
 }
 

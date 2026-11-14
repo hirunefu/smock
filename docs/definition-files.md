@@ -5810,17 +5810,27 @@ stubs:
   `status`: every gRPC reply has the HTTP status 200. `status` is
   required on HTTP Stubs only. smock adds no `Content-Type` for a gRPC
   Stub's `json`.
-- When the files load, each `json` reply without `template` is checked
-  against the method's output type. Each key must name a field of the
-  type, as the `.proto` file spells it, and each value must be of the
-  field's type: a string, `true` or `false`, or an integer that fits an
-  `int32`. Anything else is a problem at its JSON Pointer:
+- `json` is read as ProtoJSON, so a reply pasted from grpcurl or another
+  tool works: a field by its name in the `.proto` file or by its JSON
+  name, enums by name or by number, 64-bit integers as numbers or
+  strings, and bytes in base64. `null` leaves a field unset. No `json`
+  answers an empty message, every field at its default. The
+  [gRPC guide](grpc.md#the-reply) lists every form.
+- When the files load, each `json` reply without `template` is read with
+  the method's output type and encoded, once. A reply that is not a
+  message of the type is a problem at the JSON Pointer of the value at
+  fault: an unknown key, a value of the wrong type or out of its type's
+  range, `null` in a repeated field, two members of one oneof, and both
+  spellings of one field in one object. The first such value of each
+  reply is reported:
 
   ```text
   greeter.yaml: /stubs/0/response/json/mesage: is not a field of helloworld.HelloReply
   ```
 
-  A reply with `template: true` is checked once it is rendered.
+  A reply with `template: true` is read and encoded on each call, once it
+  is rendered. One that is not a message of the type gets INTERNAL, and
+  the call's Journal entry says why in `templateError`.
 - HTTP requests never match a gRPC Stub, and a gRPC Stub is never their
   [Near miss](#when-no-stub-matches). So an HTTP request such as
   `POST /helloworld.Greeter/SayHello` over HTTP/1.1 goes to the Mock's
@@ -5843,16 +5853,16 @@ What a gRPC Stub can hold is limited for now. These are problems that say
 what is not served yet:
 
 - A method whose input or output type comes from a file that is not
-  proto3, such as a proto2 or an editions file, or whose input type
-  reaches a type of such a file.
+  proto3, such as a proto2 or an editions file, or whose input or output
+  type reaches a type of such a file.
 - A method whose input type has a repeated field, a map, a field in a
   oneof other than a proto3 `optional` field's, or a field of a
   well-known type, such as `google.protobuf.Timestamp`, or reaches a
   message type that has one. Singular fields of every scalar type, enums,
   nested messages and proto3 `optional` fields are served.
-- A method whose output type has a field that is not a singular
-  `string`, `bool` or `int32`, or that is in a oneof, a proto3 `optional`
-  field included.
+- A method whose output type is a well-known type, or has, or reaches, a
+  field of one. Every other proto3 output type is served, with fields of
+  every type.
 - Any field of the Stub other than `id`, `mock`, `priority`, `scenario`,
   `variables`, `dataWrites`, `fault.seed`, `request.method`,
   `request.path`, `request.headers`, a `json` body condition, and `json`,

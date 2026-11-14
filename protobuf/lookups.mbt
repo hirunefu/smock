@@ -124,7 +124,12 @@ pub fn MessageDescriptor::find_field_by_name(
   self : MessageDescriptor,
   name : String,
 ) -> FieldDescriptor? {
-  field_named(self.fields, self.by_name, name, json=false)
+  let index = field_position(self.fields, self.by_name, name, json=false)
+  if index < 0 {
+    None
+  } else {
+    Some(self.fields[index])
+  }
 }
 
 ///|
@@ -135,19 +140,29 @@ pub fn MessageDescriptor::find_field_by_json_name(
   self : MessageDescriptor,
   json_name : String,
 ) -> FieldDescriptor? {
-  field_named(self.fields, self.by_json_name, json_name, json=true)
+  let index = field_position(
+    self.fields,
+    self.by_json_name,
+    json_name,
+    json=true,
+  )
+  if index < 0 {
+    None
+  } else {
+    Some(self.fields[index])
+  }
 }
 
 ///|
-/// The first field of `fields` whose name, or JSON name when `json`, is
-/// `name`, found by binary search in `order`, their indexes sorted by that
-/// name.
-fn field_named(
+/// The index in `fields` of the first field whose name, or JSON name when
+/// `json`, is `name`, found by binary search in `order`, their indexes
+/// sorted by that name; -1 when no field has that name.
+fn field_position(
   fields : ReadOnlyArray[FieldDescriptor],
   order : FixedArray[Int32],
   name : String,
   json~ : Bool,
-) -> FieldDescriptor? {
+) -> Int32 {
   let mut low = 0
   let mut high = order.length()
   while low < high {
@@ -164,10 +179,10 @@ fn field_named(
     let field = fields[order[low]]
     let key = if json { field.json_name } else { field.name }
     if key == name {
-      return Some(field)
+      return order[low]
     }
   }
-  None
+  -1
 }
 
 ///|

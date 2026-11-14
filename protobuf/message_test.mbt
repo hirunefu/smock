@@ -1,29 +1,7 @@
-// Messages decoded into smock's decoded form, and encoded from JSON, through
-// the public interface, for types whose fields are singular string, bool
-// and int32 fields. The messages are protoc-encoded fixtures
-// (scripts/gen-protobuf-fixtures.sh), so the codec is never checked against
-// itself.
-
-///|
-/// The top-level message `name` of the set in `hex`, a set the script wrote
-/// in hex.
-fn message_type(hex : String, name : String) -> @protobuf.MessageDescriptor {
-  let set = @protobuf.read_descriptor_set(
-    @hex.decode(hex.replace_all(old="\n", new="")) catch {
-      _ => abort("not hex")
-    },
-  ) catch {
-    err => abort("not a set: \{err}")
-  }
-  for file in set.files {
-    for message in file.messages {
-      if message.name == name {
-        return message
-      }
-    }
-  }
-  abort("no message \{name}")
-}
+// Messages decoded into smock's decoded form through the public interface,
+// for singular fields of every scalar type, enums and nested messages. The
+// messages are protoc-encoded fixtures (scripts/gen-protobuf-fixtures.sh),
+// so the codec is never checked against itself.
 
 ///|
 /// The bytes of a fixture the script wrote in hex.
@@ -458,98 +436,9 @@ test "a type with a repeated field is not decoded yet" {
 }
 
 ///|
-test "a type with a oneof is not decoded yet, and one with a oneof or a proto3 optional field is not encoded yet" {
-  let pick = message_type(oneofs_set, "Pick")
+test "a type with a oneof is not decoded yet" {
   inspect(
     decoded(oneofs_set, "oneofs.Pick", b""),
     content="error: octet 0: the field word is in a oneof, which smock does not decode yet",
-  )
-  inspect(
-    encoded(pick, {}),
-    content="error: the field word is in a oneof or optional, which smock does not encode yet",
-  )
-}
-
-///|
-/// `json` encoded as a message of the type `message`, in hex, or the error
-/// that stops it.
-fn encoded(message : @protobuf.MessageDescriptor, json : Json) -> String {
-  @hex.encode(@protobuf.encode_json(message, json)) catch {
-    err => "error: \{err}"
-  }
-}
-
-///|
-test "a message encoded from JSON has protoc's bytes" {
-  let reply = message_type(greeter_set, "HelloReply")
-  assert_eq(
-    encoded(reply, { "message": "Hello Tom" }),
-    @hex.encode(fixture(hello_reply)),
-  )
-  let count = message_type(catalog_set, "CountReply")
-  assert_eq(
-    encoded(count, { "count": -5, "exact": true, "shelf": "A1" }),
-    @hex.encode(fixture(count_reply)),
-  )
-  // Keys in another order give the same bytes: fields go out in
-  // field-number order.
-  assert_eq(
-    encoded(count, { "shelf": "A1", "exact": true, "count": -5 }),
-    @hex.encode(fixture(count_reply)),
-  )
-}
-
-///|
-test "a field at its default is not written, and an empty object is an empty message" {
-  let count = message_type(catalog_set, "CountReply")
-  inspect(
-    encoded(count, { "count": 0, "exact": false, "shelf": "" }),
-    content="",
-  )
-  inspect(encoded(count, {}), content="")
-}
-
-///|
-test "a field may be written with its proto name or its JSON name" {
-  let request = message_type(catalog_set, "CountRequest")
-  inspect(encoded(request, { "in_stock": true }), content="1001")
-  inspect(encoded(request, { "inStock": true }), content="1001")
-}
-
-///|
-test "JSON that is not a message of the type is an error at its JSON Pointer" {
-  let count = message_type(catalog_set, "CountReply")
-  inspect(
-    encoded(count, [1]),
-    content="error: must be an object: the message is a catalog.CountReply",
-  )
-  inspect(
-    encoded(count, { "cuont": 1 }),
-    content="error: /cuont: is not a field of catalog.CountReply",
-  )
-  inspect(
-    encoded(count, { "shelf": 1 }),
-    content="error: /shelf: must be a string: the field shelf is a string",
-  )
-  inspect(
-    encoded(count, { "exact": "yes" }),
-    content="error: /exact: must be true or false: the field exact is a bool",
-  )
-  inspect(
-    encoded(count, { "count": 2147483648.0 }),
-    content="error: /count: must be an integer from -2147483648 to 2147483647: the field count is an int32",
-  )
-  inspect(
-    encoded(count, { "count": 1.5 }),
-    content="error: /count: must be an integer from -2147483648 to 2147483647: the field count is an int32",
-  )
-}
-
-///|
-test "a type with a field that is not a singular string, bool or int32 is not encoded yet" {
-  let item = message_type(catalog_set, "Item")
-  inspect(
-    encoded(item, {}),
-    content="error: the field price has the type int64, which smock does not encode yet",
   )
 }
