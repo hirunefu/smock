@@ -335,11 +335,11 @@ fn reply_pointer(index : Int32?) -> String {
 /// message is `framed` and whose trailers are `trailers`, and commits the
 /// Journal entry `entry` just before the trailers, which end the stream. A
 /// message that fits the windows is queued whole, in one DATA frame that
-/// does not end the stream, then the trailers. One that does not fit gets as much as the windows allow; the
-/// rest is returned, which the caller sends in the stream's task, with the
-/// trailers after it and the entry still to commit. HEADERS or trailers the
-/// `Conn` refuses get RST_STREAM INTERNAL_ERROR, the entry committed just
-/// before (`reset_after`).
+/// does not end the stream, then the trailers. One that does not fit gets
+/// as much as the windows allow; the rest is returned, which the caller
+/// sends in the stream's task, with the trailers after it and the entry
+/// still to commit. HEADERS or trailers the `Conn` refuses get RST_STREAM
+/// INTERNAL_ERROR, the entry committed just before (`reset_after`).
 fn H2Connection::queue_reply(
   self : H2Connection,
   stream : Int32,
