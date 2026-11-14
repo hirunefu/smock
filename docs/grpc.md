@@ -2,19 +2,198 @@
 
 A Mock can stand in for a gRPC service. It names the service's
 Descriptor set, the compiled form of its `.proto` files, and smock reads
-and checks the set when it loads the Definition files. This guide says how
-to build a set that smock reads. The
+and checks the set when it loads the Definition files. Its gRPC Stubs then
+answer unary calls, on the plain port over h2c. This guide shows a first
+call, says how a call reaches a Stub and how smock answers it, and how to
+build a set that smock reads. The
 [Definition-file reference](definition-files.md#grpc) describes the
-Mock's `grpc` field.
+Mock's `grpc` field and gRPC Stubs.
 
 ## Contents
 
+- [Quick start](#quick-start)
+- [How smock serves a call](#how-smock-serves-a-call)
+  - [The call the Stubs see](#the-call-the-stubs-see)
+  - [The reply](#the-reply)
+  - [The Journal and the metrics](#the-journal-and-the-metrics)
+- [Calls smock does not serve yet](#calls-smock-does-not-serve-yet)
 - [Building a set](#building-a-set)
   - [Self-contained sets](#self-contained-sets)
   - [What smock checks](#what-smock-checks)
   - [What smock keeps](#what-smock-keeps)
   - [One set per Mock](#one-set-per-mock)
   - [Memory](#memory)
+
+## Quick start
+
+Build the Descriptor set of gRPC's
+[helloworld.proto](https://github.com/grpc/grpc/blob/master/examples/protos/helloworld.proto)
+into the body-file subdirectory of a definitions directory:
+
+```sh
+mkdir -p defs/files
+protoc --include_imports -o defs/files/greeter.binpb helloworld.proto
+```
+
+Write a Mock that names the set, and a gRPC Stub on the method `SayHello`,
+in `defs/greeter.yaml`:
+
+```yaml
+mocks:
+  - name: greeter
+    grpc:
+      descriptorSet: greeter.binpb
+stubs:
+  - id: hello
+    mock: greeter
+    request:
+      path: /helloworld.Greeter/SayHello
+      body: { json: { name: Tom } }
+    response:
+      json: { message: Hello Tom }
+```
+
+Serve it, and call the method over h2c on the plain port, here with
+[grpcurl](https://github.com/fullstorydev/grpcurl), which reads the
+method's types from the same set:
+
+```sh
+SMOCK_ADMIN_TOKEN=change-me smock serve --dir defs
+grpcurl -plaintext -protoset defs/files/greeter.binpb \
+  -d '{"name": "Tom"}' localhost:8080 helloworld.Greeter/SayHello
+```
+
+```json
+{
+  "message": "Hello Tom"
+}
+```
+
+The Journal records the call, with the request message as JSON:
+
+```sh
+curl -H "Authorization: Bearer change-me" -d '{}' localhost:9090/v1/journal/query
+```
+
+Its entry shows `POST`, the target `/helloworld.Greeter/SayHello`, the
+version `HTTP/2`, grpcurl's metadata as headers, and the body
+`{"name":"Tom"}`. With `{"name": "Ann"}`, which the Stub's condition does
+not meet, grpcurl reports `Code: Internal` and `Message: no Stub matched`
+([Calls smock does not serve yet](#calls-smock-does-not-serve-yet)).
+
+## How smock serves a call
+
+An HTTP/2 request on the plain port whose `content-type` is
+`application/grpc` is a gRPC call. Every other request, an HTTP/1.1
+request with that content type included, is an HTTP request, which the
+Mock's HTTP Stubs answer as before.
+
+When the call's request has ended, smock:
+
+1. takes the call's one message from its body;
+2. finds the call's Mock, the Mock whose Hosts include the call's
+   `:authority`, or else the Default Mock;
+3. finds the method that the call's `:path`, such as
+   `/helloworld.Greeter/SayHello`, names in the Mock's set;
+4. decodes the message into JSON with the method's input type;
+5. matches the call against the Mock's gRPC Stubs on that method;
+6. encodes the reply with the method's output type, and sends it.
+
+Steps 2 to 6 use one version of the Definition files, so a reload never
+decodes a call with one version of a set and answers it with another.
+
+### The call the Stubs see
+
+A gRPC Stub sees a call as a request:
+
+- the method is `POST`, and the path is the call's `:path`;
+- the headers are the call's metadata, every field, `content-type` and
+  `te` included;
+- the body is the request message as compact JSON, with its fields in
+  field-number order, each under its JSON name, and each field the message
+  leaves out at its default, such as `""`, `false` or `0`. A field's JSON
+  name is its name in lowerCamelCase, such as `inStock` for `in_stock`,
+  unless the `.proto` file gives it a `json_name`. So the message
+  `name: "Tom"` is `{"name":"Tom"}`.
+
+A call is matched only against the gRPC Stubs on its method, in the order
+Stubs are tried, never against an HTTP Stub, even one whose conditions it
+meets. A `json` body condition matches the decoded message, as it matches
+a JSON body:
+
+```yaml
+request:
+  path: /helloworld.Greeter/SayHello
+  body: { json: { name: Tom } }
+```
+
+For now, smock decodes messages whose fields are all singular `string`,
+`bool` and `int32` fields outside any oneof, and answers with replies of
+such types. The [Definition-file reference](definition-files.md#grpc-stubs)
+lists what a gRPC Stub cannot hold yet.
+
+### The reply
+
+smock encodes the Stub's `json` reply with the method's output type, as
+protoc encodes it, and sends what a gRPC server sends:
+
+- HEADERS with `:status` 200, `content-type: application/grpc`,
+  `smock-mock` when the Default Mock answered, and `date`;
+- one DATA frame with the reply message, framed;
+- trailers with `grpc-status: 0`, which end the stream.
+
+A reply larger than the client's flow-control windows goes out as the
+client widens them, and the trailers follow it.
+
+### The Journal and the metrics
+
+The Journal records each call that reaches the Stubs, matched or not. Its
+entry shows the method `POST`, the call's `:path` as its target, the
+version `HTTP/2`, the metadata as headers, and the request message as JSON
+as its body. The body's `size` counts the octets the call's DATA frames
+brought, and `truncated` says whether the JSON was cut at
+`--journal-body-limit`.
+
+The request metrics count a call that a Stub answered under its Mock and
+Stub, as they count an HTTP request, and a call that no Stub matched as
+an unmatched request of its Mock.
+
+## Calls smock does not serve yet
+
+smock answers the calls it does not serve yet with Trailers-Only: one
+HEADERS block that ends the stream, with `:status` 200,
+`content-type: application/grpc`, `grpc-status: 13` (INTERNAL) and a fixed
+`grpc-message`. A gRPC client reports INTERNAL with that message.
+
+These calls never reach the Stubs. They are not in the Journal, and the
+request metrics count them as rejected requests, with `mock=""` and
+`stub=""`:
+
+| The call | `grpc-message` |
+|---|---|
+| Its method is not `POST` | `the method must be POST` |
+| Its body is not one uncompressed message | `the request is not one uncompressed message` |
+| No Mock lists its Host, and there is no Default Mock | `no Mock for this Host` |
+| Its Mock has no set | `the Mock has no Descriptor set` |
+| Its `:path` names no method of the set | `unknown method` |
+| Its method streams | `streaming methods are not served yet` |
+| Its message does not decode, or its type has a field that smock does not decode yet | `the request message cannot be decoded` |
+
+These calls reach the Stubs. The Journal records each with the HTTP
+status planned for it: the Mock's `noMatch` status for an unmatched call,
+500 or 507 for smock's own failures, and 200 for a rendered reply that
+does not fit the output type:
+
+| The call | `grpc-message` |
+|---|---|
+| No gRPC Stub on its method matches it | `no Stub matched` |
+| The Stub's reply, a `variables` value or a `dataWrites` value fails to render, or the rendered reply does not fit the output type | `template failed` |
+| A write of the Stub's `dataWrites` cannot be applied | `data write failed` |
+| The Stub's writes do not fit the bound on per-Session state | `state limit reached` |
+
+An unmatched call is in the Journal with its Near miss, chosen among the
+gRPC Stubs on its method, and in the unmatched list. The status and
+headers of the Mock's `noMatch` never reach the client.
 
 ## Building a set
 

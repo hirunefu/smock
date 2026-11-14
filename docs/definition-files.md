@@ -5719,8 +5719,9 @@ Nothing expires a copy, so plan for growth:
 
 A Mock can stand in for a gRPC service. It names the service's
 Descriptor set, the compiled form of its `.proto` files, with `grpc`.
-smock reads and checks the set with the Definition files. It does not
-serve gRPC calls yet. The [gRPC guide](grpc.md) says how to build a set,
+smock reads and checks the set with the Definition files, and its
+[gRPC Stubs](#grpc-stubs) answer unary calls. The [gRPC guide](grpc.md)
+shows a first call, says how smock serves a call, and how to build a set,
 what smock checks in it and what it keeps.
 
 ### Descriptor sets
@@ -5801,8 +5802,9 @@ stubs:
   bidi-streaming method is a problem at its `path`. Streaming methods are
   planned for R3, a later release.
 - A gRPC Stub's reply is `json`, the reply message, and it has no
-  `status`. `status` is required on HTTP Stubs only. smock adds no
-  `Content-Type` for a gRPC Stub's `json`.
+  `status`: every gRPC reply has the HTTP status 200. `status` is
+  required on HTTP Stubs only. smock adds no `Content-Type` for a gRPC
+  Stub's `json`.
 - When the files load, each `json` reply without `template` is checked
   against the method's output type. Each key must name a field of the
   type, as the `.proto` file spells it, and each value must be of the
@@ -5820,9 +5822,14 @@ stubs:
   HTTP Stubs, then gets its `noMatch` answer.
 - A gRPC Stub and an HTTP Stub never [shadow](#a-stub-that-can-never-match)
   each other.
+- gRPC calls match gRPC Stubs only. A call sees the Stub as a `POST` to
+  the method's path, with its metadata as headers and its message as
+  JSON, so `headers` and `json` body conditions match it. The
+  [gRPC guide](grpc.md#how-smock-serves-a-call) says how a call reaches a
+  Stub, and how smock answers it.
 
-smock does not serve gRPC calls yet, so what a gRPC Stub can hold is
-limited for now. These are problems that say what is not served yet:
+What a gRPC Stub can hold is limited for now. These are problems that say
+what is not served yet:
 
 - A method whose input or output type comes from a file that is not
   proto3, such as a proto2 or an editions file.

@@ -167,6 +167,20 @@ of each GitHub release include its section
   `map_entry`, `packed` and `message_set_wire_format`, and unknown fields
   such as Buf's image extensions cost nothing. Each Mock holds its own
   set. A new guide, [gRPC](docs/grpc.md), says how to build a set.
+- gRPC unary calls, on the plain port over h2c. An HTTP/2 request whose
+  `content-type` is `application/grpc` is a gRPC call: smock takes its one
+  message, decodes it into JSON with the input type of the method its
+  `:path` names in its Mock's set, and matches it against the Mock's gRPC
+  Stubs on that method, as a `POST` with the metadata as headers and the
+  JSON as the body. The reply JSON is encoded with the output type and
+  sent as HEADERS, one DATA frame and trailers with `grpc-status: 0`. The
+  Journal records the call with its decoded body, whose size counts the
+  octets received, and the request metrics count it under its Mock and
+  Stub. For now smock serves messages of singular `string`, `bool` and
+  `int32` fields, and answers the calls it does not serve yet with
+  Trailers-Only INTERNAL and a fixed message. The new `smock/grpc` module
+  frames messages and names gRPC's status codes, and `smock/protobuf`
+  decodes and encodes messages. See [gRPC](docs/grpc.md).
 
 ### Changed
 
