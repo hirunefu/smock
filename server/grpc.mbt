@@ -42,6 +42,11 @@ fn is_served_subtype(subtype : BytesView) -> Bool {
 }
 
 ///|
+/// The fixed `grpc-message` of the UNIMPLEMENTED answer to a gRPC call
+/// whose content subtype smock does not serve, such as `json`.
+let unserved_subtype_message : String = "only the proto content subtype is served"
+
+///|
 /// The unary method that a gRPC call to `path` calls in `set`, the
 /// Descriptor set of the call's Mock, or `None` when `path` names no method
 /// of the set, or names a streaming method: such a call cannot reach a gRPC
@@ -147,7 +152,12 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
   let ports = self.ports
   let incoming = request.to_engine()
   if incoming.meth != "POST" {
-    self.refuse_call(stream, "the method must be POST")
+    self.refuse_call(
+      stream,
+      @grpc.Internal,
+      "the method must be POST",
+      ended=true,
+    )
     return
   }
   // The second lookup, from the definition set served now: a reload since
@@ -161,14 +171,24 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
   guard @grpc.next_message(incoming.body)
     is Message(flag=b'\x00', message~, rest~) &&
     @grpc.next_message(rest) is Done else {
-    self.refuse_call(stream, "the request is not one uncompressed message")
+    self.refuse_call(
+      stream,
+      @grpc.Internal,
+      "the request is not one uncompressed message",
+      ended=true,
+    )
     return
   }
   // A message that does not parse, or whose type has a field that smock
   // does not decode yet, does not decode.
   let json = @protobuf.decode_json(set, set.input_of(rpc), message) catch {
     _ => {
-      self.refuse_call(stream, "the request message cannot be decoded")
+      self.refuse_call(
+        stream,
+        @grpc.Internal,
+        "the request message cannot be decoded",
+        ended=true,
+      )
       return
     }
   }
@@ -393,17 +413,22 @@ fn H2Connection::end_with_trailers(
 }
 
 ///|
-/// Answers `stream`, a gRPC call whose request has ended and that this
-/// layer cannot serve, with Trailers-Only INTERNAL and the fixed ASCII
-/// `message`, and counts it as rejected traffic. It never reached the
-/// engine, so it has no Journal entry.
+/// Answers `stream`, a gRPC call that this layer refuses, with Trailers-Only,
+/// the gRPC status `status` and the fixed ASCII `message`, and counts it as
+/// rejected traffic, with `mock=""` and `stub=""`: one whose content
+/// subtype smock does not serve, from its HEADERS, or one that this layer
+/// cannot serve, once its request has ended. It never reached the engine,
+/// so it has no Journal entry. A call whose request has not `ended` then
+/// gets RST_STREAM NO_ERROR (`end_early`).
 fn H2Connection::refuse_call(
   self : H2Connection,
   stream : Int32,
+  status : @grpc.Status,
   message : String,
+  ended~ : Bool,
 ) -> Unit {
   let fields = trailers_only(
-    @grpc.Internal,
+    status,
     Some(message),
     None,
     date=self.ports.dates.at(self.now),
@@ -415,6 +440,9 @@ fn H2Connection::refuse_call(
     }
   }
   self.streams.ended_by_smock(stream)
+  if !ended {
+    self.end_early(stream)
+  }
   self.ports.rejected(self.last_read)
 }
 

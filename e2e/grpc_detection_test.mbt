@@ -167,3 +167,96 @@ async test "on h2c and over TLS, a call whose content type is application/grpc, 
     )
   })
 }
+
+///|
+async test "on h2c and over TLS, a call with another subtype, such as +json, gets Trailers-Only UNIMPLEMENTED as soon as its HEADERS arrive, then RST_STREAM NO_ERROR while the client still sends; it is not journaled, and counts as rejected traffic" {
+  with_detection(smock => {
+    let hello = framed(@fs.read_file(hello_request_path).binary())
+    let path = "/helloworld.Greeter/SayHello"
+    let out = []
+    for tls in [false, true] {
+      let raw = smock.raw_h2(tls~)
+      out.push(if tls { "Over TLS:" } else { "On h2c:" })
+      out.push(raw.acknowledge_settings())
+      raw.send([
+        headers_frame(
+          1,
+          raw.block(
+            call_fields(path, "localhost", content_type="application/grpc+json"),
+          ),
+          end_stream=false,
+        ),
+        Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false),
+      ])
+      out.push("+json, its request not ended:")
+      out.push(raw.frames_until_ping_ack())
+      raw.send([
+        // Sent before the client learnt of the answer, as a client does:
+        // ignored.
+        Data(stream_id=1, data=hello, end_stream=true, padding=0),
+        headers_frame(
+          3,
+          raw.block(
+            call_fields(
+              path,
+              "localhost",
+              content_type="application/grpc+protobuf; charset=utf-8",
+            ),
+          ),
+        ),
+      ])
+      out.push("Its message, then +protobuf, whose HEADERS end the request:")
+      out.push(raw.frames_until_stream_ends(3))
+      raw.send([
+        headers_frame(
+          5,
+          raw.block(call_fields(path, "localhost")),
+          end_stream=false,
+        ),
+        Data(stream_id=5, data=hello, end_stream=true, padding=0),
+      ])
+      out.push("Then a call with no subtype:")
+      out.push(raw.frames_until_stream_ends(5))
+      raw.close()
+    }
+    out.push("Journal:")
+    out.push(routes_journaled(smock))
+    out.push(smock.metric("smock_requests_total"))
+    out.push(smock.metric("smock_unmatched_requests_total"))
+    inspect(
+      out.join("\n"),
+      content=(
+        #|On h2c:
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+        #|+json, its request not ended:
+        #|SETTINGS ACK
+        #|HEADERS 1 END_STREAM END_HEADERS [:status: 200, content-type: application/grpc, grpc-status: 12, grpc-message: only the proto content subtype is served, date: <now>]
+        #|RST_STREAM 1 NO_ERROR
+        #|Its message, then +protobuf, whose HEADERS end the request:
+        #|HEADERS 3 END_STREAM END_HEADERS [:status: 200, content-type: application/grpc, grpc-status: 12, grpc-message: only the proto content subtype is served, date: <now>]
+        #|Then a call with no subtype:
+        #|HEADERS 5 END_HEADERS [:status: 200, content-type: application/grpc, smock-mock: greeter; via=default, date: <now>]
+        #|DATA 5 16 octets
+        #|HEADERS 5 END_STREAM END_HEADERS [grpc-status: 0]
+        #|Over TLS:
+        #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+        #|+json, its request not ended:
+        #|SETTINGS ACK
+        #|HEADERS 1 END_STREAM END_HEADERS [:status: 200, content-type: application/grpc, grpc-status: 12, grpc-message: only the proto content subtype is served, date: <now>]
+        #|RST_STREAM 1 NO_ERROR
+        #|Its message, then +protobuf, whose HEADERS end the request:
+        #|HEADERS 3 END_STREAM END_HEADERS [:status: 200, content-type: application/grpc, grpc-status: 12, grpc-message: only the proto content subtype is served, date: <now>]
+        #|Then a call with no subtype:
+        #|HEADERS 5 END_HEADERS [:status: 200, content-type: application/grpc, smock-mock: greeter; via=default, date: <now>]
+        #|DATA 5 16 octets
+        #|HEADERS 5 END_STREAM END_HEADERS [grpc-status: 0]
+        #|Journal:
+        #|HTTP/2 application/grpc: "hello" 200 "OK"
+        #|HTTP/2 application/grpc: "hello" 200 "OK"
+        #|smock_requests_total{mock="",stub=""} 4
+        #|smock_requests_total{mock="greeter",stub="hello"} 2
+        #|
+      ),
+    )
+  })
+}
