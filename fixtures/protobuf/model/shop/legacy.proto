@@ -1,0 +1,8 @@
+// Written for smock's tests: a file in an edition, which smock loads.
+edition = "2023";
+
+package shop.legacy;
+
+message Item {
+  string name = 1;
+}

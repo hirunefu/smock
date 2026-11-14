@@ -75,3 +75,8 @@ descriptor_set helloworld greeter.binpb helloworld.proto
 descriptor_set helloworld-v2 greeter.binpb helloworld.proto
 copy helloworld/greeter.binpb schema/v1/fixtures/body-files/greeter.binpb
 hex_test helloworld/greeter.binpb greeter_set "The Descriptor set of gRPC's helloworld.proto, fixtures/protobuf/helloworld/greeter.binpb, in hex." protobuf
+
+# Every part of the descriptor model: proto2, proto3 and an edition, nested
+# types, enums with an alias, groups, extensions, maps, oneofs and streaming.
+descriptor_set model shop.binpb shop/orders.proto
+hex_test model/shop.binpb shop_set "The Descriptor set of fixtures/protobuf/model/shop/orders.proto and its imports, fixtures/protobuf/model/shop.binpb, in hex." protobuf
