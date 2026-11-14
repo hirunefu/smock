@@ -31,10 +31,7 @@ fn greeter_stubs(json : String) -> String {
 ///|
 /// Runs `f` with a definitions directory holding `greeter.yaml` and the set
 /// of gRPC's helloworld.proto at `files/greeter.binpb`.
-async fn with_greeter(
-  yaml : String,
-  f : async (String) -> Unit,
-) -> Unit {
+async fn with_greeter(yaml : String, f : async (String) -> Unit) -> Unit {
   with_definitions([("greeter.yaml", yaml)], dir => {
     @fs.mkdir("\{dir}/files")
     write_bytes(

@@ -34,10 +34,7 @@ fn greeter(match_index~ : Bool) -> Harness raise {
   harness(
     greeter_files,
     body_files=[
-      (
-        "greeter.binpb",
-        @hex.decode(greeter_set.replace_all(old="\n", new="")),
-      ),
+      ("greeter.binpb", @hex.decode(greeter_set.replace_all(old="\n", new=""))),
     ],
     match_index~,
   )

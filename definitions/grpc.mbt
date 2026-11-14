@@ -122,12 +122,13 @@ fn method_named(set : @protobuf.DescriptorSet, path : String) -> NamedMethod? {
   let parts = path[1:].to_owned().split("/").collect()
   guard parts is [service, name] else { return None }
   let service = service.to_owned()
+  let name = name.to_owned()
   for file in set.files {
     for declared in file.services {
       guard full_name(file, declared.name) == service else { continue }
       for rpc in declared.methods {
-        if rpc.name == name.to_owned() {
-          return Some({ service, rpc, set })
+        if rpc.name == name {
+          return Some({ service, rpc, set, })
         }
       }
     }
@@ -168,7 +169,7 @@ fn find_message(
   for file in set.files {
     for message in file.messages {
       if full_name(file, message.name) == name {
-        return Some({ name, file, message })
+        return Some({ name, file, message, })
       }
     }
   }
@@ -178,9 +179,9 @@ fn find_message(
 ///|
 /// Checks the gRPC Stub `stub`, at `pointer`, against `named`, the method
 /// its exact path names. Its fields must be served, as
-/// `File::refuse_unserved` says. The method must be unary. Its input and output
-/// types must be served, each on its own, as `File::check_served` says.
-/// Each static `json` reply is checked against the output type.
+/// `File::refuse_unserved` says. The method must be unary. Its input and
+/// output types must be served, each on its own, as `File::check_served`
+/// says. Each static `json` reply is checked against the output type.
 fn File::check_grpc_stub(
   self : File,
   pointer : String,
@@ -294,8 +295,7 @@ fn File::check_value(
       n <= @int.MAX_VALUE.to_double() => return
     (Some(String), _) => "a string"
     (Some(Bool), _) => "true or false"
-    (Some(Int32), _) =>
-      "an integer from \{@int.MIN_VALUE} to \{@int.MAX_VALUE}"
+    (Some(Int32), _) => "an integer from \{@int.MIN_VALUE} to \{@int.MAX_VALUE}"
     _ => return
   }
   let type_ = field.type_.map_or("", type_ => type_.to_string())
