@@ -262,6 +262,7 @@ fn File::check_input(
   input : @protobuf.MessageDescriptor,
 ) -> Unit {
   let not_served = "the input type \{input.full_name} is not served yet"
+  let later = "and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far"
   let seen : Set[String] = Set([input.full_name])
   let pending = [input]
   while pending.pop() is Some(message) {
@@ -288,43 +289,33 @@ fn File::check_input(
       let type_ = set.message_of(field)
       let problem = if field.label is Repeated {
         if type_ is Some({ map_entry: true, .. }) {
-          "is a map"
+          "is a map, \{later}"
         } else {
-          "is repeated"
+          "is repeated, \{later}"
         }
       } else if field.oneof_index is Some(index) && !field.proto3_optional {
-        "is in the oneof \{message.oneofs[index].name}"
+        "is in the oneof \{message.oneofs[index].name}, \{later}"
       } else {
         let name = match (type_, set.enum_of(field)) {
           (Some(type_), _) => type_.full_name
           (_, Some(type_)) => type_.full_name
           _ => continue
         }
-        if @protobuf.is_well_known(name) {
-          let field_name = if reached {
-            "the field \{field.name} of \{message.full_name}, a type it reaches,"
-          } else {
-            "its field \{field.name}"
+        if !@protobuf.is_well_known(name) {
+          if type_ is Some(type_) && !seen.contains(name) {
+            seen.add(name)
+            reached_types.push(type_)
           }
-          self.error(
-            pointer,
-            "\{not_served}: \{field_name} has the well-known type \{name}, and gRPC Stubs serve no well-known types so far",
-          )
-        } else if type_ is Some(type_) && !seen.contains(name) {
-          seen.add(name)
-          reached_types.push(type_)
+          continue
         }
-        continue
+        "has the well-known type \{name}, and gRPC Stubs serve no well-known types so far"
       }
       let field_name = if reached {
         "the field \{field.name} of \{message.full_name}, a type it reaches,"
       } else {
         "its field \{field.name}"
       }
-      self.error(
-        pointer,
-        "\{not_served}: \{field_name} \{problem}, and gRPC Stubs serve no repeated fields, maps or oneofs in requests so far",
-      )
+      self.error(pointer, "\{not_served}: \{field_name} \{problem}")
     }
     // The types this one reaches are checked next, in the order of its
     // fields.

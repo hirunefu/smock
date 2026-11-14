@@ -217,8 +217,11 @@ fn DescriptorSet::print_message(
             message="messages nest deeper than \{max_depth}",
           )
         }
-        guard self.message_of(field) is Some(type_) else { continue }
-        self.print_message(out, type_, list, depth + 1)
+        match self.message_of(field) {
+          Some(type_) => self.print_message(out, type_, list, depth + 1)
+          // Never: a message field's type is a message of its set.
+          None => out.write_bytes(b"{}")
+        }
       }
       Some(Octets(octets)) =>
         if field.type_ is Bytes {
