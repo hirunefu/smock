@@ -498,8 +498,12 @@ fn DescriptorSet::print_map(
   let value_field = entry.fields[value_index]
   let textual = key_field.type_ is String
   // Each entry's key: its text for a string key, or else a number whose
-  // unsigned order is the key's order.
-  let keys : FixedArray[UInt64] = FixedArray::make(count, 0)
+  // unsigned order is the key's order, the default's until the entry
+  // gives one.
+  let keys : FixedArray[UInt64] = FixedArray::make(
+    count,
+    key_order(key_field.type_, 0),
+  )
   let texts : FixedArray[BytesView] = FixedArray::make(
     if textual {
       count
@@ -551,15 +555,17 @@ fn DescriptorSet::print_map(
   }
   let order = sorted_entries(keys, texts)
   out.write_byte(b'{')
+  let mut first = true
   for n in 0..<count {
     let i = order[n]
     // Of the entries with one key, the last wins.
     if n + 1 < count && same_key(keys, texts, i, order[n + 1]) {
       continue
     }
-    if n > 0 {
+    if !first {
       out.write_byte(b',')
     }
+    first = false
     let values = scan(entry, [entries[i]])
     match values[key_index] {
       Some(Octets(text)) => write_json_string(out, text)
