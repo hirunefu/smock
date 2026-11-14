@@ -206,7 +206,9 @@ fn H2Connection::unblock(self : H2Connection, stream : Int32) -> Unit {
 /// decided for the request, `request`; it is counted when the task ends.
 /// With a partial Fault, `rest` is the rest of the half that Fault sends,
 /// and once it is queued the task resets the stream with RST_STREAM
-/// INTERNAL_ERROR (`reset_after`).
+/// INTERNAL_ERROR (`reset_after`). With `trailers`, as for a gRPC reply,
+/// the last DATA does not end the stream: the trailers end it once `rest`
+/// is queued.
 ///
 /// The task ends with its stream, as the task of a delay does (`wait`):
 /// when the body is queued in full and written, when a reset cancels it,
@@ -218,6 +220,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
   rest : BytesView,
   outcome : @engine.Outcome,
   out : WatchedStream[S],
+  trailers? : Array[@header.Header],
 ) -> Unit {
   // The read that brought the request in full.
   let stopwatch = self.last_read
@@ -230,8 +233,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::write_slowly(
       rest,
       outcome.journal,
       out,
-      end=!partial,
+      end=!partial && trailers is None,
     )
+    if finished && trailers is Some(trailers) {
+      self.end_with_trailers(stream, trailers)
+    }
     self.end_task(stream, out, finished~, reset=partial)
   })
   self.waiting[stream] = task

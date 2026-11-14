@@ -1,0 +1,72 @@
+# smock/grpc
+
+gRPC's wire rules for MoonBit: the content type of gRPC calls, the 5-octet
+prefix that frames each message, and gRPC's seventeen status codes with
+their names. smock serves gRPC unary calls with it, beside
+`smock/protobuf`, which encodes the messages. The module does no I/O and
+depends only on `moonbitlang/core`. It builds for every MoonBit target and
+is tested on native and `wasm-gc`.
+
+## Messages
+
+A gRPC call is an HTTP/2 request whose `content-type` is
+`application/grpc`. Its body, and the body of its reply, are messages,
+each after a 5-octet prefix: a flag octet, 1 when the message is
+compressed, then the message's length in 4 octets, big-endian
+([gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)).
+
+- `@grpc.next_message(body)` gives the message at the start of `body`,
+  with its flag and the octets after it, or tells how the body ends:
+  `Done` when nothing is left, `InPrefix` when it ends inside a prefix, and
+  `InMessage(length~)` when it ends inside a message. It copies nothing.
+- `@grpc.frame(message)` frames a message, uncompressed.
+
+```mbt check
+///|
+test "take the one message of a call's body" {
+  // HelloRequest { name: "Tom" }, framed.
+  let body = b"\x00\x00\x00\x00\x05\x0a\x03Tom"
+  guard @grpc.next_message(body[:]) is Message(flag~, message~, rest~) else {
+    fail("no message")
+  }
+  inspect(flag, content="b'\\x00'")
+  inspect(message.length(), content="5")
+  inspect(@grpc.next_message(rest) is Done, content="true")
+}
+
+///|
+test "a body that ends early is told apart" {
+  inspect(@grpc.next_message(b"\x00\x00\x00"[:]) is InPrefix, content="true")
+  debug_inspect(
+    @grpc.next_message(b"\x00\x00\x00\x00\x05\x0a"[:]),
+    content="InMessage(length=5)",
+  )
+}
+
+///|
+test "frame a reply's message" {
+  inspect(
+    @grpc.frame(b"\x0a\x03Tom"[:]) == b"\x00\x00\x00\x00\x05\x0a\x03Tom",
+    content="true",
+  )
+}
+```
+
+## Status codes
+
+`@grpc.Status` has gRPC's seventeen status codes
+([Status codes](https://grpc.github.io/grpc/core/md_doc_statuscodes.html)),
+from `Ok`, 0, to `Unauthenticated`, 16. `code()` gives the number that
+`grpc-status` carries, and `name()` the name, such as `NOT_FOUND`.
+`Status::from_code` and `Status::from_name` read them back.
+
+```mbt check
+///|
+test "a status by its number and by its name" {
+  let status = @grpc.Status::NotFound
+  inspect(status.code(), content="5")
+  inspect(status.name(), content="NOT_FOUND")
+  debug_inspect(@grpc.Status::from_name("INTERNAL"), content="Some(Internal)")
+  debug_inspect(@grpc.Status::from_code(17), content="None")
+}
+```

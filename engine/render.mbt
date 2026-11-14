@@ -828,8 +828,13 @@ pub impl ToJson for Rendering with fn to_json(self) {
 ///|
 /// The `Body` schema of the Admin API document: the bytes as text when they
 /// are UTF-8, otherwise in base64. `bytes` are the first bytes of a body of
-/// `size` bytes, by default all of them.
-fn body_json(bytes : BytesView, size~ : Int32 = bytes.length()) -> Json {
+/// `size` bytes, by default all of them, and `truncated` says whether they
+/// were cut, by default when they are fewer than `size`.
+fn body_json(
+  bytes : BytesView,
+  size~ : Int32 = bytes.length(),
+  truncated~ : Bool = bytes.length() < size,
+) -> Json {
   let (encoding, data) = try @utf8.decode(bytes) catch {
     _ => ("base64", @base64.encode(bytes))
   } noraise {
@@ -839,7 +844,7 @@ fn body_json(bytes : BytesView, size~ : Int32 = bytes.length()) -> Json {
     "encoding": Json::string(encoding),
     "data": Json::string(data),
     "size": Json::number(size.to_double()),
-    "truncated": Json::boolean(bytes.length() < size),
+    "truncated": Json::boolean(truncated),
   }
 }
 

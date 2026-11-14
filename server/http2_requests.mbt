@@ -38,6 +38,8 @@ priv struct H2Request {
   /// When the read timeout ends it, in `@async.now()` milliseconds: the
   /// read timeout after the read that brought its first frame.
   deadline : Int64
+  /// Whether it is a gRPC call: its `content-type` is `application/grpc`.
+  grpc : Bool
 }
 
 ///|
@@ -131,6 +133,7 @@ fn H2Request::new(
   let mut cookies : StringBuilder? = None
   let mut declared = -1L
   let mut expects = false
+  let mut grpc = false
   for place in 0..<fields.length() {
     let field = fields[place]
     let name = field.name
@@ -169,6 +172,8 @@ fn H2Request::new(
         }
       } else if name == b"expect" && @http1.expects_continue(value) {
         expects = true
+      } else if name == b"content-type" && is_grpc_content_type(field.value) {
+        grpc = true
       }
       headers.push(text)
     }
@@ -192,6 +197,7 @@ fn H2Request::new(
     body: b"",
     parts: None,
     deadline,
+    grpc,
   }
 }
 

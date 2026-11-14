@@ -564,8 +564,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         self.idle_deadline = forever
         self.requests[stream] = request
         // A CONNECT goes to the engine when its HEADERS arrive, as soon as
-        // it is known that they brought no reset (RFC 9113, section 8.5).
-        if request.meth == "CONNECT" {
+        // it is known that they brought no reset (RFC 9113, section 8.5). A
+        // gRPC call waits for its request to end, whatever its method.
+        if request.meth == "CONNECT" && !request.grpc {
           self.connect = stream
         }
       }
@@ -1077,13 +1078,17 @@ fn H2Connection::final_goaway(self : H2Connection) -> Unit {
 /// in a task of its own (`wait`), and so do the rest of a body larger than
 /// the windows (`write_slowly`) and the events of a stream of Server-Sent
 /// Events, whose HEADERS are queued at once (`start_events`); each writes
-/// to `out`.
+/// to `out`. A gRPC call is answered by the gRPC layer (`answer_call`).
 fn[S : @io.Writer + ReadOutput] H2Connection::respond(
   self : H2Connection,
   stream : Int32,
   request : H2Request,
   out : WatchedStream[S],
 ) -> Unit {
+  if request.grpc {
+    self.answer_call(stream, request, out)
+    return
+  }
   let ports = self.ports
   let incoming = request.to_engine()
   let outcome = ports.decide(

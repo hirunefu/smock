@@ -46,6 +46,22 @@ pub(all) struct Request {
 }
 
 ///|
+/// The marker of a request that is a gRPC call, which `handle` takes beside
+/// the request. The request is the call as the engine sees it: the method
+/// `POST`, the target its `:path`, the metadata as headers, and the message
+/// decoded into JSON as the body.
+#derive(Debug)
+pub(all) struct GrpcCall {
+  /// The path that names the method called, such as
+  /// `/helloworld.Greeter/SayHello`: the exact path of the gRPC Stubs on
+  /// the method.
+  path : String
+  /// The count of octets the call's DATA frames brought: the size of the
+  /// body as received, which the Journal entry records.
+  octets : Int32
+}
+
+///|
 /// What the engine decided for one request.
 #derive(Debug)
 pub(all) struct Outcome {
@@ -106,6 +122,19 @@ pub fn ContentFailure::message(self : ContentFailure) -> String {
     Template(error) => error.message
     Data(error) => error.message
   }
+}
+
+///|
+/// Whether the plan is the reply of the gRPC Stub that matched, for an
+/// outcome of a gRPC call, whose candidates are all gRPC Stubs: a Stub
+/// matched, and its response was planned, with the HTTP status 200 of
+/// every gRPC reply. Otherwise, when no Stub matched, or when the plan is
+/// smock's own answer to a Stub that could not serve its content, a 500 or
+/// a 507, the plan is an HTTP answer, which is not a gRPC reply.
+pub fn Outcome::is_grpc_reply(self : Outcome) -> Bool {
+  self.matched is Some(_) &&
+  self.content_error is None &&
+  self.plan.status == 200
 }
 
 ///|
@@ -297,6 +326,28 @@ pub fn Engine::mock_for_host(self : Engine, host : String) -> String? {
 }
 
 ///|
+/// The Mock that answers a gRPC call to `request`, from the snapshot
+/// served, chosen as `handle` chooses it: the Mock whose Hosts include the
+/// request's Host, given by `authority` when given, else the Default Mock.
+/// `None` when neither answers. Its Descriptor set, if it has one, is its
+/// `descriptor_set`. Unlike `mock_for_host`, it answers with the Default
+/// Mock, since a call that it answers is served.
+pub fn Engine::mock_for_call(
+  self : Engine,
+  request : Request,
+  authority? : String,
+) -> @definitions.Mock? {
+  let found = match host_of(request, authority) {
+    Some(host) => self.snapshot.mock_for_host(host)
+    None => None
+  }
+  match found {
+    Some(_) => found
+    None => self.snapshot.default_mock()
+  }
+}
+
+///|
 /// What a reload did.
 #derive(Debug)
 pub(all) struct ReloadResult {
@@ -439,6 +490,12 @@ pub fn Engine::reload(
 ///   way, so that no `host` field is added to the request: the Journal
 ///   lists only the fields the client sent, and header conditions see only
 ///   a `host` field it sent. HTTP/1.1 never gives it.
+/// - `grpc`, when given, marks the request as a gRPC call, made with the
+///   method it names. A gRPC call is matched only against the Mock's gRPC
+///   Stubs on that method, in matching order, and its Near miss is chosen
+///   among them; the Ephemeral Stubs, which are never gRPC Stubs, are not
+///   tried. Its Journal entry records the call's octets as the body's size.
+///   HTTP never gives it.
 /// - `session` is the request's Session key, or `None` without a Session.
 /// - `now` is the time the request was received, in milliseconds since the
 ///   Unix epoch.
@@ -448,6 +505,7 @@ pub fn Engine::handle(
   self : Engine,
   request : Request,
   authority? : String,
+  grpc? : GrpcCall,
   session~ : String?,
   now~ : Int64,
   rand~ : @prng.Generator,
@@ -480,8 +538,8 @@ pub fn Engine::handle(
   // a request that matched nothing is chosen among every candidate, in
   // that order.
   let ephemeral = match mock {
-    Some(mock) => self.ephemeral.of(mock.name, session)
-    None => None
+    Some(mock) if grpc is None => self.ephemeral.of(mock.name, session)
+    _ => None
   }
   // A Stub with a Scenario clause matches only in the state it requires,
   // checked once its request conditions hold. The Session's states for the
@@ -528,7 +586,19 @@ pub fn Engine::handle(
       states_known = true
     }
     let current = states
-    let found = if self.match_index {
+    let found = if grpc is Some(call) {
+      // A gRPC call is matched against the gRPC Stubs on its method alone,
+      // which the snapshot lists by path, with or without the match index.
+      let stubs = mock.grpc_candidates(call.path)
+      let mut found = None
+      for i in 0..<stubs.length() {
+        if incoming.matches(stubs[i], current) {
+          found = Some(stubs[i])
+          break
+        }
+      }
+      found
+    } else if self.match_index {
       if gated {
         mock.first_candidate(request.meth, incoming.path, stub => {
           incoming.matches(stub, current)
@@ -745,10 +815,12 @@ pub fn Engine::handle(
             Some(list) => list.iter().map(e => (e.stub, StubSource::Ephemeral))
             None => Iter::empty()
           }
+          let stubs = match grpc {
+            Some(call) => mock.grpc_candidates(call.path)
+            None => mock.http_stubs
+          }
           near_miss = incoming.near_miss(
-            ephemeral.concat(
-              mock.http_stubs.iter().map(stub => (stub, StubSource::File)),
-            ),
+            ephemeral.concat(stubs.iter().map(stub => (stub, StubSource::File))),
             states,
           )
           no_match(mock, near_miss)
@@ -778,6 +850,10 @@ pub fn Engine::handle(
         content_error~,
         crud=crud_called,
         near_miss~,
+        body_size=match grpc {
+          Some(call) => call.octets
+          None => request.body.length()
+        },
         plan~,
         digest=self.snapshot.digest,
         now~,

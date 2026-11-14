@@ -170,7 +170,10 @@ fn File::read_response(
       _ => self.unknown_field(field)
     }
   }
-  if !grpc {
+  if grpc {
+    // Every gRPC reply has the HTTP status 200, which the Journal records.
+    status = 200
+  } else {
     self.require(response, pointer, "status")
   }
   let bodies = ["body", "bodyFile", "json", "events", "llm"].filter(key => {

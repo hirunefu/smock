@@ -386,3 +386,55 @@ fn File::refuse_unserved_reply(
 fn File::not_served(self : File, pointer : String) -> Unit {
   self.error(pointer, "is not served on gRPC Stubs yet")
 }
+
+///|
+/// The gRPC Stubs of `path`, the `:path` of a gRPC call, in matching order:
+/// the Stubs of the Mock whose exact path it is. A gRPC call is matched
+/// against these alone, and its Near miss is chosen among them.
+pub fn Mock::grpc_candidates(self : Mock, path : String) -> ReadOnlyArray[Stub] {
+  match self.grpc_stubs.get(path) {
+    Some(stubs) => stubs
+    None => no_stubs
+  }
+}
+
+///|
+/// No Stubs.
+let no_stubs : ReadOnlyArray[Stub] = ReadOnlyArray::from_array([])
+
+///|
+/// The gRPC Stubs of a Mock that has none, by path: none, shared by every
+/// such Mock, so that a Mock without gRPC Stubs holds nothing new for them.
+let no_grpc_stubs : Map[String, ReadOnlyArray[Stub]] = Map([])
+
+///|
+/// The gRPC Stubs among `stubs`, a Mock's Stubs in matching order, by their
+/// exact path, each list in matching order.
+fn grpc_stubs_by_path(
+  stubs : ReadOnlyArray[Stub],
+) -> Map[String, ReadOnlyArray[Stub]] {
+  let by_path : Map[String, Array[Stub]] = Map([])
+  for stub in stubs {
+    if stub.serves
+      is Ordinary(
+        {
+          grpc_method: Some(_),
+          request: { path: Some(Has(Exact(path))), .. },
+          ..
+        }
+      ) {
+      match by_path.get(path) {
+        Some(list) => list.push(stub)
+        None => by_path[path] = [stub]
+      }
+    }
+  }
+  if by_path.is_empty() {
+    return no_grpc_stubs
+  }
+  let out = Map([])
+  for path, list in by_path {
+    out[path] = ReadOnlyArray::from_array(list)
+  }
+  out
+}

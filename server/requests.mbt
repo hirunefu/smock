@@ -34,19 +34,21 @@ fn header_text(value : BytesView) -> String {
 ///|
 /// Decides the answer to `request`, received at `now`, for the Session its
 /// header fields carry. `authority`, when given, is the request's Host,
-/// ahead of its target and of any `host` field (see
-/// `@engine.Engine::handle`). The caller then writes the response the
+/// ahead of its target and of any `host` field, and `grpc` marks a gRPC
+/// call (see `@engine.Engine::handle`). The caller then writes the response the
 /// outcome's plan describes, commits its Journal entry with `commit`, and
 /// ends with `done`.
 fn MockPorts::decide(
   self : MockPorts,
   request : @engine.Request,
   authority? : String,
+  grpc? : @engine.GrpcCall,
   now~ : Int64,
 ) -> @engine.Outcome {
   self.engine.handle(
     request,
     authority?,
+    grpc?,
     session=self.sessions.session_of(request.headers),
     now~,
     rand=self.rand,

@@ -167,6 +167,20 @@ copy invalid/duplicate-name.binpb schema/v1/fixtures/body-files/duplicate-name.b
 descriptor_set oneofs oneofs.binpb oneofs.proto
 hex_test oneofs/oneofs.binpb oneofs_set "The Descriptor set of fixtures/protobuf/oneofs/oneofs.proto, fixtures/protobuf/oneofs/oneofs.binpb, in hex." definitions
 
+# The request and reply of a call to SayHello, and messages of catalog.proto
+# with string, bool and int32 fields, which smock/protobuf decodes and
+# encodes.
+message helloworld helloworld.proto helloworld.HelloRequest hello-request
+message helloworld helloworld.proto helloworld.HelloReply hello-reply
+message catalog catalog.proto catalog.CountRequest count-request
+message catalog catalog.proto catalog.CountReply count-reply
+hex_test catalog/catalog.binpb catalog_set "The Descriptor set of fixtures/protobuf/catalog/catalog.proto, fixtures/protobuf/catalog/catalog.binpb, in hex." protobuf
+hex_test helloworld/hello-request.binpb hello_request "HelloRequest { name: \"Tom\" }, as protoc encodes it: fixtures/protobuf/helloworld/hello-request.binpb, in hex." protobuf
+hex_test helloworld/hello-reply.binpb hello_reply "HelloReply { message: \"Hello Tom\" }, as protoc encodes it: fixtures/protobuf/helloworld/hello-reply.binpb, in hex." protobuf
+hex_test catalog/count-request.binpb count_request "A CountRequest with a shelf that JSON escapes, and in_stock true, as protoc encodes it: fixtures/protobuf/catalog/count-request.binpb, in hex." protobuf
+hex_test catalog/count-reply.binpb count_reply "CountReply { count: -5, exact: true, shelf: \"A1\" }, as protoc encodes it: fixtures/protobuf/catalog/count-reply.binpb, in hex." protobuf
+hex_test oneofs/oneofs.binpb oneofs_set "The Descriptor set of fixtures/protobuf/oneofs/oneofs.proto, fixtures/protobuf/oneofs/oneofs.binpb, in hex." protobuf
+
 # The end of the list of fixtures. With --check: every file the script
 # wrote, compared with the committed one.
 if [ -n "$check" ]; then

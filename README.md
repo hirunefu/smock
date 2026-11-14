@@ -1085,18 +1085,19 @@ to date.
 
 ## Layout
 
-The repository is a MoonBit workspace (`moon.work`) of six modules:
+The repository is a MoonBit workspace (`moon.work`) of seven modules:
 
 | Directory | Module | What it is |
 |---|---|---|
 | `.` | `smock/smock` | smock itself. Its parts are packages of this module. |
+| `grpc/` | `smock/grpc` | gRPC's wire rules: the content type, the 5-octet prefix that frames each message, and the seventeen status codes with their names. |
 | `http1/` | `smock/http1` | The HTTP/1.1 codec. |
-| `protobuf/` | `smock/protobuf` | Protobuf's wire format, and a reader of Descriptor sets (FileDescriptorSets) that checks them and indexes their messages, fields, enums and methods for lookups (documented in `protobuf/README.mbt.md`). |
+| `protobuf/` | `smock/protobuf` | Protobuf's wire format, a reader of Descriptor sets (FileDescriptorSets) that checks them and indexes their messages, fields, enums and methods for lookups, and messages decoded into JSON and encoded from it (documented in `protobuf/README.mbt.md`). |
 | `re2/` | `smock/re2` | RE2-syntax regular expressions. |
 | `xml/` | `smock/xml` | An XML parser that refuses DTDs, with simple paths that select values (documented in `xml/README.mbt.md`). |
 | `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON, and `write` turns a tree into a document, with comments, that `parse` reads back as the same tree. `parse` also has a YAML 1.2 mode for OpenAPI documents, which Definition files never use (documented in `yaml/yaml.mbt`). |
 
-The five protocol modules do no I/O and do not depend on smock, so they can
+The six protocol modules do no I/O and do not depend on smock, so they can
 be published on mooncakes on their own. `scripts/check-no-io.sh` checks
 that.
 

@@ -9,6 +9,7 @@ preferred_target = "native"
 warnings = "-implicit_impl_as_method"
 
 import {
+  "smock/grpc@0.1.0",
   "smock/http1@0.1.0",
   "smock/protobuf@0.1.0",
   "smock/re2@0.1.0",
