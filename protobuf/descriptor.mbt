@@ -92,15 +92,17 @@ pub struct MessageDescriptor {
   /// Whether its option `message_set_wire_format` is true, which makes it
   /// a MessageSet, whose extensions use another wire form.
   message_set_wire_format : Bool
-  /// Its fields by number, the first of each number.
-  priv fields_by_number : Map[Int32, FieldDescriptor]
-  /// Its fields by name.
-  priv fields_by_name : Map[String, FieldDescriptor]
-  /// Its fields by JSON name, the first of each JSON name.
-  priv fields_by_json_name : Map[String, FieldDescriptor]
-  /// The extensions of the set that extend it, by number, filled when the
-  /// set is checked.
-  priv extended_by : Map[Int32, FieldDescriptor]
+  /// The indexes in `fields` of its fields, by number, ties in the order
+  /// of `fields`. Sorted arrays cost a few octets a field, where a map would
+  /// cost tens.
+  priv by_number : FixedArray[Int32]
+  /// The indexes of its fields, by name.
+  priv by_name : FixedArray[Int32]
+  /// The indexes of its fields, by JSON name.
+  priv by_json_name : FixedArray[Int32]
+  /// The extensions of the set that extend it, by number, once the set is
+  /// checked; `None` when none does.
+  priv mut extended_by : Map[Int32, FieldDescriptor]?
 }
 
 ///|
@@ -238,10 +240,11 @@ pub struct EnumDescriptor {
   /// Its values, in the order of the file. An alias is a value with the
   /// number of an earlier one.
   values : ReadOnlyArray[EnumValueDescriptor]
-  /// Its values by name.
-  priv values_by_name : Map[String, EnumValueDescriptor]
-  /// Its values by number, the first of each number.
-  priv values_by_number : Map[Int32, EnumValueDescriptor]
+  /// The indexes in `values` of its values, by name, ties in the order of
+  /// `values`.
+  priv by_name : FixedArray[Int32]
+  /// The indexes of its values, by number.
+  priv by_number : FixedArray[Int32]
 }
 
 ///|
@@ -517,20 +520,6 @@ fn read_message(
   for view in extension_views {
     extensions.push(read_field(view, inner))
   }
-  let fields_by_number = Map([])
-  let fields_by_name = Map([])
-  let fields_by_json_name = Map([])
-  for field in fields {
-    if !fields_by_number.contains(field.number) {
-      fields_by_number[field.number] = field
-    }
-    if !fields_by_name.contains(field.name) {
-      fields_by_name[field.name] = field
-    }
-    if !fields_by_json_name.contains(field.json_name) {
-      fields_by_json_name[field.json_name] = field
-    }
-  }
   {
     name,
     full_name,
@@ -543,10 +532,16 @@ fn read_message(
     extension_ranges: ReadOnlyArray::from_array(extension_ranges),
     map_entry,
     message_set_wire_format,
-    fields_by_number,
-    fields_by_name,
-    fields_by_json_name,
-    extended_by: Map([]),
+    by_number: sorted(fields.length(), (a, b) => {
+      fields[a].number.compare(fields[b].number)
+    }),
+    by_name: sorted(fields.length(), (a, b) => {
+      fields[a].name.compare(fields[b].name)
+    }),
+    by_json_name: sorted(fields.length(), (a, b) => {
+      fields[a].json_name.compare(fields[b].json_name)
+    }),
+    extended_by: None,
   }
 }
 
@@ -665,13 +660,38 @@ fn read_field(
     type_: type_.unwrap_or(Message),
     type_name,
     extendee,
-    json_name: json_name.unwrap_or_else(() => lower_camel_case(name)),
+    json_name: match json_name {
+      // The name itself, when they are equal, so that a set holds one
+      // string for both.
+      Some(json_name) if json_name == name => name
+      Some(json_name) => json_name
+      None => lower_camel_case(name)
+    },
     oneof_index,
     proto3_optional,
     packed,
     typed: type_ is Some(_),
     type_index: -1,
   }
+}
+
+///|
+/// The indexes from 0 to `count`, sorted by `compare`, ties in their own
+/// order, for lookups by binary search.
+fn sorted(
+  count : Int32,
+  compare : (Int32, Int32) -> Int32,
+) -> FixedArray[Int32] {
+  let indexes = FixedArray::makei(count, i => i)
+  indexes.sort_by((a, b) => {
+    let order = compare(a, b)
+    if order != 0 {
+      order
+    } else {
+      a.compare(b)
+    }
+  })
+  indexes
 }
 
 ///|
@@ -710,23 +730,17 @@ fn read_enum(
       _ => reader.skip()
     }
   }
-  let values_by_name = Map([])
-  let values_by_number = Map([])
-  for value in values {
-    if !values_by_name.contains(value.name) {
-      values_by_name[value.name] = value
-    }
-    if !values_by_number.contains(value.number) {
-      values_by_number[value.number] = value
-    }
-  }
   {
     name,
     full_name: scope.full_name(name),
     syntax: scope.syntax,
     values: ReadOnlyArray::from_array(values),
-    values_by_name,
-    values_by_number,
+    by_name: sorted(values.length(), (a, b) => {
+      values[a].name.compare(values[b].name)
+    }),
+    by_number: sorted(values.length(), (a, b) => {
+      values[a].number.compare(values[b].number)
+    }),
   }
 }
 

@@ -279,7 +279,7 @@ fn Checker::define_message(
   }
   for field in message.fields {
     self.add_symbol(field.full_name, Field, file)
-    if message.fields_by_number.get(field.number) is Some(first) &&
+    if message.find_field_by_number(field.number) is Some(first) &&
       !physical_equal(first, field) {
       self.problems.push(
         "the message \{message.full_name} uses field number \{field.number} twice, for \{first.name} and \{field.name}",
@@ -391,12 +391,20 @@ fn Checker::resolve(self : Checker) -> Unit {
             "the extension \{extension.full_name} has field number \{extension.number}, which \{message.full_name} does not declare for extensions",
           )
         } else {
-          match message.extended_by.get(extension.number) {
+          let extended_by = match message.extended_by {
+            Some(extended_by) => extended_by
+            None => {
+              let extended_by = Map([])
+              message.extended_by = Some(extended_by)
+              extended_by
+            }
+          }
+          match extended_by.get(extension.number) {
             Some(first) =>
               self.problems.push(
                 "the extensions \{first.full_name} and \{extension.full_name} extend \{message.full_name} with the same field number \{extension.number}",
               )
-            None => message.extended_by[extension.number] = extension
+            None => extended_by[extension.number] = extension
           }
         }
       }

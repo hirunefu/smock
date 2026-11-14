@@ -99,7 +99,22 @@ pub fn MessageDescriptor::find_field_by_number(
   self : MessageDescriptor,
   number : Int32,
 ) -> FieldDescriptor? {
-  self.fields_by_number.get(number)
+  let order = self.by_number
+  let mut low = 0
+  let mut high = order.length()
+  while low < high {
+    let middle = (low + high) / 2
+    if self.fields[order[middle]].number < number {
+      low = middle + 1
+    } else {
+      high = middle
+    }
+  }
+  if low < order.length() && self.fields[order[low]].number == number {
+    Some(self.fields[order[low]])
+  } else {
+    None
+  }
 }
 
 ///|
@@ -109,7 +124,7 @@ pub fn MessageDescriptor::find_field_by_name(
   self : MessageDescriptor,
   name : String,
 ) -> FieldDescriptor? {
-  self.fields_by_name.get(name)
+  field_named(self.fields, self.by_name, name, json=false)
 }
 
 ///|
@@ -120,7 +135,39 @@ pub fn MessageDescriptor::find_field_by_json_name(
   self : MessageDescriptor,
   json_name : String,
 ) -> FieldDescriptor? {
-  self.fields_by_json_name.get(json_name)
+  field_named(self.fields, self.by_json_name, json_name, json=true)
+}
+
+///|
+/// The first field of `fields` whose name, or JSON name when `json`, is
+/// `name`, found by binary search in `order`, their indexes sorted by that
+/// name.
+fn field_named(
+  fields : ReadOnlyArray[FieldDescriptor],
+  order : FixedArray[Int32],
+  name : String,
+  json~ : Bool,
+) -> FieldDescriptor? {
+  let mut low = 0
+  let mut high = order.length()
+  while low < high {
+    let middle = (low + high) / 2
+    let field = fields[order[middle]]
+    let key = if json { field.json_name } else { field.name }
+    if key < name {
+      low = middle + 1
+    } else {
+      high = middle
+    }
+  }
+  if low < order.length() {
+    let field = fields[order[low]]
+    let key = if json { field.json_name } else { field.name }
+    if key == name {
+      return Some(field)
+    }
+  }
+  None
 }
 
 ///|
@@ -130,7 +177,10 @@ pub fn MessageDescriptor::find_extension(
   self : MessageDescriptor,
   number : Int32,
 ) -> FieldDescriptor? {
-  self.extended_by.get(number)
+  match self.extended_by {
+    Some(extensions) => extensions.get(number)
+    None => None
+  }
 }
 
 ///|
@@ -139,7 +189,22 @@ pub fn EnumDescriptor::find_value_by_name(
   self : EnumDescriptor,
   name : String,
 ) -> EnumValueDescriptor? {
-  self.values_by_name.get(name)
+  let order = self.by_name
+  let mut low = 0
+  let mut high = order.length()
+  while low < high {
+    let middle = (low + high) / 2
+    if self.values[order[middle]].name < name {
+      low = middle + 1
+    } else {
+      high = middle
+    }
+  }
+  if low < order.length() && self.values[order[low]].name == name {
+    Some(self.values[order[low]])
+  } else {
+    None
+  }
 }
 
 ///|
@@ -149,5 +214,20 @@ pub fn EnumDescriptor::find_value_by_number(
   self : EnumDescriptor,
   number : Int32,
 ) -> EnumValueDescriptor? {
-  self.values_by_number.get(number)
+  let order = self.by_number
+  let mut low = 0
+  let mut high = order.length()
+  while low < high {
+    let middle = (low + high) / 2
+    if self.values[order[middle]].number < number {
+      low = middle + 1
+    } else {
+      high = middle
+    }
+  }
+  if low < order.length() && self.values[order[low]].number == number {
+    Some(self.values[order[low]])
+  } else {
+    None
+  }
 }
