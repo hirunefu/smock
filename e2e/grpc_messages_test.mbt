@@ -59,12 +59,16 @@ async fn Smock::bodies(self : Smock) -> String {
 }
 
 ///|
-async test "the ticket's example: an Order with the largest int64, a float of 9.99, an enum, an empty string and a nested message is journaled in smock's decoded form, meets a Stub whose condition is written so, and is what templates and the Near miss read" {
+async test "the ticket's example: an Order with the largest int64, a float of 9.99, an enum, an empty string and a nested message is journaled in smock's decoded form, meets a Stub whose condition is written so, never one whose int64 is one less, and is what templates and the Near miss read" {
   let yaml =
     #|mocks:
     #|  - name: orders
     #|    grpc: { descriptorSet: scalars.binpb }
     #|stubs:
+    #|  - id: one-less
+    #|    mock: orders
+    #|    request: { path: /scalars.Orders/Place, body: { json: { id: 9223372036854775806 } } }
+    #|    response: { json: { id: one-less } }
     #|  - id: pending
     #|    mock: orders
     #|    request: { path: /scalars.Orders/Place, body: { json: { status: PENDING } } }
@@ -103,7 +107,8 @@ async test "the ticket's example: an Order with the largest int64, a float of 9.
           #|{"seq":1,"receivedAt":"<time>","durationMs":"<ms>","session":null,"host":"localhost","mock":"orders","viaDefault":true,"digest":"<digest>","request":{"method":"POST","target":"/scalars.Orders/Place","version":"HTTP/2","headers":[{"name":"content-type","value":"application/grpc"},{"name":"te","value":"trailers"}],"body":{"encoding":"utf-8","data":"{\"id\":9223372036854775807,\"price\":9.99,\"status\":\"ACTIVE\",\"note\":\"\",\"address\":{\"city\":\"Kyoto\"}}","size":31,"truncated":false}},"stub":"active-at-9.99","stubSource":"file","scenario":null,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null,"status":200,"grpcStatus":"OK","fault":null,"templateError":null}
         ),
       )
-      // An Order whose status is the enum's value 0 meets neither Stub.
+      // An Order with the id 42 and the status of value 0 meets no Stub.
+      // Its Near miss is the first Stub that fails one condition.
       let _ = client.call(
         "/scalars.Orders/Place",
         body=scalars_message("order-twice"),
@@ -116,7 +121,7 @@ async test "the ticket's example: an Order with the largest int64, a float of 9.
       inspect(
         near_miss.stringify(),
         content=(
-          #|{"stub":"pending","stubSource":"file","failed":[{"condition":"body","expected":{"json":{"status":"PENDING"}},"actual":["{\"id\":42,\"price\":0,\"status\":\"STATUS_UNSPECIFIED\",\"note\":\"\"}"]}]}
+          #|{"stub":"one-less","stubSource":"file","failed":[{"condition":"body","expected":{"json":{"id":9223372036854775806}},"actual":["{\"id\":42,\"price\":0,\"status\":\"STATUS_UNSPECIFIED\",\"note\":\"\"}"]}]}
         ),
       )
     })

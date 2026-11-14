@@ -176,7 +176,7 @@ of each GitHub release include its section
   sent as HEADERS, one DATA frame and trailers with `grpc-status: 0`. The
   Journal records the call with its decoded body, whose size counts the
   octets received, and the request metrics count it under its Mock and
-  Stub. For now smock serves messages of singular `string`, `bool` and
+  Stub. For now smock serves replies of singular `string`, `bool` and
   `int32` fields, and answers the calls it does not serve yet with
   Trailers-Only INTERNAL and a fixed message. The new `smock/grpc` module
   frames messages and names gRPC's status codes, and `smock/protobuf`
@@ -187,6 +187,17 @@ of each GitHub release include its section
   verification and the unmatched list take calls by their Mock, `POST`,
   the method's path and their metadata as headers. See
   [The Journal and the metrics](docs/grpc.md#the-journal-and-the-metrics).
+- Request messages with singular fields of every protobuf scalar type,
+  enums and nested messages, decoded into one JSON form that the Journal,
+  conditions, templates and the Near miss see: fields in field-number
+  order under their JSON names, 64-bit integers as exact numbers, floats
+  in their shortest form, NaN and the infinities as strings, bytes in
+  base64 and enums by name. Fields without presence print at their
+  defaults, and proto3 `optional` and message fields only when set, so
+  `$exists` tells them apart. A message that does not parse gets INTERNAL
+  and counts as rejected traffic. Repeated fields, maps, oneofs and the
+  well-known types are not served yet. See
+  [The request message as JSON](docs/grpc.md#the-request-message-as-json).
 
 ### Changed
 
