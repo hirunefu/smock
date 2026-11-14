@@ -1,0 +1,37 @@
+// Written for smock's tests: the proto2 parts of the descriptor model.
+syntax = "proto2";
+
+package shop;
+
+// A message with a required field, a packed field, a group, and extension
+// ranges.
+message Money {
+  required string currency = 1;
+  optional int64 units = 2;
+  repeated int32 cents = 3 [packed = true];
+  optional group Note = 4 {
+    optional string text = 1;
+  }
+  optional Status status = 5;
+  extensions 100 to 199, 1000 to max;
+}
+
+// A top-level extension.
+extend Money {
+  optional int32 priority = 100;
+}
+
+// An extension declared inside a message.
+message Audit {
+  extend Money {
+    optional string audited_by = 101;
+  }
+}
+
+// An enum with an alias.
+enum Status {
+  option allow_alias = true;
+  STATUS_UNKNOWN = 0;
+  ACTIVE = 1;
+  ENABLED = 1;
+}

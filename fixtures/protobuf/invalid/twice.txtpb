@@ -1,0 +1,17 @@
+# Written for smock's tests: a FileDescriptorSet that holds one file twice.
+file {
+  name: "orders.proto"
+  package: "shop"
+  message_type {
+    name: "Order"
+  }
+  syntax: "proto3"
+}
+file {
+  name: "orders.proto"
+  package: "shop"
+  message_type {
+    name: "Order"
+  }
+  syntax: "proto3"
+}

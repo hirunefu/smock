@@ -1,0 +1,4 @@
+mocks:
+  - name: shop
+    grpc:
+      descriptorSet: duplicate-name.binpb

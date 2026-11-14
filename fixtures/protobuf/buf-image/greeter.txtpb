@@ -1,0 +1,416 @@
+# The Buf image that buf build -o writes with its defaults (buf 1.75.0) for
+# gRPC's helloworld.proto, as in fixtures/protobuf/helloworld/: source info,
+# and Buf's field 8042 in each file. Decoded as text with protoc and
+# buf/alpha/image/v1/image.proto. Encoding it again gives buf's bytes.
+file {
+  name: "helloworld.proto"
+  package: "helloworld"
+  message_type {
+    name: "HelloRequest"
+    field {
+      name: "name"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "name"
+    }
+  }
+  message_type {
+    name: "HelloReply"
+    field {
+      name: "message"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "message"
+    }
+  }
+  service {
+    name: "Greeter"
+    method {
+      name: "SayHello"
+      input_type: ".helloworld.HelloRequest"
+      output_type: ".helloworld.HelloReply"
+      options {
+      }
+    }
+    method {
+      name: "SayHelloStreamReply"
+      input_type: ".helloworld.HelloRequest"
+      output_type: ".helloworld.HelloReply"
+      options {
+      }
+      server_streaming: true
+    }
+    method {
+      name: "SayHelloBidiStream"
+      input_type: ".helloworld.HelloRequest"
+      output_type: ".helloworld.HelloReply"
+      options {
+      }
+      client_streaming: true
+      server_streaming: true
+    }
+  }
+  options {
+    java_package: "io.grpc.examples.helloworld"
+    java_outer_classname: "HelloWorldProto"
+    java_multiple_files: true
+    objc_class_prefix: "HLW"
+  }
+  source_code_info {
+    location {
+      span: 14
+      span: 0
+      span: 41
+      span: 1
+    }
+    location {
+      path: 12
+      span: 14
+      span: 0
+      span: 18
+      leading_detached_comments: " Copyright 2015 gRPC authors.\n\n Licensed under the Apache License, Version 2.0 (the \"License\");\n you may not use this file except in compliance with the License.\n You may obtain a copy of the License at\n\n     http://www.apache.org/licenses/LICENSE-2.0\n\n Unless required by applicable law or agreed to in writing, software\n distributed under the License is distributed on an \"AS IS\" BASIS,\n WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n See the License for the specific language governing permissions and\n limitations under the License.\n"
+    }
+    location {
+      path: 8
+      span: 16
+      span: 0
+      span: 34
+    }
+    location {
+      path: 8
+      path: 10
+      span: 16
+      span: 0
+      span: 34
+    }
+    location {
+      path: 8
+      span: 17
+      span: 0
+      span: 52
+    }
+    location {
+      path: 8
+      path: 1
+      span: 17
+      span: 0
+      span: 52
+    }
+    location {
+      path: 8
+      span: 18
+      span: 0
+      span: 48
+    }
+    location {
+      path: 8
+      path: 8
+      span: 18
+      span: 0
+      span: 48
+    }
+    location {
+      path: 8
+      span: 19
+      span: 0
+      span: 33
+    }
+    location {
+      path: 8
+      path: 36
+      span: 19
+      span: 0
+      span: 33
+    }
+    location {
+      path: 2
+      span: 21
+      span: 0
+      span: 19
+    }
+    location {
+      path: 6
+      path: 0
+      span: 24
+      span: 0
+      span: 31
+      span: 1
+      leading_comments: " The greeting service definition.\n"
+    }
+    location {
+      path: 6
+      path: 0
+      path: 1
+      span: 24
+      span: 8
+      span: 15
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 0
+      span: 26
+      span: 2
+      span: 53
+      leading_comments: " Sends a greeting\n"
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 0
+      path: 1
+      span: 26
+      span: 6
+      span: 14
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 0
+      path: 2
+      span: 26
+      span: 16
+      span: 28
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 0
+      path: 3
+      span: 26
+      span: 39
+      span: 49
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 1
+      span: 28
+      span: 2
+      span: 71
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 1
+      path: 1
+      span: 28
+      span: 6
+      span: 25
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 1
+      path: 2
+      span: 28
+      span: 27
+      span: 39
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 1
+      path: 6
+      span: 28
+      span: 50
+      span: 56
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 1
+      path: 3
+      span: 28
+      span: 57
+      span: 67
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 2
+      span: 30
+      span: 2
+      span: 77
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 2
+      path: 1
+      span: 30
+      span: 6
+      span: 24
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 2
+      path: 5
+      span: 30
+      span: 26
+      span: 32
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 2
+      path: 2
+      span: 30
+      span: 33
+      span: 45
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 2
+      path: 6
+      span: 30
+      span: 56
+      span: 62
+    }
+    location {
+      path: 6
+      path: 0
+      path: 2
+      path: 2
+      path: 3
+      span: 30
+      span: 63
+      span: 73
+    }
+    location {
+      path: 4
+      path: 0
+      span: 34
+      span: 0
+      span: 36
+      span: 1
+      leading_comments: " The request message containing the user\'s name.\n"
+    }
+    location {
+      path: 4
+      path: 0
+      path: 1
+      span: 34
+      span: 8
+      span: 20
+    }
+    location {
+      path: 4
+      path: 0
+      path: 2
+      path: 0
+      path: 5
+      span: 35
+      span: 2
+      span: 8
+    }
+    location {
+      path: 4
+      path: 0
+      path: 2
+      path: 0
+      span: 35
+      span: 2
+      span: 18
+    }
+    location {
+      path: 4
+      path: 0
+      path: 2
+      path: 0
+      path: 1
+      span: 35
+      span: 9
+      span: 13
+    }
+    location {
+      path: 4
+      path: 0
+      path: 2
+      path: 0
+      path: 3
+      span: 35
+      span: 16
+      span: 17
+    }
+    location {
+      path: 4
+      path: 1
+      span: 39
+      span: 0
+      span: 41
+      span: 1
+      leading_comments: " The response message containing the greetings\n"
+    }
+    location {
+      path: 4
+      path: 1
+      path: 1
+      span: 39
+      span: 8
+      span: 18
+    }
+    location {
+      path: 4
+      path: 1
+      path: 2
+      path: 0
+      path: 5
+      span: 40
+      span: 2
+      span: 8
+    }
+    location {
+      path: 4
+      path: 1
+      path: 2
+      path: 0
+      span: 40
+      span: 2
+      span: 21
+    }
+    location {
+      path: 4
+      path: 1
+      path: 2
+      path: 0
+      path: 1
+      span: 40
+      span: 9
+      span: 16
+    }
+    location {
+      path: 4
+      path: 1
+      path: 2
+      path: 0
+      path: 3
+      span: 40
+      span: 19
+      span: 20
+    }
+  }
+  syntax: "proto3"
+  buf_extension {
+    is_import: false
+    is_syntax_unspecified: false
+  }
+}

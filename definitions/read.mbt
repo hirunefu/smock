@@ -461,8 +461,9 @@ fn File::read_grpc(
 ///|
 /// Reads the Descriptor set that `json`, the value at `pointer`, names: a
 /// body file, with the path rules of `bodyFile`, that holds a
-/// FileDescriptorSet in protobuf's binary encoding. It has none, and the
-/// problem is reported, when the file is missing or does not decode.
+/// self-contained FileDescriptorSet in protobuf's binary encoding. It has
+/// none, and each problem is reported, when the file is missing, does not
+/// decode, or fails the checks of `@protobuf.read_descriptor_set`.
 fn File::read_descriptor_set(
   self : File,
   pointer : String,
@@ -470,18 +471,24 @@ fn File::read_descriptor_set(
 ) -> @protobuf.DescriptorSet? {
   guard self.string(pointer, json) is Some(path) else { return None }
   guard self.body_file(pointer, path) is Some(bytes) else { return None }
-  // `declared_sets` has decoded it already.
+  // `declared_sets` has read it already.
   let decoded = match self.sets.by_path.get(path) {
     Some(decoded) => decoded
     None => decode_set(bytes)
   }
   match decoded {
     Decoded(set) => Some(set)
-    NotASet(err) => {
+    NotASet(NotDecoded(err)) => {
       self.error(
         pointer,
         "\{path.escape()}: not a Descriptor set, a FileDescriptorSet in protobuf's binary encoding: \{err}",
       )
+      None
+    }
+    NotASet(Invalid(problems)) => {
+      for problem in problems {
+        self.error(pointer, "\{path.escape()}: \{problem}")
+      }
       None
     }
   }
