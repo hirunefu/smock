@@ -97,6 +97,18 @@ expect() {
   fi
 }
 
+# add <line>...: adds lines at the end of the list of fixtures in the
+# copy's script, as a later ticket adds a fixture.
+add() {
+  script=$copy/scripts/gen-protobuf-fixtures.sh
+  printf '%s\n' "$@" >"$tmp/lines"
+  # The lines go before the comment that ends the list.
+  awk -v lines="$tmp/lines" '
+    /^# The end of the list of fixtures\./ { while ((getline line < lines) > 0) print line; print "" }
+    { print }' "$script" >"$tmp/script"
+  cat "$tmp/script" >"$script"
+}
+
 # bump <file> <offset>: adds 1 to the octet at <offset> of a file of the
 # copy, so that exactly that octet changes.
 bump() {
@@ -118,6 +130,66 @@ expect changed "one octet of $set_file changed: the check fails and names that f
 cp "$tmp/committed" "$copy/$set_file"
 check restored
 expect restored "$set_file restored: the check passes again" 0
+
+# A fixture that a later ticket adds: a set, a message of its type, a copy
+# of the set and the set in hex in a test file.
+fresh
+added=fixtures/protobuf/added
+mkdir -p "$copy/$added"
+cat >"$copy/$added/added.proto" <<'PROTO'
+syntax = "proto3";
+package added;
+import "google/protobuf/timestamp.proto";
+message Item {
+  string name = 1;
+  google.protobuf.Timestamp at = 2;
+}
+PROTO
+printf 'name: "one"\nat { seconds: 1 }\n' >"$copy/$added/item.txtpb"
+add "descriptor_set added added.binpb added.proto" \
+  "message added added.proto added.Item item" \
+  "copy added/added.binpb $added/copy/added.binpb" \
+  "hex_test added/added.binpb added_set \"The added set, in hex.\" $added/hex"
+check added
+expect added "a fixture added to the script, not built yet: the check names each file it builds" 1 \
+  "$added/added.binpb" "$added/item.binpb" "$added/copy/added.binpb" "$added/hex/added_set_test.mbt"
+"$copy/scripts/gen-protobuf-fixtures.sh" >/dev/null
+check built
+expect built "the added fixture built by the script: the check passes" 0
+printf 'name: "two"\nat { seconds: 1 }\n' >"$copy/$added/item.txtpb"
+check message
+expect message "the added message changed in its source: the check names it alone" 1 "$added/item.binpb"
+"$copy/scripts/gen-protobuf-fixtures.sh" >/dev/null
+cat >"$copy/$added/added.proto" <<'PROTO'
+syntax = "proto3";
+package added;
+import "google/protobuf/timestamp.proto";
+message Item {
+  string name = 1;
+  google.protobuf.Timestamp at = 2;
+  int32 count = 3;
+}
+PROTO
+check source
+expect source "a field added to the added .proto: the check names its set and every copy of it" 1 \
+  "$added/added.binpb" "$added/copy/added.binpb" "$added/hex/added_set_test.mbt"
+
+# Another protoc than the pinned one, which says it is 36.1.
+fresh
+mkdir -p "$tmp/other"
+real=$(command -v "$protoc")
+cat >"$tmp/other/protoc" <<SCRIPT
+#!/bin/sh
+if [ "\$1" = --version ]; then echo "libprotoc 36.1"; exit 0; fi
+exec "$real" "\$@"
+SCRIPT
+chmod +x "$tmp/other/protoc"
+PROTOC=$tmp/other/protoc check other
+expect other "another protoc than the pinned one: the check refuses to run" 2
+if ! grep -q "not libprotoc $pinned" "$tmp/other.out"; then
+  fail "another protoc than the pinned one: the check does not name the pinned version"
+  cat "$tmp/other.out"
+fi
 
 echo "test-protobuf-fixtures: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]
