@@ -1,9 +1,9 @@
 // The `check` warnings: problems that do not make a definition set invalid.
 // There are two: a shadowed Stub, which can never match because an earlier
 // Stub of the same Mock and of the same kind, gRPC or HTTP, always matches
-// first; and a Stub that requires a
-// state of a Scenario that no Stub in the files moves to. A warning is only
-// reported when it can be proven, so it is never a false positive.
+// first; and a Stub that requires a state of a Scenario that no Stub in
+// the files moves to. A warning is only reported when it can be proven, so
+// it is never a false positive.
 
 ///|
 /// A warning about a valid definition set: the file it is in, a JSON
