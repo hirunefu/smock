@@ -18,9 +18,10 @@ pub struct JournalSettings {
   /// its fixed fields, two for each UTF-16 code unit of the text it holds
   /// (the request line, the header fields, the Session, Host, Mock and
   /// Stub names, the Scenario move, the names of the Variables and Data
-  /// buckets written, why a data write failed, the CRUD operation and its
-  /// key, and the Near miss), 32 for each value its Near miss keeps from a
-  /// form or an XML body, and the bytes of its truncated body.
+  /// buckets written, why a template or a data write failed, the CRUD
+  /// operation and its key, and the Near miss), 32 for each value its Near
+  /// miss keeps from a form or an XML body, and the bytes of its truncated
+  /// body.
   max_bytes : Int32
   /// The most bytes of a request body an entry keeps, and of the values its
   /// Near miss keeps from a form or an XML body, in total, each value
@@ -112,14 +113,14 @@ pub struct JournalEntry {
   /// The gRPC status a gRPC call got: its plan's, or the one the server
   /// sets with `set_grpc_status` before it commits the entry. `None` for an
   /// HTTP request.
-  grpc_status : @grpc.Status?
+  mut grpc_status : @grpc.Status?
   /// The connection Fault injected instead of the response, if any.
   fault : @definitions.ConnectionKind?
   /// Why the Stub's template could not be rendered, when it could not: the
   /// client then got a 500, or, for a gRPC call, INTERNAL.
-  template_error : TemplateError?
+  mut template_error : TemplateError?
   /// The bytes the entry counts against the Journal's byte bound.
-  priv size : Int32
+  priv mut size : Int32
 }
 
 ///|
@@ -128,6 +129,31 @@ pub struct JournalEntry {
 pub fn JournalEntry::finish(self : JournalEntry, at~ : Int64) -> Unit {
   let duration = at - self.received_at
   self.duration_ms = Some(if duration < 0L { 0L } else { duration })
+}
+
+///|
+/// Sets the gRPC status that the entry's call really got, `status`, when
+/// it ends otherwise than its plan said, and, when one is given, the
+/// template error `template_error`, which says why, in place of the one the
+/// entry has. The HTTP status stays as it is.
+///
+/// The server calls it before it commits the entry, since the error's text
+/// counts toward the entry's bytes under the Journal's byte bound, two
+/// bytes for each UTF-16 code unit, as the entry's other text does;
+/// `finish` still runs after the commit.
+pub fn JournalEntry::set_grpc_status(
+  self : JournalEntry,
+  status : @grpc.Status,
+  template_error? : TemplateError,
+) -> Unit {
+  self.grpc_status = Some(status)
+  if template_error is Some(error) {
+    if self.template_error is Some(old) {
+      self.size -= 2 * (old.at.length() + old.message.length())
+    }
+    self.size += 2 * (error.at.length() + error.message.length())
+    self.template_error = Some(error)
+  }
 }
 
 ///|
