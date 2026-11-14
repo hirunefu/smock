@@ -1,0 +1,18 @@
+# Written for smock's tests: a FileDescriptorSet in which two files define
+# the message shop.Order.
+file {
+  name: "orders.proto"
+  package: "shop"
+  message_type {
+    name: "Order"
+  }
+  syntax: "proto3"
+}
+file {
+  name: "orders-v2.proto"
+  package: "shop"
+  message_type {
+    name: "Order"
+  }
+  syntax: "proto3"
+}

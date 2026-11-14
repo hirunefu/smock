@@ -1,0 +1,34 @@
+# Written for smock's tests: a FileDescriptorSet whose field, method and
+# extension name types that it does not define.
+file {
+  name: "orders.proto"
+  package: "shop"
+  message_type {
+    name: "Order"
+    field {
+      name: "total"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".shop.Money"
+      json_name: "total"
+    }
+  }
+  service {
+    name: "Orders"
+    method {
+      name: "Get"
+      input_type: ".shop.GetOrderRequest"
+      output_type: ".shop.Order"
+    }
+  }
+  extension {
+    name: "priority"
+    extendee: ".shop.Customer"
+    number: 100
+    label: LABEL_OPTIONAL
+    type: TYPE_INT32
+    json_name: "priority"
+  }
+  syntax: "proto2"
+}

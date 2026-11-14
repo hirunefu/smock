@@ -60,9 +60,11 @@ body-file subdirectory (`files/`, the default), so a fixture can refer to
 `helloworld.proto`, with a Mock's `grpc.descriptorSet`. A fixture whose
 `bodyFile`, `jsonFile` or `descriptorSet` names a file that is not there
 belongs in `invalid-beyond-schema/`, as does one whose `descriptorSet` names
-a file that does not decode as a Descriptor set. `greeter.binpb` is a copy
-that `scripts/gen-protobuf-fixtures.sh` writes
-(`fixtures/protobuf/README.md`).
+a file that does not decode as a Descriptor set, or a set that smock
+refuses: `orders-without-imports.binpb`, which lacks a file it imports, and
+`duplicate-name.binpb`, in which two files define one message.
+`greeter.binpb` and those two sets are copies that
+`scripts/gen-protobuf-fixtures.sh` writes (`fixtures/protobuf/README.md`).
 
 Adding a fixture is adding a file, named after what it shows and ending in
 `.json`, `.yaml` or `.yml`. `valid/users-from-jsonnet.json` is exported from

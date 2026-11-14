@@ -1,0 +1,4 @@
+mocks:
+  - name: shop
+    grpc:
+      descriptorSet: orders-without-imports.binpb
