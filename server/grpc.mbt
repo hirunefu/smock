@@ -1,24 +1,32 @@
 // The gRPC layer of the HTTP/2 mapping: an HTTP/2 stream whose
-// `content-type` is `application/grpc` is a gRPC unary call. Once its
-// request has ended, its one message is taken from the body, the call's
-// Mock and the method its `:path` names are looked up, the message is
-// decoded into JSON, and the engine decides the call as a POST to the
-// method's path, with the metadata as headers, the JSON as the body and
-// the gRPC call marker. The reply JSON is then encoded with the method's
-// output type and written as gRPC writes it: HEADERS, one DATA frame with
-// the framed message, then trailers with `grpc-status: 0`. The lookup, the
+// `content-type` is `application/grpc` is a gRPC unary call. The call's
+// Mock and its Descriptor set are looked up twice, from the definition set
+// served at the time. When the call's HEADERS arrive, a call that cannot
+// reach a gRPC Stub, since its Host reaches no Mock, its Mock has no set,
+// or its `:path` names no unary method of the set, is answered at once,
+// without waiting for its message. Once the request has ended, the call is
+// looked up again, its one message is taken from the body and decoded into
+// JSON, and the engine decides the call as a POST to the method's path,
+// with the metadata as headers, the JSON as the body and the gRPC call
+// marker. The reply JSON is then encoded with the method's output type and
+// written as gRPC writes it: HEADERS, one DATA frame with the framed
+// message, then trailers with `grpc-status: 0`. The second lookup, the
 // decoding, `handle` and the encoding run with no await between them, so a
-// reload never splits them.
+// reload never splits them, and a call that the reload leaves without a
+// gRPC Stub to reach gets the answer it would have got from its HEADERS.
 //
-// A plan whose gRPC status is not OK, such as the UNIMPLEMENTED of a call
-// that no Stub matched, is sent as Trailers-Only, one HEADERS block that
-// ends the stream, with `:status` 200, its `grpc-status`, its fixed ASCII
-// `grpc-message` and its trailers, such as the Near miss. What the layer
-// cannot serve yet gets Trailers-Only too, with `grpc-status` INTERNAL and
-// a fixed ASCII `grpc-message`. A call that does not reach the engine is
-// counted as rejected traffic and is not journaled; one that does is
-// journaled as the engine planned it, with the gRPC status INTERNAL, which
-// the entry records before it is committed.
+// A call that cannot reach a gRPC Stub still goes to the engine, with an
+// empty body, which plans its UNIMPLEMENTED answer and journals it as
+// unmatched. A plan whose gRPC status is not OK, such as that UNIMPLEMENTED,
+// is sent as Trailers-Only, one HEADERS block that ends the stream, with
+// `:status` 200, its `grpc-status`, its fixed ASCII `grpc-message` and its
+// trailers, such as the Near miss. An answer sent before the client has
+// ended its request is followed by RST_STREAM NO_ERROR (`end_early`). What
+// the layer cannot serve yet gets Trailers-Only too, with `grpc-status`
+// INTERNAL and a fixed ASCII `grpc-message`. A call that does not reach the
+// engine is counted as rejected traffic and is not journaled; one that does
+// is journaled as the engine planned it, with the gRPC status INTERNAL,
+// which the entry records before it is committed.
 
 ///|
 /// The content type of gRPC calls, as the octets of a field value.
@@ -32,13 +40,102 @@ fn is_grpc_content_type(value : Bytes) -> Bool {
 }
 
 ///|
+/// The unary method that a gRPC call to `path` calls in `set`, the
+/// Descriptor set of the call's Mock, or `None` when `path` names no method
+/// of the set, or names a streaming method: such a call cannot reach a gRPC
+/// Stub.
+fn unary_method(
+  set : @protobuf.DescriptorSet,
+  path : String,
+) -> @protobuf.MethodDescriptor? {
+  guard set.find_method(path) is Some(rpc) else { return None }
+  if rpc.client_streaming || rpc.server_streaming {
+    return None
+  }
+  Some(rpc)
+}
+
+///|
+/// Answers `stream`, a gRPC call whose HEADERS have just arrived, with
+/// `request` as they give it, when the call cannot reach a gRPC Stub: when
+/// its Host reaches no Mock, its Mock has no Descriptor set, or its `:path`
+/// names no unary method of the set. Returns whether it answered it. The
+/// call is then no longer among the requests: its answer is sent at once,
+/// without waiting for its message (`answer_unserved`), and RST_STREAM
+/// NO_ERROR follows it. A call that can reach a gRPC Stub waits for the end
+/// of its request, which looks it up again.
+fn H2Connection::answer_from_headers(
+  self : H2Connection,
+  stream : Int32,
+  request : H2Request,
+) -> Bool {
+  let mock = self.ports.engine.mock_for_call(
+    request.without_body(),
+    authority?=request.authority,
+  )
+  if mock is Some({ descriptor_set: Some(set), .. }) &&
+    unary_method(set, request.target) is Some(_) {
+    return false
+  }
+  self.requests.remove(stream)
+  self.answer_unserved(stream, request, ended=false)
+  self.end_stream()
+  true
+}
+
+///|
+/// Answers `stream`, a gRPC call whose request is `request` and that cannot
+/// reach a gRPC Stub, through the engine, which decides it with an empty
+/// body and the count of octets received so far: it plans Trailers-Only
+/// UNIMPLEMENTED with the fixed message that says why, and journals the
+/// call as unmatched. A call whose request has not `ended` then gets
+/// RST_STREAM NO_ERROR (`end_early`).
+fn H2Connection::answer_unserved(
+  self : H2Connection,
+  stream : Int32,
+  request : H2Request,
+  ended~ : Bool,
+) -> Unit {
+  let outcome = self.ports.decide(
+    request.without_body(),
+    authority?=request.authority,
+    grpc={ path: request.target, octets: request.received(), },
+    now=self.now,
+  )
+  guard outcome.plan.grpc is Some(part) else {
+    abort("a gRPC call that reaches no gRPC Stub is planned UNIMPLEMENTED")
+  }
+  self.answer_status(
+    stream,
+    request,
+    outcome,
+    part,
+    date=self.ports.dates.at(self.now),
+  )
+  if !ended {
+    self.end_early(stream)
+  }
+}
+
+///|
+/// Ends `stream`, a gRPC call that smock has answered before the client
+/// ended its request, with RST_STREAM NO_ERROR, so that the client stops
+/// sending it (RFC 9113, section 8.1), as grpc-go does. Every gRPC answer
+/// sent before the request has ended is followed by it.
+fn H2Connection::end_early(self : H2Connection, stream : Int32) -> Unit {
+  self.reset(stream, @http2.error_no_error)
+}
+
+///|
 /// Answers the gRPC call that has arrived in full on `stream`: through the
 /// engine, when the call can be served, or else with Trailers-Only
-/// INTERNAL, as `refuse_call` sends it. A plan whose gRPC status is not OK
-/// is sent as Trailers-Only, with its gRPC part. A reply whose framed
-/// message fits the windows is queued at once; the rest of a larger one is
-/// sent in a task of its own (`write_slowly`), which writes to `out`, with
-/// the trailers after it.
+/// INTERNAL, as `refuse_call` sends it. The call's Mock and its set are
+/// looked up again first, and a call that cannot reach a gRPC Stub now is
+/// answered as from its HEADERS (`answer_unserved`). A plan whose gRPC
+/// status is not OK is sent as Trailers-Only, with its gRPC part. A reply
+/// whose framed message fits the windows is queued at once; the rest of a
+/// larger one is sent in a task of its own (`write_slowly`), which writes
+/// to `out`, with the trailers after it.
 fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
   self : H2Connection,
   stream : Int32,
@@ -51,27 +148,18 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
     self.refuse_call(stream, "the method must be POST")
     return
   }
+  // The second lookup, from the definition set served now: a reload since
+  // the HEADERS may have changed the Mock, its set or the method.
+  guard ports.engine.mock_for_call(incoming, authority?=request.authority)
+    is Some({ descriptor_set: Some(set), .. }) &&
+    unary_method(set, incoming.target) is Some(rpc) else {
+    self.answer_unserved(stream, request, ended=true)
+    return
+  }
   guard @grpc.next_message(incoming.body)
     is Message(flag=b'\x00', message~, rest~) &&
     @grpc.next_message(rest) is Done else {
     self.refuse_call(stream, "the request is not one uncompressed message")
-    return
-  }
-  guard ports.engine.mock_for_call(incoming, authority?=request.authority)
-    is Some(mock) else {
-    self.refuse_call(stream, "no Mock for this Host")
-    return
-  }
-  guard mock.descriptor_set is Some(set) else {
-    self.refuse_call(stream, "the Mock has no Descriptor set")
-    return
-  }
-  guard set.find_method(incoming.target) is Some(rpc) else {
-    self.refuse_call(stream, "unknown method")
-    return
-  }
-  if rpc.client_streaming || rpc.server_streaming {
-    self.refuse_call(stream, "streaming methods are not served yet")
     return
   }
   // A message that does not parse, or whose type has a field that smock
@@ -104,15 +192,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
   // Any status but OK, such as the UNIMPLEMENTED of a call that no Stub
   // matched, ends the call without a message.
   guard part.status is Ok else {
-    let fields = trailers_only(
-      part.status,
-      part.message,
-      smock_mock_of(plan.headers),
-      date~,
-      trailers=part.trailers,
-    )
-    self.headers_only(stream, fields, outcome.journal, partial=false)
-    self.ended_in_place(request, outcome)
+    self.answer_status(stream, request, outcome, part, date~)
     return
   }
   // A static reply was checked against the output type at load; a
@@ -140,6 +220,31 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
     )
     return
   }
+  self.ended_in_place(request, outcome)
+}
+
+///|
+/// Answers `stream`, a gRPC call that the engine decided `outcome` for,
+/// whose plan has the gRPC part `part`, with a status other than OK: with
+/// Trailers-Only, carrying the part's status, message and trailers, and
+/// commits the call's Journal entry just before. `date` is the value of the
+/// answer's `date` field.
+fn H2Connection::answer_status(
+  self : H2Connection,
+  stream : Int32,
+  request : H2Request,
+  outcome : @engine.Outcome,
+  part : @engine.GrpcPart,
+  date~ : String,
+) -> Unit {
+  let fields = trailers_only(
+    part.status,
+    part.message,
+    smock_mock_of(outcome.plan.headers),
+    date~,
+    trailers=part.trailers,
+  )
+  self.headers_only(stream, fields, outcome.journal, partial=false)
   self.ended_in_place(request, outcome)
 }
 
