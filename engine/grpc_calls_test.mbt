@@ -41,6 +41,22 @@ fn Harness::call(
 }
 
 ///|
+/// The gRPC part of the plan of `outcome`, one item per line: its status,
+/// its `grpc-message` if any, then its trailers. `none` when the plan has
+/// no gRPC part.
+fn grpc_part(outcome : @engine.Outcome) -> String {
+  guard outcome.plan.grpc is Some(part) else { return "none" }
+  let lines = [part.status.name()]
+  if part.message is Some(message) {
+    lines.push("grpc-message: \{message}")
+  }
+  for trailer in part.trailers {
+    lines.push("\{trailer.0}: \{trailer.1}")
+  }
+  lines.join("\n")
+}
+
+///|
 /// Two Mocks: `greeter`, for the Host `greeter.svc`, with the set, and
 /// `plain`, the Default Mock, without one.
 let two_mocks : String =
@@ -172,7 +188,7 @@ test "a gRPC call matches only the gRPC Stubs on its method, in matching order, 
         #|{"message":"Hello"}
       ),
     )
-    inspect(tom.is_grpc_reply(), content="true")
+    inspect(grpc_part(tom), content="OK")
     // The same request without the marker is an HTTP request.
     let http = h.send(
       "POST",
@@ -184,7 +200,7 @@ test "a gRPC call matches only the gRPC Stubs on its method, in matching order, 
 }
 
 ///|
-test "a call to a method without a gRPC Stub matches nothing, and has no Near miss, though HTTP Stubs would take its path" {
+test "a call to a method without a gRPC Stub matches nothing, and is planned UNIMPLEMENTED with no Near miss, though HTTP Stubs would take its path" {
   for match_index in [true, false] {
     let h = harness(
       [("greeter.yaml", greeter_calls)],
@@ -198,7 +214,13 @@ test "a call to a method without a gRPC Stub matches nothing, and has no Near mi
     )
     inspect(matched_id(outcome).unwrap_or("none"), content="none")
     inspect(outcome.near_miss is None, content="true")
-    inspect(outcome.is_grpc_reply(), content="false")
+    inspect(
+      grpc_part(outcome),
+      content=(
+        #|UNIMPLEMENTED
+        #|grpc-message: no Stub matched
+      ),
+    )
   }
 }
 
@@ -239,7 +261,14 @@ test "an unmatched call's Near miss is chosen among the gRPC Stubs on its method
       "\{near_miss.stub}: \{near_miss.failed.length()} failed",
       content="hello-ann: 2 failed",
     )
-    inspect(outcome.is_grpc_reply(), content="false")
+    inspect(
+      grpc_part(outcome),
+      content=(
+        #|UNIMPLEMENTED
+        #|grpc-message: no Stub matched
+        #|smock-near-miss: hello-ann; failed=header:x-tenant,body
+      ),
+    )
   }
 }
 
@@ -311,7 +340,7 @@ test "a call's JSON is cut at the Journal's body limit, and its size is still th
 }
 
 ///|
-test "a gRPC Stub that fails to render its reply plans smock's own answer, which is not a gRPC reply" {
+test "a gRPC Stub that fails to render its reply plans smock's own answer, which has no gRPC part" {
   let h = harness(
     [
       (
@@ -337,5 +366,5 @@ test "a gRPC Stub that fails to render its reply plans smock's own answer, which
   )
   inspect(matched_id(outcome).unwrap_or("none"), content="hello")
   inspect(outcome.plan.status, content="500")
-  inspect(outcome.is_grpc_reply(), content="false")
+  inspect(grpc_part(outcome), content="none")
 }
