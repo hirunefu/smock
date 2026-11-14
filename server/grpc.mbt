@@ -1,5 +1,9 @@
-// The gRPC layer of the HTTP/2 mapping: an HTTP/2 stream whose
-// `content-type` is `application/grpc` is a gRPC unary call. The call's
+// The gRPC layer of the HTTP/2 mapping, on the plain and TLS ports alike: an
+// HTTP/2 stream whose `content-type` is `application/grpc`, alone or
+// followed by `+` or `;`, is a gRPC unary call (`@grpc.content_subtype`).
+// One whose content subtype is neither none nor `proto`, such as `json`, is
+// refused from its HEADERS, after spec E's checks, with Trailers-Only
+// UNIMPLEMENTED. Every other stream is an HTTP request. The call's
 // Mock and its Descriptor set are looked up twice, from the definition set
 // served at the time. When the call's HEADERS arrive, a call that cannot
 // reach a gRPC Stub, since its Host reaches no Mock, its Mock has no set,
@@ -24,8 +28,8 @@
 // `:status` 200, its `grpc-status`, its fixed ASCII `grpc-message` and its
 // trailers, such as the Near miss. An answer sent before the client has
 // ended its request is followed by RST_STREAM NO_ERROR (`end_early`). What
-// the layer cannot serve yet gets Trailers-Only too, with `grpc-status`
-// INTERNAL and a fixed ASCII `grpc-message`. A call that does not reach the
+// the layer refuses, or cannot serve yet, gets Trailers-Only too, with its
+// `grpc-status` and a fixed ASCII `grpc-message`. A call that does not reach the
 // engine is counted as rejected traffic and is not journaled; one that does
 // is journaled as the engine planned it, with the gRPC status INTERNAL,
 // which the entry records before it is committed.

@@ -5725,9 +5725,10 @@ Nothing expires a copy, so plan for growth:
 A Mock can stand in for a gRPC service. It names the service's
 Descriptor set, the compiled form of its `.proto` files, with `grpc`.
 smock reads and checks the set with the Definition files, and its
-[gRPC Stubs](#grpc-stubs) answer unary calls. The [gRPC guide](grpc.md)
-shows a first call, says how smock serves a call, and how to build a set,
-what smock checks in it and what it keeps.
+[gRPC Stubs](#grpc-stubs) answer unary calls, on the plain port over h2c
+and on the TLS port over h2. The [gRPC guide](grpc.md) shows a first call,
+says which requests are gRPC calls and how smock serves a call, and how to
+build a set, what smock checks in it and what it keeps.
 
 ### Descriptor sets
 
@@ -5832,9 +5833,13 @@ stubs:
   is rendered. One that is not a message of the type gets INTERNAL, and
   the call's Journal entry says why in `templateError`.
 - HTTP requests never match a gRPC Stub, and a gRPC Stub is never their
-  [Near miss](#when-no-stub-matches). So an HTTP request such as
-  `POST /helloworld.Greeter/SayHello` over HTTP/1.1 goes to the Mock's
-  HTTP Stubs, then gets its `noMatch` answer.
+  [Near miss](#when-no-stub-matches). An HTTP request is every request
+  but a gRPC call, an HTTP/2 request whose `content-type` is
+  `application/grpc`, alone or followed by `+` or `;`
+  ([Ports and detection](grpc.md#ports-and-detection)). So
+  `POST /helloworld.Greeter/SayHello` over HTTP/1.1, or over HTTP/2 with
+  `content-type: application/grpc-web`, goes to the Mock's HTTP Stubs,
+  then gets its `noMatch` answer.
 - A gRPC Stub and an HTTP Stub never [shadow](#a-stub-that-can-never-match)
   each other.
 - gRPC calls match gRPC Stubs only. A call sees the Stub as a `POST` to

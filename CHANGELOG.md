@@ -167,8 +167,15 @@ of each GitHub release include its section
   `map_entry`, `packed` and `message_set_wire_format`, and unknown fields
   such as Buf's image extensions cost nothing. Each Mock holds its own
   set. A new guide, [gRPC](docs/grpc.md), says how to build a set.
-- gRPC unary calls, on the plain port over h2c. An HTTP/2 request whose
-  `content-type` is `application/grpc` is a gRPC call: smock takes its one
+- gRPC unary calls, on the plain port over h2c and on the TLS port over
+  h2; `--tls-http2 off` turns gRPC over TLS off too, and the admin port
+  never serves it. An HTTP/2 request whose `content-type` is
+  `application/grpc`, alone or followed by `+` or `;`, is a gRPC call.
+  One with no subtype, `+proto` or `;` parameters is served; one with
+  another subtype, such as `+json`, gets Trailers-Only UNIMPLEMENTED as
+  soon as its HEADERS arrive, and counts as rejected traffic. Every other
+  content type, gRPC-Web's included, and every HTTP/1.1 request go to the
+  HTTP Stubs. smock takes a call's one
   message, decodes it into JSON with the input type of the method its
   `:path` names in its Mock's set, and matches it against the Mock's gRPC
   Stubs on that method, as a `POST` with the metadata as headers and the
