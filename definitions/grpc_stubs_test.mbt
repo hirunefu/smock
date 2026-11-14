@@ -194,3 +194,76 @@ test "a gRPC Stub's json reply gets no Content-Type, and a templated one is not 
     ),
   )
 }
+
+///|
+test "a Stub on a client-, server- or bidi-streaming method is a problem at its path that points to R3" {
+  inspect(
+    check_stubs(
+      (
+        #|  - id: stream-reply
+        #|    mock: greeter
+        #|    request: { path: /helloworld.Greeter/SayHelloStreamReply }
+        #|    response: { json: { mesage: Hi } }
+        #|  - id: bidi
+        #|    mock: greeter
+        #|    request: { path: /helloworld.Greeter/SayHelloBidiStream }
+        #|    response: { json: {} }
+        #|  - id: upload
+        #|    mock: catalog
+        #|    request: { path: /catalog.Catalog/UploadItems }
+        #|    response: { json: {} }
+      ),
+    ),
+    content=(
+      #|a.yaml: /stubs/0/request/path: the method helloworld.Greeter/SayHelloStreamReply is server-streaming, and smock serves only unary methods: streaming methods are planned for R3
+      #|a.yaml: /stubs/1/request/path: the method helloworld.Greeter/SayHelloBidiStream is bidi-streaming, and smock serves only unary methods: streaming methods are planned for R3
+      #|a.yaml: /stubs/2/request/path: the method catalog.Catalog/UploadItems is client-streaming, and smock serves only unary methods: streaming methods are planned for R3
+    ),
+  )
+}
+
+///|
+test "a method whose input or output type has a field other than a singular string, bool or int32, or comes from a file that is not proto3, or is nested, is not served yet, each side on its own" {
+  inspect(
+    check_stubs(
+      (
+        #|  - id: get-item
+        #|    mock: catalog
+        #|    request: { path: /catalog.Catalog/GetItem }
+        #|    response: { json: { price: 1, tags: [], sku: x } }
+        #|  - id: find-items
+        #|    mock: catalog
+        #|    request: { path: /catalog.Catalog/FindItems }
+        #|    response: { json: { count: 1 } }
+        #|  - id: get-shelf
+        #|    mock: catalog
+        #|    request: { path: /catalog.Catalog/GetShelf }
+        #|    response: { json: {} }
+        #|  - id: get-legacy-item
+        #|    mock: catalog
+        #|    request: { path: /catalog.Catalog/GetLegacyItem }
+        #|    response: { json: {} }
+        #|  - id: get-edition-item
+        #|    mock: catalog
+        #|    request: { path: /catalog.Catalog/GetEditionItem }
+        #|    response: { json: {} }
+      ),
+    ),
+    content=(
+      #|a.yaml: /stubs/0/request/path: the output type catalog.Item is not served yet: its field price has the type int64, and gRPC Stubs serve only singular string, bool and int32 fields so far
+      #|a.yaml: /stubs/0/request/path: the output type catalog.Item is not served yet: its field tags is repeated, and gRPC Stubs serve only singular string, bool and int32 fields so far
+      #|a.yaml: /stubs/0/request/path: the output type catalog.Item is not served yet: its field kind has the type catalog.Kind, and gRPC Stubs serve only singular string, bool and int32 fields so far
+      #|a.yaml: /stubs/0/request/path: the output type catalog.Item is not served yet: its field stock has the type catalog.CountReply, and gRPC Stubs serve only singular string, bool and int32 fields so far
+      #|a.yaml: /stubs/0/request/path: the output type catalog.Item is not served yet: its field picture has the type bytes, and gRPC Stubs serve only singular string, bool and int32 fields so far
+      #|a.yaml: /stubs/0/response/json/sku: is not a field of catalog.Item
+      #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field price has the type int64, and gRPC Stubs serve only singular string, bool and int32 fields so far
+      #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field tags is repeated, and gRPC Stubs serve only singular string, bool and int32 fields so far
+      #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field kind has the type catalog.Kind, and gRPC Stubs serve only singular string, bool and int32 fields so far
+      #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field stock has the type catalog.CountReply, and gRPC Stubs serve only singular string, bool and int32 fields so far
+      #|a.yaml: /stubs/1/request/path: the input type catalog.Item is not served yet: its field picture has the type bytes, and gRPC Stubs serve only singular string, bool and int32 fields so far
+      #|a.yaml: /stubs/2/request/path: the input type catalog.Shelf.Request is not served yet: it is not a top-level message of the Descriptor set, and gRPC Stubs serve only those so far
+      #|a.yaml: /stubs/3/request/path: the input type legacy.LegacyRequest is not served yet: legacy.proto, which defines it, is a proto2 file, and gRPC Stubs serve only types of proto3 files so far
+      #|a.yaml: /stubs/4/request/path: the input type edition.EditionRequest is not served yet: edition.proto, which defines it, is an editions file, and gRPC Stubs serve only types of proto3 files so far
+    ),
+  )
+}

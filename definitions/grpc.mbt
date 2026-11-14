@@ -164,11 +164,7 @@ fn find_message(
   set : @protobuf.DescriptorSet,
   type_name : String,
 ) -> FoundMessage? {
-  let name = if type_name.has_prefix(".") {
-    type_name[1:].to_owned()
-  } else {
-    type_name
-  }
+  let name = without_dot(type_name)
   for file in set.files {
     for message in file.messages {
       if full_name(file, message.name) == name {
@@ -181,15 +177,33 @@ fn find_message(
 
 ///|
 /// Checks the gRPC Stub `stub`, at `pointer`, against `named`, the method
-/// its exact path names: each static `json` reply against the method's
-/// output type.
+/// its exact path names. The method must be unary. Its input and output
+/// types must be served, each on its own, as `File::check_served` says.
+/// Each static `json` reply is checked against the output type.
 fn File::check_grpc_stub(
   self : File,
   pointer : String,
   stub : Map[String, Json],
   named : NamedMethod,
 ) -> Unit {
-  guard find_message(named.set, named.rpc.output_type) is Some(output) else {
+  let rpc = named.rpc
+  let path = child_pointer(child_pointer(pointer, "request"), "path")
+  let streaming = match (rpc.client_streaming, rpc.server_streaming) {
+    (false, false) => None
+    (true, false) => Some("client-streaming")
+    (false, true) => Some("server-streaming")
+    (true, true) => Some("bidi-streaming")
+  }
+  if streaming is Some(streaming) {
+    self.error(
+      path,
+      "the method \{named.service}/\{rpc.name} is \{streaming}, and smock serves only unary methods: streaming methods are planned for R3",
+    )
+    return
+  }
+  let _ = self.check_served(path, named.set, "input", rpc.input_type)
+  guard self.check_served(path, named.set, "output", rpc.output_type)
+    is Some(output) else {
     return
   }
   if stub.get("response") is Some(Object(response)) {
@@ -295,5 +309,64 @@ fn article(word : String) -> String {
   match word.get_char(0) {
     Some('a' | 'e' | 'i' | 'o' | 'u') => "an"
     _ => "a"
+  }
+}
+
+///|
+/// Finds the message type `type_name` of `set`, the input or output type
+/// of a gRPC Stub's method, as `side` says, and reports at `pointer`, the
+/// Stub's path, what gRPC Stubs do not serve of it yet: a type that is not
+/// a top-level message, a type of a file that is not proto3, and each field
+/// that is not a singular string, bool or int32. Returns the type, unless
+/// it is not found.
+fn File::check_served(
+  self : File,
+  pointer : String,
+  set : @protobuf.DescriptorSet,
+  side : String,
+  type_name : String,
+) -> FoundMessage? {
+  guard find_message(set, type_name) is Some(found) else {
+    self.error(
+      pointer,
+      "the \{side} type \{without_dot(type_name)} is not served yet: it is not a top-level message of the Descriptor set, and gRPC Stubs serve only those so far",
+    )
+    return None
+  }
+  let not_served = "the \{side} type \{found.name} is not served yet"
+  let syntax = match found.file.syntax {
+    Proto3 => None
+    Proto2 => Some("a proto2 file")
+    Editions => Some("an editions file")
+  }
+  if syntax is Some(syntax) {
+    self.error(
+      pointer,
+      "\{not_served}: \{found.file.name}, which defines it, is \{syntax}, and gRPC Stubs serve only types of proto3 files so far",
+    )
+  }
+  for field in found.message.fields {
+    let problem = match (field.label, field.type_) {
+      (Repeated, _) => "is repeated"
+      (_, Some(String | Bool | Int32)) => continue
+      (_, Some(type_)) if field.type_name == "" => "has the type \{type_}"
+      (_, _) => "has the type \{without_dot(field.type_name)}"
+    }
+    self.error(
+      pointer,
+      "\{not_served}: its field \{field.name} \{problem}, and gRPC Stubs serve only singular string, bool and int32 fields so far",
+    )
+  }
+  Some(found)
+}
+
+///|
+/// A full name as a Descriptor set writes it, such as `.helloworld.Hello`,
+/// without its leading dot.
+fn without_dot(name : String) -> String {
+  if name.has_prefix(".") {
+    name[1:].to_owned()
+  } else {
+    name
   }
 }
