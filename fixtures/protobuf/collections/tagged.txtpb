@@ -1,0 +1,7 @@
+# The ticket's example. protoc writes the tags, then the map entries in key
+# order.
+tags: "a"
+tags: "b"
+counts { key: 10 value: 1 }
+counts { key: 1 value: 3 }
+counts { key: 2 value: 5 }

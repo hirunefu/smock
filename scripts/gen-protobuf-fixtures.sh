@@ -201,8 +201,30 @@ hex_test scalars/order.binpb order "The order of the ticket's example, as protoc
 hex_test scalars/every-max.binpb every_max "An Every with each scalar field at its largest value, as protoc encodes it: fixtures/protobuf/scalars/every-max.binpb, in hex." protobuf
 hex_test scalars/every-min.binpb every_min "An Every with each signed scalar field at its smallest value, as protoc encodes it: fixtures/protobuf/scalars/every-min.binpb, in hex." protobuf
 
-# A method whose input type has a field of a well-known type.
+# A method whose input type has fields of a well-known type.
 descriptor_set stamped stamped.binpb stamped.proto
+
+# Request messages with repeated fields, maps, a oneof and merged messages,
+# and what a client may send in place of them.
+descriptor_set collections collections.binpb collections.proto
+message collections collections.proto collections.Tagged tagged
+message collections collections.proto collections.TaggedOnTheWire tagged-counts
+message collections collections.proto collections.TaggedOnTheWire tagged-tags
+message collections collections.proto collections.Lists lists
+message collections collections.proto collections.ListsOnTheWire lists-on-the-wire
+message collections collections.proto collections.Lists lists-more
+message collections collections.proto collections.MapsOnTheWire maps
+message collections collections.proto collections.MapsOnTheWire maps-gaps
+message collections collections.proto collections.Choice choice-word
+message collections collections.proto collections.Choice choice-number
+message collections collections.proto collections.Choice choice-item
+message collections collections.proto collections.ChoiceOnTheWire choice-every
+message collections collections.proto collections.Choice box-first
+message collections collections.proto collections.Choice box-second
+hex_test collections/collections.binpb collections_set "The Descriptor set of fixtures/protobuf/collections/collections.proto, fixtures/protobuf/collections/collections.binpb, in hex." protobuf
+hex_test collections/tagged.binpb tagged "The Tagged of the ticket's example, as protoc encodes it: fixtures/protobuf/collections/tagged.binpb, in hex." protobuf
+hex_test collections/lists.binpb lists "A Lists with its scalars packed, as protoc encodes it: fixtures/protobuf/collections/lists.binpb, in hex." protobuf
+hex_test collections/lists-on-the-wire.binpb lists_on_the_wire "The values of lists.binpb with its scalars unpacked, as protoc encodes them: fixtures/protobuf/collections/lists-on-the-wire.binpb, in hex." protobuf
 
 # The end of the list of fixtures. With --check: every file the script
 # wrote, compared with the committed one.

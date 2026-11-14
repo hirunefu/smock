@@ -1,0 +1,3 @@
+# More numbers, packed in one record, for the tests to send after another
+# message's numbers.
+numbers: [4, 5]

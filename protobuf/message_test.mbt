@@ -450,20 +450,8 @@ test "a message that does not parse is an error at the octet where it breaks" {
 }
 
 ///|
-test "a type with a repeated field is not decoded yet" {
-  inspect(
-    decoded(catalog_set, "catalog.Item", b""),
-    content="error: octet 0: the field tags is repeated, which smock does not decode yet",
-  )
-}
-
-///|
-test "a type with a oneof is not decoded yet, and one with a oneof or a proto3 optional field is not encoded yet" {
+test "a type with a oneof or a proto3 optional field is not encoded yet" {
   let pick = message_type(oneofs_set, "Pick")
-  inspect(
-    decoded(oneofs_set, "oneofs.Pick", b""),
-    content="error: octet 0: the field word is in a oneof, which smock does not decode yet",
-  )
   inspect(
     encoded(pick, {}),
     content="error: the field word is in a oneof or optional, which smock does not encode yet",
