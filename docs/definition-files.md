@@ -5923,8 +5923,9 @@ stubs:
   ```
 
 - An error goes out as Trailers-Only, one HEADERS block that ends the
-  stream, as gRPC servers send it. A reply with `OK` goes out as before,
-  with its message, if it has one, in its trailers.
+  stream, as gRPC servers send it. A reply with `OK` goes out as HEADERS,
+  the reply message in one DATA frame, then the trailers, which carry the
+  status message, if it has one.
 - An HTTP Stub's response cannot give `grpc`: it is a problem at `grpc`,
   which says that the Stub's exact path names no method of its Mock's set.
 - The Journal records the status a call got as its `grpcStatus`, while its
