@@ -2,8 +2,8 @@
 // into smock's decoded form, the JSON text the engine, the Journal and
 // templates see, and encoded from JSON as ProtoJSON reads it
 // (https://protobuf.dev/programming-guides/json/). For now the decoder
-// serves singular fields of every scalar type, enums and nested messages,
-// and the encoder types whose fields are singular string, bool and int32
+// serves every field but groups and those of the well-known types, and
+// the encoder types whose fields are singular string, bool and int32
 // fields without presence.
 
 ///|
