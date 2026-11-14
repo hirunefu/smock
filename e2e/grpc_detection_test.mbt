@@ -515,3 +515,30 @@ async test "with --tls-http2 off, the TLS port serves no gRPC: a client offering
     )
   })
 }
+
+///|
+async test "the method is checked before the subtype: a call with +json and a method other than POST gets the method's answer, as one with no subtype does" {
+  with_detection(smock => {
+    let client = smock.h2c()
+    defer client.close()
+    let hello = framed(@fs.read_file(hello_request_path).binary())
+    let out = []
+    for content_type in ["application/grpc+json", "application/grpc"] {
+      let stream = client.send(
+        "PUT",
+        "/helloworld.Greeter/SayHello",
+        authority="localhost",
+        headers=[("content-type", content_type), ("te", "trailers")],
+        body=hello,
+      )
+      out.push("PUT \{content_type}: \{client.reply(stream).outline()}")
+    }
+    inspect(
+      out.join("\n"),
+      content=(
+        #|PUT application/grpc+json: :status: 200, grpc-status: 13, grpc-message: the method must be POST, 0 DATA (end)
+        #|PUT application/grpc: :status: 200, grpc-status: 13, grpc-message: the method must be POST, 0 DATA (end)
+      ),
+    )
+  })
+}
