@@ -120,18 +120,30 @@ fn File::grpc_method_of(self : File, stub : Map[String, Json]) -> NamedMethod? {
 }
 
 ///|
+/// The types of a gRPC Stub's method that gRPC Stubs serve, as
+/// `File::check_grpc_stub` finds them.
+priv struct ServedTypes {
+  /// The input type, when it is served: the Stub's `json` condition is
+  /// checked against it.
+  input : @protobuf.MessageDescriptor?
+  /// The output type, when it is served: the Stub's static replies are
+  /// encoded with it.
+  output : @protobuf.MessageDescriptor?
+}
+
+///|
 /// Checks the gRPC Stub `stub`, at `pointer`, against `named`, the method
 /// its exact path names. Its fields must be served, as
 /// `File::refuse_unserved` says. The method must be unary. Its input type
 /// must be served, as `File::check_input` says, and its output type, as
-/// `File::check_output` says. Returns the output type when it is served,
-/// so that the Stub's static replies are encoded with it.
+/// `File::check_output` says. Returns each of them that is served, and
+/// neither for a streaming method.
 fn File::check_grpc_stub(
   self : File,
   pointer : String,
   stub : Map[String, Json],
   named : NamedMethod,
-) -> @protobuf.MessageDescriptor? {
+) -> ServedTypes {
   self.refuse_unserved(pointer, stub)
   let rpc = named.rpc
   let path = child_pointer(child_pointer(pointer, "request"), "path")
@@ -146,14 +158,21 @@ fn File::check_grpc_stub(
       path,
       "the method \{named.name} is \{streaming}, and smock serves only unary methods: streaming methods are planned for R3",
     )
-    return None
+    return { input: None, output: None, }
   }
-  self.check_input(path, named.set, named.set.input_of(rpc))
+  let input = named.set.input_of(rpc)
   let output = named.set.output_of(rpc)
-  if self.check_output(path, named.set, output) {
-    Some(output)
-  } else {
-    None
+  {
+    input: if self.check_input(path, named.set, input) {
+      Some(input)
+    } else {
+      None
+    },
+    output: if self.check_output(path, named.set, output) {
+      Some(output)
+    } else {
+      None
+    },
   }
 }
 
@@ -287,14 +306,16 @@ fn syntax_name(syntax : @protobuf.Syntax) -> String? {
 /// field of a well-known type, or a map whose values have one. Every other
 /// field is served, singular or repeated, a map or in a oneof: one of any
 /// scalar type, of an enum, or of a message, which is checked in turn.
+/// Returns whether every type it reaches is served.
 fn File::check_input(
   self : File,
   pointer : String,
   set : @protobuf.DescriptorSet,
   input : @protobuf.MessageDescriptor,
-) -> Unit {
+) -> Bool {
   let not_served = "the input type \{input.full_name} is not served yet"
   let later = "and gRPC Stubs serve no well-known types so far"
+  let mut served = true
   let seen : Set[String] = Set([input.full_name])
   let pending = [input]
   while pending.pop() is Some(message) {
@@ -314,6 +335,7 @@ fn File::check_input(
         pointer,
         "\{not_served}: \{message.file_name}, which defines \{defines}, is \{syntax}, and gRPC Stubs serve only types of proto3 files so far",
       )
+      served = false
       continue
     }
     let reached_types = []
@@ -350,6 +372,7 @@ fn File::check_input(
         "has the well-known type \{name}"
       }
       self.error(pointer, "\{not_served}: \{field_name} \{problem}, \{later}")
+      served = false
     }
     // The types this one reaches are checked next, in the order of its
     // fields.
@@ -357,6 +380,7 @@ fn File::check_input(
       pending.push(reached_types[i])
     }
   }
+  served
 }
 
 ///|

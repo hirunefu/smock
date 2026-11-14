@@ -1,0 +1,4 @@
+# User 42 with a float of 16777217, which protoc rounds to the nearest
+# 32-bit float, 16777216.
+user_id: 42
+ratio: 16777217

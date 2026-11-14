@@ -1,0 +1,42 @@
+// Written for smock's tests of gRPC Stubs' conditions, which smock checks
+// against the method's input type and normalises when the files load: the
+// fields of the ticket's example, an enum with an alias, a float, bytes,
+// a map with integer keys, a repeated enum, and a nested message with a map
+// whose keys are strings.
+syntax = "proto3";
+
+package users;
+
+service Users {
+  rpc Find (Query) returns (Found);
+}
+
+message Query {
+  int64 user_id = 1;
+  Status status = 2;
+  float ratio = 3;
+  bytes token = 4;
+  map<int32, string> labels = 5;
+  repeated Status history = 6;
+  Profile profile = 7;
+}
+
+// ACTIVE has the alias ENABLED, so a condition with either name, or with
+// the number 1, means ACTIVE.
+enum Status {
+  option allow_alias = true;
+  STATUS_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  ENABLED = 1;
+  SUSPENDED = 2;
+}
+
+message Profile {
+  string display_name = 1;
+  // Its keys are data, which a condition never rewrites.
+  map<string, int32> scores = 2;
+}
+
+message Found {
+  string id = 1;
+}

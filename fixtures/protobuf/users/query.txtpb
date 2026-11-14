@@ -1,0 +1,13 @@
+# The ticket's example, user 42 and the status ACTIVE, with a float of 0.1,
+# bytes whose base64 has padding and differs from URL-safe base64, a
+# label, two statuses and a profile with a score under a snake_case key.
+user_id: 42
+status: ACTIVE
+ratio: 0.1
+token: "\373\377"
+labels { key: 7 value: "seven" }
+history: [ACTIVE, SUSPENDED]
+profile {
+  display_name: "Tom"
+  scores { key: "math_score" value: 90 }
+}
