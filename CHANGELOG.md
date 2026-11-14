@@ -158,6 +158,15 @@ of each GitHub release include its section
   Pointer of `descriptorSet`, and a reload swaps the set in with the files.
   The path has the rules of `bodyFile`. The new `smock/protobuf` module
   reads the set. See [Descriptor sets](docs/definition-files.md#descriptor-sets).
+- smock reads any self-contained Descriptor set that `buf build` or
+  `protoc --include_imports` writes, proto2, proto3 and editions files
+  included, and keeps the whole descriptor model, with the JSON names of
+  fields. It refuses a set that lacks a file its files import, holds a
+  file twice, defines a name twice, or names a type it does not define,
+  each a problem at `descriptorSet`. Source info, options other than
+  `map_entry`, `packed` and `message_set_wire_format`, and unknown fields
+  such as Buf's image extensions cost nothing. Each Mock holds its own
+  set. A new guide, [gRPC](docs/grpc.md), says how to build a set.
 
 ### Changed
 
