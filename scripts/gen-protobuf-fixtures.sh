@@ -126,7 +126,8 @@ hex_test() {
 # The fixtures. A new one goes at the end of this list, and a copy or a
 # hex_test after the fixture it takes.
 
-# gRPC's helloworld.proto, and the same rebuilt with one more field.
+# gRPC's helloworld.proto, and the same rebuilt with one more field in each
+# message.
 descriptor_set helloworld greeter.binpb helloworld.proto
 descriptor_set helloworld-v2 greeter.binpb helloworld.proto
 copy helloworld/greeter.binpb schema/v1/fixtures/body-files/greeter.binpb
@@ -180,6 +181,10 @@ hex_test helloworld/hello-reply.binpb hello_reply "HelloReply { message: \"Hello
 hex_test catalog/count-request.binpb count_request "A CountRequest with a shelf that JSON escapes, and in_stock true, as protoc encodes it: fixtures/protobuf/catalog/count-request.binpb, in hex." protobuf
 hex_test catalog/count-reply.binpb count_reply "CountReply { count: -5, exact: true, shelf: \"A1\" }, as protoc encodes it: fixtures/protobuf/catalog/count-reply.binpb, in hex." protobuf
 hex_test oneofs/oneofs.binpb oneofs_set "The Descriptor set of fixtures/protobuf/oneofs/oneofs.proto, fixtures/protobuf/oneofs/oneofs.binpb, in hex." protobuf
+
+# A request of version 2 of helloworld.proto, which carries the field
+# version that version 1 lacks.
+message helloworld-v2 helloworld.proto helloworld.HelloRequest hello-request
 
 # The end of the list of fixtures. With --check: every file the script
 # wrote, compared with the committed one.
