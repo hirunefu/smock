@@ -76,8 +76,8 @@ curl -H "Authorization: Bearer change-me" -d '{}' localhost:9090/v1/journal/quer
 ```
 
 Its entry shows `POST`, the target `/helloworld.Greeter/SayHello`, the
-version `HTTP/2`, grpcurl's metadata as headers, and the body
-`{"name":"Tom"}`. With `{"name": "Ann"}`, which the Stub's condition does
+version `HTTP/2`, grpcurl's metadata as headers, the body
+`{"name":"Tom"}`, the status 200 and the gRPC status `OK`. With `{"name": "Ann"}`, which the Stub's condition does
 not meet, grpcurl reports `Code: Internal` and `Message: no Stub matched`
 ([Calls smock does not serve yet](#calls-smock-does-not-serve-yet)).
 
@@ -151,8 +151,29 @@ The Journal records each call that reaches the Stubs, matched or not. Its
 entry shows the method `POST`, the call's `:path` as its target, the
 version `HTTP/2`, the metadata as headers, and the request message as JSON
 as its body. The body's `size` counts the octets the call's DATA frames
-brought, and `truncated` says whether the JSON was cut at
+brought, as received, and `truncated` says whether the JSON was cut at
 `--journal-body-limit`.
+
+The entry's `grpcStatus` is the name of the gRPC status the call got:
+`OK` for a reply, or the status smock answered with instead, such as
+`INTERNAL`. Its `status` stays the HTTP status, 200 for a reply, as gRPC
+sends it: a client learns of an error from `grpc-status`, not from
+`:status`. The entry of an HTTP request has no `grpcStatus`.
+
+Journal queries, verification and the unmatched list take calls as they
+take HTTP requests. A filter gives the Mock, the method `POST`, the path
+that names the gRPC method, and metadata as headers:
+
+```json
+{
+  "filter": {
+    "mock": "greeter",
+    "method": "POST",
+    "path": "/helloworld.Greeter/SayHello",
+    "headers": { "x-tenant": "acme" }
+  }
+}
+```
 
 The request metrics count a call that a Stub answered under its Mock and
 Stub, as they count an HTTP request, and a call that no Stub matched as
@@ -179,10 +200,10 @@ request metrics count them as rejected requests, with `mock=""` and
 | Its method streams | `streaming methods are not served yet` |
 | Its message does not decode, or its type has a field that smock does not decode yet | `the request message cannot be decoded` |
 
-These calls reach the Stubs. The Journal records each with the HTTP
-status planned for it: the Mock's `noMatch` status for an unmatched call,
-500 or 507 for smock's own failures, and 200 for a rendered reply that
-does not fit the output type:
+These calls reach the Stubs. The Journal records each with the
+`grpcStatus` `INTERNAL`, and with the HTTP status planned for it: the
+Mock's `noMatch` status for an unmatched call, 500 or 507 for smock's own
+failures, and 200 for a rendered reply that does not fit the output type:
 
 | The call | `grpc-message` |
 |---|---|

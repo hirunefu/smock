@@ -181,6 +181,12 @@ of each GitHub release include its section
   Trailers-Only INTERNAL and a fixed message. The new `smock/grpc` module
   frames messages and names gRPC's status codes, and `smock/protobuf`
   decodes and encodes messages. See [gRPC](docs/grpc.md).
+- `grpcStatus` in the Journal. A gRPC call's entry records the name of the
+  gRPC status the call got, such as `OK`, beside its HTTP status, which is
+  200 for a reply. An HTTP request's entry has none. Queries,
+  verification and the unmatched list take calls by their Mock, `POST`,
+  the method's path and their metadata as headers. See
+  [The Journal and the metrics](docs/grpc.md#the-journal-and-the-metrics).
 
 ### Changed
 
@@ -252,6 +258,12 @@ of each GitHub release include its section
   HTTP Stubs, so `smock check` still reports an HTTP Stub's response
   without `status`. The format version stays 1. See
   [gRPC Stubs](docs/definition-files.md#grpc-stubs).
+- The Admin API document's `JournalEntry` gains `grpcStatus`, one of
+  gRPC's seventeen status names, which a gRPC call's entry has and an HTTP
+  request's does not. Its `Body` says what a gRPC call's recorded request
+  holds: in `data` the decoded JSON, in `size` the octets of the DATA
+  frames received, and in `truncated` whether the JSON was cut at
+  `--journal-body-limit`.
 
 ### Fixed
 
