@@ -73,7 +73,9 @@ pub fn DescriptorSet::encode_json(
     )
   }
   let writer = Writer()
-  self.write_message(writer, message, members, 1)
+  // The top message is at depth 0, so 100 levels may nest in it, as the
+  // decoder allows.
+  self.write_message(writer, message, members, 0)
   writer.to_bytes()
 }
 

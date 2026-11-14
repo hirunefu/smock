@@ -481,7 +481,7 @@ test "a value of the wrong type or out of its type's range is an error" {
 }
 
 ///|
-test "messages nest 100 deep at most" {
+test "messages may nest 100 deep in the top one, and no deeper" {
   /// A chain of `count` messages, each in the one before, from an
   /// Everything, whose `inner` holds a Nested, whose `recursive` holds an
   /// Everything.
@@ -497,8 +497,8 @@ test "messages nest 100 deep at most" {
     json
   }
 
-  inspect(reply("Everything", chain(100)).has_prefix("error"), content="false")
-  let error = reply("Everything", chain(101))
+  inspect(reply("Everything", chain(101)).has_prefix("error"), content="false")
+  let error = reply("Everything", chain(102))
   inspect(error.has_suffix(": nests messages deeper than 100"), content="true")
 }
 
