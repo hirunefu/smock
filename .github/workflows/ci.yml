@@ -82,6 +82,26 @@ jobs:
       - run: scripts/check-ci-artifacts.sh
       - run: python3 bench/gen_definitions.py --check
 
+  # The Descriptor sets and protobuf messages that tests read are committed
+  # beside their .proto sources (fixtures/protobuf/README.md). This rebuilds
+  # every file that scripts/gen-protobuf-fixtures.sh writes, with the pinned
+  # protoc, and fails on any difference, naming each file that differs. A
+  # fixture added to the script is checked with no change here.
+  protobuf-fixtures:
+    name: Check the protobuf fixtures against their sources
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install protoc
+        run: scripts/install-protoc.sh "$RUNNER_TEMP/protoc"
+
+      - name: Rebuild the fixtures and compare them with the committed ones
+        run: scripts/gen-protobuf-fixtures.sh --check
+
+      - name: Test the check
+        run: scripts/test-protobuf-fixtures.sh
+
   # The chart on a cluster is tested in build-test.yml, with the image built
   # there.
   helm-chart:

@@ -1102,8 +1102,10 @@ that.
 
 `fixtures/protobuf/` holds the Descriptor sets and protobuf messages that
 tests read, beside the `.proto` files they are built from.
-`scripts/gen-protobuf-fixtures.sh` rebuilds them with protoc; the README
-there says how to add one.
+`scripts/gen-protobuf-fixtures.sh` rebuilds them with the pinned protoc,
+which `scripts/install-protoc.sh` installs, and CI checks on every push
+that the committed ones are what their sources build; the README there
+says how to add one.
 
 Packages of `smock/smock`:
 
@@ -1303,6 +1305,9 @@ scripts/test-sbom.sh                 # the SBOM scripts, and the check that the 
 scripts/test-h2spec-verdict.sh       # how a run of h2spec is judged against its list of cases
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
 scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture, and the SDK job takes it (needs yq and jq)
+scripts/install-protoc.sh            # the pinned protoc, into ~/.local/bin, with its well-known types
+PROTOC=~/.local/bin/protoc scripts/gen-protobuf-fixtures.sh --check   # the protobuf fixtures are what their sources build
+PROTOC=~/.local/bin/protoc scripts/test-protobuf-fixtures.sh          # that check, on a copy of the working tree
 scripts/check-llm-sdks.sh dist/smock # the official LLM SDKs, pinned by hash, read smock's LLM responses (needs python3 and PyPI)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
 scripts/test-helm-chart-on-kind.sh smock:dev   # the chart on a kind cluster (needs kind, kubectl and helm)
