@@ -224,24 +224,38 @@ test "find a method, its input type and a field" {
 
 ## Messages
 
-`@protobuf.decode_json(message, input)` decodes a message of the type
-`message`, a `MessageDescriptor` of a set, into smock's decoded form:
+`@protobuf.decode_json(set, message, input)` decodes a message of the
+type `message`, a `MessageDescriptor` of `set`, into smock's decoded form:
 compact JSON text in UTF-8, with one member per field, in field-number
-order, under the field's JSON name, as `json_name` gives it. A field the
-message leaves out is printed at its default. It
-reads the message as protobuf's parsers read it: the last value of a field
-wins, and unknown fields are skipped. It raises `DecodeError` when the
-input is not protobuf, or a string is not UTF-8.
+order, under the field's JSON name, as `json_name` gives it.
+
+- 64-bit integers are JSON numbers, exact at any size, and so are 32-bit
+  integers. A double is printed as `Double::to_string` prints it, and a
+  float in the shortest form that reads back as the same 32-bit float, so
+  0.1f prints `0.1`. NaN and the infinities are the strings `"NaN"`,
+  `"Infinity"` and `"-Infinity"`.
+- bytes are standard base64 with padding. An enum value is printed by its
+  name, the first one of an alias, or by its number when the enum does not
+  define it. A nested message is an object.
+- A field without presence that the message leaves out is printed at its
+  default. A proto3 `optional` field and a message field are printed only
+  when the message holds them.
+
+It reads the message as protobuf's parsers read it: the last value of a
+scalar field wins, the values of a message field are merged, and unknown
+fields are skipped. It raises `DecodeError` when the input is not
+protobuf, a string is not UTF-8, or messages nest deeper than 100. It
+does not decode repeated fields, maps, oneofs, groups and the well-known
+types yet, and raises its error for a message that has one.
 
 `@protobuf.encode_json(message, json)` encodes JSON, as ProtoJSON writes a
 message, the way protoc encodes it: fields in field-number order, each left
 out at its default. A key may be the field's proto name or its JSON name.
 It raises `EncodeError`, which names the JSON Pointer of the value at
-fault, for JSON that is not a message of the type.
-
-Both serve types whose fields are singular `string`, `bool` and `int32`
-fields outside any oneof for now, and raise their error for a type with
-any other field, a proto3 `optional` field included.
+fault, for JSON that is not a message of the type. It serves types whose
+fields are singular `string`, `bool` and `int32` fields outside any oneof
+for now, and raises its error for a type with any other field, a proto3
+`optional` field included.
 
 ```mbt check
 ///|
@@ -251,7 +265,7 @@ test "decode a message, and encode one" {
     b"\x0a\x48\x0a\x07a.proto\x12\x04demo\x22\x2f\x0a\x0cCountRequest\x12\x0d\x0a\x05shelf\x18\x01\x20\x01\x28\x09\x12\x10\x0a\x08in_stock\x18\x02\x20\x01\x28\x08\x62\x06proto3"[:],
   )
   let count = set.files[0].messages[0]
-  let json = @protobuf.decode_json(count, b"\x0a\x02A1\x10\x01"[:])
+  let json = @protobuf.decode_json(set, count, b"\x0a\x02A1\x10\x01"[:])
   inspect(@utf8.decode(json), content="{\"shelf\":\"A1\",\"inStock\":true}")
   inspect(
     @protobuf.encode_json(count, { "in_stock": true, "shelf": "A1" }) ==

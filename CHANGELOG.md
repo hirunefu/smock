@@ -187,11 +187,11 @@ of each GitHub release include its section
   Mock, and the Default Mock answers with its own set. A call is looked up
   again when its request ends, so a reload never makes a call decoded with
   one version of a set and answered with another. For now smock serves
-  messages of singular `string`, `bool` and `int32` fields, and answers
+  replies of singular `string`, `bool` and `int32` fields, and answers
   the calls it does not serve yet with Trailers-Only INTERNAL and a fixed
-  message. The new
-  `smock/grpc` module frames messages and names gRPC's status codes, and
-  `smock/protobuf` decodes and encodes messages. See [gRPC](docs/grpc.md).
+  message. The new `smock/grpc` module frames messages and names gRPC's
+  status codes, and `smock/protobuf` decodes and encodes messages. See
+  [gRPC](docs/grpc.md).
 - `grpcStatus` in the Journal. A gRPC call's entry records the name of the
   gRPC status the call got, such as `OK` or `UNIMPLEMENTED`, beside its
   HTTP status, which is 200 for a reply and for an unmatched call. An HTTP
@@ -199,6 +199,17 @@ of each GitHub release include its section
   verification and the unmatched list take calls by their Mock, `POST`,
   the method's path and their metadata as headers. See
   [The Journal and the metrics](docs/grpc.md#the-journal-and-the-metrics).
+- Request messages with singular fields of every protobuf scalar type,
+  enums and nested messages, decoded into one JSON form that the Journal,
+  conditions, templates and the Near miss see: fields in field-number
+  order under their JSON names, 64-bit integers as exact numbers, floats
+  in their shortest form, NaN and the infinities as strings, bytes in
+  base64 and enums by name. Fields without presence print at their
+  defaults, and proto3 `optional` and message fields only when set, so
+  `$exists` tells them apart. A message that does not parse gets INTERNAL
+  and counts as rejected traffic. Repeated fields, maps, oneofs and the
+  well-known types are not served yet. See
+  [The request message as JSON](docs/grpc.md#the-request-message-as-json).
 
 ### Changed
 

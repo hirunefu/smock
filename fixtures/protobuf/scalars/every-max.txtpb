@@ -1,0 +1,17 @@
+# Each scalar field at its largest value, and the enum through its alias.
+a_double: 1.7976931348623157e308
+a_float: 3.4028235e38
+an_int64: 9223372036854775807
+a_uint64: 18446744073709551615
+an_int32: 2147483647
+a_fixed64: 18446744073709551615
+a_fixed32: 4294967295
+a_bool: true
+a_string: "Kyōto \"quoted\"\n"
+a_bytes: "\000\001\373\377"
+a_uint32: 4294967295
+an_sfixed32: 2147483647
+an_sfixed64: 9223372036854775807
+an_sint32: 2147483647
+an_sint64: 9223372036854775807
+a_status: ENABLED
