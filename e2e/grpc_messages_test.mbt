@@ -59,7 +59,7 @@ async fn Smock::bodies(self : Smock) -> String {
 }
 
 ///|
-async test "the ticket's example: an Order with the largest int64, a float of 9.99, an enum, an empty string and a nested message is journaled in smock's decoded form, and meets a Stub whose condition is written so" {
+async test "the ticket's example: an Order with the largest int64, a float of 9.99, an enum, an empty string and a nested message is journaled in smock's decoded form, meets a Stub whose condition is written so, and is what templates and the Near miss read" {
   let yaml =
     #|mocks:
     #|  - name: orders
@@ -72,7 +72,7 @@ async test "the ticket's example: an Order with the largest int64, a float of 9.
     #|  - id: active-at-9.99
     #|    mock: orders
     #|    request: { path: /scalars.Orders/Place, body: { json: { price: 9.99, status: ACTIVE } } }
-    #|    response: { json: { id: placed } }
+    #|    response: { template: true, json: { id: "order ${body.id}" } }
   with_scalars_set(yaml, dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
       let client = smock.h2c()
@@ -81,11 +81,42 @@ async test "the ticket's example: an Order with the largest int64, a float of 9.
         "/scalars.Orders/Place",
         body=scalars_message("order"),
       )
-      debug_inspect(reply.trailers, content="Some([(\"grpc-status\", \"0\")])")
+      // Placed { id: "order 9223372036854775807" }: field 1, 25 octets,
+      // framed.
+      inspect(
+        reply.render(),
+        content=(
+          #|HEADERS
+          #|  :status: 200
+          #|  content-type: application/grpc
+          #|  smock-mock: orders; via=default
+          #|  date: <now>
+          #|DATA 000000001b0a196f726465722039323233333732303336383534373735383037
+          #|TRAILERS
+          #|  grpc-status: 0
+          #|(end)
+        ),
+      )
       inspect(
         smock.last_entry(),
         content=(
           #|{"seq":1,"receivedAt":"<time>","durationMs":"<ms>","session":null,"host":"localhost","mock":"orders","viaDefault":true,"digest":"<digest>","request":{"method":"POST","target":"/scalars.Orders/Place","version":"HTTP/2","headers":[{"name":"content-type","value":"application/grpc"},{"name":"te","value":"trailers"}],"body":{"encoding":"utf-8","data":"{\"id\":9223372036854775807,\"price\":9.99,\"status\":\"ACTIVE\",\"note\":\"\",\"address\":{\"city\":\"Kyoto\"}}","size":31,"truncated":false}},"stub":"active-at-9.99","stubSource":"file","scenario":null,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null,"status":200,"grpcStatus":"OK","fault":null,"templateError":null}
+        ),
+      )
+      // An Order whose status is the enum's value 0 meets neither Stub.
+      let _ = client.call(
+        "/scalars.Orders/Place",
+        body=scalars_message("order-twice"),
+      )
+      let (_, journal) = smock.journal()
+      guard journal
+        is Object({ "entries": [_, Object({ "nearMiss": near_miss, .. })], .. }) else {
+        fail("not two entries: \{journal.stringify()}")
+      }
+      inspect(
+        near_miss.stringify(),
+        content=(
+          #|{"stub":"pending","stubSource":"file","failed":[{"condition":"body","expected":{"json":{"status":"PENDING"}},"actual":["{\"id\":42,\"price\":0,\"status\":\"STATUS_UNSPECIFIED\",\"note\":\"\"}"]}]}
         ),
       )
     })
