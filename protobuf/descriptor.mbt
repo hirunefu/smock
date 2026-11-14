@@ -289,11 +289,59 @@ pub struct MethodDescriptor {
 }
 
 ///|
+/// How many characters the full names that a set's names are joined into
+/// may take in all. A full name repeats the names of its package and of
+/// the messages it is nested in, so a small set could otherwise hold full
+/// names many times its size.
+let max_name_length : Int32 = 16 * 1024 * 1024
+
+///|
+/// What is left of `max_name_length` while a set is read.
+priv struct Names {
+  /// The characters left.
+  mut left : Int32
+}
+
+///|
+/// The problem of a set whose full names take more than `max_name_length`.
+let too_many_names : String = "the full names of the set take more than 16 MiB"
+
+///|
+/// Takes `length` characters, or raises `DecodeError` when that passes the
+/// bound, which `read_descriptor_set` reports as `too_many_names`.
+fn Names::take(self : Names, length : Int32) -> Unit raise DecodeError {
+  self.left = self.left - length
+  if self.left < 0 {
+    raise DecodeError(position=0, message=too_many_names)
+  }
+}
+
+///|
+/// `prefix` and `name` joined with a dot, counted against the bound.
+fn Names::join(
+  self : Names,
+  prefix : String,
+  name : String,
+) -> String raise DecodeError {
+  if prefix == "" {
+    return name
+  }
+  self.take(prefix.length() + 1 + name.length())
+  "\{prefix}.\{name}"
+}
+
+///|
+/// How deep messages may nest, as protobuf's C++ and Java parsers bound
+/// messages by default.
+let max_message_depth : Int32 = 100
+
+///|
 /// Reads the files of a FileDescriptorSet, each with what it indexes of
-/// its own messages and enums. Raises `DecodeError` as
-/// `read_descriptor_set` says.
+/// its own messages and enums, counting the full names it builds in
+/// `names`. Raises `DecodeError` as `read_descriptor_set` says.
 fn read_files(
   input : BytesView,
+  names : Names,
 ) -> ReadOnlyArray[FileDescriptor] raise DecodeError {
   let reader = Reader(input)
   let files = []
@@ -301,7 +349,7 @@ fn read_files(
     match reader.tag() {
       1 => {
         reader.expect(Len)
-        files.push(read_file(reader.length_delimited()))
+        files.push(read_file(reader.length_delimited(), names))
       }
       _ => reader.skip()
     }
@@ -310,23 +358,23 @@ fn read_files(
 }
 
 ///|
-/// Where a definition is: the full name of its package or message, and the
-/// syntax of its file.
+/// Where a definition is: the full name of its package or message, how
+/// deep that message is nested, and the syntax of its file.
 priv struct Scope {
   /// The full name of the package or message, or `""` for the root.
   prefix : String
+  /// How many messages the scope is nested in: 0 for a package.
+  depth : Int32
   /// The syntax of the file.
   syntax : Syntax
+  /// What is left of the bound on full names.
+  names : Names
 }
 
 ///|
 /// The full name of `name` in `scope`.
-fn Scope::full_name(self : Scope, name : String) -> String {
-  if self.prefix == "" {
-    name
-  } else {
-    "\{self.prefix}.\{name}"
-  }
+fn Scope::full_name(self : Scope, name : String) -> String raise DecodeError {
+  self.names.join(self.prefix, name)
 }
 
 ///|
@@ -334,7 +382,10 @@ fn Scope::full_name(self : Scope, name : String) -> String {
 /// services are read once the whole file is, since their full names need
 /// its package and their syntax needs its syntax, which may come after
 /// them.
-fn read_file(input : BytesView) -> FileDescriptor raise DecodeError {
+fn read_file(
+  input : BytesView,
+  names : Names,
+) -> FileDescriptor raise DecodeError {
   let reader = Reader(input)
   let mut name = ""
   let mut package_name = ""
@@ -369,7 +420,7 @@ fn read_file(input : BytesView) -> FileDescriptor raise DecodeError {
       _ => reader.skip()
     }
   }
-  let scope = { prefix: package_name, syntax, }
+  let scope = { prefix: package_name, depth: 0, syntax, names, }
   let messages = []
   for view in message_views {
     messages.push(read_message(view, scope))
@@ -400,12 +451,16 @@ fn read_file(input : BytesView) -> FileDescriptor raise DecodeError {
 
 ///|
 /// Reads a DescriptorProto in `scope`. What it holds is read once the
-/// whole message is, since full names need its name.
+/// whole message is, since full names need its name. Raises `DecodeError`
+/// when messages nest deeper than 100.
 fn read_message(
   input : BytesView,
   scope : Scope,
 ) -> MessageDescriptor raise DecodeError {
   let reader = Reader(input)
+  if scope.depth >= max_message_depth {
+    raise reader.error(0, "messages nest deeper than \{max_message_depth}")
+  }
   let mut name = ""
   let field_views = []
   let message_views = []
@@ -440,7 +495,12 @@ fn read_message(
     }
   }
   let full_name = scope.full_name(name)
-  let inner = { prefix: full_name, syntax: scope.syntax, }
+  let inner = {
+    prefix: full_name,
+    depth: scope.depth + 1,
+    syntax: scope.syntax,
+    names: scope.names,
+  }
   let fields = []
   for view in field_views {
     fields.push(read_field(view, inner))

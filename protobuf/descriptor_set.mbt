@@ -63,7 +63,15 @@ pub impl Show for DescriptorSetError with fn output(self, logger) {
 pub fn read_descriptor_set(
   input : BytesView,
 ) -> DescriptorSet raise DescriptorSetError {
-  let files = read_files(input) catch { err => raise NotDecoded(err) }
+  let names = { left: max_name_length, }
+  let files = read_files(input, names) catch {
+    err =>
+      raise if names.left < 0 {
+        Invalid([too_many_names])
+      } else {
+        NotDecoded(err)
+      }
+  }
   let set = {
     files,
     all_messages: [],
@@ -73,8 +81,10 @@ pub fn read_descriptor_set(
     methods: Map([]),
     extensions: Map([]),
   }
-  let checker = Checker::new(set)
-  checker.check()
+  let checker = Checker::new(set, names)
+  checker.check() catch {
+    _ => raise Invalid([too_many_names])
+  }
   if checker.problems.length() > 0 {
     raise Invalid(ReadOnlyArray::from_array(checker.problems))
   }
@@ -137,11 +147,14 @@ priv struct Checker {
   extensions : Array[FieldDescriptor]
   /// Every method, with its full name, to resolve.
   methods : Array[(String, MethodDescriptor)]
+  /// What is left of the bound on full names.
+  names : Names
 }
 
 ///|
-/// A checker of `set`, which has no index yet.
-fn Checker::new(set : DescriptorSet) -> Checker {
+/// A checker of `set`, which has no index yet, whose full names take
+/// what `names` has left.
+fn Checker::new(set : DescriptorSet, names : Names) -> Checker {
   {
     set,
     problems: [],
@@ -149,13 +162,14 @@ fn Checker::new(set : DescriptorSet) -> Checker {
     fields: [],
     extensions: [],
     methods: [],
+    names,
   }
 }
 
 ///|
 /// Checks the set and indexes it: files, imports and full names first,
 /// then, when they hold no problem, the types that the set names.
-fn Checker::check(self : Checker) -> Unit {
+fn Checker::check(self : Checker) -> Unit raise DecodeError {
   let seen : Map[String, Bool] = Map([])
   let files = []
   for file in self.set.files {
@@ -210,7 +224,10 @@ fn Checker::add_symbol(
 ///|
 /// Defines what `file` defines, and indexes its messages, enums,
 /// extensions and methods.
-fn Checker::define_file(self : Checker, file : FileDescriptor) -> Unit {
+fn Checker::define_file(
+  self : Checker,
+  file : FileDescriptor,
+) -> Unit raise DecodeError {
   if file.package_name != "" {
     // A package a.b defines the packages a and a.b.
     let mut end = 0
@@ -218,6 +235,7 @@ fn Checker::define_file(self : Checker, file : FileDescriptor) -> Unit {
       end = end + 1
       if end == file.package_name.length() ||
         file.package_name.unsafe_get(end) == '.' {
+        self.names.take(end)
         self.add_symbol(file.package_name[:end].to_owned(), Package, file.name)
       }
     }
@@ -234,8 +252,9 @@ fn Checker::define_file(self : Checker, file : FileDescriptor) -> Unit {
   for service in file.services {
     self.add_symbol(service.full_name, Service, file.name)
     for rpc in service.methods {
-      let full_name = "\{service.full_name}.\{rpc.name}"
+      let full_name = self.names.join(service.full_name, rpc.name)
       self.add_symbol(full_name, Method, file.name)
+      self.names.take(service.full_name.length() + rpc.name.length() + 2)
       let path = "/\{service.full_name}/\{rpc.name}"
       if !self.set.methods.contains(path) {
         self.set.methods[path] = rpc
@@ -252,7 +271,7 @@ fn Checker::define_message(
   self : Checker,
   message : MessageDescriptor,
   file : String,
-) -> Unit {
+) -> Unit raise DecodeError {
   self.add_symbol(message.full_name, Message, file)
   if !self.set.message_index.contains(message.full_name) {
     self.set.message_index[message.full_name] = self.set.all_messages.length()
@@ -275,7 +294,7 @@ fn Checker::define_message(
     self.fields.push(field)
   }
   for oneof in message.oneofs {
-    self.add_symbol("\{message.full_name}.\{oneof.name}", Oneof, file)
+    self.add_symbol(self.names.join(message.full_name, oneof.name), Oneof, file)
   }
   for nested in message.messages {
     self.define_message(nested, file)
@@ -296,14 +315,14 @@ fn Checker::define_enum(
   enum_ : EnumDescriptor,
   scope : String,
   file : String,
-) -> Unit {
+) -> Unit raise DecodeError {
   self.add_symbol(enum_.full_name, Enum, file)
   if !self.set.enum_index.contains(enum_.full_name) {
     self.set.enum_index[enum_.full_name] = self.set.all_enums.length()
     self.set.all_enums.push(enum_)
   }
   for value in enum_.values {
-    let name = if scope == "" { value.name } else { "\{scope}.\{value.name}" }
+    let name = self.names.join(scope, value.name)
     self.add_symbol(name, EnumValue, file)
   }
 }
