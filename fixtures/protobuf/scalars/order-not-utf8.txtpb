@@ -1,0 +1,2 @@
+# A note whose octets are not UTF-8.
+note: "\303\050"

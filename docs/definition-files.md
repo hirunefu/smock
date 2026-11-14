@@ -5831,7 +5831,9 @@ stubs:
   the method's path, with its metadata as headers and its message as
   JSON, so `headers` and `json` body conditions match it. The
   [gRPC guide](grpc.md#how-smock-serves-a-call) says how a call reaches a
-  Stub, and how smock answers it.
+  Stub, how smock prints the message as JSON
+  ([The request message as JSON](grpc.md#the-request-message-as-json)),
+  and how smock answers it.
 - A call that no gRPC Stub on its method matches gets UNIMPLEMENTED, with
   the gRPC Stub that came closest in a `smock-near-miss` trailer, never
   the Mock's `noMatch` answer
@@ -5841,10 +5843,16 @@ What a gRPC Stub can hold is limited for now. These are problems that say
 what is not served yet:
 
 - A method whose input or output type comes from a file that is not
-  proto3, such as a proto2 or an editions file.
-- A method whose input or output type has a field that is not a singular
+  proto3, such as a proto2 or an editions file, or whose input type
+  reaches a type of such a file.
+- A method whose input type has a repeated field, a map, a field in a
+  oneof other than a proto3 `optional` field's, or a field of a
+  well-known type, such as `google.protobuf.Timestamp`, or reaches a
+  message type that has one. Singular fields of every scalar type, enums,
+  nested messages and proto3 `optional` fields are served.
+- A method whose output type has a field that is not a singular
   `string`, `bool` or `int32`, or that is in a oneof, a proto3 `optional`
-  field included. Each side is checked on its own.
+  field included.
 - Any field of the Stub other than `id`, `mock`, `priority`, `scenario`,
   `variables`, `dataWrites`, `fault.seed`, `request.method`,
   `request.path`, `request.headers`, a `json` body condition, and `json`,

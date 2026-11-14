@@ -1,0 +1,11 @@
+# Each signed scalar field at its smallest value, and bytes of one octet,
+# which base64 pads with two "=".
+a_double: -1.7976931348623157e308
+a_float: -3.4028235e38
+an_int64: -9223372036854775808
+an_int32: -2147483648
+an_sfixed32: -2147483648
+an_sfixed64: -9223372036854775808
+an_sint32: -2147483648
+an_sint64: -9223372036854775808
+a_bytes: "a"

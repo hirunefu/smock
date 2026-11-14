@@ -1,0 +1,109 @@
+// Written for smock's tests of request messages: every scalar type, an
+// enum with an alias, nested messages and proto3 optional fields, which
+// smock decodes, and types that reach fields it does not decode yet, or a
+// type of legacy.proto, a proto2 file.
+syntax = "proto3";
+
+package scalars;
+
+import "legacy.proto";
+
+service Orders {
+  rpc Place (Order) returns (Placed);
+  rpc Check (Every) returns (Placed);
+  rpc Send (Parcel) returns (Placed);
+  rpc Walk (Node) returns (Placed);
+  rpc Remember (Memo) returns (Placed);
+}
+
+// The order of the ticket's example.
+message Order {
+  int64 id = 1;
+  float price = 2;
+  Status status = 3;
+  string note = 4;
+  Address address = 5;
+}
+
+message Address {
+  string city = 1;
+}
+
+enum Status {
+  option allow_alias = true;
+  STATUS_UNSPECIFIED = 0;
+  PENDING = 1;
+  ACTIVE = 2;
+  ENABLED = 2;
+}
+
+// A field of every scalar type, numbered in the order of
+// FieldDescriptorProto's types, then an enum, a message and two proto3
+// optional fields.
+message Every {
+  double a_double = 1;
+  float a_float = 2;
+  int64 an_int64 = 3;
+  uint64 a_uint64 = 4;
+  int32 an_int32 = 5;
+  fixed64 a_fixed64 = 6;
+  fixed32 a_fixed32 = 7;
+  bool a_bool = 8;
+  string a_string = 9;
+  bytes a_bytes = 12;
+  uint32 a_uint32 = 13;
+  sfixed32 an_sfixed32 = 15;
+  sfixed64 an_sfixed64 = 16;
+  sint32 an_sint32 = 17;
+  sint64 an_sint64 = 18;
+  Status a_status = 20;
+  Address an_address = 21;
+  optional int32 maybe_count = 22;
+  optional string maybe_name = 23;
+}
+
+message Placed {
+  string id = 1;
+}
+
+// A message that reaches, through two fields of one nested message type,
+// fields smock does not decode yet.
+message Parcel {
+  Address to = 1;
+  Contents contents = 2;
+  Contents spare = 3;
+}
+
+message Contents {
+  repeated string items = 1;
+  map<string, int32> counts = 2;
+  oneof wrapping {
+    string paper = 3;
+    bool box = 4;
+  }
+}
+
+// A message that nests itself.
+message Node {
+  string name = 1;
+  Node child = 2;
+}
+
+// A message that reaches a type of a proto2 file.
+message Memo {
+  legacy.Note note = 1;
+}
+
+// What a client may send in place of an Order, which protoc encodes for
+// the tests: a field twice, an enum number that Status does not define,
+// octets that are not UTF-8 in a string, and fields that Order lacks, as a
+// newer client sends them.
+message OrderOnTheWire {
+  repeated int64 id = 1 [packed = false];
+  int32 status = 3;
+  bytes note = 4;
+  Address address = 5;
+  string coupon = 6;
+  repeated fixed32 marks = 7;
+  Address billing = 8;
+}
