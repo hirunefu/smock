@@ -820,6 +820,10 @@ pub fn Engine::handle(
     }
     None =>
       match mock {
+        // A gRPC call gets UNIMPLEMENTED in gRPC's form, never the 404 of
+        // an HTTP request.
+        None if grpc is Some(_) =>
+          grpc_unimplemented("no Mock for this Host", None)
         None => no_mock(host, self.snapshot.hosts())
         Some(mock) => {
           // Only now, when every candidate has failed, are conditions
@@ -848,7 +852,7 @@ pub fn Engine::handle(
             states,
           )
           if grpc is Some(_) {
-            grpc_no_match(near_miss)
+            grpc_unimplemented("no Stub matched", near_miss)
           } else {
             no_match(mock, near_miss)
           }
@@ -984,12 +988,12 @@ fn no_match(mock : @definitions.Mock, near_miss : NearMiss?) -> ResponsePlan {
 
 ///|
 /// The response to a gRPC call that no gRPC Stub matches: Trailers-Only
-/// UNIMPLEMENTED with the fixed message `no Stub matched`, and the Near
-/// miss, if any, in the `smock-near-miss` trailer, in the form of the
-/// `Smock-Near-Miss` header. Its HTTP status is 200, as gRPC sends every
-/// answer. The Mock's `noMatch` applies to HTTP requests only, so neither
-/// its status nor its headers reach the call.
-fn grpc_no_match(near_miss : NearMiss?) -> ResponsePlan {
+/// UNIMPLEMENTED with the fixed message `message`, such as `no Stub
+/// matched`, and the Near miss, if any, in the `smock-near-miss` trailer,
+/// in the form of the `Smock-Near-Miss` header. Its HTTP status is 200, as
+/// gRPC sends every answer. The Mock's `noMatch` applies to HTTP requests
+/// only, so neither its status nor its headers reach the call.
+fn grpc_unimplemented(message : String, near_miss : NearMiss?) -> ResponsePlan {
   {
     status: 200,
     // Room for the Smock-Mock field the Default Mock adds.
@@ -999,7 +1003,7 @@ fn grpc_no_match(near_miss : NearMiss?) -> ResponsePlan {
     fault: None,
     grpc: Some({
       status: Unimplemented,
-      message: Some("no Stub matched"),
+      message: Some(message),
       trailers: match near_miss {
         Some(near_miss) => [("smock-near-miss", near_miss.header_value())]
         None => []
