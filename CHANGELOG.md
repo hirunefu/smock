@@ -150,6 +150,14 @@ of each GitHub release include its section
   `encode_response` writes for a field name or value. They join
   `is_token`, `is_field_value` and `is_host_value`, which were public
   already.
+- A Mock's `grpc` field names its Descriptor set, a FileDescriptorSet as
+  `protoc --include_imports -o` or `buf build -o` writes it, in the
+  body-file subdirectory: `grpc: { descriptorSet: greeter.binpb }`. smock
+  reads the set with the Definition files: `smock check`, startup and a
+  reload report a set that is missing or does not decode, at the JSON
+  Pointer of `descriptorSet`, and a reload swaps the set in with the files.
+  The path has the rules of `bodyFile`. The new `smock/protobuf` module
+  reads the set. See [Descriptor sets](docs/definition-files.md#descriptor-sets).
 
 ### Changed
 

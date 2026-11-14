@@ -1085,19 +1085,25 @@ to date.
 
 ## Layout
 
-The repository is a MoonBit workspace (`moon.work`) of five modules:
+The repository is a MoonBit workspace (`moon.work`) of six modules:
 
 | Directory | Module | What it is |
 |---|---|---|
 | `.` | `smock/smock` | smock itself. Its parts are packages of this module. |
 | `http1/` | `smock/http1` | The HTTP/1.1 codec. |
+| `protobuf/` | `smock/protobuf` | Protobuf's wire format, and a reader of Descriptor sets (FileDescriptorSets). |
 | `re2/` | `smock/re2` | RE2-syntax regular expressions. |
 | `xml/` | `smock/xml` | An XML parser that refuses DTDs, with simple paths that select values (documented in `xml/README.mbt.md`). |
 | `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON, and `write` turns a tree into a document, with comments, that `parse` reads back as the same tree. `parse` also has a YAML 1.2 mode for OpenAPI documents, which Definition files never use (documented in `yaml/yaml.mbt`). |
 
-The four protocol modules do no I/O and do not depend on smock, so they can
+The five protocol modules do no I/O and do not depend on smock, so they can
 be published on mooncakes on their own. `scripts/check-no-io.sh` checks
 that.
+
+`fixtures/protobuf/` holds the Descriptor sets and protobuf messages that
+tests read, beside the `.proto` files they are built from.
+`scripts/gen-protobuf-fixtures.sh` rebuilds them with protoc; the README
+there says how to add one.
 
 Packages of `smock/smock`:
 
@@ -1114,7 +1120,8 @@ Packages of `smock/smock`:
   (file, JSON Pointer, message). Its validation is written by hand and
   follows the JSON Schema. The snapshot holds each Mock's Stubs in matching
   order and their match index, which finds the Stubs a request can match
-  by its method and exact path, and each response's templates, parsed.
+  by its method and exact path, each response's templates, parsed, and
+  each Mock's Descriptor set, decoded.
 - `engine`: decides the response to each request from the snapshot,
   including its Faults, and renders a named Stub's response for a sample
   request, for `smock render` and the Admin render operation. It also holds

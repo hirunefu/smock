@@ -46,6 +46,10 @@ _Avoid_: CRUD route, resource route
 A response that declares an LLM reply by its content, which smock writes in one LLM API's wire form, as JSON or as a stream.
 _Avoid_: completion, fixture
 
+**Descriptor set**:
+A compiled protobuf schema, a self-contained FileDescriptorSet, that a Mock names; its gRPC Stubs are checked against it and its calls are decoded with it.
+_Avoid_: proto file, protoset, schema file
+
 **Upstream**:
 The real service a Mock impersonates. Forwarding the requests a Mock does not match to its Upstream, and recording the exchanges as Definition files, are not implemented.
 _Avoid_: Backend, origin, target
