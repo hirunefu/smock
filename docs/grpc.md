@@ -77,8 +77,9 @@ curl -H "Authorization: Bearer change-me" -d '{}' localhost:9090/v1/journal/quer
 
 Its entry shows `POST`, the target `/helloworld.Greeter/SayHello`, the
 version `HTTP/2`, grpcurl's metadata as headers, the body
-`{"name":"Tom"}`, the status 200 and the gRPC status `OK`. With `{"name": "Ann"}`, which the Stub's condition does
-not meet, grpcurl reports `Code: Internal` and `Message: no Stub matched`
+`{"name":"Tom"}`, the status 200 and the gRPC status `OK`. With
+`{"name": "Ann"}`, which the Stub's condition does not meet, grpcurl
+reports `Code: Internal` and `Message: no Stub matched`
 ([Calls smock does not serve yet](#calls-smock-does-not-serve-yet)).
 
 ## How smock serves a call
