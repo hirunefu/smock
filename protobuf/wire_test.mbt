@@ -262,3 +262,26 @@ test "groups nested deeper than 100 are an error, and 100 deep are skipped" {
     content="error: octet 100: groups nest deeper than 100",
   )
 }
+
+///|
+test "a writer encodes tags and values as protobuf's documentation shows them" {
+  let writer = @protobuf.Writer()
+  // The documentation's example: field 1 holding the varint 150.
+  writer.tag(1, Varint)
+  writer.varint(150)
+  writer.tag(2, Len)
+  writer.length_delimited(b"testing"[:])
+  writer.tag(3, I32)
+  writer.fixed32(0x04030201)
+  writer.tag(4, I64)
+  writer.fixed64(0x0807060504030201)
+  writer.tag(536870911, Varint)
+  writer.varint(0xffffffffffffffff)
+  inspect(
+    writer.to_bytes(),
+    content=(
+      #|b"\x08\x96\x01\x12\x07testing\x1d\x01\x02\x03\x04!\x01\x02\x03\x04\x05\x06\x07\x08\xf8\xff\xff\xff\x0f\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01"
+
+    ),
+  )
+}

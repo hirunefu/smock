@@ -299,3 +299,70 @@ fn Reader::skip_group(
     }
   }
 }
+
+///|
+/// Writes protobuf's wire format, one record at a time: `tag`, then the
+/// value its wire type says, with one of `varint`, `fixed64`,
+/// `length_delimited` or `fixed32`.
+pub struct Writer {
+  /// What has been written so far.
+  priv out : @buffer.Buffer
+}
+
+///|
+/// A writer with nothing written yet.
+pub fn Writer::Writer() -> Writer {
+  { out: @buffer.new() }
+}
+
+///|
+/// Writes the tag of a record of field `field`, from 1 to 2^29 - 1, whose
+/// value has the wire type `wire_type`.
+pub fn Writer::tag(self : Writer, field : Int32, wire_type : WireType) -> Unit {
+  let wire = match wire_type {
+    Varint => 0UL
+    I64 => 1
+    Len => 2
+    StartGroup => 3
+    EndGroup => 4
+    I32 => 5
+  }
+  self.varint((field.to_uint64() << 3) | wire)
+}
+
+///|
+/// Writes `value` as a varint: 7 bits to an octet, least significant first.
+pub fn Writer::varint(self : Writer, value : UInt64) -> Unit {
+  let mut rest = value
+  while rest >= 0x80 {
+    self.out.write_byte((rest & 0x7f | 0x80).to_byte())
+    rest = rest >> 7
+  }
+  self.out.write_byte(rest.to_byte())
+}
+
+///|
+/// Writes `value` as 4 octets, little-endian.
+pub fn Writer::fixed32(self : Writer, value : UInt) -> Unit {
+  self.out.write_uint_le(value)
+}
+
+///|
+/// Writes `value` as 8 octets, little-endian.
+pub fn Writer::fixed64(self : Writer, value : UInt64) -> Unit {
+  self.out.write_uint64_le(value)
+}
+
+///|
+/// Writes `value` as a length-delimited value: its length as a varint,
+/// then its octets.
+pub fn Writer::length_delimited(self : Writer, value : BytesView) -> Unit {
+  self.varint(value.length().to_uint64())
+  self.out.write_bytesview(value)
+}
+
+///|
+/// What has been written so far.
+pub fn Writer::to_bytes(self : Writer) -> Bytes {
+  self.out.to_bytes()
+}
