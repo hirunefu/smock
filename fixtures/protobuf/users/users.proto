@@ -1,8 +1,8 @@
 // Written for smock's tests of gRPC Stubs' conditions, which smock checks
 // against the method's input type and normalises when the files load: the
 // fields of the ticket's example, an enum with an alias, a float, bytes,
-// a map with integer keys, a repeated enum, and a nested message with a map
-// whose keys are strings.
+// a map with integer keys, a repeated enum, and nested messages, singular
+// and repeated, with a map whose keys are strings.
 syntax = "proto3";
 
 package users;
@@ -19,6 +19,7 @@ message Query {
   map<int32, string> labels = 5;
   repeated Status history = 6;
   Profile profile = 7;
+  repeated Profile friends = 8;
 }
 
 // ACTIVE has the alias ENABLED, so a condition with either name, or with
