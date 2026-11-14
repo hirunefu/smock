@@ -1388,7 +1388,7 @@ The fields of `llm`:
   seeds and time](#ids-seeds-and-time) says more.
 
 An LLM response is a response like any other. `status` is required, as
-always. `llm` may stand in `response` or in any element of
+on every HTTP Stub. `llm` may stand in `response` or in any element of
 [`responses`](#several-responses), so weighted responses can answer one
 request in ten with an ordinary 429. Request conditions,
 [templates](#templates-in-llm-replies), Faults, Ephemeral Stubs, the
