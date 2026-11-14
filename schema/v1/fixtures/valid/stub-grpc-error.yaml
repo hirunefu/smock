@@ -1,0 +1,23 @@
+mocks:
+  - name: greeter
+    hosts: [greeter.svc]
+    grpc:
+      descriptorSet: greeter.binpb
+stubs:
+  - id: hello-flaky
+    mock: greeter
+    request:
+      path: /helloworld.Greeter/SayHello
+      body: { json: { name: Tom } }
+    responses:
+      - { weight: 9, json: { message: Hello Tom } }
+      - { weight: 1, grpc: { status: UNAVAILABLE, message: "try again ☺" } }
+  - id: hello-unknown
+    mock: greeter
+    request:
+      path: /helloworld.Greeter/SayHello
+    response:
+      template: true
+      grpc:
+        status: NOT_FOUND
+        message: "no user called ${body.name}"

@@ -75,6 +75,11 @@ fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int32? {
 ///   too. A reply that takes more than `@llm.max_reply_bytes` once encoded
 ///   is a render error at the `llm` field, and its waits are not drawn.
 ///
+/// The reply to a gRPC call, when `grpc` is true, gets the plan's gRPC
+/// part last: the status of the response's `grpc`, `OK` without one, its
+/// message, as written or rendered after the body, and the reply message
+/// encoded when the files were loaded, if it was.
+///
 /// Every template of the response renders in one rendering for the
 /// request: `context`, the one that the Stub's Variables left, or, without
 /// one, the request's first rendering, made here from `now`, `draw`,
@@ -93,6 +98,7 @@ fn plan_response(
   vars~ : Map[String, Json]?,
   data~ : Map[String, Json],
   copies~ : Map[String, Json]?,
+  grpc~ : Bool,
 ) -> ResponsePlan raise @template.RenderError {
   let status = response.status
   let mut context = context
@@ -131,7 +137,7 @@ fn plan_response(
       headers
     }
   }
-  match response.body {
+  let plan = match response.body {
     Bytes(bytes) =>
       if response.serves_ranges {
         range_response(status, headers, bytes, incoming.request)
@@ -166,6 +172,7 @@ fn plan_response(
         data~,
         copies~,
       )
+      context = Some(rendering)
       render_body(status, headers, template, rendering)
     }
     Llm(llm) => {
@@ -206,6 +213,28 @@ fn plan_response(
       }
       { status, headers, body, delay_ms: 0, fault: None, grpc: None, }
     }
+  }
+  guard grpc else { return plan }
+  let (status, message) = match response.grpc {
+    None => (@grpc.Ok, None)
+    Some({ status, message: None, }) => (status, None)
+    Some({ status, message: Some(Written(text)), }) => (status, Some(text))
+    Some({ status, message: Some(Templated(text)), }) => {
+      let rendering = rendering_for(
+        incoming,
+        context,
+        now~,
+        draw~,
+        vars~,
+        data~,
+        copies~,
+      )
+      (status, Some(text.render(rendering)))
+    }
+  }
+  {
+    ..plan,
+    grpc: Some({ ..grpc_ok, status, message, encoded: response.encoded, }),
   }
 }
 

@@ -1,0 +1,12 @@
+mocks:
+  - name: greeter
+    grpc:
+      descriptorSet: greeter.binpb
+stubs:
+  - id: hello-missing
+    mock: greeter
+    request:
+      path: /helloworld.Greeter/SayHello
+    response:
+      json: { message: Hello }
+      grpc: { status: NOT_FOUND, message: no such user }

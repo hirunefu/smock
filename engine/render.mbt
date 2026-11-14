@@ -502,6 +502,7 @@ pub fn Engine::render(
               vars=Some(sample.vars),
               data=mock.initial_data,
               copies~,
+              grpc=ordinary.grpc_method is Some(_),
             )
           catch {
             RenderError(at~, message~) => {

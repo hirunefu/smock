@@ -70,6 +70,14 @@ priv struct ToolCallDecl {
 }
 
 ///|
+/// A gRPC Stub's `grpc` as written: its status, and its message with its
+/// JSON Pointer, which is parsed as a template with `template` on.
+priv struct GrpcDecl {
+  status : @grpc.Status
+  message : (String, String)?
+}
+
+///|
 /// Reads the `responses` of the Stub at `stub_pointer`: the value `json` at
 /// `pointer`, 1 to `max_responses` responses, each the shape of `response`
 /// plus `weight`, an integer from 1 to `max_weight`, by default 1. Their
@@ -119,8 +127,10 @@ fn File::read_responses(
 ///|
 /// Reads the response of the Stub at `stub_pointer`: the value `json` at
 /// `pointer`. Its templates may read the Data buckets `buckets`. A gRPC
-/// Stub's response, when `grpc` is true, needs no status, and its `json`
-/// gets no Content-Type.
+/// Stub's response, when `grpc` is true, needs no status, its `json` gets
+/// no Content-Type, and it may give `grpc`, the status and message its
+/// reply ends with; an error gives no `json`. An HTTP Stub's response
+/// cannot give `grpc`.
 fn File::read_response(
   self : File,
   stub_pointer : String,
@@ -133,6 +143,7 @@ fn File::read_response(
   let headers : Array[(String, String, String)] = []
   let mut body : BodyField = NoBody
   let mut template = false
+  let mut grpc_reply : GrpcDecl? = None
   guard json is Object(response) else {
     self.error(pointer, "must be an object")
     return {
@@ -143,6 +154,7 @@ fn File::read_response(
       reads_variables: false,
       reads_data: false,
       encoded: None,
+      grpc: None,
     }
   }
   // An `llm` needs it before it is read below: its text is known only once
@@ -168,8 +180,25 @@ fn File::read_response(
           False => template = false
           _ => self.error(field, "must be true or false")
         }
+      "grpc" =>
+        if grpc {
+          grpc_reply = self.read_reply_grpc(field, value)
+        } else {
+          self.error(
+            field, "is only for gRPC Stubs, and this is an HTTP Stub: its exact path names no method of its Mock's Descriptor set",
+          )
+        }
       _ => self.unknown_field(field)
     }
+  }
+  // A unary call gets a reply message or an error, never both.
+  if grpc_reply is Some({ status, .. }) &&
+    !(status is Ok) &&
+    response.contains("json") {
+    self.error(
+      child_pointer(pointer, "json"),
+      "is not allowed with the gRPC status \{status}: a gRPC call gets a reply message or an error, never both",
+    )
   }
   if grpc {
     // Every gRPC reply has the HTTP status 200, which the Journal records.
@@ -249,19 +278,93 @@ fn File::read_response(
     }
     (ResponseHeaders::Written(written), body, serves_ranges)
   }
+  let grpc_reply : GrpcReply? = match grpc_reply {
+    None => None
+    Some({ status, message: None, }) => Some({ status, message: None, })
+    Some({ status, message: Some((text, field)), }) =>
+      if template {
+        // A message that fails to parse is reported, and the set is not
+        // loaded, so the reply it leaves is never sent.
+        match
+          @template.Text::parse(
+            text,
+            pointer=template_pointer(stub_pointer, field),
+            kind=Body(Plain),
+            env=self.env,
+            buckets~,
+          ) {
+          Ok(template) => Some({ status, message: Some(Templated(template)), })
+          Err(problem) => {
+            self.report_template_problem(stub_pointer, problem)
+            Some({ status, message: None, })
+          }
+        }
+      } else {
+        Some({ status, message: Some(GrpcMessage::Written(text)), })
+      }
+  }
+  // Whether the templated message reads Variables, and Data buckets.
+  let (message_vars, message_data) = match grpc_reply {
+    Some({ message: Some(Templated(text)), .. }) =>
+      (text.reads_vars(), text.reads_data())
+    _ => (false, false)
+  }
   {
     status,
     headers,
     body,
     serves_ranges,
     reads_variables: headers.reads(@template.Text::reads_vars) ||
-    body.reads(@template.Text::reads_vars, @template.Structured::reads_vars),
+    body.reads(@template.Text::reads_vars, @template.Structured::reads_vars) ||
+    message_vars,
     reads_data: headers.reads(@template.Text::reads_data) ||
-    body.reads(@template.Text::reads_data, @template.Structured::reads_data),
+    body.reads(@template.Text::reads_data, @template.Structured::reads_data) ||
+    message_data,
     // A gRPC Stub's reply is encoded once its Stub is checked.
     encoded: None,
+    grpc: grpc_reply,
   }
 }
+
+///|
+/// Reads a gRPC Stub's `grpc`, a closed object, the value `json` at
+/// `pointer`: `status`, a name from `OK` to `UNAUTHENTICATED`, by default
+/// `OK`, and `message`, any string. Returns `None` when it is not an
+/// object.
+fn File::read_reply_grpc(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> GrpcDecl? {
+  guard json is Object(grpc) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let mut status : @grpc.Status = Ok
+  let mut message = None
+  for key, value in grpc {
+    let field = child_pointer(pointer, key)
+    match key {
+      "status" =>
+        match value {
+          String(name) if @grpc.Status::from_name(name) is Some(named) =>
+            status = named
+          _ => self.error(field, "must be a gRPC status name: \{status_names}")
+        }
+      "message" =>
+        if self.string(field, value) is Some(text) {
+          message = Some((text, field))
+        }
+      _ => self.unknown_field(field)
+    }
+  }
+  Some({ status, message, })
+}
+
+///|
+/// gRPC's seventeen status names, in the order of their codes, as a
+/// problem lists them.
+let status_names : String = "OK, CANCELLED, UNKNOWN, INVALID_ARGUMENT, DEADLINE_EXCEEDED, NOT_FOUND, ALREADY_EXISTS, PERMISSION_DENIED, RESOURCE_EXHAUSTED, FAILED_PRECONDITION, ABORTED, OUT_OF_RANGE, UNIMPLEMENTED, INTERNAL, UNAVAILABLE, DATA_LOSS or UNAUTHENTICATED"
 
 ///|
 /// Parses the templates of a response with `template` on, from its header

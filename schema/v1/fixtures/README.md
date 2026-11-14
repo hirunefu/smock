@@ -51,7 +51,8 @@ disagree.
   So do rules that depend on whether a Stub is a gRPC Stub, which the
   Schema cannot see, since a Stub is one when its exact path names a method
   of its Mock's Descriptor set: an HTTP Stub's response without `status`,
-  and a gRPC Stub on a streaming method.
+  an HTTP Stub's response that gives `grpc`, and a gRPC Stub on a streaming
+  method.
 
 A field joins the Schema only together with smock's support for it, so no
 fixture is accepted by the Schema and rejected by smock for a field smock
