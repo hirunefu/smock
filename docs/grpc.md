@@ -17,6 +17,8 @@ Mock's `grpc` field and gRPC Stubs.
   - [The request message as JSON](#the-request-message-as-json)
   - [The reply](#the-reply)
   - [The Journal and the metrics](#the-journal-and-the-metrics)
+- [Unmatched calls](#unmatched-calls)
+  - [The Near miss trailer](#the-near-miss-trailer)
 - [Calls smock does not serve yet](#calls-smock-does-not-serve-yet)
 - [Building a set](#building-a-set)
   - [Self-contained sets](#self-contained-sets)
@@ -80,8 +82,9 @@ Its entry shows `POST`, the target `/helloworld.Greeter/SayHello`, the
 version `HTTP/2`, grpcurl's metadata as headers, the body
 `{"name":"Tom"}`, the status 200 and the gRPC status `OK`. With
 `{"name": "Ann"}`, which the Stub's condition does not meet, grpcurl
-reports `Code: Internal` and `Message: no Stub matched`
-([Calls smock does not serve yet](#calls-smock-does-not-serve-yet)).
+reports `Code: Unimplemented` and `Message: no Stub matched`, and the
+Journal records the call as unmatched
+([Unmatched calls](#unmatched-calls)).
 
 ## How smock serves a call
 
@@ -118,8 +121,9 @@ A gRPC Stub sees a call as a request:
 
 A call is matched only against the gRPC Stubs on its method, in the order
 Stubs are tried, never against an HTTP Stub, even one whose conditions it
-meets. A `json` body condition matches the decoded message, as it matches
-a JSON body:
+meets. A call that none of them matches gets UNIMPLEMENTED
+([Unmatched calls](#unmatched-calls)). A `json` body condition matches the
+decoded message, as it matches a JSON body:
 
 ```yaml
 request:
@@ -208,8 +212,9 @@ brought, as received, and `truncated` says whether the JSON was cut at
 
 The entry's `grpcStatus` is the name of the gRPC status the call got:
 `OK` for a reply, or the status smock answered with instead, such as
-`INTERNAL`. Its `status` stays the HTTP status, 200 for a reply, as gRPC
-sends it: a client learns of an error from `grpc-status`, not from
+`UNIMPLEMENTED` for an unmatched call, or `INTERNAL`. Its `status` stays
+the HTTP status, 200 for a reply and for an unmatched call, as gRPC sends
+them: a client learns of an error from `grpc-status`, not from
 `:status`. The entry of an HTTP request has no `grpcStatus`.
 
 Journal queries, verification and the unmatched list take calls as they
@@ -230,6 +235,64 @@ that names the gRPC method, and metadata as headers:
 The request metrics count a call that a Stub answered under its Mock and
 Stub, as they count an HTTP request, and a call that no Stub matched as
 an unmatched request of its Mock.
+
+## Unmatched calls
+
+A call that no gRPC Stub on its method matches gets UNIMPLEMENTED, the
+status gRPC servers give a method they do not serve. smock sends it as
+Trailers-Only: one HEADERS block that ends the stream, with `:status` 200,
+`content-type: application/grpc`, `grpc-status: 12` and the fixed
+`grpc-message` `no Stub matched`. With the quick start's Stub, a call with
+`{"name": "Ann"}` gets:
+
+```text
+:status: 200
+content-type: application/grpc
+grpc-status: 12
+grpc-message: no Stub matched
+smock-mock: greeter; via=default
+smock-near-miss: hello; failed=body
+date: Sat, 14 Nov 2026 07:00:00 GMT
+```
+
+`smock-mock` is there because the Default Mock answered, as on HTTP. The
+message never changes, so a test that checks it stays stable.
+
+The Mock's `noMatch` applies to HTTP requests only. Its status and its
+headers never reach a gRPC call.
+
+The Journal records an unmatched call with the HTTP status 200, the
+`grpcStatus` `UNIMPLEMENTED`, and its full Near miss: each condition that
+the closest Stub failed, with what it expects and what the call sent. The
+call is in the unmatched list, `GET /v1/journal/unmatched`, and the
+request metrics count it as an unmatched request of its Mock.
+
+### The Near miss trailer
+
+The Near miss is the gRPC Stub on the call's method that failed the fewest
+conditions, the one tried first on a tie, as on HTTP
+([When no Stub matches](definition-files.md#when-no-stub-matches)). smock
+sends it in the `smock-near-miss` field of the answer, in the form of the
+HTTP `Smock-Near-Miss` header: the Stub's ID, then the conditions it
+failed. With a Stub that requires the metadata `x-tenant: acme`, a call
+without it gets:
+
+```text
+smock-near-miss: hello; failed=header:x-tenant
+```
+
+The field is ASCII only. The Stub ID and the names in it, such as a
+metadata name, are percent-encoded where they hold anything other than the
+characters of an HTTP token. It never carries what a condition expects or
+what the call sent: the Journal entry has those.
+
+A gRPC client reads the field as trailing metadata, as it reads every field
+of a Trailers-Only answer. grpcurl prints it with `-v`, among the response
+trailers.
+
+A call has no Near miss, and its answer no `smock-near-miss` field, when
+no gRPC Stub is on its method. An HTTP Stub is never a call's Near miss,
+even one whose path pattern takes the call's path.
 
 ## Calls smock does not serve yet
 
@@ -258,20 +321,15 @@ type 6 or 7, a varint or a length cut short, or messages nested deeper
 than 100.
 
 These calls reach the Stubs. The Journal records each with the
-`grpcStatus` `INTERNAL`, and with the HTTP status planned for it: the
-Mock's `noMatch` status for an unmatched call, 500 or 507 for smock's own
-failures, and 200 for a rendered reply that does not fit the output type:
+`grpcStatus` `INTERNAL`, and with the HTTP status planned for it: 500 or
+507 for smock's own failures, and 200 for a rendered reply that does not
+fit the output type:
 
 | The call | `grpc-message` |
 |---|---|
-| No gRPC Stub on its method matches it | `no Stub matched` |
 | The Stub's reply, a `variables` value or a `dataWrites` value fails to render, or the rendered reply does not fit the output type | `template failed` |
 | A write of the Stub's `dataWrites` cannot be applied | `data write failed` |
 | The Stub's writes do not fit the bound on per-Session state | `state limit reached` |
-
-An unmatched call is in the Journal with its Near miss, chosen among the
-gRPC Stubs on its method, and in the unmatched list. The status and
-headers of the Mock's `noMatch` never reach the client.
 
 ## Building a set
 

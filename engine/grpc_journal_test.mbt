@@ -33,7 +33,7 @@ test "a call answered by a gRPC Stub has a plan with the gRPC status OK, which i
     "{\"name\":\"Tom\"}",
     octets=10,
   )
-  debug_inspect(call.plan.grpc, content="Some({ status: Ok })")
+  inspect(grpc_part(call), content="OK")
   json_inspect(answer_members(call), content={
     "stub": "hello",
     "status": 200,
@@ -45,7 +45,7 @@ test "a call answered by a gRPC Stub has a plan with the gRPC status OK, which i
     "/helloworld.Greeter/SayHello",
     body="{\"name\":\"Tom\"}",
   )
-  debug_inspect(http.plan.grpc, content="None")
+  inspect(grpc_part(http), content="none")
   json_inspect(answer_members(http), content={
     "stub": "any-post",
     "status": 200,
@@ -56,29 +56,54 @@ test "a call answered by a gRPC Stub has a plan with the gRPC status OK, which i
 ///|
 test "the final-status method sets the gRPC status a call really got, and keeps its HTTP status" {
   let h = harness(
-    [("greeter.yaml", greeter_calls)],
+    [
+      (
+        "greeter.yaml",
+        (
+          #|mocks:
+          #|  - name: greeter
+          #|    grpc: { descriptorSet: greeter.binpb }
+          #|stubs:
+          #|  - id: fails
+          #|    mock: greeter
+          #|    request: { path: /helloworld.Greeter/SayHello, headers: { x-tenant: fails } }
+          #|    response: { template: true, json: { message: "${body.missing.name}" } }
+          #|  - id: hello
+          #|    mock: greeter
+          #|    request: { path: /helloworld.Greeter/SayHello }
+          #|    response: { json: { message: Hello } }
+        ),
+      ),
+    ],
     body_files=greeter_body_files(),
   )
-  // No gRPC Stub on the method: smock answers in its own way, so the plan
+  // A template that fails: smock answers in its own way, a 500, so the plan
   // has no gRPC part, and the entry has no gRPC status yet.
-  let unmatched = h.call(
-    "/helloworld.Greeter/SayHelloStreamReply",
+  let failed = h.call(
+    "/helloworld.Greeter/SayHello",
     "{\"name\":\"Tom\"}",
     octets=10,
+    headers=[("x-tenant", "fails")],
   )
-  debug_inspect(unmatched.plan.grpc, content="None")
-  json_inspect(answer_members(unmatched), content={
-    "stub": null,
-    "status": 404,
-    "templateError": null,
+  inspect(grpc_part(failed), content="none")
+  json_inspect(answer_members(failed), content={
+    "stub": "fails",
+    "status": 500,
+    "templateError": {
+      "at": "/response/json/message",
+      "message": "body.missing.name is missing",
+    },
   })
-  guard unmatched.journal is Some(entry) else { fail("no entry") }
+  guard failed.journal is Some(entry) else { fail("no entry") }
   entry.set_grpc_status(Internal)
-  json_inspect(answer_members(unmatched), content={
-    "stub": null,
-    "status": 404,
+  json_inspect(answer_members(failed), content={
+    "stub": "fails",
+    "status": 500,
     "grpcStatus": "INTERNAL",
-    "templateError": null,
+    "templateError": {
+      "at": "/response/json/message",
+      "message": "body.missing.name is missing",
+    },
   })
   // A reply planned as OK may end otherwise, as at a deadline.
   let call = h.call(
