@@ -362,7 +362,7 @@ fn File::check_input(
 /// Stubs do not serve yet. They serve `id`, `mock`, `priority`, `scenario`,
 /// `variables`, `dataWrites`, `fault.seed`, `request.method`,
 /// `request.path`, `request.headers`, a `json` body condition, and `json`,
-/// `template` and `weight` in a reply. A member that no Stub has is
+/// `grpc`, `template` and `weight` in a reply. A member that no Stub has is
 /// reported as unknown where it is read.
 fn File::refuse_unserved(
   self : File,
@@ -413,8 +413,8 @@ fn File::refuse_unserved(
 
 ///|
 /// Reports each member of `response`, a reply of a gRPC Stub at `pointer`,
-/// that gRPC Stubs do not serve yet: all but `json`, `template` and
-/// `weight`.
+/// that gRPC Stubs do not serve yet: all but `json`, `grpc`, `template`
+/// and `weight`.
 fn File::refuse_unserved_reply(
   self : File,
   pointer : String,
