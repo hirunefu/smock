@@ -1,0 +1,4 @@
+# A shelf with a quote, a backslash, a letter outside ASCII and a newline,
+# which JSON escapes or keeps.
+shelf: "A\"1\\\303\251\n"
+in_stock: true

@@ -1,9 +1,11 @@
 # smock/protobuf
 
-Protobuf for MoonBit: the wire format, and a reader of Descriptor sets
+Protobuf for MoonBit: the wire format, a reader of Descriptor sets
 (FileDescriptorSets), the compiled form of `.proto` files that
-`protoc --include_imports -o` and `buf build -o` write. smock reads a
-Mock's Descriptor set with it. The module does no I/O and depends only on
+`protoc --include_imports -o` and `buf build -o` write, and messages
+decoded into JSON and encoded from it with their types from a set. smock
+reads a Mock's Descriptor set with it, and decodes and encodes the
+messages of gRPC calls. The module does no I/O and depends only on
 `moonbitlang/core`. It builds for every MoonBit target and is tested on
 native and `wasm-gc`.
 
@@ -133,6 +135,44 @@ test "read a Descriptor set" {
   inspect(
     "\{file.name} \{file.package_name} \{file.syntax == Proto3}",
     content="a.proto demo true",
+  )
+}
+```
+
+## Messages
+
+`@protobuf.decode_json(message, input)` decodes a message of the type
+`message`, a `MessageDescriptor` of a set, into smock's decoded form:
+compact JSON text in UTF-8, with one member per field, in field-number
+order, under the field's JSON name, its name in lowerCamelCase as protoc
+computes it. A field the message leaves out is printed at its default. It
+reads the message as protobuf's parsers read it: the last value of a field
+wins, and unknown fields are skipped. It raises `DecodeError` when the
+input is not protobuf, or a string is not UTF-8.
+
+`@protobuf.encode_json(message, json)` encodes JSON, as ProtoJSON writes a
+message, the way protoc encodes it: fields in field-number order, each left
+out at its default. A key may be the field's proto name or its JSON name.
+It raises `EncodeError`, which names the JSON Pointer of the value at
+fault, for JSON that is not a message of the type.
+
+Both serve types whose fields are singular `string`, `bool` and `int32`
+fields for now, and raise their error for a type with any other field.
+
+```mbt check
+///|
+test "decode a message, and encode one" {
+  // message CountRequest { string shelf = 1; bool in_stock = 2; }
+  let set = @protobuf.read_descriptor_set(
+    b"\x0a\x48\x0a\x07a.proto\x12\x04demo\x22\x2f\x0a\x0cCountRequest\x12\x0d\x0a\x05shelf\x18\x01\x20\x01\x28\x09\x12\x10\x0a\x08in_stock\x18\x02\x20\x01\x28\x08\x62\x06proto3"[:],
+  )
+  let count = set.files[0].messages[0]
+  let json = @protobuf.decode_json(count, b"\x0a\x02A1\x10\x01"[:])
+  inspect(@utf8.decode(json), content="{\"shelf\":\"A1\",\"inStock\":true}")
+  inspect(
+    @protobuf.encode_json(count, { "in_stock": true, "shelf": "A1" }) ==
+    b"\x0a\x02A1\x10\x01",
+    content="true",
   )
 }
 ```

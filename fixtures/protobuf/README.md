@@ -49,9 +49,9 @@ working tree; CI runs it in the same job.
 
 | Directory | Sources | Built |
 |---|---|---|
-| `helloworld/` | gRPC's `helloworld.proto`, as `examples/protos/helloworld.proto` is at grpc/grpc commit `d72ce236d8696ae3493d325edd5f33cda39a757f` | `greeter.binpb`, its set. The script copies it to `schema/v1/fixtures/body-files/`, and writes it in hex to `greeter_set_test.mbt` in `protobuf/`, `definitions/` and `engine/`. |
+| `helloworld/` | gRPC's `helloworld.proto`, as `examples/protos/helloworld.proto` is at grpc/grpc commit `d72ce236d8696ae3493d325edd5f33cda39a757f`, and the messages `hello-request.txtpb` and `hello-reply.txtpb` | `greeter.binpb`, its set. The script copies it to `schema/v1/fixtures/body-files/`, and writes it in hex to `greeter_set_test.mbt` in `protobuf/`, `definitions/` and `engine/`. `hello-request.binpb` and `hello-reply.binpb`, the request and reply of a call to `SayHello`, which the script also writes in hex to `protobuf/`. |
 | `helloworld-v2/` | The same file, with one more field in `HelloReply` | `greeter.binpb`, its set: the set of `helloworld/` rebuilt with one more field |
-| `catalog/` | `catalog.proto`, written for smock's tests of gRPC Stubs, which imports `legacy.proto`, a proto2 file, and `edition.proto`, an editions file. Its methods stream, or reach types that gRPC Stubs serve, and types they do not serve yet. | `catalog.binpb`, its set. The script writes it in hex to `definitions/catalog_set_test.mbt`. |
+| `catalog/` | `catalog.proto`, written for smock's tests of gRPC Stubs, which imports `legacy.proto`, a proto2 file, and `edition.proto`, an editions file. Its methods stream, or reach types that gRPC Stubs serve, and types they do not serve yet. Two messages of its types. | `catalog.binpb`, its set. The script writes it in hex to `catalog_set_test.mbt` in `definitions/` and `protobuf/`. `count-request.binpb` and `count-reply.binpb`, from `count-request.txtpb` and `count-reply.txtpb`, messages with string, bool and int32 fields, which the script also writes in hex to `protobuf/`. |
 
 ## Adding a set
 

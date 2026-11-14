@@ -1,0 +1,4 @@
+# A negative int32, which protobuf encodes in 10 octets.
+count: -5
+exact: true
+shelf: "A1"
