@@ -7,11 +7,41 @@ their names. smock serves gRPC unary calls with it, beside
 depends only on `moonbitlang/core`. It builds for every MoonBit target and
 is tested on native and `wasm-gc`.
 
-## Messages
+## Content type
 
 A gRPC call is an HTTP/2 request whose `content-type` is
-`application/grpc`. Its body, and the body of its reply, are messages,
-each after a 5-octet prefix: a flag octet, 1 when the message is
+`application/grpc`, alone or followed by `+` or `;`. The text after `+`, up
+to any `;`, is the call's content subtype, which names the codec of its
+messages: none, or `proto`, for protobuf.
+
+- `@grpc.content_subtype(value)` gives the subtype of a call whose
+  `content-type` has the value `value`, empty when there is none, or `None`
+  when the value makes no gRPC call. It copies nothing.
+- `@grpc.content_type` is `application/grpc`, the content type of replies.
+
+```mbt check
+///|
+test "tell a gRPC call by its content type" {
+  guard @grpc.content_subtype(b"application/grpc+proto;v=1"[:])
+    is Some(subtype) else {
+    fail("not a call")
+  }
+  inspect(subtype == b"proto"[:], content="true")
+  guard @grpc.content_subtype(b"application/grpc;v=1"[:]) is Some(none) else {
+    fail("not a call")
+  }
+  inspect(none.length(), content="0")
+  inspect(
+    @grpc.content_subtype(b"application/grpc-web"[:]) is None,
+    content="true",
+  )
+}
+```
+
+## Messages
+
+The body of a gRPC call, and the body of its reply, are messages, each
+after a 5-octet prefix: a flag octet, 1 when the message is
 compressed, then the message's length in 4 octets, big-endian
 ([gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)).
 
