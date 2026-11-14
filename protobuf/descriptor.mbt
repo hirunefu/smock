@@ -10,6 +10,19 @@
 pub struct DescriptorSet {
   /// The files, in the order of the set.
   files : ReadOnlyArray[FileDescriptor]
+  /// Every message of the set, nested ones included. A field's or a
+  /// method's resolved type is an index in it.
+  priv all_messages : Array[MessageDescriptor]
+  /// The index in `all_messages` of each message, by its full name.
+  priv message_index : Map[String, Int32]
+  /// Every enum of the set, nested ones included.
+  priv all_enums : Array[EnumDescriptor]
+  /// The index in `all_enums` of each enum, by its full name.
+  priv enum_index : Map[String, Int32]
+  /// Each method, by the path gRPC calls it by.
+  priv methods : Map[String, MethodDescriptor]
+  /// Each extension, by its full name.
+  priv extensions : Map[String, FieldDescriptor]
 }
 
 ///|
@@ -79,6 +92,15 @@ pub struct MessageDescriptor {
   /// Whether its option `message_set_wire_format` is true, which makes it
   /// a MessageSet, whose extensions use another wire form.
   message_set_wire_format : Bool
+  /// Its fields by number, the first of each number.
+  priv fields_by_number : Map[Int32, FieldDescriptor]
+  /// Its fields by name.
+  priv fields_by_name : Map[String, FieldDescriptor]
+  /// Its fields by JSON name, the first of each JSON name.
+  priv fields_by_json_name : Map[String, FieldDescriptor]
+  /// The extensions of the set that extend it, by number, filled when the
+  /// set is checked.
+  priv extended_by : Map[Int32, FieldDescriptor]
 }
 
 ///|
@@ -113,8 +135,9 @@ pub struct FieldDescriptor {
   number : Int32
   /// Whether it is optional, required or repeated.
   label : Label
-  /// Its type.
-  type_ : FieldType
+  /// Its type. When the set gives none, it is `Message` or `Enum`, as the
+  /// type that `type_name` names is.
+  mut type_ : FieldType
   /// The full name of its message, group or enum type, as the set gives
   /// it, such as `.helloworld.HelloRequest`, or `""` for a scalar type.
   type_name : String
@@ -130,6 +153,11 @@ pub struct FieldDescriptor {
   proto3_optional : Bool
   /// Its option `packed`, when it gives one.
   packed : Bool?
+  /// Whether the set gives its type.
+  priv typed : Bool
+  /// The index of its message or group type in the set's `all_messages`,
+  /// or of its enum type in `all_enums`, once resolved; -1 otherwise.
+  priv mut type_index : Int32
 }
 
 ///|
@@ -210,6 +238,10 @@ pub struct EnumDescriptor {
   /// Its values, in the order of the file. An alias is a value with the
   /// number of an earlier one.
   values : ReadOnlyArray[EnumValueDescriptor]
+  /// Its values by name.
+  priv values_by_name : Map[String, EnumValueDescriptor]
+  /// Its values by number, the first of each number.
+  priv values_by_number : Map[Int32, EnumValueDescriptor]
 }
 
 ///|
@@ -249,29 +281,20 @@ pub struct MethodDescriptor {
   client_streaming : Bool
   /// Whether the server sends a stream of messages.
   server_streaming : Bool
+  /// The index of its input type in the set's `all_messages`, once
+  /// resolved.
+  priv mut input_index : Int32
+  /// The index of its output type, once resolved.
+  priv mut output_index : Int32
 }
 
 ///|
-/// Reads `input`, a FileDescriptorSet in protobuf's binary encoding, as
-/// `protoc --include_imports -o` and `buf build -o` write it.
-///
-/// It keeps the descriptor model: each file's name, package, syntax and
-/// dependencies; its messages, nested ones included, with their fields,
-/// oneofs, extension ranges and the options `map_entry` and
-/// `message_set_wire_format`; its enums and their values; its extensions;
-/// and its services and methods. Of a field it keeps the number, label,
-/// type, type name, extendee, JSON name, oneof, proto3 `optional` and the
-/// option `packed`. It skips every other field, such as source info, other
-/// options and Buf's image extensions. Raises `DecodeError` when the input
-/// is not protobuf, when a field it keeps has another wire type than
-/// descriptor.proto gives it, when a string it keeps is not UTF-8, and when
-/// a syntax, a label or a type is not one that descriptor.proto defines.
-///
-/// It reads what the set holds and checks nothing more: files may repeat,
-/// and names need not resolve.
-pub fn read_descriptor_set(
+/// Reads the files of a FileDescriptorSet, each with what it indexes of
+/// its own messages and enums. Raises `DecodeError` as
+/// `read_descriptor_set` says.
+fn read_files(
   input : BytesView,
-) -> DescriptorSet raise DecodeError {
+) -> ReadOnlyArray[FileDescriptor] raise DecodeError {
   let reader = Reader(input)
   let files = []
   while !reader.at_end() {
@@ -283,7 +306,7 @@ pub fn read_descriptor_set(
       _ => reader.skip()
     }
   }
-  { files: ReadOnlyArray::from_array(files), }
+  ReadOnlyArray::from_array(files)
 }
 
 ///|
@@ -434,6 +457,20 @@ fn read_message(
   for view in extension_views {
     extensions.push(read_field(view, inner))
   }
+  let fields_by_number = Map([])
+  let fields_by_name = Map([])
+  let fields_by_json_name = Map([])
+  for field in fields {
+    if !fields_by_number.contains(field.number) {
+      fields_by_number[field.number] = field
+    }
+    if !fields_by_name.contains(field.name) {
+      fields_by_name[field.name] = field
+    }
+    if !fields_by_json_name.contains(field.json_name) {
+      fields_by_json_name[field.json_name] = field
+    }
+  }
   {
     name,
     full_name,
@@ -446,6 +483,10 @@ fn read_message(
     extension_ranges: ReadOnlyArray::from_array(extension_ranges),
     map_entry,
     message_set_wire_format,
+    fields_by_number,
+    fields_by_name,
+    fields_by_json_name,
+    extended_by: Map([]),
   }
 }
 
@@ -568,6 +609,8 @@ fn read_field(
     oneof_index,
     proto3_optional,
     packed,
+    typed: type_ is Some(_),
+    type_index: -1,
   }
 }
 
@@ -607,11 +650,23 @@ fn read_enum(
       _ => reader.skip()
     }
   }
+  let values_by_name = Map([])
+  let values_by_number = Map([])
+  for value in values {
+    if !values_by_name.contains(value.name) {
+      values_by_name[value.name] = value
+    }
+    if !values_by_number.contains(value.number) {
+      values_by_number[value.number] = value
+    }
+  }
   {
     name,
     full_name: scope.full_name(name),
     syntax: scope.syntax,
     values: ReadOnlyArray::from_array(values),
+    values_by_name,
+    values_by_number,
   }
 }
 
@@ -673,7 +728,15 @@ fn read_method(input : BytesView) -> MethodDescriptor raise DecodeError {
       _ => reader.skip()
     }
   }
-  { name, input_type, output_type, client_streaming, server_streaming, }
+  {
+    name,
+    input_type,
+    output_type,
+    client_streaming,
+    server_streaming,
+    input_index: -1,
+    output_index: -1,
+  }
 }
 
 ///|

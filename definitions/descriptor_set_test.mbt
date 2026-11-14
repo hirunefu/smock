@@ -120,3 +120,21 @@ test "a descriptorSet whose file does not decode as a FileDescriptorSet is one p
     ),
   )
 }
+
+///|
+test "a descriptorSet that decodes but is not self-contained gives each of its problems at descriptorSet" {
+  // The file a.proto, which imports b.proto, twice.
+  let a_proto = b"\x0a\x12\x0a\x07a.proto\x1a\x07b.proto"
+  inspect(
+    mock_sets(
+      (
+        #|[{ "name": "a", "grpc": { "descriptorSet": "a.binpb" } }]
+      ),
+      body_files=[("a.binpb", a_proto + a_proto)],
+    ),
+    content=(
+      #|a.json: /mocks/0/grpc/descriptorSet: "a.binpb": the file a.proto is in the set more than once
+      #|a.json: /mocks/0/grpc/descriptorSet: "a.binpb": a.proto imports b.proto, which is not in the set; build the set with protoc --include_imports, or with buf build
+    ),
+  )
+}

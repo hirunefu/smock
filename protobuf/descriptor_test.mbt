@@ -257,7 +257,7 @@ fn message_field(
 }
 
 ///|
-test "a file without syntax is proto2, and dependencies, labels, field types, MessageSet and streaming flags are kept" {
+test "a file without syntax is proto2, a field without a type takes the kind of the type it names, and labels, MessageSet and streaming flags are kept" {
   let field = (name, number, label, type_, type_name) => {
     nested(w => {
       string_field(w, 1, name)
@@ -313,12 +313,24 @@ test "a file without syntax is proto2, and dependencies, labels, field types, Me
       }),
     )
   })
+  let common = nested(w => {
+    string_field(w, 1, "shop/common.proto")
+    string_field(w, 2, "shop")
+    message_field(w, 4, nested(w => string_field(w, 1, "Line")))
+    message_field(w, 5, nested(w => string_field(w, 1, "Status")))
+  })
+  let timestamp = nested(w => {
+    string_field(w, 1, "google/protobuf/timestamp.proto")
+    string_field(w, 2, "google.protobuf")
+  })
   let editions = nested(w => {
     string_field(w, 1, "new.proto")
     string_field(w, 12, "editions")
   })
   let set = nested(w => {
     message_field(w, 1, file)
+    message_field(w, 1, common)
+    message_field(w, 1, timestamp)
     message_field(w, 1, editions)
   })
   inspect(
@@ -328,12 +340,68 @@ test "a file without syntax is proto2, and dependencies, labels, field types, Me
       #|  message shop.Order
       #|    1 shop.Order.id, json id: required uint64
       #|    2 shop.Order.lines, json lines: repeated message .shop.Line
-      #|    3 shop.Order.status, json status: optional message .shop.Status
+      #|    3 shop.Order.status, json status: optional enum .shop.Status
       #|    4 shop.Order.total, json total: optional double
       #|  message shop.Bag, message_set_wire_format
       #|  service shop.Orders
       #|    Upload(stream .shop.Order) returns (.shop.Bag)
+      #|file shop/common.proto, package shop, proto2, dependencies []
+      #|  message shop.Line
+      #|  enum shop.Status: 
+      #|file google/protobuf/timestamp.proto, package google.protobuf, proto2, dependencies []
       #|file new.proto, package , editions, dependencies []
+      #|
+    ),
+  )
+}
+
+///|
+test "a field without json_name gets protoc's lowerCamelCase name, and one with json_name keeps it" {
+  let field = (name : String, number : UInt64) => {
+    nested(w => {
+      string_field(w, 1, name)
+      varint_field(w, 3, number)
+      varint_field(w, 5, 5)
+    })
+  }
+  let file = nested(w => {
+    string_field(w, 1, "names.proto")
+    message_field(
+      w,
+      4,
+      nested(w => {
+        string_field(w, 1, "M")
+        message_field(w, 2, field("user_name", 1))
+        message_field(w, 2, field("_private", 2))
+        message_field(w, 2, field("a__b", 3))
+        message_field(w, 2, field("x_1y", 4))
+        message_field(w, 2, field("Already_Camel", 5))
+        message_field(w, 2, field("trailing_", 6))
+        message_field(
+          w,
+          2,
+          nested(w => {
+            string_field(w, 1, "display_name")
+            varint_field(w, 3, 7)
+            varint_field(w, 5, 9)
+            string_field(w, 10, "title")
+          }),
+        )
+      }),
+    )
+  })
+  inspect(
+    read(nested(w => message_field(w, 1, file))),
+    content=(
+      #|file names.proto, package , proto2, dependencies []
+      #|  message M
+      #|    1 M.user_name, json userName: optional int32
+      #|    2 M._private, json Private: optional int32
+      #|    3 M.a__b, json aB: optional int32
+      #|    4 M.x_1y, json x1y: optional int32
+      #|    5 M.Already_Camel, json AlreadyCamel: optional int32
+      #|    6 M.trailing_, json trailing: optional int32
+      #|    7 M.display_name, json title: optional string
       #|
     ),
   )
