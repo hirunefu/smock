@@ -205,6 +205,24 @@ hex_test scalars/every-min.binpb every_min "An Every with each signed scalar fie
 # A method whose input type has a field of a well-known type.
 descriptor_set stamped stamped.binpb stamped.proto
 
+# A service whose output types hold every proto3 field type but the
+# well-known types, and replies of them, which smock/protobuf encodes from
+# ProtoJSON.
+descriptor_set replies replies.binpb replies.proto
+message replies replies.proto replies.User user
+for reply in maxima minima specials lists maps choice inner; do
+  message replies replies.proto replies.Everything "$reply"
+done
+hex_test replies/replies.binpb replies_set "The Descriptor set of fixtures/protobuf/replies/replies.proto, fixtures/protobuf/replies/replies.binpb, in hex." protobuf
+hex_test replies/user.binpb user_reply "The User of fixtures/protobuf/replies/user.txtpb, as protoc encodes it, in hex." protobuf
+for reply in maxima minima specials lists maps choice inner; do
+  hex_test "replies/$reply.binpb" "everything_$reply" "The Everything of fixtures/protobuf/replies/$reply.txtpb, as protoc encodes it, in hex." protobuf
+done
+
+# Output types that gRPC Stubs do not serve yet: a well-known type, and a
+# type of a proto2 file, at the top or through nested messages.
+descriptor_set unserved unserved.binpb unserved.proto
+
 # A request of version 2 of helloworld.proto, which carries the field
 # version that version 1 lacks.
 message helloworld-v2 helloworld.proto helloworld.HelloRequest hello-request

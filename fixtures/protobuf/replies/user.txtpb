@@ -1,0 +1,6 @@
+# The reply of the gRPC Stubs' example: an int64, an enum and a repeated
+# string.
+user_id: 42
+status: ACTIVE
+tags: "a"
+tags: "b"

@@ -8,12 +8,14 @@
 // looked up again, its one message is taken from the body and decoded into
 // JSON, and the engine decides the call as a POST to the method's path,
 // with the metadata as headers, the JSON as the body and the gRPC call
-// marker. The reply JSON is then encoded with the method's output type and
-// written as gRPC writes it: HEADERS, one DATA frame with the framed
-// message, then trailers with `grpc-status: 0`. The second lookup, the
-// decoding, `handle` and the encoding run with no await between them, so a
-// reload never splits them, and a call that the reload leaves without a
-// gRPC Stub to reach gets the answer it would have got from its HEADERS.
+// marker. The reply is the message that a static reply was encoded into
+// when the files were loaded, or else the rendered reply JSON, encoded here
+// with the method's output type. It is written as gRPC writes it: HEADERS,
+// one DATA frame with the framed message, then trailers with
+// `grpc-status: 0`. The second lookup, the decoding, `handle` and the
+// encoding run with no await between them, so a reload never splits them,
+// and a call that the reload leaves without a gRPC Stub to reach gets the
+// answer it would have got from its HEADERS.
 //
 // A call that cannot reach a gRPC Stub still goes to the engine, with an
 // empty body, which plans its UNIMPLEMENTED answer and journals it as
@@ -195,13 +197,34 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answer_call(
     self.answer_status(stream, request, outcome, part, date~)
     return
   }
-  // A static reply was checked against the output type at load; a
-  // templated one is checked here, once rendered.
-  let reply = encode_reply(set.output_of(rpc), plan.body) catch {
-    _ => {
-      self.answer_internal(stream, request, outcome, "template failed", date~)
-      return
-    }
+  // A static reply was encoded when the files were loaded, with the output
+  // type of the set served then, which is this one unless the Stub outlived
+  // a reload. A templated one is encoded here, once rendered.
+  let output = set.output_of(rpc)
+  let reply = match part.encoded {
+    Some(encoded) if physical_equal(encoded.output, output) => encoded.message
+    _ =>
+      encode_reply(set, output, plan.body) catch {
+        EncodeError(pointer~, message~) => {
+          let template_error = match outcome.journal {
+            Some(entry) =>
+              Some(@engine.TemplateError::{
+                at: reply_pointer(entry.response_index) + pointer,
+                message,
+              })
+            None => None
+          }
+          self.answer_internal(
+            stream,
+            request,
+            outcome,
+            "template failed",
+            date~,
+            template_error?,
+          )
+          return
+        }
+      }
   }
   let rest = self.queue_reply(
     stream,
@@ -252,8 +275,9 @@ fn H2Connection::answer_status(
 /// Answers `stream`, a gRPC call that the engine decided `outcome` for, with
 /// Trailers-Only INTERNAL and the fixed ASCII `message` instead of the
 /// plan's reply, which it cannot send, and records INTERNAL as the call's
-/// gRPC status in its Journal entry, which is then committed. `date` is the
-/// value of the answer's `date` field.
+/// gRPC status in its Journal entry, which is then committed, with
+/// `template_error`, when given, as the reason. `date` is the value of the
+/// answer's `date` field.
 fn H2Connection::answer_internal(
   self : H2Connection,
   stream : Int32,
@@ -261,6 +285,7 @@ fn H2Connection::answer_internal(
   outcome : @engine.Outcome,
   message : String,
   date~ : String,
+  template_error? : @engine.TemplateError,
 ) -> Unit {
   let fields = trailers_only(
     @grpc.Internal,
@@ -269,25 +294,42 @@ fn H2Connection::answer_internal(
     date~,
   )
   if outcome.journal is Some(entry) {
-    entry.set_grpc_status(@grpc.Internal)
+    entry.set_grpc_status(@grpc.Internal, template_error?)
   }
   self.headers_only(stream, fields, outcome.journal, partial=false)
   self.ended_in_place(request, outcome)
 }
 
 ///|
-/// The reply message that `body`, a plan's body, holds as JSON, encoded
-/// with `output`: an empty body is an empty message. Raises when the body
-/// is not JSON, or not a message of the type.
+/// The reply message that `body`, a plan's body, holds as JSON, read as
+/// ProtoJSON and encoded with `output`, a type of `set`: an empty body is
+/// an empty message. Raises `EncodeError`, at the JSON Pointer of the value
+/// at fault, when the body is not a message of the type.
 fn encode_reply(
+  set : @protobuf.DescriptorSet,
   output : @protobuf.MessageDescriptor,
   body : @engine.Body,
-) -> Bytes raise {
-  guard body is Bytes(json) else { fail("a reply is not events") }
-  if json.length() == 0 {
-    return b""
+) -> Bytes raise @protobuf.EncodeError {
+  guard body is Bytes(json) && json.length() > 0 else { return b"" }
+  let value = @json.parse(@utf8.decode(json)) catch {
+    _ =>
+      raise @protobuf.EncodeError(
+        pointer="",
+        message="the rendered reply is not JSON",
+      )
   }
-  @protobuf.encode_json(output, @json.parse(@utf8.decode(json)))
+  set.encode_json(output, value)
+}
+
+///|
+/// The JSON Pointer, within its Stub, of the `json` of the reply that the
+/// Stub's pick chose: of its `response`, when `index` is `None`, or else of
+/// that element of its `responses`.
+fn reply_pointer(index : Int32?) -> String {
+  match index {
+    Some(index) => "/responses/\{index}/json"
+    None => "/response/json"
+  }
 }
 
 ///|

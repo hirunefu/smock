@@ -206,7 +206,8 @@ pub(all) struct ResponsePlan {
 
 ///|
 /// The gRPC part of a plan: what a gRPC call's reply carries beside its
-/// message, which is the plan's body.
+/// message, which is the plan's body as JSON, and the message encoded when
+/// it could be.
 #derive(Debug)
 pub(all) struct GrpcPart {
   /// The gRPC status the reply ends with.
@@ -216,12 +217,21 @@ pub(all) struct GrpcPart {
   /// Its trailing metadata, after the status and the message, such as the
   /// `smock-near-miss` field of a call that no Stub matched.
   trailers : ReadOnlyArray[(String, String)]
+  /// The reply message, encoded when the files were loaded, for a reply
+  /// without templates; `None` for one that the server encodes from the
+  /// plan's body, once rendered, and for an answer without a message.
+  encoded : @definitions.EncodedMessage?
 }
 
 ///|
-/// The gRPC part of every reply that a gRPC Stub serves: the status `OK`,
-/// with no message and no trailing metadata.
-let grpc_ok : GrpcPart = { status: Ok, message: None, trailers: [], }
+/// The gRPC part of every reply that a gRPC Stub serves, but for its
+/// `encoded`: the status `OK`, with no message and no trailing metadata.
+let grpc_ok : GrpcPart = {
+  status: Ok,
+  message: None,
+  trailers: [],
+  encoded: None,
+}
 
 ///|
 /// A response body: bytes sent at once, or a stream of Server-Sent Events,
@@ -785,7 +795,10 @@ pub fn Engine::handle(
               } noraise {
                 plan =>
                   if grpc is Some(_) {
-                    { ..plan, grpc: Some(grpc_ok), }
+                    {
+                      ..plan,
+                      grpc: Some({ ..grpc_ok, encoded: response.encoded, }),
+                    }
                   } else {
                     plan
                   }
@@ -1031,6 +1044,7 @@ fn grpc_unimplemented(message : String, near_miss : NearMiss?) -> ResponsePlan {
         Some(near_miss) => [("smock-near-miss", near_miss.header_value())]
         None => []
       },
+      encoded: None,
     }),
   }
 }

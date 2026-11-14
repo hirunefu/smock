@@ -234,15 +234,70 @@ does not have, such as those a newer client sends, are skipped.
 For now, smock decodes messages whose fields are singular: repeated
 fields, maps, oneofs other than a proto3 `optional` field's, and the
 well-known types, such as `google.protobuf.Timestamp`, are not decoded
-yet. It answers with replies whose fields are all singular `string`,
-`bool` and `int32` fields outside any oneof. The
+yet. It answers with replies of every proto3 type but the well-known
+types ([The reply](#the-reply)). The
 [Definition-file reference](definition-files.md#grpc-stubs) lists what a
 gRPC Stub cannot hold yet.
 
 ### The reply
 
-smock encodes the Stub's `json` reply with the method's output type, as
-protoc encodes it, and sends what a gRPC server sends:
+A gRPC Stub's reply is `json`, the reply message, read as ProtoJSON reads
+JSON, so a reply that grpcurl or another tool printed can be pasted as it
+is:
+
+| Field | In `json` |
+|---|---|
+| Any field | Its name as the `.proto` file spells it, such as `user_id`, or its JSON name, such as `userId`. Giving both in one object is a problem. |
+| `int32`, `sint32`, `sfixed32`, `uint32`, `fixed32` | A number or a string, in its type's range: `7` or `"7"`. An exponent or a fraction of zeros is fine, such as `1e3` or `"100.0"`. |
+| `int64`, `sint64`, `sfixed64`, `uint64`, `fixed64` | The same, exact at any size: `"9223372036854775807"`, or the number, whose digits smock keeps. |
+| `float`, `double` | A number or a string, or `"NaN"`, `"Infinity"` or `"-Infinity"`. A `float` is rounded to the nearest 32-bit float, and one beyond its range is a problem. |
+| `bool` | `true` or `false`. |
+| `string` | A string. |
+| `bytes` | A string in base64, standard or URL-safe, with or without its padding. |
+| An enum | The name of a value, such as `ACTIVE`, or a number, which may name no value, as an open enum allows. |
+| A message | An object. |
+| A repeated field | An array. `null` in it is a problem. |
+| A map | An object whose keys are the map's keys as strings: integers in decimal, such as `"-1"`, and `"true"` and `"false"`. A `null` value is a problem. |
+| A oneof | One of its members. Two members in one object are a problem, but a member that is `null` does not count. |
+
+`null` leaves a field unset. A key that names no field is a problem. A
+Stub without `json` answers an empty message, with every field at its
+default.
+
+The reply's output type may be any proto3 message, with any of these
+fields, but for the well-known types, such as `google.protobuf.Timestamp`,
+which smock does not serve yet: a Stub on a method whose output type is
+one, or reaches one through its fields, is a problem at its `path`, as is
+one whose output type reaches a type of a proto2 or an editions file.
+
+A reply without `template` is read and encoded once, when the files load.
+A reply that is not a message of the output type is a problem at the JSON
+Pointer of its first value at fault, which `smock check` reports:
+
+```text
+replies.yaml: /stubs/0/response/json/tags/1: cannot be null: it is an element of the repeated field tags of replies.User
+```
+
+A reply with `template: true` is rendered as JSON, its values escaped as
+in any `json` template, then read and encoded on each call. One that is
+not a message of the output type gets Trailers-Only INTERNAL with the
+message `template failed`, and the call's Journal entry says why in
+`templateError`, at the JSON Pointer of the value at fault within the
+Stub:
+
+```json
+{
+  "at": "/response/json/userId",
+  "message": "must be an integer from -9223372036854775808 to 9223372036854775807: the field user_id of replies.User has the type int64"
+}
+```
+
+smock encodes the reply as protoc encodes it: fields in field-number
+order; a field without presence left out at its default, while a message
+field, a member of a oneof and a proto3 `optional` field are written
+whenever they are set; repeated scalars packed, unless the field says
+`packed = false`; and map entries sorted by key, each with its key and
+its value. It sends what a gRPC server sends:
 
 - HEADERS with `:status` 200, `content-type: application/grpc`,
   `smock-mock` when the Default Mock answered, and `date`;
@@ -418,7 +473,7 @@ than 100.
 These calls reach the Stubs. The Journal records each with the
 `grpcStatus` `INTERNAL`, and with the HTTP status planned for it: 500 or
 507 for smock's own failures, and 200 for a rendered reply that does not
-fit the output type:
+fit the output type, whose `templateError` says why:
 
 | The call | `grpc-message` |
 |---|---|

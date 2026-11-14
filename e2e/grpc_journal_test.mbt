@@ -147,7 +147,7 @@ async test "smock's INTERNAL answers to calls that reached the Stubs are journal
         answers(page),
         content=(
           #|"fails" 500 "INTERNAL" x-tenant=fails templateError={"at":"/response/json/message","message":"body.missing.name is missing"}
-          #|"misfit" 200 "INTERNAL" x-tenant=misfit
+          #|"misfit" 200 "INTERNAL" x-tenant=misfit templateError={"at":"/response/json/mesage","message":"is not a field of helloworld.HelloReply"}
         ),
       )
     })
