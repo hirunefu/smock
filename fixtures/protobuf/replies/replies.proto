@@ -1,0 +1,88 @@
+// Written for smock's tests of gRPC replies: a service whose output types
+// hold every proto3 field type but the well-known types, which smock
+// encodes from ProtoJSON.
+syntax = "proto3";
+
+package replies;
+
+service Accounts {
+  // An int64, an enum and a repeated string.
+  rpc GetUser (UserRequest) returns (User);
+  // Every scalar type, singular and repeated, packed or not, with maps,
+  // a oneof, a proto3 optional field and nested messages.
+  rpc GetEverything (UserRequest) returns (Everything);
+}
+
+message UserRequest {
+  string name = 1;
+}
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  SUSPENDED = 2;
+}
+
+message User {
+  int64 user_id = 1;
+  Status status = 2;
+  repeated string tags = 3;
+  string display_name = 4;
+}
+
+message Everything {
+  double a_double = 1;
+  float a_float = 2;
+  int32 an_int32 = 3;
+  int64 an_int64 = 4;
+  uint32 a_uint32 = 5;
+  uint64 a_uint64 = 6;
+  sint32 a_sint32 = 7;
+  sint64 a_sint64 = 8;
+  fixed32 a_fixed32 = 9;
+  fixed64 a_fixed64 = 10;
+  sfixed32 an_sfixed32 = 11;
+  sfixed64 an_sfixed64 = 12;
+  bool a_bool = 13;
+  string a_string = 14;
+  bytes some_bytes = 15;
+  Status status = 16;
+  Nested nested = 17;
+  optional int32 maybe = 18;
+  string renamed = 19 [json_name = "alias"];
+
+  repeated int32 int32s = 20;
+  repeated int32 unpacked_int32s = 21 [packed = false];
+  repeated double doubles = 22;
+  repeated float floats = 23;
+  repeated int64 int64s = 24;
+  repeated uint64 uint64s = 25;
+  repeated sint32 sint32s = 26;
+  repeated sint64 sint64s = 27;
+  repeated fixed32 fixed32s = 28;
+  repeated sfixed64 sfixed64s = 29;
+  repeated bool bools = 30;
+  repeated Status statuses = 31;
+  repeated string strings = 32;
+  repeated bytes byte_strings = 33;
+  repeated Nested nesteds = 34;
+
+  map<string, int32> counts = 40;
+  map<int32, string> names = 41;
+  map<bool, Nested> by_flag = 42;
+  map<int64, Status> by_id = 43;
+  map<uint64, bytes> blobs = 44;
+  map<sint32, double> by_sint = 45;
+  map<fixed64, bool> by_fixed = 46;
+
+  oneof choice {
+    string word = 50;
+    int32 number = 51;
+    Nested inner = 52;
+  }
+
+  message Nested {
+    string label = 1;
+    Everything recursive = 2;
+  }
+}

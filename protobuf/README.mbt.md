@@ -233,15 +233,24 @@ reads the message as protobuf's parsers read it: the last value of a field
 wins, and unknown fields are skipped. It raises `DecodeError` when the
 input is not protobuf, or a string is not UTF-8.
 
-`@protobuf.encode_json(message, json)` encodes JSON, as ProtoJSON writes a
-message, the way protoc encodes it: fields in field-number order, each left
-out at its default. A key may be the field's proto name or its JSON name.
+`set.encode_json(message, json)` encodes JSON, a message of the type
+`message`, a type of `set`, as ProtoJSON writes it, the way protoc encodes
+it: fields in field-number order, a field without presence left out at its
+default, repeated scalars packed unless the field says `packed = false`,
+and map entries sorted by key. It reads JSON as ProtoJSON reads it: a key
+may be the field's proto name or its JSON name, `null` leaves a field
+unset, an enum is a name or a number, a 64-bit integer a number or a
+string, exact at any size, a float `"NaN"`, `"Infinity"` or `"-Infinity"`
+too, and bytes are base64, standard or URL-safe, with or without padding.
 It raises `EncodeError`, which names the JSON Pointer of the value at
-fault, for JSON that is not a message of the type.
+fault, for JSON that is not a message of the type, and for the types it
+does not encode yet: the well-known types, such as
+`google.protobuf.Timestamp`, and types of files that are not proto3.
+`message.is_well_known()` tells the well-known types.
 
-Both serve types whose fields are singular `string`, `bool` and `int32`
-fields outside any oneof for now, and raise their error for a type with
-any other field, a proto3 `optional` field included.
+`decode_json` serves types whose fields are singular `string`, `bool` and
+`int32` fields outside any oneof for now, and raises its error for a type
+with any other field, a proto3 `optional` field included.
 
 ```mbt check
 ///|
@@ -254,7 +263,7 @@ test "decode a message, and encode one" {
   let json = @protobuf.decode_json(count, b"\x0a\x02A1\x10\x01"[:])
   inspect(@utf8.decode(json), content="{\"shelf\":\"A1\",\"inStock\":true}")
   inspect(
-    @protobuf.encode_json(count, { "in_stock": true, "shelf": "A1" }) ==
+    set.encode_json(count, { "in_stock": true, "shelf": "A1" }) ==
     b"\x0a\x02A1\x10\x01",
     content="true",
   )

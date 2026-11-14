@@ -1,0 +1,33 @@
+// Written for smock's tests: methods whose output types reach types that
+// gRPC Stubs do not serve yet, a well-known type and a type of a proto2
+// file, at the top or through nested messages.
+syntax = "proto3";
+
+package unserved;
+
+import "google/protobuf/timestamp.proto";
+import "old.proto";
+
+service Clock {
+  rpc Now (TimeRequest) returns (TimeReply);
+  rpc Schedule (TimeRequest) returns (ScheduleReply);
+  rpc Stamp (TimeRequest) returns (google.protobuf.Timestamp);
+}
+
+message TimeRequest {
+  string zone = 1;
+}
+
+message TimeReply {
+  google.protobuf.Timestamp at = 1;
+}
+
+message ScheduleReply {
+  message Slot {
+    google.protobuf.Timestamp start = 1;
+    old.Note note = 2;
+    ScheduleReply next = 3;
+  }
+  repeated Slot slots = 1;
+  map<string, Slot> by_name = 2;
+}

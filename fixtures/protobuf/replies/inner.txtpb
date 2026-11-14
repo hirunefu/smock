@@ -1,0 +1,9 @@
+# A oneof member that is a message, holding a message of the type that
+# holds it.
+inner {
+  label: "outer"
+  recursive {
+    an_int32: 1
+    inner { label: "inner" }
+  }
+}

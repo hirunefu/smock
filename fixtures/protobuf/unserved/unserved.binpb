@@ -1,0 +1,31 @@
+
+ÿ
+google/protobuf/timestamp.protogoogle.protobuf";
+	Timestamp
+seconds (Rseconds
+nanos (RnanosB…
+com.google.protobufBTimestampProtoPZ2google.golang.org/protobuf/types/known/timestamppbø¢GPBªGoogle.Protobuf.WellKnownTypesbproto3
+,
+	old.protoold"
+Note
+text (	Rtext
+Ã
+unserved.protounservedgoogle/protobuf/timestamp.proto	old.proto"!
+TimeRequest
+zone (	Rzone"7
+	TimeReply*
+at (2.google.protobuf.TimestampRat"á
+ScheduleReply2
+slots (2.unserved.ScheduleReply.SlotRslots<
+by_name (2#.unserved.ScheduleReply.ByNameEntryRbyName„
+Slot0
+start (2.google.protobuf.TimestampRstart
+note (2	.old.NoteRnote+
+next (2.unserved.ScheduleReplyRnextW
+ByNameEntry
+key (	Rkey2
+value (2.unserved.ScheduleReply.SlotRvalue:82²
+Clock1
+Now.unserved.TimeRequest.unserved.TimeReply:
+Schedule.unserved.TimeRequest.unserved.ScheduleReply:
+Stamp.unserved.TimeRequest.google.protobuf.Timestampbproto3

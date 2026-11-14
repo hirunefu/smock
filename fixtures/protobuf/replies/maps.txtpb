@@ -1,0 +1,14 @@
+# A map of each key type, entries at their defaults included.
+counts {key: "b" value: 2}
+counts {key: "a" value: 1}
+counts {key: "" value: 0}
+names {key: 10 value: "ten"}
+names {key: -1 value: "minus one"}
+names {key: 2 value: ""}
+by_flag {key: true value {label: "yes"}}
+by_flag {key: false value {}}
+by_id {key: -9223372036854775808 value: ACTIVE}
+by_id {key: 7 value: STATUS_UNSPECIFIED}
+blobs {key: 18446744073709551615 value: "\001"}
+by_sint {key: -2 value: 1.5}
+by_fixed {key: 1 value: true}

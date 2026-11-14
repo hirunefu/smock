@@ -181,6 +181,24 @@ hex_test catalog/count-request.binpb count_request "A CountRequest with a shelf 
 hex_test catalog/count-reply.binpb count_reply "CountReply { count: -5, exact: true, shelf: \"A1\" }, as protoc encodes it: fixtures/protobuf/catalog/count-reply.binpb, in hex." protobuf
 hex_test oneofs/oneofs.binpb oneofs_set "The Descriptor set of fixtures/protobuf/oneofs/oneofs.proto, fixtures/protobuf/oneofs/oneofs.binpb, in hex." protobuf
 
+# A service whose output types hold every proto3 field type but the
+# well-known types, and replies of them, which smock/protobuf encodes from
+# ProtoJSON.
+descriptor_set replies replies.binpb replies.proto
+message replies replies.proto replies.User user
+for reply in maxima minima specials lists maps choice inner; do
+  message replies replies.proto replies.Everything "$reply"
+done
+hex_test replies/replies.binpb replies_set "The Descriptor set of fixtures/protobuf/replies/replies.proto, fixtures/protobuf/replies/replies.binpb, in hex." protobuf
+hex_test replies/user.binpb user_reply "The User of fixtures/protobuf/replies/user.txtpb, as protoc encodes it, in hex." protobuf
+for reply in maxima minima specials lists maps choice inner; do
+  hex_test "replies/$reply.binpb" "everything_$reply" "The Everything of fixtures/protobuf/replies/$reply.txtpb, as protoc encodes it, in hex." protobuf
+done
+
+# Output types that gRPC Stubs do not serve yet: a well-known type, and a
+# type of a proto2 file, at the top or through nested messages.
+descriptor_set unserved unserved.binpb unserved.proto
+
 # The end of the list of fixtures. With --check: every file the script
 # wrote, compared with the committed one.
 if [ -n "$check" ]; then
