@@ -104,7 +104,11 @@ pub struct Mock {
   /// priority in declaration order, that is file-name order, then position
   /// in the file.
   stubs : ReadOnlyArray[Stub]
-  /// The match index of `stubs`, which `candidates` looks up.
+  /// The Stubs that HTTP requests are matched against: `stubs` without the
+  /// gRPC Stubs, in the same order. It is `stubs` itself when the Mock has
+  /// no gRPC Stub.
+  http_stubs : ReadOnlyArray[Stub]
+  /// The match index of `http_stubs`, which `candidates` looks up.
   priv index : MatchIndex
   /// The Scenarios that the Mock's Stubs name, each with its file states,
   /// in byte-wise order of their names. A Scenario has no declaration: it
@@ -1235,6 +1239,7 @@ pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
           journal: true,
           descriptor_set: None,
           stubs: ReadOnlyArray::from_array([]),
+          http_stubs: ReadOnlyArray::from_array([]),
           index: MatchIndex::new(ReadOnlyArray::from_array([])),
           scenarios: ReadOnlyArray::from_array([]),
           buckets: ReadOnlyArray::from_array([]),
@@ -1253,6 +1258,13 @@ pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
         reader.stubs.iter().filter(stub => stub.mock == mock.name).collect(),
       ),
     )
+    // HTTP requests never match a gRPC Stub, so they are split off here,
+    // and an HTTP request pays nothing for them.
+    let http_stubs = if stubs.iter().any(stub => stub.is_grpc()) {
+      ReadOnlyArray::from_iter(stubs.iter().filter(stub => !stub.is_grpc()))
+    } else {
+      stubs
+    }
     let buckets = []
     let initial_data = Map([])
     for declared in reader.buckets {
@@ -1269,7 +1281,8 @@ pub fn ValidSet::snapshot(self : ValidSet, digest~ : String) -> Snapshot {
       journal: mock.journal,
       descriptor_set: mock.descriptor_set,
       stubs,
-      index: MatchIndex::new(stubs),
+      http_stubs,
+      index: MatchIndex::new(http_stubs),
       scenarios: scenarios_of(stubs),
       buckets: ReadOnlyArray::from_array(buckets),
       initial_data,
