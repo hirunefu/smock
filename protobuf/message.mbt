@@ -539,7 +539,7 @@ fn DescriptorSet::print_map(
               _ => reader.varint()
             },
           )
-        (2, String, Len) if value_field.type_ is String => {
+        (2, _, Len) if value_field.type_ is String => {
           // Checked here, since only the last entry of a key is printed.
           let text = reader.length_delimited()
           if !is_utf8(text) {

@@ -338,3 +338,372 @@ test "a map's message values print in the decoded form, and two values in one en
     ),
   )
 }
+
+///|
+test "a oneof member prints only when the message holds it, even at its default, and a later member replaces an earlier one" {
+  let choice = (write : (@protobuf.Writer) -> Unit) => {
+    collected("Choice", nested(write))
+  }
+  inspect(
+    choice(w => string_field(w, 1, "none")),
+    content=(
+      #|{"label":"none"}
+    ),
+  )
+  inspect(
+    choice(w => string_field(w, 2, "")),
+    content=(
+      #|{"label":"","word":""}
+    ),
+  )
+  inspect(
+    choice(w => varint_field(w, 3, 0)),
+    content=(
+      #|{"label":"","number":0}
+    ),
+  )
+  // Every member in turn: the last, the message, stays.
+  inspect(
+    choice(w => {
+      string_field(w, 2, "w")
+      varint_field(w, 3, 3)
+      message_field(w, 4, nested(w => string_field(w, 1, "pen")))
+    }),
+    content=(
+      #|{"label":"","item":{"name":"pen","sizes":[],"stock":{}}}
+    ),
+  )
+  // The message, then the string: the string stays.
+  inspect(
+    choice(w => {
+      message_field(w, 4, nested(w => string_field(w, 1, "pen")))
+      string_field(w, 2, "w")
+    }),
+    content=(
+      #|{"label":"","word":"w"}
+    ),
+  )
+}
+
+///|
+test "two values of a oneof's message member are merged, unless another member comes between them" {
+  let size = (n : UInt64) => nested(w => varint_field(w, 2, n))
+  let choice = (write : (@protobuf.Writer) -> Unit) => {
+    collected("Choice", nested(write))
+  }
+  inspect(
+    choice(w => {
+      message_field(w, 4, size(1))
+      message_field(w, 4, size(2))
+    }),
+    content=(
+      #|{"label":"","item":{"name":"","sizes":[1,2],"stock":{}}}
+    ),
+  )
+  inspect(
+    choice(w => {
+      message_field(w, 4, size(1))
+      varint_field(w, 3, 7)
+      message_field(w, 4, size(2))
+    }),
+    content=(
+      #|{"label":"","item":{"name":"","sizes":[2],"stock":{}}}
+    ),
+  )
+  // A member with another wire type than its type's is skipped, so it
+  // replaces nothing.
+  inspect(
+    choice(w => {
+      varint_field(w, 3, 7)
+      varint_field(w, 2, 1)
+    }),
+    content=(
+      #|{"label":"","number":7}
+    ),
+  )
+}
+
+///|
+test "the values of a message field are merged: the last value of a scalar wins, repeated fields are joined and maps merged, the last entry of a key winning" {
+  let stock = (key : String, value : UInt64) => {
+    nested(w => {
+      string_field(w, 1, key)
+      varint_field(w, 2, value)
+    })
+  }
+  let first = nested(w => {
+    string_field(w, 1, "pen")
+    varint_field(w, 2, 1)
+    message_field(w, 3, stock("a", 1))
+    message_field(w, 3, stock("c", 3))
+  })
+  let second = nested(w => {
+    varint_field(w, 2, 2)
+    message_field(w, 3, stock("a", 2))
+    message_field(w, 3, stock("b", 5))
+  })
+  inspect(
+    collected(
+      "Choice",
+      nested(w => {
+        message_field(w, 5, first)
+        string_field(w, 1, "boxed")
+        message_field(w, 5, second)
+      }),
+    ),
+    content=(
+      #|{"label":"boxed","box":{"name":"pen","sizes":[1,2],"stock":{"a":2,"b":5,"c":3}}}
+    ),
+  )
+}
+
+///|
+test "a repeated field or a map that does not parse is an error at the octet where it breaks" {
+  let lists = (write : (@protobuf.Writer) -> Unit) => {
+    collected("Lists", nested(write))
+  }
+  // A packed record that ends inside a varint, and one of fixed32 values
+  // that ends inside one.
+  inspect(
+    lists(w => {
+      w.tag(1, Len)
+      w.length_delimited(b"\x01\x80")
+    }),
+    content="error: octet 3: the input ends inside a varint",
+  )
+  inspect(
+    lists(w => {
+      w.tag(3, Len)
+      w.length_delimited(b"\x01\x00\x00\x00\x02")
+    }),
+    content="error: octet 6: the input ends inside a fixed 32-bit value",
+  )
+  // Strings that are not UTF-8: in a list, a map key, and the value of a
+  // map entry that a later one replaces.
+  inspect(
+    lists(w => {
+      string_field(w, 8, "ok")
+      w.tag(8, Len)
+      w.length_delimited(b"\xff")
+    }),
+    content="error: octet 5: the field words holds octets that are not UTF-8",
+  )
+  let maps = (write : (@protobuf.Writer) -> Unit) => {
+    collected("Maps", nested(write))
+  }
+  inspect(
+    maps(w => {
+      message_field(
+        w,
+        5,
+        nested(w => {
+          w.tag(1, Len)
+          w.length_delimited(b"\xc3\x28")
+        }),
+      )
+    }),
+    content="error: octet 3: the field key holds octets that are not UTF-8",
+  )
+  inspect(
+    maps(w => {
+      message_field(
+        w,
+        1,
+        nested(w => {
+          varint_field(w, 1, 1)
+          w.tag(2, Len)
+          w.length_delimited(b"\xc3")
+        }),
+      )
+      message_field(w, 1, named(1, "later"))
+    }),
+    content="error: octet 5: the field value holds octets that are not UTF-8",
+  )
+  // A map entry that ends inside its value.
+  inspect(
+    maps(w => message_field(w, 1, b"\x08\x01\x12\x05ab")),
+    content="error: octet 5: a length of 5 runs past the end of the input, which has 2 octets left",
+  )
+}
+
+///|
+/// A set of `tree.Tree`, a message with a map of Trees and a list of them,
+/// written field by field.
+fn tree_set() -> @protobuf.DescriptorSet {
+  let field = (
+    name : String,
+    number : UInt64,
+    label : UInt64,
+    type_ : UInt64,
+    type_name : String,
+  ) => {
+    nested(w => {
+      string_field(w, 1, name)
+      varint_field(w, 3, number)
+      varint_field(w, 4, label)
+      varint_field(w, 5, type_)
+      if type_name != "" {
+        string_field(w, 6, type_name)
+      }
+    })
+  }
+  let entry = message_proto("ChildrenEntry", body=w => {
+    message_field(w, 2, field("key", 1, 1, 9, ""))
+    message_field(w, 2, field("value", 2, 1, 11, ".tree.Tree"))
+    // MessageOptions with map_entry true.
+    message_field(w, 7, nested(w => varint_field(w, 7, 1)))
+  })
+  let tree = message_proto("Tree", body=w => {
+    message_field(w, 2, field("children", 1, 3, 11, ".tree.Tree.ChildrenEntry"))
+    message_field(w, 2, field("list", 2, 3, 11, ".tree.Tree"))
+    message_field(w, 3, entry)
+  })
+  let file = file_proto("tree.proto", package_name="tree", body=w => {
+    message_field(w, 4, tree)
+  })
+  @protobuf.read_descriptor_set(set_of([file])) catch {
+    err => abort("not a set: \{err}")
+  }
+}
+
+///|
+/// `input` decoded as a `tree.Tree`, as text, or the error that stops it.
+fn tree(input : Bytes) -> String {
+  let set = tree_set()
+  guard set.find_message("tree.Tree") is Some(message) else { abort("no Tree") }
+  @utf8.decode(@protobuf.decode_json(set, message, input[:])) catch {
+    err => "error: \{err}"
+  }
+}
+
+///|
+test "messages in lists and in maps nest 100 deep and no deeper, each map entry counting as a message" {
+  // Trees `depth` deep through their lists, and through their maps, where
+  // each level is an entry and a Tree.
+  let listed = (depth : Int32) => {
+    let mut message = b""
+    for _ in 0..<depth {
+      message = nested(w => message_field(w, 2, message))
+    }
+    message
+  }
+  let mapped = (levels : Int32) => {
+    let mut message = b""
+    for _ in 0..<levels {
+      message = nested(w => {
+        message_field(w, 1, nested(w => message_field(w, 2, message)))
+      })
+    }
+    message
+  }
+  let outcome = (text : String) => {
+    if text.has_prefix("error: ") {
+      text[text.find(": messages").unwrap() + 2:].to_owned()
+    } else {
+      "decoded"
+    }
+  }
+  inspect(
+    [
+      outcome(tree(listed(100))),
+      outcome(tree(listed(101))),
+      outcome(tree(mapped(50))),
+      outcome(tree(mapped(51))),
+    ].join("\n"),
+    content=(
+      #|decoded
+      #|messages nest deeper than 100
+      #|decoded
+      #|messages nest deeper than 100
+    ),
+  )
+  inspect(
+    tree(mapped(2)),
+    content=(
+      #|{"children":{"":{"children":{"":{"children":{},"list":[]}},"list":[]}},"list":[]}
+    ),
+  )
+}
+
+///|
+test "a repeated field and a map of a well-known type are not decoded yet" {
+  let timestamp = file_proto(
+    "google/protobuf/timestamp.proto",
+    package_name="google.protobuf",
+    body=w => {
+      message_field(
+        w,
+        4,
+        message_proto("Timestamp", body=w => {
+          message_field(w, 2, field_proto("seconds", 1, 3))
+        }),
+      )
+    },
+  )
+  let field = (name : String, number : UInt64, type_name : String) => {
+    nested(w => {
+      string_field(w, 1, name)
+      varint_field(w, 3, number)
+      varint_field(w, 4, 3)
+      varint_field(w, 5, 11)
+      string_field(w, 6, type_name)
+    })
+  }
+  let stamped = file_proto(
+    "stamped.proto",
+    package_name="stamped",
+    dependencies=["google/protobuf/timestamp.proto"],
+    body=w => {
+      message_field(
+        w,
+        4,
+        message_proto("History", body=w => {
+          message_field(w, 2, field("at", 1, ".google.protobuf.Timestamp"))
+        }),
+      )
+      message_field(
+        w,
+        4,
+        message_proto("ByName", body=w => {
+          message_field(w, 2, field("at", 1, ".stamped.ByName.AtEntry"))
+          message_field(
+            w,
+            3,
+            message_proto("AtEntry", body=w => {
+              message_field(w, 2, field_proto("key", 1, 9))
+              message_field(
+                w,
+                2,
+                field_proto(
+                  "value",
+                  2,
+                  11,
+                  type_name=".google.protobuf.Timestamp",
+                ),
+              )
+              message_field(w, 7, nested(w => varint_field(w, 7, 1)))
+            }),
+          )
+        }),
+      )
+    },
+  )
+  let set = @protobuf.read_descriptor_set(set_of([timestamp, stamped])) catch {
+    err => fail("not a set: \{err}")
+  }
+  let errors = ["stamped.History", "stamped.ByName"].map(name => {
+    guard set.find_message(name) is Some(message) else { abort("no \{name}") }
+    try @protobuf.decode_json(set, message, b""[:]) catch {
+      err => err.to_string()
+    } noraise {
+      _ => "decoded"
+    }
+  })
+  inspect(
+    errors.join("\n"),
+    content=(
+      #|octet 0: the field at has the well-known type google.protobuf.Timestamp, which smock does not decode yet
+      #|octet 0: the field at is a map whose values have the well-known type google.protobuf.Timestamp, which smock does not decode yet
+    ),
+  )
+}
