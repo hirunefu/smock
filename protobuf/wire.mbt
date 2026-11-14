@@ -67,3 +67,63 @@ pub fn Reader::varint(self : Reader) -> UInt64 raise DecodeError {
   }
   raise self.error(start, "the input ends inside a varint")
 }
+
+///|
+/// Whether every octet of the input has been read.
+pub fn Reader::at_end(self : Reader) -> Bool {
+  self.pos >= self.input.length()
+}
+
+///|
+/// Reads `n` octets as a little-endian unsigned integer, or raises
+/// `DecodeError` naming `what` when the input ends first.
+fn Reader::little_endian(
+  self : Reader,
+  n : Int32,
+  what : String,
+) -> UInt64 raise DecodeError {
+  if self.input.length() - self.pos < n {
+    raise self.error(self.pos, "the input ends inside \{what}")
+  }
+  let mut value = 0UL
+  for i = n - 1; i >= 0; i = i - 1 {
+    value = (value << 8) | self.input[self.pos + i].to_uint64()
+  }
+  self.pos = self.pos + n
+  value
+}
+
+///|
+/// Reads a fixed 32-bit value: 4 octets, little-endian, as protobuf
+/// encodes `fixed32`, `sfixed32` and `float`. Raises `DecodeError` when the
+/// input ends first.
+pub fn Reader::fixed32(self : Reader) -> UInt raise DecodeError {
+  self.little_endian(4, "a fixed 32-bit value").to_uint()
+}
+
+///|
+/// Reads a fixed 64-bit value: 8 octets, little-endian, as protobuf
+/// encodes `fixed64`, `sfixed64` and `double`. Raises `DecodeError` when
+/// the input ends first.
+pub fn Reader::fixed64(self : Reader) -> UInt64 raise DecodeError {
+  self.little_endian(8, "a fixed 64-bit value")
+}
+
+///|
+/// Reads a length-delimited value: a varint length, then that many octets,
+/// which it returns as a view of the input. Raises `DecodeError` when the
+/// length runs past the end of the input, before anything is allocated.
+pub fn Reader::length_delimited(self : Reader) -> BytesView raise DecodeError {
+  let start = self.pos
+  let length = self.varint()
+  let left = self.input.length() - self.pos
+  if length > left.to_uint64() {
+    raise self.error(
+      start,
+      "a length of \{length} runs past the end of the input, which has \{left} octets left",
+    )
+  }
+  let value = self.input[self.pos:self.pos + length.to_int()]
+  self.pos = self.pos + length.to_int()
+  value
+}
