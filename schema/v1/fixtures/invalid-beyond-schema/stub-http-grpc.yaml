@@ -1,0 +1,9 @@
+mocks:
+  - name: shop
+stubs:
+  - id: unavailable
+    mock: shop
+    request:
+      path: /helloworld.Greeter/SayHello
+    response:
+      grpc: { status: UNAVAILABLE }
