@@ -1,9 +1,10 @@
 // Seam 2 tests of gRPC unary calls over h2c: a call reaches the gRPC Stubs
 // of its Mock, decoded from protobuf into JSON, and gets its reply encoded
 // with the method's output type, framed in one DATA frame, then trailers
-// with grpc-status 0. Calls this branch cannot serve yet get Trailers-Only
-// INTERNAL. The set is gRPC's helloworld.proto, and the messages are
-// protoc-encoded fixtures (scripts/gen-protobuf-fixtures.sh).
+// with grpc-status 0. An unmatched call gets Trailers-Only UNIMPLEMENTED,
+// and calls this branch cannot serve yet get Trailers-Only INTERNAL. The
+// set is gRPC's helloworld.proto, and the messages are protoc-encoded
+// fixtures (scripts/gen-protobuf-fixtures.sh).
 
 ///|
 /// The Mock `greeter`, the Default Mock, with the set, and the gRPC Stub
@@ -95,7 +96,7 @@ async test "a call meets the json body condition of a gRPC Stub on the decoded m
 }
 
 ///|
-async test "an unmatched call gets Trailers-Only INTERNAL, and is journaled as unmatched, with a Near miss that names a gRPC Stub, never an HTTP Stub on its path" {
+async test "an unmatched call gets Trailers-Only UNIMPLEMENTED, and is journaled as unmatched, with a Near miss that names a gRPC Stub, never an HTTP Stub on its path" {
   let yaml =
     #|mocks:
     #|  - name: greeter
@@ -119,9 +120,10 @@ async test "an unmatched call gets Trailers-Only INTERNAL, and is journaled as u
           #|HEADERS
           #|  :status: 200
           #|  content-type: application/grpc
-          #|  grpc-status: 13
+          #|  grpc-status: 12
           #|  grpc-message: no Stub matched
           #|  smock-mock: greeter; via=default
+          #|  smock-near-miss: hello-ann; failed=body
           #|  date: <now>
           #|(end)
         ),
@@ -143,7 +145,7 @@ async test "an unmatched call gets Trailers-Only INTERNAL, and is journaled as u
       inspect(
         "stub \{stub.stringify()}, status \{status.stringify()}\nnear miss \{near_miss.stringify()}",
         content=(
-          #|stub null, status 404
+          #|stub null, status 200
           #|near miss {"stub":"hello-ann","stubSource":"file","failed":[{"condition":"body","expected":{"json":{"name":"Ann"}},"actual":["{\"name\":\"Tom\"}"]}]}
         ),
       )

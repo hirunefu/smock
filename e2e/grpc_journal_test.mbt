@@ -42,7 +42,7 @@ fn answers(page : Json) -> String raise {
 }
 
 ///|
-async test "a call's entry records grpcStatus OK beside its HTTP status 200, an unmatched call's INTERNAL, and queries, verification and the unmatched list take calls by Mock, POST, path and metadata" {
+async test "a call's entry records grpcStatus OK beside its HTTP status 200, an unmatched call's UNIMPLEMENTED, and queries, verification and the unmatched list take calls by Mock, POST, path and metadata" {
   let yaml =
     #|mocks:
     #|  - name: greeter
@@ -72,11 +72,11 @@ async test "a call's entry records grpcStatus OK beside its HTTP status 200, an 
           #|200 {"ok":true,"count":1,"evicted":0,"reason":null,"warnings":[]}
         ),
       )
-      // Two calls that no Stub matches: smock answers INTERNAL.
+      // Two calls that no Stub matches: smock answers UNIMPLEMENTED.
       for headers in [[], [("x-tenant", "other")]] {
         let reply = client.call("/helloworld.Greeter/SayHello", headers~)
-        guard reply.head.contains(("grpc-status", "13")) else {
-          fail("not INTERNAL: \{reply.render()}")
+        guard reply.head.contains(("grpc-status", "12")) else {
+          fail("not UNIMPLEMENTED: \{reply.render()}")
         }
       }
       let (_, page) = smock.journal(query="{\"filter\":\{by_path}}")
@@ -84,8 +84,8 @@ async test "a call's entry records grpcStatus OK beside its HTTP status 200, an 
         answers(page),
         content=(
           #|"hello" 200 "OK" x-tenant=acme
-          #|null 404 "INTERNAL"
-          #|null 404 "INTERNAL" x-tenant=other
+          #|null 200 "UNIMPLEMENTED"
+          #|null 200 "UNIMPLEMENTED" x-tenant=other
         ),
       )
       // Metadata filters as headers do.
@@ -107,8 +107,8 @@ async test "a call's entry records grpcStatus OK beside its HTTP status 200, an 
       inspect(
         answers(unmatched.json()),
         content=(
-          #|null 404 "INTERNAL"
-          #|null 404 "INTERNAL" x-tenant=other
+          #|null 200 "UNIMPLEMENTED"
+          #|null 200 "UNIMPLEMENTED" x-tenant=other
         ),
       )
     })
