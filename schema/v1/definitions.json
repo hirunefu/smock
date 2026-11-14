@@ -74,6 +74,19 @@
           "description": "Whether the requests this Mock receives are recorded in the Journal. Turn it off so that a high-rate load test pays nothing for recording. Default true (on).",
           "type": "boolean",
           "default": true
+        },
+        "grpc": {
+          "description": "The Mock's gRPC settings: the Descriptor set that its gRPC Stubs are checked against and its calls are decoded with.",
+          "type": "object",
+          "properties": {
+            "descriptorSet": {
+              "description": "The Mock's Descriptor set: a self-contained FileDescriptorSet in protobuf's binary encoding, as protoc --include_imports -o or buf build -o writes it, read from a body file. It is a path relative to the body-file subdirectory of the definitions directory (files by default), such as greeter.binpb, with the path rules of bodyFile. It is read when the definitions are loaded, and a file that does not decode as a FileDescriptorSet is an error.",
+              "type": "string",
+              "pattern": "^(?!\\.)[^/]+(/(?!\\.)[^/]+)*$"
+            }
+          },
+          "required": ["descriptorSet"],
+          "additionalProperties": false
         }
       },
       "required": ["name"],

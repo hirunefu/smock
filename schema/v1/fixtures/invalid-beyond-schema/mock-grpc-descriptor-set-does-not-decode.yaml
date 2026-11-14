@@ -1,0 +1,4 @@
+mocks:
+  - name: greeter
+    grpc:
+      descriptorSet: orders.json
