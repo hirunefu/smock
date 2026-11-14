@@ -82,3 +82,67 @@ test "a call whose Host reaches no Mock, with no Default Mock, is planned UNIMPL
     "templateError": null,
   })
 }
+
+///|
+test "a call to a Mock without a set, to a method the set lacks or to a streaming method is planned UNIMPLEMENTED with its own message, and its Near miss is chosen among every gRPC Stub of the Mock" {
+  for match_index in [true, false] {
+    let h = harness(
+      [("mocks.yaml", unserved_mocks)],
+      body_files=greeter_body_files(),
+      match_index~,
+    )
+    let out = []
+    let calls = [
+      ("plain.svc", "/helloworld.Greeter/SayHello"),
+      ("greeter.svc", "/helloworld.Greeter/SayGoodbye"),
+      ("greeter.svc", "/helloworld.Greeter/SayHelloStreamReply"),
+      ("greeter.svc", "/helloworld.Greeter"),
+    ]
+    for call in calls {
+      let (authority, path) = call
+      let outcome = h.call(
+        path,
+        "",
+        octets=0,
+        authority~,
+        headers=[("content-type", "application/grpc"), ("x-tenant", "acme")],
+      )
+      out.push("\{authority} \{path}:")
+      out.push(response(outcome))
+      out.push(grpc_part(outcome))
+      out.push(answer_members(outcome).stringify())
+    }
+    inspect(
+      out.join("\n"),
+      content=(
+        #|plain.svc /helloworld.Greeter/SayHello:
+        #|200
+        #|
+        #|UNIMPLEMENTED
+        #|grpc-message: the Mock has no Descriptor set
+        #|{"stub":null,"status":200,"grpcStatus":"UNIMPLEMENTED","templateError":null}
+        #|greeter.svc /helloworld.Greeter/SayGoodbye:
+        #|200
+        #|
+        #|UNIMPLEMENTED
+        #|grpc-message: unknown method
+        #|smock-near-miss: hello; failed=path
+        #|{"stub":null,"status":200,"grpcStatus":"UNIMPLEMENTED","templateError":null}
+        #|greeter.svc /helloworld.Greeter/SayHelloStreamReply:
+        #|200
+        #|
+        #|UNIMPLEMENTED
+        #|grpc-message: streaming methods are not served yet
+        #|smock-near-miss: hello; failed=path
+        #|{"stub":null,"status":200,"grpcStatus":"UNIMPLEMENTED","templateError":null}
+        #|greeter.svc /helloworld.Greeter:
+        #|200
+        #|
+        #|UNIMPLEMENTED
+        #|grpc-message: unknown method
+        #|smock-near-miss: hello; failed=path
+        #|{"stub":null,"status":200,"grpcStatus":"UNIMPLEMENTED","templateError":null}
+      ),
+    )
+  }
+}

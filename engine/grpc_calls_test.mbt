@@ -1,9 +1,10 @@
 // Seam 1 tests of gRPC calls: the call that finds a call's Mock and its
 // Descriptor set, and `handle` with the gRPC call marker. A gRPC call is
 // matched only against its Mock's gRPC Stubs on its method, in matching
-// order, its Near miss is chosen among them, and its Journal entry records
-// the decoded JSON body with the octets its DATA frames brought as its
-// size. The set is gRPC's helloworld.proto (greeter_set_test.mbt).
+// order, its Near miss is chosen among every gRPC Stub of the Mock, and its
+// Journal entry records the decoded JSON body with the octets its DATA
+// frames brought as its size. The set is gRPC's helloworld.proto
+// (greeter_set_test.mbt).
 
 ///|
 /// The body files of these tests: the set of helloworld.proto.
@@ -200,7 +201,7 @@ test "a gRPC call matches only the gRPC Stubs on its method, in matching order, 
 }
 
 ///|
-test "a call to a method without a gRPC Stub matches nothing, and is planned UNIMPLEMENTED with no Near miss, though HTTP Stubs would take its path" {
+test "a call to a method without a gRPC Stub matches nothing, though HTTP Stubs would take its path, and its Near miss is a gRPC Stub on another method" {
   for match_index in [true, false] {
     let h = harness(
       [("greeter.yaml", greeter_calls)],
@@ -213,19 +214,20 @@ test "a call to a method without a gRPC Stub matches nothing, and is planned UNI
       octets=10,
     )
     inspect(matched_id(outcome).unwrap_or("none"), content="none")
-    inspect(outcome.near_miss is None, content="true")
+    // hello-ann fails the path and the body, hello the path alone.
     inspect(
       grpc_part(outcome),
       content=(
         #|UNIMPLEMENTED
-        #|grpc-message: no Stub matched
+        #|grpc-message: streaming methods are not served yet
+        #|smock-near-miss: hello; failed=path
       ),
     )
   }
 }
 
 ///|
-test "an unmatched call's Near miss is chosen among the gRPC Stubs on its method, never an HTTP Stub" {
+test "an unmatched call's Near miss is chosen among the Mock's gRPC Stubs, never an HTTP Stub" {
   let files = [
     (
       "greeter.yaml",

@@ -390,7 +390,8 @@ fn File::not_served(self : File, pointer : String) -> Unit {
 ///|
 /// The gRPC Stubs of `path`, the `:path` of a gRPC call, in matching order:
 /// the Stubs of the Mock whose exact path it is. A gRPC call is matched
-/// against these alone, and its Near miss is chosen among them.
+/// against these alone. Its Near miss is chosen among every gRPC Stub of
+/// the Mock, those of `stubs` that are gRPC Stubs.
 pub fn Mock::grpc_candidates(self : Mock, path : String) -> ReadOnlyArray[Stub] {
   match self.grpc_stubs.get(path) {
     Some(stubs) => stubs
