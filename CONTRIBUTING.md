@@ -2763,22 +2763,31 @@ from, one JSON object per line: its run, its name, its mutants at once,
 the mutants it ran, how long its run took (`bulk.json`'s `wall_s`, which
 holds everything `run.py` does) and how it exited. A shard that stopped,
 or ran no mutant, says nothing of a mutant's time. The record holds the
-baseline's 43 shards and the 40 of the first weekly run
+baseline's 43 shards, the 40 of the first weekly run
 ([run 44423781036](https://github.com/hirunefu/smock/actions/runs/44423781036),
-the pinned set on `main` at 7eac627b, planned at 20 s a mutant). A
-mutant took 7.0 s of runner time on average over the baseline's sample,
-and 6.3 s over the weekly run, but the slowest shards took twice as long
-a mutant or more. In the baseline they were `engine`'s: the BODY pass's
-shard 5-of-20 took 16 min 10 s for 68 mutants, 14.27 s each. In the
-weekly run it was `protobuf`'s shard 20-of-40, whose 460 mutants, half of
-them at an unchecked access and so also run natively, took 1 h 56 min
-30 s, 15.19 s each. So bulk runs plan 16 s a mutant (`bulk.py`'s
-`SECONDS_PER_MUTANT`); before the baseline they planned 20 s, from #275's
-cost model. The rule takes the slowest shard, not the average, because a
-shard holds a stretch of the run's order, mostly one or two packages,
-and the costly stretches are not spread over the shards. At the
-average's 7 s, the monthly run's shards would hold 1,331 mutants each:
-5.6 hours at 15.19 s a mutant.
+the pinned set on `main` at 7eac627b, planned at 20 s a mutant) and the
+20 of the second
+([run 44851160701](https://github.com/hirunefu/smock/actions/runs/44851160701),
+the same mutants on `main` at 65831e4e, planned at 16 s). A mutant took
+7.0 s of runner time on average over the baseline's sample, 6.3 s over
+the first weekly run and 6.1 s over the second, but the slowest shards
+took twice as long a mutant or more. In the baseline they were
+`engine`'s: the BODY pass's shard 5-of-20 took 16 min 10 s for 68
+mutants, 14.27 s each. In the first weekly run it was `protobuf`'s shard
+20-of-40, whose 460 mutants, half of them at an unchecked access and so
+also run natively, took 1 h 56 min 30 s, 15.19 s each. In the second it
+was `engine`'s shard 3-of-20, 920 mutants in 2 h 59 min 21 s, 11.70 s
+each. Its runner was slower than the others: it took 2.19 s to run
+`engine`'s tests without a mutant, where the three other runners that ran
+`engine` took 1.46 to 1.63 s, and each step of its mutants took 1.2 to
+1.4 times as long as in the first weekly run. So bulk runs plan 16 s a
+mutant (`bulk.py`'s `SECONDS_PER_MUTANT`); before the baseline they
+planned 20 s, from #275's cost model. The rule takes the slowest shard,
+not the average, because a shard holds a stretch of the run's order,
+mostly one or two packages, and the costly stretches are not spread over
+the shards; nor are the slower runners. At the average's 7 s, the
+monthly run's shards would hold 1,331 mutants each: 5.6 hours at
+15.19 s a mutant.
 
 At 16 s, on 7eac627b's tree, the weekly run's 18,403 mutants go in 20
 shards of 920 or 921, all at once, where 20 s cut them into 40 shards in
