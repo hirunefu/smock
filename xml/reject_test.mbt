@@ -440,8 +440,9 @@ test "an XML declaration must come first, and be well-formed" {
   // the input holds no declaration, which needs whitespace and a version
   // there (§2.8 [23], [24]), and no root element (§2.1 [1]); parsing
   // ends with an error for every input (the README's Documents). Only the
-  // refusal is asserted: which message fits there is put to the
-  // maintainer (#411).
+  // refusal is asserted. The message both get today is a defect that #430
+  // records, as the maintainer decided on 2026-11-21: no test pins it, and
+  // #430's fix gives them their message and its tests.
   for input in [b"<?xml", b"\xEF\xBB\xBF<?xml"] {
     assert_true(error_of(input) != "parsed")
   }
