@@ -190,6 +190,12 @@ let timeout_units : Array[(Char, Int64)] = [
 ///|
 /// Characters that are no TimeoutUnit, beside those that are: units in the
 /// other case, other letters, the micro sign, a percent sign and a space.
+/// PROTOCOL-HTTP2 writes its grammar in ABNF, whose quoted strings ignore
+/// case (RFC 5234, section 2.3), but its units cannot be read so: `M` is a
+/// minute and `m` a millisecond. The gRPC guide decides the case
+/// (docs/grpc/unmatched-and-refused-calls.md, "Timeouts"): it names the six
+/// letters, then "Any other value is malformed", so a value with `h`, `s`,
+/// `N` or `U` is malformed.
 let other_units : Array[Char] = ['h', 's', 'N', 'U', 'x', 'µ', '%', ' ']
 
 ///|
