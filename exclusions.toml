@@ -1204,9 +1204,13 @@ reviewer = "the maintainer, 2026-11-21, on a reading page that gives every entry
 # and a byte at a time after a GET whose target is 1 to 600 bytes long,
 # with each mutant applied by hand and without it: the same digests for
 # each, while five variants that are not equivalent changed them (a scratch
-# test, not committed). take_body's `self.size = 0` changes nothing a caller
-# can see: its two entries are EQUIVALENT, and the statement is a deletion
-# candidate that the maintainer decides with the package's other deletions.
+# test, not committed). take_body's `self.size = 0` decides nothing: `size`
+# is 0 already when take_body runs, and SizeStart writes it before any state
+# reads it. So the statement is a candidate for deletion (the maintainer's
+# rule of 2026-11-21: code that decides nothing is one), which a triage
+# context lists and does not delete; the maintainer decides it with http1's
+# other candidates. Its two survivors' entries stand until then, and stay
+# if the deletion is refused.
 # `adversarial` stays "pending" until a separate agent context, which wrote
 # none of these entries, tries to kill each mutant from the specs and
 # smock's documents. The maintainer reads every entry, since http1 is a
@@ -1225,7 +1229,7 @@ reviewer = ""
 mutant = "http1/chunked.mbt,Chunks::take_body,DEL,self.size = 0,,0"
 text = "5baf9fabbdbe25a4"
 category = "EQUIVALENT"
-reason = "take_body no longer sets `size` to 0. Its one caller, Parser::next, calls it only after decode returned `Ok(Some(_))`, which only the Trailer state returns; SizeLf enters that state only when `size` is 0 (the last chunk, `0` CRLF), and the trailer's states leave `size` alone. So `size` is 0 already. Besides, take_body puts the decoder back in SizeStart, which sets `size` before any state reads it (as in the entry for Chunks::Chunks). Every input gives the same requests and the same errors. Only a white-box call of take_body on a decoder in the middle of a body, followed by a white-box read of the private field, sees the old value. The statement changes nothing a caller can see: it is a deletion candidate, which the maintainer decides (#405)."
+reason = "take_body no longer sets `size` to 0. Its one caller, Parser::next, calls it only after decode returned `Ok(Some(_))`, which only the Trailer state returns; SizeLf enters that state only when `size` is 0 (the last chunk, `0` CRLF), and the trailer's states leave `size` alone. So `size` is 0 already. Besides, take_body puts the decoder back in SizeStart, which sets `size` before any state reads it (as in the entry for Chunks::Chunks). Every input gives the same requests and the same errors. Only a white-box call of take_body on a decoder in the middle of a body, followed by a white-box read of the private field, sees the old value. The statement decides nothing: it is a candidate for deletion (the maintainer's rule of 2026-11-21), which the maintainer decides with http1's other candidates (#405); if it is deleted, this entry goes with it."
 compiler_output = "differs"
 adversarial = { context = "pending: a separate agent context, after #405's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
 reviewer = ""
