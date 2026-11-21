@@ -40,8 +40,9 @@ pub struct Parser {
   priv mut end : Int32
   /// How many bytes after `start` the head scan has looked at, and where in
   /// the head they leave it, so the scan resumes there: the part of the
-  /// head, how many bytes of the method, the target or the version it has
-  /// seen, and where in the header section it is.
+  /// head (in the method or the target, whether a byte of it has been
+  /// seen), how many bytes of the version it has seen, and where in the
+  /// header section it is.
   priv mut scanned : Int32
   priv mut scan : HeadScan
   priv mut scan_count : Int32
@@ -399,23 +400,20 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       EmptyLineLf => scan = if c == b'\n' { EmptyLine } else { Broken }
       Method =>
         if is_tchar(c) {
-          count += 1
-        } else if c == b' ' && count > 0 {
-          scan = Target
-          count = 0
-        } else if c == b'\r' && count == 0 {
+          scan = MethodRest
+        } else if c == b'\r' {
           scan = EmptyLineLf
         } else {
           scan = Broken
         }
+      MethodRest =>
+        if !is_tchar(c) {
+          scan = if c == b' ' { TargetStart } else { Broken }
+        }
+      TargetStart => scan = if is_visible_byte(c) { Target } else { Broken }
       Target =>
-        if is_visible_byte(c) {
-          count += 1
-        } else if c == b' ' && count > 0 {
-          scan = Version
-          count = 0
-        } else {
-          scan = Broken
+        if !is_visible_byte(c) {
+          scan = if c == b' ' { Version } else { Broken }
         }
       Version => {
         let expected = match count {
@@ -469,7 +467,6 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       // An empty line before the request line is consumed and ignored.
       start = at
       scan = Method
-      count = 0
     } else if scan is Fields {
       if section is Ended {
         result = Ended(at)
@@ -490,7 +487,6 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
         }
       }
     } else if scan is Target {
-      let from = at
       // Eight bytes at a time while all of them are visible characters.
       let bytes = buf.unsafe_reinterpret_as_bytes()
       while at + 8 <= stop && is_visible(bytes.unsafe_read_uint64_le(at)) {
@@ -499,7 +495,6 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       while at < stop && is_visible_byte(buf[at]) {
         at += 1
       }
-      count += at - from
     }
   }
   self.start = start
@@ -520,9 +515,14 @@ priv enum HeadScan {
   /// An empty line before the request line has ended; servers ignore it
   /// (RFC 9112, section 2.2).
   EmptyLine
-  /// In the method.
+  /// The first byte of the method, or the CR of an empty line before the
+  /// request line, is next.
   Method
-  /// In the request target.
+  /// In the method, after its first byte.
+  MethodRest
+  /// The first byte of the request target is next.
+  TargetStart
+  /// In the request target, after its first byte.
   Target
   /// In the HTTP version, `HTTP/D.D`, then the CR that ends the line.
   Version
