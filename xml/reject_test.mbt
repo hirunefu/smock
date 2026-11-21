@@ -1,3 +1,35 @@
+// What `@xml.parse` refuses, and at which byte, through the module's
+// public interface. The conditions it refuses come from XML 1.0,
+// Namespaces in XML 1.0, RFC 3629 and the README's Documents.
+//
+// The README words two of the messages: "a DOCTYPE is not allowed" and
+// "end tag </a> does not match start tag <b>". No document words the
+// others. Their words are the code's, and the maintainer, who confirmed
+// on 2026-11-21 that they stay as the code has them (#325), is their
+// source: five first ("expected version in the XML declaration", "XML
+// version <v> is not supported", "U+0000 is not a character XML allows",
+// "the input is not UTF-8" and "attribute <name> is repeated"), then, in
+// a second round, every other text of the parser but three, with
+// "U+<hex> is not a character XML allows" for every code point and
+// "&#<n>; is not a character XML allows" for a character reference, and
+// in a third round those three: "encoding <e> is not supported; the
+// input must be UTF-8", "processing instruction target <t> is reserved"
+// and "only comments, processing instructions and whitespace may follow
+// the root element". So every text the parser can report is worded by
+// the README or confirmed by the maintainer, but for what a cut-off
+// `<?xml` gets, which is a defect that #430 records. The condition each
+// message reports keeps the source its test cites.
+//
+// The positions the tests pin follow the README's rule for where a
+// ParseError is and which one is reported (in its Use, after what the
+// errors carry): a byte that cannot be where it is, at that byte; a
+// construct refused as a whole, at its first byte; an input that ends too
+// soon, at its end, where the missing part would begin, or at the first
+// byte of the element, comment, CDATA section, processing instruction or
+// quoted value whose content it ends in, which is not closed; and when the
+// input breaks more than one rule, the error found first reading from the
+// left.
+
 ///|
 /// Parses `input` and shows the error, or `parsed`.
 fn error_of(input : Bytes) -> String {
@@ -493,8 +525,9 @@ test "an XML declaration must come first, and be well-formed" {
   // the input holds no declaration, which needs whitespace and a version
   // there (§2.8 [23], [24]), and no root element (§2.1 [1]); parsing
   // ends with an error for every input (the README's Documents). Only the
-  // refusal is asserted: which message fits there is put to the
-  // maintainer (#411).
+  // refusal is asserted. The message both get today is a defect that #430
+  // records, as the maintainer decided on 2026-11-21: no test pins it, and
+  // #430's fix gives them their message and its tests.
   for input in [b"<?xml", b"\xEF\xBB\xBF<?xml"] {
     assert_true(error_of(input) != "parsed")
   }
@@ -619,6 +652,10 @@ test "UTF-8 of every length is read in text, names and attribute values; overlon
     ),
   )
   // A reference's name starts with any name character, ASCII or not.
+  // After `&`, the byte FF starts no name, and it is not UTF-8 either
+  // (RFC 3629 §1): the input breaks two rules, and by the README's rule
+  // the error found first reading from the left is reported, at the `&`,
+  // which starts no reference.
   inspect(
     [error_of(b"<a>&\xC3\xA9;</a>"), error_of(b"<a>&\xFF;</a>")].join("\n"),
     content=(
