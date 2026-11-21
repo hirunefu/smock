@@ -180,6 +180,19 @@ test "a declared Content-Length over the body limit gets 413 once the head has a
       limited(@http1.Parser(body_limit=16), post("Content-Length: 17, 17\r\n")),
       limited(@http1.Parser(body_limit=0), post("Content-Length: 0\r\n")),
       limited(@http1.Parser(body_limit=0), post("Content-Length: 1\r\n")),
+      // The largest body limit an Int32 holds, 2147483647: a body within it
+      // is read, and a length past it, 2^31, gets 413. Parser::Parser's
+      // documentation: "`body_limit` is the longest body a request may
+      // have" and "A declared Content-Length over it gets 413 before any of
+      // the body is read" (RFC 9110, section 15.5.14).
+      limited(
+        @http1.Parser(body_limit=2147483647),
+        post("Content-Length: 5\r\n") + "hello",
+      ),
+      limited(
+        @http1.Parser(body_limit=2147483647),
+        post("Content-Length: 2147483648\r\n"),
+      ),
       limited(@http1.Parser(body_limit=-1), post("Content-Length: 0\r\n")),
       limited(@http1.Parser(body_limit=-1), post("Content-Length: 1\r\n")),
     ].join("\n"),
@@ -190,6 +203,8 @@ test "a declared Content-Length over the body limit gets 413 once the head has a
       #|invalid 413
       #|invalid 413
       #|POST /p body=0, need more
+      #|invalid 413
+      #|POST /p body=5, need more
       #|invalid 413
       #|POST /p body=0, need more
       #|invalid 413
@@ -224,6 +239,18 @@ test "a chunked body gets 413 as soon as a chunk size takes it past the body lim
       ),
       limited(@http1.Parser(), chunked + "a00000\r\n"),
       limited(@http1.Parser(), chunked + "a00001\r\n"),
+      // The largest body limit an Int32 holds, 2147483647: a body within it
+      // is read, and a chunk size of 2^31, past it and past what an Int32
+      // holds, gets 413. Parser::Parser's documentation: "a chunked body
+      // gets 413 as soon as a chunk size would take it past the limit,
+      // before that chunk's data"; RFC 9112, section 7.1: "recipients MUST
+      // anticipate potentially large hexadecimal numerals and prevent
+      // parsing errors due to integer conversion overflows".
+      limited(
+        @http1.Parser(body_limit=2147483647),
+        chunked + "5\r\nhello\r\n0\r\n\r\n",
+      ),
+      limited(@http1.Parser(body_limit=2147483647), chunked + "80000000\r\n"),
       limited(@http1.Parser(body_limit=0), chunked + "0\r\n\r\n"),
       limited(@http1.Parser(body_limit=0), chunked + "1\r\n"),
       limited(@http1.Parser(body_limit=-1), chunked + "0\r\n\r\n"),
@@ -236,6 +263,8 @@ test "a chunked body gets 413 as soon as a chunk size takes it past the body lim
       #|invalid 413
       #|need more
       #|need more
+      #|invalid 413
+      #|POST /p body=5, need more
       #|invalid 413
       #|POST /p body=0, need more
       #|invalid 413
