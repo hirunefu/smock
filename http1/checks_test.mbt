@@ -338,6 +338,51 @@ test "a Host value is a host and an optional port: names, IPv4 and IPv6 literals
       #|21 24 26-2e 30-39 3b 3d 41-5a 5f 61-7a 7e
     ),
   )
+  // IP literals at the edges of RFC 3986, section 3.2.2. An IPv6 address is
+  // eight groups of one to four hexadecimal digits, where an IPv4 address
+  // may stand for the last two (`ls32`) and nowhere else, and one `::` for
+  // one or more groups, so that the groups written around it are seven at
+  // most. An IPv4 address is four numbers from 0 to 255 (`dec-octet`). An
+  // IPvFuture is `v`, hexadecimal digits, `.`, then unreserved characters,
+  // sub-delims and colons, at least one of each part.
+  let edges = [
+    "[1:2:3:4:5:6:192.0.2.1]", "[1:2:3:4:5:192.0.2.1]", "[1:2:3:4:5:6:7:192.0.2.1]",
+    "[192.0.2.1::1]", "[::1:2:3:4:5:6:7]", "[1:2:3::4:5:6:7]", "[1:2:3:4:5:6:7::]",
+    "[::1:2:3:4:5:6:7:8]", "[1:2:3:4::5:6:7:8]", "[1:2:3:4:5:6:7::8]", "[::1:2:3:4:5:192.0.2.1]",
+    "[::1:2:3:4:5:6:192.0.2.1]", "[::0.0.0.0]", "[::255.255.255.255]", "[::255.255.255.256]",
+    "[vf.x]", "[vF.x]", "[vg.x]", "[vG.x]", "[v1.!$&'()*+,;=:-._~aZ9]", "[v1.@]",
+    "[v1.x/]", "[v1.%41]",
+  ]
+  inspect(
+    edges
+    .map(host => "\{shown(host)}: \{@http1.is_host_value(host)}")
+    .join("\n"),
+    content=(
+      #|"[1:2:3:4:5:6:192.0.2.1]": true
+      #|"[1:2:3:4:5:192.0.2.1]": false
+      #|"[1:2:3:4:5:6:7:192.0.2.1]": false
+      #|"[192.0.2.1::1]": false
+      #|"[::1:2:3:4:5:6:7]": true
+      #|"[1:2:3::4:5:6:7]": true
+      #|"[1:2:3:4:5:6:7::]": true
+      #|"[::1:2:3:4:5:6:7:8]": false
+      #|"[1:2:3:4::5:6:7:8]": false
+      #|"[1:2:3:4:5:6:7::8]": false
+      #|"[::1:2:3:4:5:192.0.2.1]": true
+      #|"[::1:2:3:4:5:6:192.0.2.1]": false
+      #|"[::0.0.0.0]": true
+      #|"[::255.255.255.255]": true
+      #|"[::255.255.255.256]": false
+      #|"[vf.x]": true
+      #|"[vF.x]": true
+      #|"[vg.x]": false
+      #|"[vG.x]": false
+      #|"[v1.!$&'()*+,;=:-._~aZ9]": true
+      #|"[v1.@]": false
+      #|"[v1.x/]": false
+      #|"[v1.%41]": false
+    ),
+  )
 }
 
 ///|
@@ -379,6 +424,28 @@ test "the 100-continue check finds the expectation in any case, among other elem
       #|"\u{130}" false
       #|"" false
       #|" , " false
+    ),
+  )
+  // Almost matches. RFC 9110, section 10.1.1: the one expectation is
+  // `100-continue`, and the field value is case-insensitive, which only
+  // letters have (RFC 5234, section 2.3). So another first character is
+  // another expectation, and so is a code unit that differs from a digit or
+  // the hyphen in bit 0x20 alone, as an upper-case letter differs from its
+  // lower case: U+0011 for `1`, U+0010 for `0`, CR for `-`.
+  let almost = [
+    "200-continue", "\u{11}00-continue", "1\u{10}0-continue", "10\u{10}-continue",
+    "100\rcontinue",
+  ]
+  inspect(
+    almost
+    .map(value => "\{shown(value)} \{@http1.expects_continue(value)}")
+    .join("\n"),
+    content=(
+      #|"200-continue" false
+      #|"\u{11}00-continue" false
+      #|"1\u{10}0-continue" false
+      #|"10\u{10}-continue" false
+      #|"100\rcontinue" false
     ),
   )
 }

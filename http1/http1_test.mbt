@@ -102,6 +102,136 @@ test "requests that follow each other on one connection come out in turn, each s
 }
 
 ///|
+/// A request with the method `meth`, the target `target` and a field named
+/// `name` after Host, then a field of 2,000 bytes.
+fn padded_request(meth : String, target : String, name : String) -> String {
+  "\{meth} \{target} HTTP/1.1\r\nHost: a.example\r\n\{name}: 1\r\nX-Pad: \{"p".repeat(2000)}\r\n\r\n"
+}
+
+///|
+test "a method, target or field name that begins as the one of the request before it, with more or fewer characters, is read as sent, however the second request is cut" {
+  // RFC 9112, section 3: a request line is the method, the request target
+  // and the version; section 5.1: a field line begins with the field name.
+  // The parser gives each as sent (the documentation of Request and Header),
+  // and the same requests however the bytes are split into pieces (Parser's
+  // documentation). Here the one before is the same text with 1 to 16
+  // characters more, or fewer. Each request carries a field of 2,000 bytes,
+  // so the two do not fit together in the 4,096 bytes the parser's first
+  // buffer holds: when the second arrives in a piece of its own, or cut
+  // within its first lines, the parser moves its bytes to the front of the
+  // buffer before it reads its head.
+  let more = "0123456789abcdef"
+  let wrong = []
+  for count in 1..<=16 {
+    let longer = more[:count].to_owned()
+    for pair in [(longer, ""), ("", longer)] {
+      let (before, after) = pair
+      let sent = [
+        ("GET" + before, "/items" + before, "X-Item" + before),
+        ("GET" + after, "/items" + after, "X-Item" + after),
+      ]
+      let expected = sent.map(request => {
+        let (meth, target, name) = request
+        "\{meth} \{target} \{name}"
+      })
+      expected.push("need more")
+      let first = padded_request(sent[0].0, sent[0].1, sent[0].2)
+      let second = padded_request(sent[1].0, sent[1].1, sent[1].2)
+      // Fed whole, then cut before the second request and at each byte of
+      // its request line, its Host field and the field named after it.
+      let lines = second.length() - 2000 - "X-Pad: \r\n\r\n".length()
+      for cut in -1..<=lines {
+        let pieces = if cut < 0 {
+          [first + second]
+        } else {
+          [first + second[:cut].to_owned(), second[cut:].to_owned()]
+        }
+        let parser = @http1.Parser()
+        let out = []
+        for piece in pieces {
+          parser.feed(@utf8.encode(piece))
+          while parser.next() is Complete(request) {
+            let name = if request.headers.length() > 1 {
+              request.headers[1].name
+            } else {
+              "(none)"
+            }
+            out.push("\{request.meth} \{request.target} \{name}")
+          }
+        }
+        out.push(render(parser.next()))
+        if out != expected {
+          wrong.push((count, before, cut, out))
+        }
+      }
+    }
+  }
+  debug_inspect(wrong, content="[]")
+}
+
+///|
+test "a request that sends again the method, the target or a header field of the request before it gets the very string or field given for that request" {
+  // The parser's documentation of the head it parsed last: a client sends
+  // the same method, target and header fields on a connection again and
+  // again, "so the next head reuses its strings and fields where they are
+  // the same"; and of parse_head: "The method, the target and each header
+  // field that are the same as in the `previous` head, field by field in
+  // order, are its own strings and fields". A field whose name is the same
+  // text at the same place, but whose value is not, gets that name (the
+  // documentation of parse_field), and a value is compared without the
+  // white space around it (Header's documentation). The server reads which
+  // fields are the very ones of the request before, to decode each field
+  // once per connection (d66c05fa).
+  let stream = "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 1\r\n\r\n" +
+    "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 1\r\n\r\n" +
+    "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 2\r\n\r\n" +
+    "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: \t 2  \r\n\r\n" +
+    "GET /b HTTP/1.1\r\nHost: a.example\r\nX-Id: 2\r\nAccept: */*\r\n\r\n" +
+    "POST /b HTTP/1.1\r\nhost: a.example\r\nX-Id: 2\r\nAccept: */*\r\n\r\n" +
+    "POST /b HTTP/1.1\r\nhost: a.example\r\n\r\n" +
+    "POST /b HTTP/1.1\r\nhost: a.example\r\nX-New: 1\r\n\r\n"
+  let parser = @http1.Parser()
+  parser.feed(@utf8.encode(stream))
+  let same_or_new = (same : Bool) => if same { "same" } else { "new" }
+  let out = []
+  let mut before : @http1.Request? = None
+  while parser.next() is Complete(request) {
+    let line = StringBuilder()
+    line.write_string("\{request.meth} \{request.target}:")
+    if before is Some(earlier) {
+      line.write_string(
+        " method \{same_or_new(physical_equal(request.meth, earlier.meth))}, target \{same_or_new(physical_equal(request.target, earlier.target))}, fields",
+      )
+      for i, field in request.headers {
+        let kind = match earlier.headers.get(i) {
+          Some(other) if physical_equal(field, other) => "same"
+          Some(other) if physical_equal(field.name, other.name) => "same name"
+          _ => "new"
+        }
+        line.write_string(" \{field.name}=\{kind}")
+      }
+    } else {
+      line.write_string(" the first")
+    }
+    out.push(line.to_string())
+    before = Some(request)
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|GET /a: the first
+      #|GET /a: method same, target same, fields Host=same Accept=same X-Id=same
+      #|GET /a: method same, target same, fields Host=same Accept=same X-Id=same name
+      #|GET /a: method same, target same, fields Host=same Accept=same X-Id=same
+      #|GET /b: method same, target new, fields Host=same X-Id=new Accept=new
+      #|POST /b: method new, target same, fields host=new X-Id=same Accept=same
+      #|POST /b: method same, target same, fields host=same
+      #|POST /b: method same, target same, fields host=same X-New=new
+    ),
+  )
+}
+
+///|
 test "requests fed one byte at a time come out as when fed whole" {
   let stream = "GET /a HTTP/1.1\r\nHost: a.example\r\n\r\nPOST /b HTTP/1.1\r\nHost: a.example\r\nContent-Length: 4\r\n\r\n\r\n\r\nGET /c HTTP/1.1\r\nHost: a.example\r\n\r\n"
   let bytes = @utf8.encode(stream)
@@ -303,6 +433,40 @@ test "a request target in one of the four forms of RFC 9112 is accepted; any oth
       #|/#frag -> invalid 400
       #|/a?x# -> invalid 400
       #|http://a.example/#x -> invalid 400
+    ),
+  )
+  // An absolute-form target is an absolute-URI (RFC 9112, section 3.2.2),
+  // `scheme ":" hier-part` (RFC 3986, section 4.3), and a scheme is a
+  // letter, then any letters, digits, `+`, `-` and `.` (RFC 3986, section
+  // 3.1: `scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`). So a
+  // scheme of one letter will do, and each of the others may come second;
+  // an empty scheme, one that begins with another character, or one that
+  // holds another, makes no absolute-URI, and the target is in no form.
+  let schemes = [
+    "a:x", "a1:x", "a+:x", "a-:x", "a.:x", ":x", ":/x", "1:x", "+a:x", "-a:x", ".a:x",
+    "a_:x", "a~:x", "a%2B:x",
+  ]
+  inspect(
+    schemes
+    .map(target => {
+      "\{target} -> \{first_verdict("OPTIONS \{target} HTTP/1.1\r\nHost: a\r\n\r\n")}"
+    })
+    .join("\n"),
+    content=(
+      #|a:x -> accepted
+      #|a1:x -> accepted
+      #|a+:x -> accepted
+      #|a-:x -> accepted
+      #|a.:x -> accepted
+      #|:x -> invalid 400
+      #|:/x -> invalid 400
+      #|1:x -> invalid 400
+      #|+a:x -> invalid 400
+      #|-a:x -> invalid 400
+      #|.a:x -> invalid 400
+      #|a_:x -> invalid 400
+      #|a~:x -> invalid 400
+      #|a%2B:x -> invalid 400
     ),
   )
 }
