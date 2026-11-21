@@ -675,3 +675,98 @@ reason = "`let mut cdata = cursor < 0` becomes `cursor <= 0`. The two differ onl
 compiler_output = "differs"
 adversarial = { context = "a separate agent context of #275's step 3, on 2026-11-21, which wrote neither this entry nor any of xml's tests", tests = ["a differential in a scratch white-box test of xml, not committed: copies of select.mbt's walking functions carrying each of the batch's 22 mutations behind a switch, beside the copy unmutated, which equals the real functions on every pair. The corpus: 24,850 documents that parse, of 34,524 generated (the root `a` with every sequence of up to two of 41 content items, or of three of the first 20: text, white space, CR, CR LF, references, CDATA, comments, processing instructions and children; up to three of 15 attributes on the root, or one on it and two on a child and the reverse, with prefixes, xmlns, white space around `=`, and `>` and `/` in values; and 6,000 random documents four deep, with a byte order mark, an XML declaration, comments, processing instructions and white space around the root), each on 7 to 26 paths: 253,579 (document, path) pairs, 71,721 nodes, 30,913 of them attributes. For each pair: the nodes first_node and next_node visit, each node's utf8_value and whether it is a view of the input, and value_is with up to 22 texts (the value; the empty text; a space, a tab, a line feed or a CR alone; U+0000; `x`, `é` and an emoji; the value with a space, a line feed, a tab, `x` or U+0000 before or after it; `x ` and ` x`; the value one character short at either end, and its first character). No pair differs with this mutant", "the cursors text_char gives over the corpus's 32,864 characters are 3 or more (the content of `<a>` starts at 3) or -14 or less (-14 after the character just inside `<a><![CDATA[`). The boundary: the variant `cursor < 3` changes no pair, and `cursor < 4` stops on an index out of bounds on the corpus", "the mutant applied by hand in the worktree at the finder's position (sites.py --set full), with a scratch test, not committed, that folds what the real functions answer on the same 253,579 pairs into one number: it passes with the mutant as without it, and fails with node_from's `node >= 0` made `node >= 6` the same way", "the sources read for an input whose documented result the mutant changes: XML 1.0 (Fifth Edition) §2.1 [1], §2.2 [2], §2.3 [3]-[5], §2.6 [16]-[17], §2.7, §2.8 [27], §3.1 [40]-[44], §3.3.3 and §4.1; Namespaces in XML 1.0 [4] and [7]-[8]; the README's Use, Paths, Values and Documents; matching.md's XML bodies; and the documentation of first_node, next_node, value_is and utf8_value. None names an input on which the two differ"] }
 reviewer = ""
+
+# xml's select.mbt (#415, part 6 of 6 of xml's triage for #325): survivors
+# of the first weekly run (44423781036) that no input can tell from the
+# code, and one capacity hint. Each argument is in its reason. The
+# compiler's output differs for each. The implementer also compared a
+# digest of all that the walking API answers on 6,000 random documents
+# (22,462 nodes on 33 paths: each value, whether utf8_value gives a view of
+# the input, value_is for 21 texts, select's values), with characters at
+# the edges of the BMP and of the code space, lower-case hexadecimal
+# references, white space around `=` and names that almost match `xmlns`,
+# with each mutant applied by hand and without it: the same for each, while
+# five mutants that are not equivalent changed it (a scratch test, not
+# committed). `adversarial` stays "pending" until a separate agent context,
+# which wrote none of these entries, tries to kill each mutant from the
+# specs and smock's documents. The maintainer reads every entry, since xml
+# is a protocol package.
+
+[[exclusion]]
+mutant = "xml/select.mbt,attribute_value_is,INT,0,1,1"
+text = "7fd971b9701525ed"
+category = "EQUIVALENT"
+reason = "`if matched < 0 { return false }` becomes `matched < 1`. `matched` is text_continues' result there: -1, or the index after the character it matched, `i + 1` or `i + 2` for an `i` of 0 or more (`matched` starts at 0, and the loop returns as soon as it is negative). It is never 0, so the two tests hold for the same values."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #415's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: xml's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/325-path-select's tests), and the scratch digest the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "xml/select.mbt,attribute_value_is,ROR,<,<=,1"
+text = "7fd971b9701525ed"
+category = "EQUIVALENT"
+reason = "`if matched < 0 { return false }` becomes `matched <= 0`. `matched` is text_continues' result there: -1, or the index after the character it matched, `i + 1` or `i + 2` for an `i` of 0 or more (`matched` starts at 0, and the loop returns as soon as it is negative). It is never 0, so the two tests hold for the same values."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #415's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: xml's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/325-path-select's tests), and the scratch digest the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "xml/select.mbt,attribute_utf8,AOR,-,+,0"
+text = "3118399c34837291"
+category = "ARID"
+reason = "A capacity hint: the buffer that collects an attribute's value to decode is made with a size hint of `end + quote` bytes instead of `end - quote`. The buffer grows as it is written, and its bytes are what was written, so the value is the same."
+reviewer = ""
+
+[[exclusion]]
+mutant = "xml/select.mbt,text_continues,INT,0x10000,0xffff,0"
+text = "023aea0e4351c843"
+category = "EQUIVALENT"
+reason = "`if code_point < 0x10000` becomes `code_point < 0xffff`. The two differ only for U+FFFF, which the mutant compares with a surrogate pair (D7FF DFFF) rather than with one code unit. text_continues' callers, element_value_is and attribute_value_is, pass the characters of a parsed document's text or attribute value as text_char and attribute_char read them: a character written in UTF-8, a character reference, one of the five predefined entities, or the line feed or space that stands for a line end or white space. parse refuses U+FFFF written directly or as a reference (XML 1.0 §2.2 [2] Char leaves out #xFFFE and #xFFFF, and §4.1's well-formedness constraint Legal Character; the module's README: a character that XML does not allow is an error, whether it is written directly or as a character reference), so no call passes it."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #415's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: xml's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/325-path-select's tests), and the scratch digest the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "xml/select.mbt,text_continues,AOR,-,+,1"
+text = "023aea0e4351c843"
+category = "EQUIVALENT"
+reason = "`let low = 0xDC00 + ((code_point - 0x10000) & 0x3FF)` becomes `(code_point + 0x10000) & 0x3FF`. The two operands differ by 0x20000, a multiple of 0x400, so their ten low bits, the only ones that `& 0x3FF` keeps, are the same for every code point (and for every Int, since two's complement keeps them past an overflow, which no code point reaches). The low surrogate is the same on every call."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #415's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: xml's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/325-path-select's tests), and the scratch digest the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "xml/select.mbt,name_end,ROR,<,<=,0"
+text = "432227d4735c84ca"
+category = "EQUIVALENT"
+reason = "`while i < input.length() && is_name_byte(input[i])` becomes `i <= input.length()`. The two differ only if the loop reaches the input's end, where the mutant reads past it and aborts. name_end starts at the name of an element (node_from) or of an attribute (attribute_from), in a start tag of a parsed document. The tag ends in `>`, which is_name_byte refuses, so the loop stops at that `>` or before it, never at the input's end."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #415's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: xml's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/325-path-select's tests), and the scratch digest the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "xml/select.mbt,skip_spaces,ROR,<,<=,0"
+text = "e4875ed1777727eb"
+category = "EQUIVALENT"
+reason = "`while i < input.length() && is_space(input[i].to_int())` becomes `i <= input.length()`. The two differ only if the loop reaches the input's end, where the mutant reads past it and aborts. skip_spaces runs only in attribute_from, in a start tag of a parsed document: after the element's name or an attribute's closing quote, where an attribute's name, `/` or `>` follows the white space; after an attribute's name, where `=` follows; and after the `=`, where the value's quote follows (XML 1.0 §3.1 [40] and [41], §2.3 [25]). None of these is white space, and each comes before the tag's `>`, so the loop stops before the input's end."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #415's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: xml's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/325-path-select's tests), and the scratch digest the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "xml/select.mbt,is_namespace_declaration,ROR,>,>=,0"
+text = "a72fb5b23e4a5e41"
+category = "EQUIVALENT"
+reason = "`qname.length() > 6 && qname[:6] == b\"xmlns:\"[:]` becomes `qname.length() >= 6`. The two differ only for a name of exactly six bytes that are `xmlns:`: the name `xmlns:` itself, a prefix with an empty local part. parse refuses it (\"name xmlns: has an empty local name\"; Namespaces in XML 1.0 §4 [8] PrefixedName ::= Prefix ':' LocalPart and [11] LocalPart ::= NCName, which is not empty), so no attribute of a parsed document has that name."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #415's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: xml's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/325-path-select's tests), and the scratch digest the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "xml/select.mbt,is_namespace_declaration,INT,6,5,0"
+text = "a72fb5b23e4a5e41"
+category = "EQUIVALENT"
+reason = "`qname.length() > 6 && qname[:6] == b\"xmlns:\"[:]` becomes `qname.length() > 5`, which also lets a name of exactly six bytes reach the comparison; of those, only `xmlns:` passes it: the name `xmlns:` itself, a prefix with an empty local part. parse refuses it (\"name xmlns: has an empty local name\"; Namespaces in XML 1.0 §4 [8] PrefixedName ::= Prefix ':' LocalPart and [11] LocalPart ::= NCName, which is not empty), so no attribute of a parsed document has that name."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #415's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: xml's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/325-path-select's tests), and the scratch digest the batch's comment describes"] }
+reviewer = ""
