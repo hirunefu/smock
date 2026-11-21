@@ -131,6 +131,15 @@ test "a histogram renders cumulative buckets up to +Inf, then the sum and the co
   // maintainer confirmed on 2026-11-21 (#328) that the doc comment is the
   // source and that the order is not a promise to users, so no document
   // states it.
+  // The counts and sums come from the text format's "Histograms and
+  // summaries": a histogram `x` has a sample `x_bucket` with `{le="y"}` for
+  // each bucket, "where `y` is the upper bound of the bucket", one with
+  // `{le="+Inf"}` whose value "_must_ be identical to the value of
+  // `x_count`", and the samples `x_sum` and `x_count`. Prometheus's metric
+  // types page, "Histogram", makes the buckets "cumulative counters",
+  // `<basename>_bucket{le="<upper inclusive bound>"}`, so 0.1 counts in the
+  // bucket of 0.1, and `_sum` "the total sum of all observed values": for
+  // `users`, 0.004 + 0.1 + 0.25 + 3, which is 3.354 as doubles too.
   let registry = @metrics.Registry()
   let latency = registry.histogram(
     "smock_request_duration_seconds",
@@ -294,6 +303,14 @@ test "a metric name is a Prometheus metric name: one with a colon, a capital Z o
 // wrong is a mistake in smock's code, not in its input, so it aborts.
 
 ///|
+/// Prometheus's guidelines for client libraries: `labels()` "takes either
+/// a list of the label values or a map from label name to label value",
+/// and "Client libraries SHOULD NOT allow users to have different label
+/// names for the same metric"; `Counter::labels` takes its values "one for
+/// each label name, in order". One value for the label names `mock` and
+/// `stub` would give the series other label names than the metric's, so it
+/// is refused. client_golang refuses it too: its `WithLabelValues` panics
+/// with "expected %d label values but got %d".
 test "panic: a series needs one value for each label name" {
   let registry = @metrics.Registry()
   let requests = registry.counter("smock_requests_total", help="Requests.", labels=[
@@ -325,6 +342,13 @@ test "panic: a metric name is not empty" {
 ///|
 /// The data model's `[a-zA-Z_:][a-zA-Z0-9_:]*`: a digit only after the
 /// first character.
+/// That regex alone no longer decides it: since Prometheus 3.0 the data
+/// model says "Metric names MAY use any UTF-8 characters", and only that
+/// they "SHOULD match the regex". The text format 0.0.4, which smock serves
+/// (`text/plain; version=0.0.4`), decides it: smock writes a name unquoted,
+/// as its `metric_name = identifier`, and an `identifier` "carries the
+/// usual Prometheus expression language restrictions", those of the regex,
+/// so it does not start with a digit.
 test "panic: a metric name does not start with a digit" {
   let _ = @metrics.Registry().counter("2xx_requests_total", help="Requests.")
 }
@@ -367,6 +391,11 @@ test "panic: bucket bounds increase" {
 /// The text format 0.0.4: "The buckets of a histogram ... must appear in
 /// increasing numerical order of their label values", and two equal bounds
 /// would be two buckets with the same `le`.
+/// The rule that decides it is the format's "Each line must have a unique
+/// combination of a metric name and labels", which two lines
+/// `smock_size_bytes_bucket{le="1"}` would break: "increasing" alone could
+/// be read to allow equal bounds. client_golang agrees: its bounds "must be
+/// sorted in strictly increasing order".
 test "panic: bucket bounds increase strictly: two equal bounds abort" {
   let _ = @metrics.Registry().histogram("smock_size_bytes", help="A size.", buckets=[
     1, 1,
