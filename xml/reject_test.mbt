@@ -433,6 +433,34 @@ test "an XML declaration must come first, and be well-formed" {
   for input in [b"<?xml", b"\xEF\xBB\xBF<?xml"] {
     assert_true(error_of(input) != "parsed")
   }
+  // Only `xml` in some case is reserved among processing instruction
+  // targets (XML 1.0 §2.6 [17]: PITarget ::= Name - (('X' | 'x') ('M' |
+  // 'm') ('L' | 'l'))), as `XML` and `Xml` are above: a target one letter
+  // away from it in either case, or one letter shorter or longer, is a
+  // target like any other. Python's expat 2.10.0 reads each.
+  inspect(
+    errors([
+      "<a/><?wml?>", "<a/><?yml?>", "<a/><?xll?>", "<a/><?xnl?>", "<a/><?xmk?>",
+      "<a/><?xmm?>", "<a/><?WML?>", "<a/><?YML?>", "<a/><?XLL?>", "<a/><?XNL?>",
+      "<a/><?XMK?>", "<a/><?XMM?>", "<a/><?xm?>", "<a/><?xmlx?>",
+    ]),
+    content=(
+      #|<a/><?wml?> => parsed
+      #|<a/><?yml?> => parsed
+      #|<a/><?xll?> => parsed
+      #|<a/><?xnl?> => parsed
+      #|<a/><?xmk?> => parsed
+      #|<a/><?xmm?> => parsed
+      #|<a/><?WML?> => parsed
+      #|<a/><?YML?> => parsed
+      #|<a/><?XLL?> => parsed
+      #|<a/><?XNL?> => parsed
+      #|<a/><?XMK?> => parsed
+      #|<a/><?XMM?> => parsed
+      #|<a/><?xm?> => parsed
+      #|<a/><?xmlx?> => parsed
+    ),
+  )
 }
 
 ///|
