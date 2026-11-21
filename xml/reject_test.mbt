@@ -450,6 +450,18 @@ test "element and attribute names are a local name with at most one prefix" {
       #|<a x:y:z='1'/> => position 3: name x:y:z has more than one colon
     ),
   )
+  // Two colons side by side are two colons too: the prefix and the local
+  // part are NCNames, which hold none (Namespaces in XML 1.0 §4 [8], [10],
+  // [11]; the README's Documents: at most one colon). Python's expat 2.10.0
+  // refuses each, with namespaces on.
+  inspect(
+    errors(["<a::b/>", "<a::/>", "<a x::y='1'/>"]),
+    content=(
+      #|<a::b/> => position 1: name a::b has more than one colon
+      #|<a::/> => position 1: name a:: has more than one colon
+      #|<a x::y='1'/> => position 3: name x::y has more than one colon
+    ),
+  )
 }
 
 ///|
