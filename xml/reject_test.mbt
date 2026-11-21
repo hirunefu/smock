@@ -211,6 +211,43 @@ fn text_error(text : String) -> String {
 }
 
 ///|
+/// Parses each text, encoded as UTF-8, with the byte 00 (U+0000) in place
+/// of its `%`, and shows `text => position <n>` when that is refused at
+/// byte n with another message than the text gets with the byte FF there,
+/// which no UTF-8 holds (RFC 3629 §1). Otherwise it shows both results.
+fn nul_positions(texts : Array[String]) -> String {
+  texts
+  .map(text => {
+    let encoded = @utf8.encode(text)
+    let with_byte = (byte : Byte) => {
+      Bytes::makei(encoded.length(), i => {
+        if encoded[i] == b'%' {
+          byte
+        } else {
+          encoded[i]
+        }
+      })
+    }
+    let (nul, ff) = (with_byte(b'\x00'), with_byte(b'\xFF'))
+    let error = (input : Bytes) => {
+      try @xml.parse(input) catch {
+        error => Some(error)
+      } noraise {
+        _ => None
+      }
+    }
+    match (error(nul), error(ff)) {
+      (
+        Some(@xml.ParseError(position~, message~)),
+        Some(@xml.ParseError(message=other, ..)),
+      ) if message != other => "\{text} => position \{position}"
+      _ => "\{text} => \{error_of(nul)}, and with FF \{error_of(ff)}"
+    }
+  })
+  .join("\n")
+}
+
+///|
 test "a character XML does not allow is rejected wherever it is" {
   let not_allowed = "is not a character XML allows"
   inspect(
@@ -255,6 +292,34 @@ test "a character XML does not allow is rejected wherever it is" {
     content="position 15: U+0000 \{not_allowed}",
   )
   inspect(text_error("<a/>\u{0}"), content="position 4: U+0000 \{not_allowed}")
+  // Where a name starts, and inside one, U+0000 is refused at its byte too:
+  // no name starts with it or holds it (§2.3 [4], [4a]), be it an
+  // element's, an attribute's, an end tag's, a processing instruction's
+  // target or an entity reference's name. Its byte, 00, is well-formed
+  // UTF-8 (RFC 3629 §3: U+0000 to U+007F are one byte each), and the
+  // README's Documents names bytes that are not UTF-8 and characters XML
+  // does not allow as two rules: so the message is not the one a byte that
+  // is not UTF-8 gets in its place. xml's message texts wait for the
+  // maintainer (#411), so only the refusal, its position and that
+  // difference are written.
+  inspect(
+    nul_positions([
+      "<%a/>", "<a %='1'/>", "<a></%a>", "<?%?><a/>", "<a%b/>", "<a b%c='1'/>", "<a></a%>",
+      "<?p%q?><a/>", "<a>&l%t;</a>", "<a v='&l%t;'/>",
+    ]),
+    content=(
+      #|<%a/> => position 1
+      #|<a %='1'/> => position 3
+      #|<a></%a> => position 5
+      #|<?%?><a/> => position 2
+      #|<a%b/> => position 2
+      #|<a b%c='1'/> => position 4
+      #|<a></a%> => position 6
+      #|<?p%q?><a/> => position 3
+      #|<a>&l%t;</a> => position 5
+      #|<a v='&l%t;'/> => position 8
+    ),
+  )
 }
 
 ///|
