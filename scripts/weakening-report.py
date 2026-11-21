@@ -435,10 +435,11 @@ def changes(before, after, names):
     """The hunks in which after changes before, each in one section. A hunk
     whose lines are comments and blank lines alone, in before and in
     after, is not listed, wherever it sits: inside an assertion or a
-    snapshot too, since a comment there changes no value (#428). Of the
-    others: those that remove or change a snapshot's lines, or add lines
-    inside one; of the rest, those that remove or change an assertion; and
-    every other hunk, such as a wait or a condition computed before it is
+    snapshot too, since such lines change no value there (#428); MoonBit
+    joins the #| lines of a multi-line string across them. Of the others:
+    those that remove or change a snapshot's lines, or add lines inside
+    one; of the rest, those that remove or change an assertion; and every
+    other hunk, such as a wait or a condition computed before it is
     asserted, or lines added inside an assertion, as extending a test adds
     them. Lines are compared without their indentation, so that a block
     moved deeper changes nothing."""
