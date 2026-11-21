@@ -139,6 +139,27 @@ test "an attribute's value is normalised: each whitespace character becomes a sp
       #|["  one two three four five  "]
     ),
   )
+  // The value's first and last characters too: a tab, a line feed, a CR LF
+  // or a lone CR there is a space (XML 1.0 §2.11 and §3.3.3), and a
+  // reference there is its character (§3.3.3: each reference is replaced).
+  debug_inspect(
+    ["\tx", "\nx", "\r\nx", "\rx", "&lt;x", "x\t", "x\n", "x\r", "x&gt;"].map(value => {
+      values("<a v='\{value}'/>", "/a/@v")
+    }),
+    content=(
+      #|[
+      #|  [" x"],
+      #|  [" x"],
+      #|  [" x"],
+      #|  [" x"],
+      #|  ["<x"],
+      #|  ["x "],
+      #|  ["x "],
+      #|  ["x "],
+      #|  ["x>"],
+      #|]
+    ),
+  )
 }
 
 ///|
