@@ -18,6 +18,12 @@
 // may follow the root element". What a cut-off `<?xml` gets is a defect
 // that #430 records. The condition each message reports keeps the source
 // its test cites.
+//
+// The positions the tests pin follow the README's rule for where a
+// ParseError is and which one is reported (in its Use, after what the
+// errors carry): a byte that cannot be where it is, at that byte; a
+// construct refused as a whole, at its first byte; and when the input
+// breaks more than one rule, the error found first reading from the left.
 
 ///|
 /// Parses `input` and shows the error, or `parsed`.
@@ -576,6 +582,10 @@ test "UTF-8 of every length is read in text, names and attribute values; overlon
     ),
   )
   // A reference's name starts with any name character, ASCII or not.
+  // After `&`, the byte FF starts no name, and it is not UTF-8 either
+  // (RFC 3629 §1): the input breaks two rules, and by the README's rule
+  // the error found first reading from the left is reported, at the `&`,
+  // which starts no reference.
   inspect(
     [error_of(b"<a>&\xC3\xA9;</a>"), error_of(b"<a>&\xFF;</a>")].join("\n"),
     content=(
