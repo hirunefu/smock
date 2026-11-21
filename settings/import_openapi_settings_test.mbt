@@ -140,6 +140,10 @@ test "import-openapi: without --mock or without --output, the command line is re
   // with exit status 2" pins too: the maintainer decided on 2026-11-18 that
   // the words of usage errors stay as they are (#320). The usage and the
   // help that follow the first line are the help's own test.
+  // These words are moonbitlang/core's argparse's, not smock's: the
+  // maintainer confirmed on 2026-11-21 (#329) that the decision of
+  // 2026-11-18 covers them, as the reasons of usage errors that no document
+  // words.
   let mock = (settings : @settings.ImportOpenapiSettings) => settings.mock
   let first_line = (text : String) => text.split("\n").next().unwrap_or("")
   inspect(
