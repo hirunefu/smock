@@ -1,5 +1,5 @@
 {"file":"http1/chunked.mbt","definition":"Chunks::Chunks","text":"a339ed29a5a24855","pinned":{"INT":1},"full":{"INT":2}}
-{"file":"http1/chunked.mbt","definition":"Chunks::take_body","text":"5baf9fabbdbe25a4","pinned":{"BODY":1,"DEL":3,"INT":1},"full":{"BODY":1,"DEL":3,"INT":2}}
+{"file":"http1/chunked.mbt","definition":"Chunks::take_body","text":"0954e1be66380c53","pinned":{"BODY":1,"DEL":2},"full":{"BODY":1,"DEL":2}}
 {"file":"http1/chunked.mbt","definition":"Chunks::decode","text":"1ebd191458fbd90c","pinned":{"BODY":1,"ROR":4,"IFC":14,"DEL":6,"AOR":13,"INT":16},"full":{"BODY":1,"ROR":4,"IFC":28,"DEL":6,"AOR":13,"INT":35}}
 {"file":"http1/chunked.mbt","definition":"max_length","text":"7863c1a450cf272f","pinned":{"INT":1},"full":{"INT":3}}
 {"file":"http1/chunked.mbt","definition":"hex_value","text":"a63edc91f6096b66","pinned":{"BODY":1,"AOR":5,"INT":2},"full":{"BODY":1,"AOR":5,"INT":6}}
