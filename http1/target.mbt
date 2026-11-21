@@ -179,7 +179,8 @@ fn is_host_and_port(s : StringView, port_required~ : Bool) -> Bool {
 /// empty.
 fn is_uri_host(host : StringView) -> Bool {
   if host.has_prefix("[") {
-    host.length() >= 2 &&
+    // One character cannot be both `[` and `]`, so a host that ends with
+    // `]` here has two characters at least.
     host.has_suffix("]") &&
     (
       is_ipv6(host[1:host.length() - 1]) ||

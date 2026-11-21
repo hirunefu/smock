@@ -60,8 +60,9 @@ fn Chunks::Chunks(limit~ : Int32) -> Chunks {
 /// Hands over the decoded body and gets ready for the next one.
 fn Chunks::take_body(self : Chunks) -> Bytes {
   let body = self.body.to_bytes()
+  // `size` is 0 already: only the last chunk, of size 0, leads to the
+  // trailer section that ends a body.
   self.state = SizeStart
-  self.size = 0
   self.body = @buffer.Buffer()
   body
 }

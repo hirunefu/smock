@@ -1,5 +1,5 @@
 {"file":"http1/chunked.mbt","definition":"Chunks::Chunks","text":"a339ed29a5a24855","pinned":{"INT":1},"full":{"INT":2}}
-{"file":"http1/chunked.mbt","definition":"Chunks::take_body","text":"5baf9fabbdbe25a4","pinned":{"BODY":1,"DEL":3,"INT":1},"full":{"BODY":1,"DEL":3,"INT":2}}
+{"file":"http1/chunked.mbt","definition":"Chunks::take_body","text":"0954e1be66380c53","pinned":{"BODY":1,"DEL":2},"full":{"BODY":1,"DEL":2}}
 {"file":"http1/chunked.mbt","definition":"Chunks::decode","text":"1ebd191458fbd90c","pinned":{"BODY":1,"ROR":4,"IFC":14,"DEL":6,"AOR":13,"INT":16},"full":{"BODY":1,"ROR":4,"IFC":28,"DEL":6,"AOR":13,"INT":35}}
 {"file":"http1/chunked.mbt","definition":"max_length","text":"7863c1a450cf272f","pinned":{"INT":1},"full":{"INT":3}}
 {"file":"http1/chunked.mbt","definition":"hex_value","text":"a63edc91f6096b66","pinned":{"BODY":1,"AOR":5,"INT":2},"full":{"BODY":1,"AOR":5,"INT":6}}
@@ -11,10 +11,11 @@
 {"file":"http1/date.mbt","definition":"write_padded","text":"8cfef226b5b40502","pinned":{"BODY":1,"DEL":2},"full":{"BODY":1,"DEL":2}}
 {"file":"http1/date.mbt","definition":"floor_div","text":"35e8f5303ff8aa2a","pinned":{"BODY":1,"ROR":1,"IFC":1,"AOR":2,"INT":3},"full":{"BODY":1,"ROR":1,"IFC":2,"AOR":2,"INT":4}}
 {"file":"http1/parser.mbt","definition":"Parser::Parser","text":"42d0a450a4c634ee","pinned":{"ROR":2,"IFC":2,"AOR":4,"INT":16},"full":{"ROR":2,"IFC":4,"AOR":4,"INT":37}}
-{"file":"http1/parser.mbt","definition":"Parser::feed","text":"961e82efc212e007","pinned":{"BODY":1,"ROR":3,"IFC":4,"DEL":7,"AOR":5,"INT":5},"full":{"BODY":1,"ROR":3,"IFC":8,"DEL":7,"AOR":5,"INT":10}}
+{"file":"http1/parser.mbt","definition":"Parser::feed","text":"380eaa40bc32117a","pinned":{"BODY":1,"ROR":1,"IFC":2,"DEL":6,"AOR":4,"INT":2},"full":{"BODY":1,"ROR":1,"IFC":4,"DEL":6,"AOR":4,"INT":4}}
+{"file":"http1/parser.mbt","definition":"grown_capacity","text":"f685c05e0c1a7bc1","pinned":{"BODY":1,"ROR":2,"IFC":2,"DEL":1,"AOR":1,"INT":3},"full":{"BODY":1,"ROR":2,"IFC":4,"DEL":1,"AOR":1,"INT":6}}
 {"file":"http1/parser.mbt","definition":"Parser::in_request","text":"ab8c792635b065aa","pinned":{"BODY":1,"ROR":1,"LCR":1},"full":{"BODY":1,"ROR":1,"LCR":1}}
-{"file":"http1/parser.mbt","definition":"Parser::next","text":"ed14607bb48bcce4","pinned":{"ROR":1,"IFC":3,"DEL":14,"AOR":2,"INT":3},"full":{"ROR":1,"IFC":5,"DEL":14,"AOR":2,"INT":6}}
-{"file":"http1/parser.mbt","definition":"Parser::scan_head","text":"c025115023c54a64","pinned":{"ROR":11,"IFC":25,"LCR":9,"NOT":2,"DEL":23,"AOR":23,"INT":29},"full":{"ROR":11,"IFC":50,"LCR":9,"NOT":2,"DEL":23,"AOR":23,"INT":53}}
+{"file":"http1/parser.mbt","definition":"Parser::next","text":"d4e97f5292e28e9c","pinned":{"ROR":1,"IFC":3,"DEL":14,"AOR":3,"INT":3},"full":{"ROR":1,"IFC":5,"DEL":14,"AOR":3,"INT":6}}
+{"file":"http1/parser.mbt","definition":"Parser::scan_head","text":"95585eba51bc51f0","pinned":{"ROR":9,"IFC":27,"LCR":6,"NOT":4,"DEL":21,"AOR":19,"INT":18},"full":{"ROR":9,"IFC":54,"LCR":6,"NOT":4,"DEL":21,"AOR":19,"INT":37}}
 {"file":"http1/parser.mbt","definition":"Section::after","text":"f5f8e91c88180b89","pinned":{"IFC":8},"full":{"IFC":16}}
 {"file":"http1/parser.mbt","definition":"is_field_value_byte","text":"b79df22d9d3b7328","pinned":{"BODY":1,"ROR":1,"LCR":2},"full":{"BODY":1,"ROR":1,"LCR":2}}
 {"file":"http1/parser.mbt","definition":"ONES","text":"577eaddc32a8b2e0","pinned":{"INT":1},"full":{"INT":3}}
@@ -72,7 +73,7 @@
 {"file":"http1/target.mbt","definition":"has_scheme","text":"07c287fac5c79920","pinned":{"BODY":1,"ROR":2,"IFC":1,"LCR":3,"NOT":1,"BOOL":3,"INT":4,"STR":1},"full":{"BODY":1,"ROR":2,"IFC":3,"LCR":3,"NOT":1,"BOOL":3,"INT":4,"STR":2}}
 {"file":"http1/target.mbt","definition":"is_host_value","text":"9ffd0d69ed29dc18","pinned":{"BODY":1,"BOOL":1},"full":{"BODY":1,"BOOL":1}}
 {"file":"http1/target.mbt","definition":"is_host_and_port","text":"bdadd0e980640e07","pinned":{"BODY":1,"IFC":2,"LCR":2,"NOT":1,"BOOL":1,"AOR":1,"INT":3,"STR":4},"full":{"BODY":1,"IFC":4,"LCR":2,"NOT":1,"BOOL":1,"AOR":1,"INT":4,"STR":8}}
-{"file":"http1/target.mbt","definition":"is_uri_host","text":"f340b1dfe04b1897","pinned":{"BODY":1,"ROR":1,"IFC":1,"LCR":3,"AOR":2,"INT":10,"STR":2},"full":{"BODY":1,"ROR":1,"IFC":2,"LCR":3,"AOR":2,"INT":11,"STR":4}}
+{"file":"http1/target.mbt","definition":"is_uri_host","text":"9d28c03532cf9fcd","pinned":{"BODY":1,"IFC":1,"LCR":2,"AOR":2,"INT":8,"STR":2},"full":{"BODY":1,"IFC":2,"LCR":2,"AOR":2,"INT":8,"STR":4}}
 {"file":"http1/target.mbt","definition":"is_reg_name","text":"28e781705cc3bcfd","pinned":{"BODY":1,"ROR":1,"IFC":4,"LCR":1,"NOT":2,"BOOL":2,"AOR":1,"INT":7},"full":{"BODY":1,"ROR":1,"IFC":8,"LCR":1,"NOT":2,"BOOL":2,"AOR":1,"INT":11}}
 {"file":"http1/target.mbt","definition":"is_ipv6","text":"ccfeecf1cf31c327","pinned":{"BODY":1,"ROR":1,"BOOL":5,"AOR":1,"INT":3,"STR":1},"full":{"BODY":1,"ROR":1,"BOOL":5,"AOR":1,"INT":6,"STR":2}}
 {"file":"http1/target.mbt","definition":"ipv6_groups","text":"4502e9da9ea9071b","pinned":{"BODY":1,"IFC":4,"LCR":3,"AOR":3,"INT":6,"STR":1},"full":{"BODY":1,"IFC":8,"LCR":3,"AOR":3,"INT":11,"STR":2}}

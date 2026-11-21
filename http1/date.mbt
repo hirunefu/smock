@@ -26,6 +26,9 @@ pub fn DateCache::DateCache() -> DateCache {
 ///|
 /// The Date value for the time `ms`, in milliseconds since the epoch, as
 /// `@async.now()` gives it: the second it falls in, in IMF-fixdate form.
+/// It is an IMF-fixdate for a time in the years 0000 to 9999, since
+/// IMF-fixdate gives the year four digits (RFC 9110, section 5.6.7);
+/// outside them, the value is not one.
 pub fn DateCache::at(self : DateCache, ms : Int64) -> String {
   let second = floor_div(ms, 1000L)
   if second != self.second {

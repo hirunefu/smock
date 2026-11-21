@@ -16,6 +16,14 @@
 /// takes. Timeouts are the caller's; `Parser::in_request` tells which one
 /// runs.
 ///
+/// On one connection, a request's method, target and header fields that
+/// are the same as in the request before, field by field in order, are the
+/// very strings and `Header`s of that request, which `physical_equal`
+/// tells; a field with the same name in its place but another value is a
+/// new `Header` with that request's very name. A name is the same only in
+/// the same case, and a value is compared without the white space around
+/// it.
+///
 /// ```mbt check
 /// test {
 ///   let parser = @http1.Parser()
@@ -32,8 +40,9 @@ pub struct Parser {
   priv mut end : Int32
   /// How many bytes after `start` the head scan has looked at, and where in
   /// the head they leave it, so the scan resumes there: the part of the
-  /// head, how many bytes of the method, the target or the version it has
-  /// seen, and where in the header section it is.
+  /// head (in the method or the target, whether a byte of it has been
+  /// seen), how many bytes of the version it has seen, and where in the
+  /// header section it is.
   priv mut scanned : Int32
   priv mut scan : HeadScan
   priv mut scan_count : Int32
@@ -147,7 +156,8 @@ pub(all) struct Request {
 /// - `body_limit` is the longest body a request may have, in bytes, counted
 ///   after chunked decoding: chunk sizes, chunk extensions and trailer
 ///   fields do not count. A negative limit is taken as 0, so that only an
-///   empty body fits. A declared Content-Length over it gets 413 before
+///   empty body fits. A limit of 2^31 - 1, the largest an Int32 holds, is
+///   taken as 2^31 - 2. A declared Content-Length over it gets 413 before
 ///   any of the body is read, and a chunked body gets 413 as soon as a chunk
 ///   size would take it past the limit, before that chunk's data. The parser
 ///   keeps the body and not the framing around it, so neither the framing
@@ -191,11 +201,7 @@ pub fn Parser::Parser(
 pub fn Parser::feed(self : Parser, data : BytesView) -> Unit {
   let used = self.end - self.start
   if self.buf.length() - self.end < data.length() {
-    let needed = used + data.length()
-    let mut capacity = self.buf.length()
-    while capacity < needed {
-      capacity = if capacity >= 0x40000000 { needed } else { capacity * 2 }
-    }
+    let capacity = grown_capacity(self.buf.length(), used + data.length())
     let target = if capacity == self.buf.length() {
       self.buf
     } else {
@@ -208,6 +214,28 @@ pub fn Parser::feed(self : Parser, data : BytesView) -> Unit {
   }
   self.buf.blit_from_bytesview(self.end, data)
   self.end += data.length()
+}
+
+///|
+/// The length of the buffer in which `Parser::feed` holds `needed` bytes,
+/// when its buffer has `capacity` bytes, a positive number. The length
+/// gives the bytes room: it is at least `needed`, for any `needed` up to
+/// the largest Int32, and it never passes what an Int32 holds.
+///
+/// - A buffer that holds the bytes keeps its length, so that `feed` moves
+///   them within the array it has.
+/// - While it is below 2^30 bytes, a buffer that does not hold them
+///   doubles, so that a request fed in many small pieces is copied a few
+///   times, not once a piece. Twice a length below 2^30 is at most
+///   2^31 - 2, which an Int32 holds.
+/// - Once it is 2^30 bytes or more, which doubling would take past the
+///   largest Int32, a buffer that does not hold them grows to `needed`.
+fn grown_capacity(capacity : Int32, needed : Int32) -> Int32 {
+  let mut capacity = capacity
+  while capacity < needed {
+    capacity = if capacity >= 0x40000000 { needed } else { capacity * 2 }
+  }
+  capacity
 }
 
 ///|
@@ -270,12 +298,13 @@ pub fn Parser::next(self : Parser) -> Parsed {
   }
   let (body, consumed) = match head.framing {
     Length(length) => {
-      let body_end = self.start + length
-      if self.end < body_end {
+      // Comparing the bytes at hand with the length adds nothing to a
+      // position, so no position wraps however long the body.
+      if self.end - self.start < length {
         return NeedMore
       }
       (
-        self.buf.unsafe_reinterpret_as_bytes()[self.start:body_end].to_owned(),
+        self.buf.unsafe_reinterpret_as_bytes()[self.start:self.start + length].to_owned(),
         length,
       )
     }
@@ -371,23 +400,20 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       EmptyLineLf => scan = if c == b'\n' { EmptyLine } else { Broken }
       Method =>
         if is_tchar(c) {
-          count += 1
-        } else if c == b' ' && count > 0 {
-          scan = Target
-          count = 0
-        } else if c == b'\r' && count == 0 {
+          scan = MethodRest
+        } else if c == b'\r' {
           scan = EmptyLineLf
         } else {
           scan = Broken
         }
+      MethodRest =>
+        if !is_tchar(c) {
+          scan = if c == b' ' { TargetStart } else { Broken }
+        }
+      TargetStart => scan = if is_visible_byte(c) { Target } else { Broken }
       Target =>
-        if is_visible_byte(c) {
-          count += 1
-        } else if c == b' ' && count > 0 {
-          scan = Version
-          count = 0
-        } else {
-          scan = Broken
+        if !is_visible_byte(c) {
+          scan = if c == b' ' { Version } else { Broken }
         }
       Version => {
         let expected = match count {
@@ -441,7 +467,6 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       // An empty line before the request line is consumed and ignored.
       start = at
       scan = Method
-      count = 0
     } else if scan is Fields {
       if section is Ended {
         result = Ended(at)
@@ -462,7 +487,6 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
         }
       }
     } else if scan is Target {
-      let from = at
       // Eight bytes at a time while all of them are visible characters.
       let bytes = buf.unsafe_reinterpret_as_bytes()
       while at + 8 <= stop && is_visible(bytes.unsafe_read_uint64_le(at)) {
@@ -471,7 +495,6 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       while at < stop && is_visible_byte(buf[at]) {
         at += 1
       }
-      count += at - from
     }
   }
   self.start = start
@@ -492,9 +515,14 @@ priv enum HeadScan {
   /// An empty line before the request line has ended; servers ignore it
   /// (RFC 9112, section 2.2).
   EmptyLine
-  /// In the method.
+  /// The first byte of the method, or the CR of an empty line before the
+  /// request line, is next.
   Method
-  /// In the request target.
+  /// In the method, after its first byte.
+  MethodRest
+  /// The first byte of the request target is next.
+  TargetStart
+  /// In the request target, after its first byte.
   Target
   /// In the HTTP version, `HTTP/D.D`, then the CR that ends the line.
   Version

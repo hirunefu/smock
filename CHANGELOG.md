@@ -822,6 +822,14 @@ of each GitHub release include its section
   its flag or its `SMOCK_` variable, and for the Admin render operation's
   `seed` and `response`
   ([smock#426](https://github.com/hirunefu/smock/issues/426)).
+- An HTTP/1.1 request whose Content-Length body would end more than
+  2^31 - 1 bytes into what smock holds of its connection now waits for
+  its body, as any other request does. With `--header-size-limit` and
+  `--body-limit` both at 2^30, a head of 2^30 bytes with
+  `Content-Length: 1073741824`, or a body that started after more than
+  2^30 bytes of an earlier request still held, took the parser's position
+  past what an Int32 holds: smock took the request with an empty body, or
+  aborted ([smock#433](https://github.com/hirunefu/smock/issues/433)).
 
 ## [0.4.0] - 2026-11-01
 
