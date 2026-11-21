@@ -1268,17 +1268,57 @@ class ConfirmationTest(unittest.TestCase):
         self.assertEqual(flaked["tests"], [{"package": LOW[0], "file": LOW[1], "name": LOW[3], "flaked": 1,
                                             "reruns": 1}])
 
-    def test_a_time_out_that_does_not_repeat_is_unconfirmed(self):
+    # A time-out that does not repeat, decided by the twentieth round's
+    # principle (#431): the run the limit stopped named no test, so its run
+    # again decides. A run again that passes makes the mutant a survivor; one
+    # that fails repeats the kill, as killed, since only both runs stopped by
+    # the limit make a time-out.
+
+    def test_a_time_out_whose_run_again_passes_is_a_survivor(self):
+        # `n < high` survives calc's tests; a slow runner stops it once.
         out, records, package, _ = self.run_scripted(["real", "real", "real", {"sleep": 120}],
                                                      "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,1")
         [record] = records
         self.assertEqual((record["outcome"], record["first_outcome"], record["confirmation"]),
-                         ("unconfirmed", "timed out", "the mutant did not time out again"))
+                         ("survived", "timed out", "the run was stopped at the time limit, and passed when run"
+                                                   " again with the mutant on"))
         self.assertGreaterEqual(record["timings"]["run_s"], record["timings"]["limit_s"])
         self.assertLess(record["timings"]["again_s"], record["timings"]["limit_s"])
-        self.assertEqual((package["timed_out"], package["unconfirmed"], package["score"]), (0, 1, None))
+        self.assertEqual(record["ended"]["again"], {"exit_status": 0, "timed_out": False, "failed_tests": 0})
+        self.assertEqual(record["exclusion"], {"status": "unexplained"})
+        self.assertEqual((package["timed_out"], package["survived"], package["unconfirmed"], package["score"]),
+                         (0, 1, 0, 0.0))
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked["tests"], [])
         report = (out / "report.md").read_text()
-        self.assertIn("the mutant did not time out again", report)
+        self.assertIn("### Survivors (1)", report)
+        self.assertNotIn("### Unconfirmed", report)
+
+    def test_a_time_out_whose_run_again_fails_named_tests_is_killed_by_them(self):
+        # The first weekly run's `yaml/writer.mbt,Writer::hex,AOR,-,+,1` timed
+        # out (5.586 s against 5.576 s), and its run again ended within the
+        # limit; the second weekly run killed it in 3.935 s.
+        out, records, package, _ = self.run_scripted(["real", "real", "real", {"sleep": 120}, {"fail": [LOW]}],
+                                                     "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,1")
+        [record] = records
+        self.assertEqual((record["outcome"], record["confirmation"]), ("killed", "confirmed"))
+        self.assertEqual([t["name"] for t in record["killing_tests"]], [LOW[3]])
+        self.assertEqual((record["ended"]["run"]["timed_out"], record["ended"]["again"]),
+                         (True, {"exit_status": 2, "timed_out": False, "failed_tests": 1}))
+        self.assertEqual((package["killed"], package["timed_out"], package["unconfirmed"]), (1, 0, 0))
+        # LOW failed once, with the mutant on: no flaky result.
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked, {"suites": {"mutation/fixture/calc": 3}, "tests": []})
+
+    def test_a_time_out_whose_run_again_fails_without_naming_a_test_is_killed(self):
+        _, records, package, _ = self.run_scripted(
+            ["real", "real", "real", {"sleep": 120}, {"crash": "exit status: 1"}],
+            "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,1")
+        [record] = records
+        self.assertEqual((record["outcome"], record["confirmation"], record["killing_tests"]),
+                         ("killed", "confirmed", []))
+        self.assertEqual(record["ended"]["again"], {"exit_status": 255, "timed_out": False, "failed_tests": 0})
+        self.assertEqual((package["killed"], package["timed_out"], package["unconfirmed"]), (1, 0, 0))
 
     def test_a_time_out_whose_run_without_the_mutant_is_too_slow_is_unconfirmed(self):
         # A slow runner: everything times out, the run without the mutant too.

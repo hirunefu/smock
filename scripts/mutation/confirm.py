@@ -182,11 +182,20 @@ class Judge:
         return worker.moon_test(package, limit, build_only=False)
 
     def confirm(self, worker, package, path, text, mutated, record, limit):
-        """Confirms a record's kill or time-out, or makes it unconfirmed,
-        and leaves path holding text. A kill whose failed tests all give no
-        kill credit is a survivor."""
+        """Confirms a record's kill or time-out, or makes it unconfirmed or
+        a survivor, and leaves path holding text. A kill whose failed tests
+        all give no kill credit is a survivor.
+
+        A run that the time limit stopped, or that failed without naming a
+        test, did not pass, but names no test (#431). So a run again that
+        ends so repeats the kill, and no test is flaky by it. When the
+        first run named no test, the run again decides: if it passes, or
+        only tests that give no kill credit fail, the mutant survived; if
+        tests fail, they are the ones that kill it. The outcome is a
+        time-out only when the limit stopped both runs."""
         packages = [package] if isinstance(package, str) else package
-        if record["outcome"] == "killed":
+        first = record["outcome"]
+        if first == "killed":
             credited, uncredited = self.split(record["killing_tests"])
             if uncredited:
                 record["no_credit"] = uncredited
@@ -194,7 +203,9 @@ class Judge:
                 record.update(outcome="survived", killing_tests=[],
                               confirmation="only tests that give no kill credit failed")
                 return
-        elif record["outcome"] != "timed out":
+        elif first == "timed out":
+            credited = []
+        else:
             return
         timings = record["timings"]
         runs = record.setdefault("ended", {})
@@ -205,25 +216,29 @@ class Judge:
         timings["again_s"] = round(seconds, 3)
         failed = self.failed_tests(output)
         runs["again"] = ended(status, timed_out, failed)
-        if record["outcome"] == "killed":
-            if timed_out or status != 0 and not failed:
-                # A run again that the limit stopped, or that failed
-                # without naming a test, did not pass: it repeats the kill,
-                # and no test is flaky by it.
-                repeated = credited
+        unnamed = timed_out or status != 0 and not failed
+        if credited:
+            # The tests that failed: those that fail again repeat the kill,
+            # and a run again that names no test repeats it whole.
+            if unnamed:
+                tests = credited
             else:
                 again = {key(t) for t in failed}
                 self.rerun(credited, again)
-                repeated = [t for t in credited if key(t) in again]
-                if credited and not repeated:
+                tests = [t for t in credited if key(t) in again]
+                if not tests:
                     return self.unconfirmed(record, "the tests that failed passed when run again with the mutant on")
-                if not credited and status == 0:
-                    # A failure that named no test, and did not repeat, is
-                    # no kill, and no test is flaky by it.
-                    return self.survived(record, "the run failed without naming a test, and passed when run again"
-                                                 " with the mutant on")
-        elif not timed_out:
-            return self.unconfirmed(record, "the mutant did not time out again")
+        else:
+            # The first run named no test: the run again decides.
+            tests, others = ([], []) if unnamed else self.split(failed)
+            if not unnamed and not tests:
+                if others:
+                    record["no_credit"] = record.get("no_credit", []) + others
+                how = "was stopped at the time limit" if first == "timed out" else "failed without naming a test"
+                then = ("only tests that give no kill credit failed when run again" if others
+                        else "passed when run again")
+                return self.survived(record, f"the run {how}, and {then} with the mutant on")
+        outcome = "timed out" if first == "timed out" and timed_out else "killed"
         status, output, seconds, timed_out = self.run_with(worker, package, path, text, limit)
         timings["without_s"] = round(seconds, 3)
         failed = self.failed_tests(output)
@@ -231,13 +246,11 @@ class Judge:
         if timed_out:
             return self.unconfirmed(record, "the run without the mutant did not finish within the limit")
         self.suite(packages, failed)
-        if record["outcome"] == "killed":
-            without = {key(t) for t in failed}
-            confirmed = [t for t in repeated if key(t) not in without]
-            if credited and not confirmed or not credited and status != 0:
-                return self.unconfirmed(record, "the tests that failed fail without the mutant too")
-            record["killing_tests"] = confirmed
-        record["confirmation"] = "confirmed"
+        without = {key(t) for t in failed}
+        confirmed = [t for t in tests if key(t) not in without]
+        if tests and not confirmed or not tests and outcome == "killed" and status != 0:
+            return self.unconfirmed(record, "the tests that failed fail without the mutant too")
+        record.update(outcome=outcome, killing_tests=confirmed, confirmation="confirmed")
 
     @staticmethod
     def unconfirmed(record, reason):
