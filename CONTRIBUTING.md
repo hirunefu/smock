@@ -1371,7 +1371,30 @@ ledger accepts are in the same list, under the same categories:
   pin it there.
 - **DEFERRED**: carries an issue number, and still counts as unresolved.
 
-Dead code is deleted, not excluded, with the maintainer's approval.
+Dead code is deleted, not excluded, with the maintainer's approval. A
+survivor that deletes a statement or makes a check always true, while
+nothing a caller can see changes, is decided by what the code is for:
+
+- Code that decides nothing, such as a check that is always true or a
+  cap that never acts, is a candidate for deletion.
+- A statement whose deletion works only by coincidence of what follows,
+  such as a step past markup that the next loop would read as plain
+  characters, stays, and its mutant is EQUIVALENT.
+
+A triage context deletes no code. It proposes an EQUIVALENT entry either
+way, and lists each candidate for the maintainer: what would go, the
+survivors that go with it, and whether it is on the request path. The
+maintainer decides a package's deletions in one round. An approved
+deletion is then a commit of its own, which removes the entries it makes
+needless; on the request path, it brings the pre-merge benchmarks
+([Before merging into main](docs/merging-into-main.md)).
+
+When a mutant does differ, but only where a caller of the package cannot
+reach, such as a private function's own result when it is called alone
+or an input outside a documented contract, the entry's reason says so in
+plain words. Such an entry is accepted at the package's public interface,
+or within the documented contract, and no white-box test is written for
+a private function's own result.
 
 An equivalence claim reaches the maintainer in three steps:
 
