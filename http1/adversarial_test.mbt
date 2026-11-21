@@ -137,65 +137,183 @@ let fragments : Array[Bytes] = [
 ]
 
 ///|
-/// Starts for garbage, so that it also reaches the header section and a
-/// chunked body.
+/// Starts for garbage, so that it also reaches the header section, a
+/// chunked body, a transfer coding, the bytes after a whole request, and a
+/// body of 64 bytes after one.
 let starts : Array[Bytes] = [
   b"", b"POST / HTTP/1.1\r\nHost: a\r\n", b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n",
+  b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: ", b"GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+  b"GET / HTTP/1.1\r\nHost: a\r\n\r\nPOST / HTTP/1.1\r\nHost: a\r\nContent-Length: 64\r\n\r\n",
 ]
 
 ///|
-/// Random bytes: one of `starts` followed by `fragments` when `shaped`,
-/// otherwise any bytes.
-fn garbage(rand : @random.Rand, shaped~ : Bool) -> Bytes {
+/// The seed of the property that random garbage is parsed the same way
+/// however it is split. The tests run with it on every push, in mutation
+/// runs and in kill confirmations, so a failure reproduces. Each week,
+/// `scripts/random-seeds.py` writes a random seed here in a working copy and
+/// prints it (CONTRIBUTING.md, "Seeds").
+const GARBAGE_SEED : UInt64 = 3347435453365427818
+
+///|
+/// Random bytes, and where they are cut into the pieces they are fed in.
+/// When `shaped`, the parts are one of `starts` and then 1 to 40 of
+/// `fragments`; otherwise they are 1 to 40 bytes of any value, a part each.
+/// `cuts` are offsets into the bytes, in increasing order.
+priv struct Garbage {
+  shaped : Bool
+  parts : Array[Bytes]
+  cuts : Array[Int32]
+}
+
+///|
+/// Garbage as a failure shows it: each part as a bytes literal, then the
+/// cuts.
+impl @debug.Debug for Garbage with fn to_repr(self) {
+  let parts = self.parts.map(part => literal(part)).join(", ")
+  let shape = if self.shaped { "pieces of HTTP" } else { "any bytes" }
+  @debug.Repr::literal(
+    "\{shape} [\{parts}], cut at \{@debug.to_string(self.cuts)}",
+  )
+}
+
+///|
+/// The bytes the parts make, one after another.
+fn Garbage::stream(self : Garbage) -> Bytes {
   let out = @buffer.Buffer()
-  if shaped {
-    out.write_bytes(starts[rand.int(limit=starts.length())])
-  }
-  for _ in 0..<(1 + rand.int(limit=40)) {
-    if shaped {
-      out.write_bytes(fragments[rand.int(limit=fragments.length())])
-    } else {
-      out.write_byte(rand.int(limit=256).to_byte())
-    }
+  for part in self.parts {
+    out.write_bytes(part)
   }
   out.to_bytes()
 }
 
 ///|
-test "random garbage is parsed the same way however it is split, and never crashes the parser" {
-  let rand = @random.Rand::chacha8(seed=b"smock http1 garbage, any splits.")
-  let differ = []
-  let endings : Map[String, Int32] = Map([])
-  for round in 0..<2000 {
-    let stream = garbage(rand, shaped=round % 4 != 0)
-    let whole = outcome([stream[:]])
-    let bytes = (0).until(stream.length()).map(i => stream[i:i + 1]).collect()
-    if outcome(bytes) != whole ||
-      outcome(random_pieces(stream, rand, longest=7)) != whole {
-      differ.push(stream)
-    }
-    let ending = if whole.length() > 1 {
-      "complete, then \{whole[whole.length() - 1]}"
-    } else {
-      whole[0]
-    }
-    endings[ending] = endings.get(ending).unwrap_or(0) + 1
+/// Three in four shaped, as pieces of HTTP; the rest any bytes. The bytes
+/// are cut into pieces of 1 to 7 bytes.
+impl @quickcheck.Arbitrary for Garbage with fn arbitrary(_size, state) {
+  let shaped = pick(state, 4) != 0
+  let parts = if shaped {
+    [
+      starts[pick(state, starts.length())],
+      ..Array::makei(1 + pick(state, 40), _ => {
+        fragments[pick(state, fragments.length())]
+      }),
+    ]
+  } else {
+    Array::makei(1 + pick(state, 40), _ => [pick(state, 256).to_byte()])
   }
-  debug_inspect(differ, content="[]")
+  let length = { shaped, parts, cuts: [], }.stream().length()
+  { shaped, parts, cuts: random_cuts(length, state, longest=7), }
+}
+
+///|
+/// Smaller garbage: each without one of its parts, the cuts inside it
+/// dropped and those after it moved with the bytes after it, and each
+/// without one of its cuts. Each has fewer parts or cuts, so shrinking
+/// ends.
+impl @quickcheck.Shrink for Garbage with fn shrink(self) {
+  let out : Array[Garbage] = []
+  let mut start = 0
+  for i, part in self.parts {
+    let rest = self.parts.copy()
+    rest.remove(i) |> ignore
+    let cuts = []
+    for cut in self.cuts {
+      if cut <= start {
+        cuts.push(cut)
+      } else if cut >= start + part.length() {
+        cuts.push(cut - part.length())
+      }
+    }
+    out.push({ ..self, parts: rest, cuts, })
+    start += part.length()
+  }
+  for i in 0..<self.cuts.length() {
+    let rest = self.cuts.copy()
+    rest.remove(i) |> ignore
+    out.push({ ..self, cuts: rest, })
+  }
+  out.iter()
+}
+
+///|
+/// The bytes fed one at a time.
+fn bytes_one_by_one(stream : Bytes) -> Array[BytesView] {
+  (0).until(stream.length()).map(i => stream[i:i + 1]).collect()
+}
+
+///|
+/// The property, by Parser's documentation ("However the bytes are split
+/// into pieces, it takes out the same requests"): the bytes fed one at a
+/// time, and fed in their pieces, give the requests and the ending they
+/// give fed whole. A parser that crashes fails the test as well.
+fn Garbage::holds(self : Garbage) -> Bool {
+  let stream = self.stream()
+  let whole = outcome([stream[:]])
+  outcome(bytes_one_by_one(stream)) == whole &&
+  outcome(cut_at(stream, self.cuts)) == whole
+}
+
+///|
+/// How the bytes end when fed whole: as `outcome` renders the ending, after
+/// "complete, then" when a request came out first.
+fn Garbage::ending(self : Garbage) -> String {
+  let whole = outcome([self.stream()[:]])
+  if whole.length() > 1 {
+    "complete, then \{whole[whole.length() - 1]}"
+  } else {
+    whole[0]
+  }
+}
+
+///|
+/// What the parser made of failing garbage: the bytes, the lengths of the
+/// pieces, and the outcome fed whole, one byte at a time and in the pieces.
+fn Garbage::describe(self : Garbage) -> String {
+  let stream = self.stream()
+  let pieces = cut_at(stream, self.cuts)
+  let lengths = @debug.to_string(pieces.map(piece => piece.length()))
+  let whole = outcome([stream[:]]).join("\n  ")
+  let one_by_one = outcome(bytes_one_by_one(stream)).join("\n  ")
+  let cut = outcome(pieces).join("\n  ")
+  "bytes \{literal(stream)}\npieces of \{lengths} bytes\nfed whole:\n  \{whole}\nfed one byte at a time:\n  \{one_by_one}\nfed in pieces:\n  \{cut}"
+}
+
+///|
+/// The endings that the garbage reaches, each an input class of the
+/// property.
+let garbage_endings : Array[String] = [
+  "complete, then invalid 400", "complete, then need more", "invalid 400", "invalid 501",
+  "need more",
+]
+
+///|
+test "random garbage is parsed the same way however it is split, and never crashes the parser" {
+  let reached : Map[String, Int32] = Map([])
+  @quickcheck.check(
+    (garbage : Garbage) => garbage.holds(),
+    observe=garbage => {
+      let ending = garbage.ending()
+      reached[ending] = reached.get(ending).unwrap_or(0) + 1
+      [
+        ..garbage_endings.map(known => {
+          @quickcheck.classify(ending == known, known)
+        }),
+        @quickcheck.classify(
+          !garbage_endings.contains(ending),
+          "another ending",
+        ),
+        @quickcheck.classify(!garbage.shaped, "any bytes"),
+      ]
+    },
+    counterexample_context=Garbage::describe,
+    count=2000,
+    max_shrinks=2000,
+    seed=GARBAGE_SEED,
+  )
   // The garbage reaches every part of the parser: some of it even holds
   // whole requests.
-  let endings = endings.keys().collect()
-  endings.sort_by((a, b) => a.lexical_compare(b))
   debug_inspect(
-    endings,
-    content=(
-      #|[
-      #|  "complete, then invalid 400",
-      #|  "complete, then need more",
-      #|  "invalid 400",
-      #|  "invalid 501",
-      #|  "need more",
-      #|]
-    ),
+    garbage_endings.filter(ending => !reached.contains(ending)),
+    content="[]",
   )
 }

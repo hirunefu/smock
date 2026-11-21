@@ -43,28 +43,6 @@ fn splits_that_differ(stream : Bytes) -> Array[Int32] {
 }
 
 ///|
-/// `stream` cut into pieces of random lengths, up to `longest` bytes each.
-fn random_pieces(
-  stream : Bytes,
-  rand : @random.Rand,
-  longest~ : Int32,
-) -> Array[BytesView] {
-  let pieces = []
-  let mut offset = 0
-  while offset < stream.length() {
-    let length = 1 + rand.int(limit=longest)
-    let end = if offset + length < stream.length() {
-      offset + length
-    } else {
-      stream.length()
-    }
-    pieces.push(stream[offset:end])
-    offset = end
-  }
-  pieces
-}
-
-///|
 /// The index of a random one of `n` choices.
 fn pick(state : @quickcheck.RandomState, n : Int32) -> Int32 {
   state.next_uint(limit=n.reinterpret_as_uint()).reinterpret_as_int()
