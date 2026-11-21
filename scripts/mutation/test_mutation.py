@@ -26,9 +26,13 @@ counts only when the tests that failed fail again with the mutant on and
 pass with it off, and a time-out only when it happens again and the run
 without the mutant finishes within the limit; a test that failed without
 a mutant in this run, or whose flake rate is above the flake threshold of
-mutation/flakes.toml, gives no kill credit. A fake moon answers the runs
-of tests from a script, so that a flaky failure and a time-out that does
-not repeat happen every time.
+mutation/flakes.toml, gives no kill credit. A run that the time limit
+stops, or that fails without naming a test, did not pass and names no
+test: run again, it repeats the kill, and when the first run ended so,
+the run again decides (#431, the maintainer's twentieth round, point 3).
+A fake moon answers the runs of tests from a script, so that a flaky
+failure, a time-out that does not repeat and a test program that stops
+happen every time.
 
 In the fixture's package same, each mutant of the pinned set has a known
 outcome and a known result of the comparison of the compiler's output,
@@ -1003,9 +1007,12 @@ class ImportersTest(unittest.TestCase):
 # runs, from a script: a JSON list of answers, taken in turn. "real" runs
 # the real moon; {"fail": [test, ...]} prints what moon prints when those
 # tests fail, and exits as it does; {"sleep": s} waits s seconds, and the
-# runner stops it at its time limit. Once the script is used up, the real
-# moon answers. Its arguments: the script, a log of the command lines, the
-# real moon, then moon's own.
+# runner stops it at its time limit; {"crash": how} prints what moon prints
+# when a test program stops before its end, as one did in each weekly run
+# (#431: "The test executable exited with signal: 11 (SIGSEGV)"), naming no
+# test, and exits as moon 0.1.20261104 does then, with 255. Once the script
+# is used up, the real moon answers. Its arguments: the script, a log of the
+# command lines, the real moon, then moon's own.
 SCRIPTED_MOON = '''\
 import json, os, sys, time
 script, log, real, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
@@ -1026,6 +1033,12 @@ if args[:1] == ["test"] and "--build-only" not in args and "--dry-run" not in ar
             sys.exit(2)
         if isinstance(answer, dict) and "sleep" in answer:
             time.sleep(answer["sleep"])
+        if isinstance(answer, dict) and "crash" in answer:
+            target = args[args.index("--target") + 1]
+            print(f"Error: failed to run test for target {target}\\n\\nCaused by:\\n"
+                  f"    Failed to run the test: a test program\\n"
+                  f"    The test executable exited with {answer['crash']}")
+            sys.exit(255)
 os.execv(real, [real, *args])
 '''
 
@@ -1076,6 +1089,74 @@ class FlakeRecordsTest(unittest.TestCase):
             self.assertIn("did not read the same flake records", result.stderr)
 
 
+class EarlierRecordsTest(unittest.TestCase):
+    """Records as the runner wrote them before #431, without "ended", as
+    the weekly runs' artifacts keep them for months: the report, the
+    merge of an importers' run and the native verdicts still read them,
+    and say of them what they said."""
+
+    @staticmethod
+    def records():
+        # The second weekly run's records, cut to what the readers use: an
+        # unconfirmed survivor of definitions' own tests, a confirmed kill
+        # and a survivor.
+        where = {"package": "smock/smock/definitions", "file": "definitions/response.mbt",
+                 "definition": "File::read_response", "definition_lines": [1, 3], "pinned": True,
+                 "operator": "BOOL"}
+        unconfirmed = dict(where, id="definitions/response.mbt,File::read_response,BOOL,false,true,6",
+                           outcome="unconfirmed", first_outcome="killed", diff="the diff\n",
+                           confirmation="the tests that failed passed when run again with the mutant on",
+                           failed_first=[], killing_tests=[], importers=["smock/smock/engine"],
+                           message="The test executable exited with signal: 11 (SIGSEGV) (core dumped)",
+                           timings={"build_s": 0.8, "run_s": 0.4, "limit_s": 4.48,
+                                    "importers": {"build_s": 2.6, "run_s": 1.264, "limit_s": 6.246,
+                                                  "again_s": 1.894}})
+        killed = dict(where, id="definitions/response.mbt,File::read_response,BOOL,false,true,5", outcome="killed",
+                      confirmation="confirmed", importers=[],
+                      killing_tests=[{"package": "smock/smock/definitions", "file": "a_test.mbt", "index": 0,
+                                      "name": "t"}],
+                      timings={"build_s": 0.8, "run_s": 0.4, "limit_s": 4.48, "again_s": 0.4, "without_s": 0.4})
+        survived = dict(where, id="definitions/response.mbt,File::read_response,BOOL,false,true,4",
+                        outcome="survived", killing_tests=[], importers=["smock/smock/engine"],
+                        exclusion={"status": "unexplained"}, diff="the diff\n",
+                        timings={"build_s": 0.8, "run_s": 0.4, "limit_s": 4.48,
+                                 "importers": {"build_s": 2.6, "run_s": 1.3, "limit_s": 6.2}})
+        return [unconfirmed, killed, survived]
+
+    def test_the_report_reads_records_without_how_their_runs_ended(self):
+        import compare
+        import run
+
+        records = self.records()
+        summary = {"package": "smock/smock/definitions", "directory": "definitions", "operator_set": VERSION,
+                   "set": "pinned", "sites": 3, "positions": 3, "skipped": {},
+                   "sets": {s: {"sites": 3, "positions": 3, "skipped": {}} for s in ("pinned", "full")},
+                   "backend": "wasm-gc", "baseline": {"run_s": 0.4, "runs_s": [0.4, 0.4], "tests": 9, "failed": []},
+                   "limit_s": 4.48, **run.outcome_counts(records), **compare.counts(records)}
+        report = run.report(VERSION, "pinned", [summary], records)
+        self.assertIn("### Unconfirmed (1)\n\n#### `definitions/response.mbt,File::read_response,BOOL,false,true,6`"
+                      "\n\nIt was killed, but the tests that failed passed when run again with the mutant on.", report)
+        self.assertIn("### Survivors (1)\n\n#### `definitions/response.mbt,File::read_response,BOOL,false,true,4`"
+                      "\n\nUnexplained.\n\nIn `File::read_response`", report)
+        self.assertNotIn("ended otherwise", report)
+        self.assertNotIn("Not a kill", report)
+
+    def test_the_importers_and_native_verdicts_take_records_without_how_their_runs_ended(self):
+        import importers
+        import native
+
+        unconfirmed, killed, survived = self.records()
+        own = dict(survived, importers=[], timings={"run_s": 0.4})
+        credit = importers.credit(["smock/smock/engine"], [])
+        importers.merge(own, unconfirmed, ["smock/smock/engine"], credit)
+        self.assertEqual((own["outcome"], own["first_outcome"], own["confirmation"]),
+                         ("unconfirmed", "killed", unconfirmed["confirmation"]))
+        self.assertNotIn("ended", own)
+        native.combine(killed, dict(survived), "aarch64")
+        self.assertEqual((killed["outcome"], killed["verdicts"]["native"]["outcome"]), ("killed", "survived"))
+        self.assertNotIn("ended", killed["verdicts"]["wasm-gc"])
+
+
 class ConfirmationTest(unittest.TestCase):
     """Runs of one or two of calc's mutants each, with a moon that answers
     from a script, so that a flaky failure, a time-out that does not repeat
@@ -1099,9 +1180,10 @@ class ConfirmationTest(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def run_scripted(self, answers, *args):
-        """Runs the runner on calc with the moon that answers from the
-        script: its result, records, package summary and whole summary."""
+    def run_scripted(self, answers, *args, package="calc"):
+        """Runs the runner on a package, calc unless given, with the moon
+        that answers from the script: its result, records, package summary
+        and whole summary."""
         type(self).runs += 1
         name = f"run-{self.runs}"
         script = self.tmp / f"{name}.json"
@@ -1110,7 +1192,7 @@ class ConfirmationTest(unittest.TestCase):
         out = self.tmp / name
         result = subprocess.run(
             [sys.executable, str(RUN), "--root", str(FIXTURE), "--work", str(self.tmp / "work"), "--out", str(out),
-             "--moon", moon, *args, "calc"],
+             "--moon", moon, *args, package],
             capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         records = [json.loads(line) for line in (out / "mutants.jsonl").read_text().splitlines()]
@@ -1142,6 +1224,184 @@ class ConfirmationTest(unittest.TestCase):
         self.assertIn("### Unconfirmed (1)", report)
         self.assertIn("the tests that failed passed when run again with the mutant on", report)
 
+    # #431 and the maintainer's twentieth round (2026-11-21), point 3: a run
+    # again that the time limit stops, or that fails without naming a test,
+    # repeats the kill; no test is flaky by it. Only a run again that
+    # finishes with the tests that failed now passing makes the kill
+    # unconfirmed. The record keeps how each run ended ("ended").
+
+    def test_a_kill_whose_run_again_the_time_limit_stops_is_confirmed(self):
+        # The second weekly run's `template/encoding.mbt,lossy_utf8_length,
+        # DEL,length += 1L,,0`: killed by two tests, then its run again was
+        # stopped by the time limit, naming no test. `low < n` is killed by
+        # LOW; its run again sleeps past the limit.
+        out, records, package, summary = self.run_scripted(["real", "real", "real", "real", {"sleep": 120}],
+                                                           "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,0")
+        [record] = records
+        self.assertEqual((record["outcome"], record["confirmation"]), ("killed", "confirmed"))
+        self.assertEqual([t["name"] for t in record["killing_tests"]], [LOW[3]])
+        self.assertGreaterEqual(record["timings"]["again_s"], record["timings"]["limit_s"])
+        self.assertLess(record["timings"]["without_s"], record["timings"]["limit_s"])
+        # moon exits with 2 when tests fail; the runner stops a run at its
+        # limit with SIGKILL, which Python gives as the exit status -9.
+        self.assertEqual(record["ended"], {"run": {"exit_status": 2, "timed_out": False, "failed_tests": 1},
+                                           "again": {"exit_status": -9, "timed_out": True, "failed_tests": 0},
+                                           "without": {"exit_status": 0, "timed_out": False, "failed_tests": 0}})
+        self.assertEqual((package["killed"], package["unconfirmed"]), (1, 0))
+        # No test had a flaky result: the run again did not pass.
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked, {"suites": {"mutation/fixture/calc": 3}, "tests": []})
+        self.assertEqual(summary["flakes"]["flaked"], [])
+        # The report lists the kills whose run again ended otherwise than
+        # their run, which it listed as unconfirmed before.
+        report = (out / "report.md").read_text()
+        self.assertIn("### Confirmed by a run again that ended otherwise (1)\n\n"
+                      "A run that the time limit stopped, or that failed without naming a test, did not pass: it"
+                      " repeats a kill, and names no test.\n\n"
+                      "- `calc/calc.mbt,in_range,ROR,<=,<,0` (killed): its run failed naming 1 test; its run again"
+                      f" was stopped at the time limit after {record['timings']['again_s']:.2f} s.\n", report)
+        self.assertNotIn("### Unconfirmed", report)
+
+    def test_a_kill_whose_run_again_fails_without_naming_a_test_is_confirmed(self):
+        # The second weekly run's `engine/store.mbt,SessionStore::remove_where,
+        # AOR,+=,-=,4`: killed by two tests in 1.381 s, then its run again
+        # ended after 0.64 s naming no test. Here the test program of the
+        # run again stops with an exit status of 1, as an abort outside a
+        # test does on wasm-gc.
+        out, records, package, summary = self.run_scripted(
+            ["real", "real", "real", "real", {"crash": "exit status: 1"}],
+            "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,0")
+        [record] = records
+        self.assertEqual((record["outcome"], record["confirmation"]), ("killed", "confirmed"))
+        self.assertEqual([t["name"] for t in record["killing_tests"]], [LOW[3]])
+        self.assertEqual(record["ended"]["again"], {"exit_status": 255, "timed_out": False, "failed_tests": 0})
+        self.assertEqual((package["killed"], package["unconfirmed"]), (1, 0))
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked, {"suites": {"mutation/fixture/calc": 3}, "tests": []})
+        self.assertEqual(summary["flakes"]["flaked"], [])
+        report = (out / "report.md").read_text()
+        self.assertIn("- `calc/calc.mbt,in_range,ROR,<=,<,0` (killed): its run failed naming 1 test; its run again"
+                      " failed without naming a test, with exit status 255.\n", report)
+
+    def test_a_native_kill_whose_run_again_stops_on_a_signal_is_confirmed(self):
+        # The first weekly run's `protobuf/encode.mbt,Writer::utf8,AOR,+=,-=,5`
+        # at a site that uses an unchecked array access: natively, 26 tests
+        # failed, and its run again named none (in the second weekly run,
+        # its native runs stopped on SIGSEGV both times). bounds' BODY
+        # mutant runs natively too (test_native.py); natively, it is killed
+        # by its test of "a.b", then its run again stops on SIGSEGV. The
+        # runs of tests: on wasm-gc, the two without a mutant, the
+        # self-test's, the mutant's and its two confirming runs; natively,
+        # the two without a mutant, the mutant's, then its run again.
+        dot = ("mutation/fixture/bounds", "bounds_test.mbt", "a dot after the first characters")
+        _, records, _, summary = self.run_scripted(
+            ["real"] * 9 + [{"crash": "signal: 11 (SIGSEGV) (core dumped)"}],
+            "--mutant", "bounds/bounds.mbt,dot_after,BODY,{…},{ false },0", package="bounds")
+        [record] = records
+        native = record["verdicts"]["native"]
+        self.assertEqual((native["outcome"], native["confirmation"]), ("killed", "confirmed"))
+        self.assertEqual([(t["package"], t["file"], t["name"]) for t in native["killing_tests"]], [dot])
+        self.assertEqual(native["ended"]["again"], {"exit_status": 255, "timed_out": False, "failed_tests": 0})
+        self.assertEqual(summary["flakes"]["flaked"], [])
+
+    def test_a_survivor_whose_importers_run_fails_without_naming_a_test_once_is_a_survivor(self):
+        # The second weekly run's `definitions/response.mbt,File::read_response,
+        # BOOL,false,true,6`: it survived definitions' own tests; in its
+        # importers' run, engine's test program stopped on SIGSEGV, naming no
+        # test; run again, their tests passed. It is a survivor, unexplained
+        # until a test kills it or an entry covers it, not unconfirmed. units'
+        # `n >= high` survives every test that gives credit (UNITS). The
+        # runs of tests: units' two without a mutant, the self-test's and
+        # the mutant's; its importers' two without a mutant, the mutant's
+        # (which stops), then its run again.
+        mutant = "units/units.mbt,past,ROR,>,>=,0"
+        out, records, package, summary = self.run_scripted(
+            ["real"] * 6 + [{"crash": "signal: 11 (SIGSEGV) (core dumped)"}], "--mutant", mutant, package="units")
+        [record] = records
+        self.assertEqual((record["outcome"], record["killing_tests"], record["importers"]),
+                         ("survived", [], ["mutation/fixture/dial", "mutation/fixture/meter"]))
+        self.assertEqual(record["exclusion"], {"status": "unexplained"})
+        self.assertEqual((record["first_outcome"], record["confirmation"]),
+                         ("killed", "the run failed without naming a test, and passed when run again with the"
+                                    " mutant on"))
+        self.assertIn("The test executable exited with signal: 11 (SIGSEGV)", record["message"])
+        self.assertEqual(record["ended"], {
+            "run": {"exit_status": 0, "timed_out": False, "failed_tests": 0},
+            "importers": {"run": {"exit_status": 255, "timed_out": False, "failed_tests": 0},
+                          "again": {"exit_status": 0, "timed_out": False, "failed_tests": 0}}})
+        self.assertIn("diff", record)
+        self.assertEqual({k: package[k] for k in ("killed", "survived", "unconfirmed")},
+                         {"killed": 0, "survived": 1, "unconfirmed": 0})
+        self.assertEqual(package["exclusions"]["unexplained"], 1)
+        self.assertEqual((package["importers"]["reran"], package["importers"]["killed"]), (1, 0))
+        # No test is named, so none had a flaky result.
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked["tests"], [])
+        self.assertEqual(summary["flakes"]["flaked"], [])
+        # The report lists it among the survivors, and says what happened.
+        report = (out / "report.md").read_text()
+        self.assertIn(f"### Survivors (1)\n\n#### `{mutant}`\n\nUnexplained.\n\nNot a kill: with its importers'"
+                      " tests, the run failed without naming a test, and passed when run again with the mutant on.\n",
+                      report)
+        self.assertNotIn("### Unconfirmed", report)
+
+    def test_a_survivor_whose_importers_tests_fail_once_by_name_is_unconfirmed(self):
+        # Named tests that fail and then pass when run again are flaky
+        # results, wherever they run: the kill is unconfirmed, as a kill by
+        # a package's own tests is (twentieth round, point 3: only such a
+        # run again makes a kill unconfirmed). meter's test fails once.
+        meter = ("mutation/fixture/meter", "meter_test.mbt", 0, "a reading at the low end of the scale is on it")
+        out, records, package, _ = self.run_scripted(
+            ["real"] * 6 + [{"fail": [meter]}], "--mutant", "units/units.mbt,past,ROR,>,>=,0", package="units")
+        [record] = records
+        self.assertEqual((record["outcome"], record["first_outcome"], record["confirmation"]),
+                         ("unconfirmed", "killed", "the tests that failed passed when run again with the mutant on"))
+        self.assertEqual([t["name"] for t in record["failed_first"]], [meter[3]])
+        self.assertEqual((package["survived"], package["unconfirmed"]), (0, 1))
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked["tests"], [{"package": meter[0], "file": meter[1], "name": meter[3], "flaked": 1,
+                                            "reruns": 1}])
+
+    def test_a_kill_that_named_no_test_and_passes_when_run_again_is_a_survivor(self):
+        # The own tests' counterpart of read_response's case: units' test
+        # program stops once, naming no test, and passes when run again. It
+        # is a survivor of units' own tests, so its importers' tests run it
+        # again, and it survives those too.
+        out, records, package, _ = self.run_scripted(
+            ["real"] * 3 + [{"crash": "exit status: 1"}], "--mutant", "units/units.mbt,past,ROR,>,>=,0",
+            package="units")
+        [record] = records
+        self.assertEqual((record["outcome"], record["first_outcome"], record["confirmation"]),
+                         ("survived", "killed", "the run failed without naming a test, and passed when run again"
+                                                " with the mutant on"))
+        self.assertEqual(record["importers"], ["mutation/fixture/dial", "mutation/fixture/meter"])
+        self.assertEqual(record["ended"]["again"], {"exit_status": 0, "timed_out": False, "failed_tests": 0})
+        self.assertEqual(record["ended"]["importers"], {"run": {"exit_status": 0, "timed_out": False,
+                                                                "failed_tests": 0}})
+        self.assertEqual((package["own"]["survived"], package["survived"], package["unconfirmed"]), (1, 1, 0))
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked["tests"], [])
+        self.assertIn("Unexplained.\n\nNot a kill: the run failed without naming a test, and passed when run again"
+                      " with the mutant on.\n", (out / "report.md").read_text())
+
+    def test_a_kill_that_named_no_test_is_decided_by_its_run_again(self):
+        # Its run again stopped by the limit repeats the kill, with no test;
+        # one that fails names the tests that kill it.
+        mutant = ("--mutant", "calc/calc.mbt,in_range,ROR,<=,<,1")
+        _, records, _, _ = self.run_scripted(["real", "real", "real", {"crash": "exit status: 1"}, {"sleep": 120}],
+                                             *mutant)
+        [record] = records
+        self.assertEqual((record["outcome"], record["confirmation"], record["killing_tests"]),
+                         ("killed", "confirmed", []))
+        self.assertTrue(record["ended"]["again"]["timed_out"])
+        out, records, _, _ = self.run_scripted(["real", "real", "real", {"crash": "exit status: 1"},
+                                                {"fail": [LOW]}], *mutant)
+        [record] = records
+        self.assertEqual((record["outcome"], record["confirmation"]), ("killed", "confirmed"))
+        self.assertEqual([t["name"] for t in record["killing_tests"]], [LOW[3]])
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked["tests"], [])
+
     def test_a_kill_whose_tests_fail_without_the_mutant_is_not_counted(self):
         # `low < n` is killed by LOW, which then fails without it too.
         out, records, package, _ = self.run_scripted(["real", "real", "real", "real", "real", {"fail": [LOW]}],
@@ -1155,17 +1415,88 @@ class ConfirmationTest(unittest.TestCase):
         self.assertEqual(flaked["tests"], [{"package": LOW[0], "file": LOW[1], "name": LOW[3], "flaked": 1,
                                             "reruns": 1}])
 
-    def test_a_time_out_that_does_not_repeat_is_unconfirmed(self):
+    # A time-out that does not repeat, decided by the twentieth round's
+    # principle (#431): the run the limit stopped named no test, so its run
+    # again decides. A run again that passes makes the mutant a survivor; one
+    # that fails repeats the kill, as killed, since only both runs stopped by
+    # the limit make a time-out.
+
+    def test_a_time_out_whose_run_again_passes_is_a_survivor(self):
+        # `n < high` survives calc's tests; a slow runner stops it once.
         out, records, package, _ = self.run_scripted(["real", "real", "real", {"sleep": 120}],
                                                      "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,1")
         [record] = records
         self.assertEqual((record["outcome"], record["first_outcome"], record["confirmation"]),
-                         ("unconfirmed", "timed out", "the mutant did not time out again"))
+                         ("survived", "timed out", "the run was stopped at the time limit, and passed when run"
+                                                   " again with the mutant on"))
         self.assertGreaterEqual(record["timings"]["run_s"], record["timings"]["limit_s"])
         self.assertLess(record["timings"]["again_s"], record["timings"]["limit_s"])
-        self.assertEqual((package["timed_out"], package["unconfirmed"], package["score"]), (0, 1, None))
+        self.assertEqual(record["ended"]["again"], {"exit_status": 0, "timed_out": False, "failed_tests": 0})
+        self.assertEqual(record["exclusion"], {"status": "unexplained"})
+        self.assertEqual((package["timed_out"], package["survived"], package["unconfirmed"], package["score"]),
+                         (0, 1, 0, 0.0))
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked["tests"], [])
         report = (out / "report.md").read_text()
-        self.assertIn("the mutant did not time out again", report)
+        self.assertIn("### Survivors (1)", report)
+        self.assertIn("Not a kill: the run was stopped at the time limit, and passed when run again with the mutant"
+                      " on.\n", report)
+        self.assertNotIn("### Unconfirmed", report)
+
+    def test_a_time_out_whose_run_again_fails_named_tests_is_killed_by_them(self):
+        # The first weekly run's `yaml/writer.mbt,Writer::hex,AOR,-,+,1` timed
+        # out (5.586 s against 5.576 s), and its run again ended within the
+        # limit; the second weekly run killed it in 3.935 s.
+        out, records, package, _ = self.run_scripted(["real", "real", "real", {"sleep": 120}, {"fail": [LOW]}],
+                                                     "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,1")
+        [record] = records
+        self.assertEqual((record["outcome"], record["confirmation"]), ("killed", "confirmed"))
+        self.assertEqual([t["name"] for t in record["killing_tests"]], [LOW[3]])
+        self.assertEqual((record["ended"]["run"]["timed_out"], record["ended"]["again"]),
+                         (True, {"exit_status": 2, "timed_out": False, "failed_tests": 1}))
+        self.assertEqual((package["killed"], package["timed_out"], package["unconfirmed"]), (1, 0, 0))
+        # LOW failed once, with the mutant on: no flaky result.
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked, {"suites": {"mutation/fixture/calc": 3}, "tests": []})
+
+    def test_a_time_out_whose_run_again_fails_without_naming_a_test_is_killed(self):
+        _, records, package, _ = self.run_scripted(
+            ["real", "real", "real", {"sleep": 120}, {"crash": "exit status: 1"}],
+            "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,1")
+        [record] = records
+        self.assertEqual((record["outcome"], record["confirmation"], record["killing_tests"]),
+                         ("killed", "confirmed", []))
+        self.assertEqual(record["ended"]["again"], {"exit_status": 255, "timed_out": False, "failed_tests": 0})
+        self.assertEqual((package["killed"], package["timed_out"], package["unconfirmed"]), (1, 0, 0))
+
+    def test_a_kill_or_a_time_out_whose_run_without_the_mutant_fails_without_naming_a_test_is_unconfirmed(self):
+        # The run without the mutant must show that the tests that killed it
+        # pass without it, or that the tests finish within the limit. One
+        # that fails without naming a test shows neither, as one that the
+        # limit stops does not (#431's principle): no run of every test is
+        # counted by it.
+        reason = "the run without the mutant failed without naming a test"
+        out, records, package, _ = self.run_scripted(
+            ["real", "real", "real", "real", "real", {"crash": "signal: 11 (SIGSEGV) (core dumped)"}],
+            "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,0")
+        [record] = records
+        self.assertEqual((record["outcome"], record["first_outcome"], record["confirmation"]),
+                         ("unconfirmed", "killed", reason))
+        self.assertEqual([t["name"] for t in record["failed_first"]], [LOW[3]])
+        self.assertEqual(record["ended"]["without"], {"exit_status": 255, "timed_out": False, "failed_tests": 0})
+        self.assertEqual((package["killed"], package["unconfirmed"]), (0, 1))
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked, {"suites": {"mutation/fixture/calc": 2},
+                                  "tests": [{"package": LOW[0], "file": LOW[1], "name": LOW[3], "flaked": 0,
+                                             "reruns": 1}]})
+        # A time-out, the same way.
+        _, records, package, _ = self.run_scripted(
+            ["real", "real", "real", {"sleep": 120}, {"sleep": 120}, {"crash": "exit status: 1"}],
+            "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,1")
+        [record] = records
+        self.assertEqual((record["outcome"], record["first_outcome"], record["confirmation"]),
+                         ("unconfirmed", "timed out", reason))
+        self.assertEqual((package["timed_out"], package["unconfirmed"]), (0, 1))
 
     def test_a_time_out_whose_run_without_the_mutant_is_too_slow_is_unconfirmed(self):
         # A slow runner: everything times out, the run without the mutant too.

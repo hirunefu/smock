@@ -128,24 +128,42 @@ def merge(record, again, packages, summary):
     of the importers."""
     record["importers"] = list(packages)
     record["timings"]["importers"] = again["timings"]
+    if "ended" in again:
+        record.setdefault("ended", {})["importers"] = again["ended"]
     summary["reran"] += 1
     if again["outcome"] == "survived":
         # Its importers' tests that failed but give no kill credit.
         if again.get("no_credit"):
             record["no_credit"] = record.get("no_credit", []) + again["no_credit"]
+        # A failure of their tests that named no test and did not repeat
+        # (confirm.py): the record says so, in place of what its own tests
+        # left.
+        if "first_outcome" in again:
+            replace(record, again, ("message", "confirmation", "first_outcome"))
         return
     if again["outcome"] != "unconfirmed":
         record.pop("diff", None)
     record.update(outcome=again["outcome"], killing_tests=again["killing_tests"])
-    for field in ("message", "confirmation", "first_outcome", "failed_first", "no_credit"):
-        if field in again:
-            record[field] = again[field]
+    replace(record, again, ("message", "confirmation", "first_outcome", "failed_first"))
+    if "no_credit" in again:
+        record["no_credit"] = again["no_credit"]
     # A confirmed time-out counts as killed.
     if again["outcome"] in ("killed", "timed out"):
         summary["killed"] += 1
         for name in sorted({t["package"] for t in again["killing_tests"] if t.get("package")}):
             summary["killed_by"][name] = summary["killed_by"].get(name, 0) + 1
         summary["killed_by"] = dict(sorted(summary["killed_by"].items()))
+
+
+def replace(record, again, fields):
+    """Gives a record the fields of its importers' run (again) in place of
+    those its own tests' run left: each field again has, and none that it
+    lacks."""
+    for field in fields:
+        if field in again:
+            record[field] = again[field]
+        else:
+            record.pop(field, None)
 
 
 def own_records(records):
