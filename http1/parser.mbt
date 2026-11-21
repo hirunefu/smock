@@ -155,7 +155,8 @@ pub(all) struct Request {
 /// - `body_limit` is the longest body a request may have, in bytes, counted
 ///   after chunked decoding: chunk sizes, chunk extensions and trailer
 ///   fields do not count. A negative limit is taken as 0, so that only an
-///   empty body fits. A declared Content-Length over it gets 413 before
+///   empty body fits. A limit of 2^31 - 1, the largest an Int32 holds, is
+///   taken as 2^31 - 2. A declared Content-Length over it gets 413 before
 ///   any of the body is read, and a chunked body gets 413 as soon as a chunk
 ///   size would take it past the limit, before that chunk's data. The parser
 ///   keeps the body and not the framing around it, so neither the framing
