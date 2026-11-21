@@ -215,8 +215,13 @@ class Judge:
                 again = {key(t) for t in failed}
                 self.rerun(credited, again)
                 repeated = [t for t in credited if key(t) in again]
-                if credited and not repeated or not credited and status == 0:
+                if credited and not repeated:
                     return self.unconfirmed(record, "the tests that failed passed when run again with the mutant on")
+                if not credited and status == 0:
+                    # A failure that named no test, and did not repeat, is
+                    # no kill, and no test is flaky by it.
+                    return self.survived(record, "the run failed without naming a test, and passed when run again"
+                                                 " with the mutant on")
         elif not timed_out:
             return self.unconfirmed(record, "the mutant did not time out again")
         status, output, seconds, timed_out = self.run_with(worker, package, path, text, limit)
@@ -239,6 +244,12 @@ class Judge:
         """Makes a record's kill or time-out unconfirmed, for a reason."""
         record.update(outcome="unconfirmed", first_outcome=record["outcome"], confirmation=reason,
                       failed_first=record.pop("killing_tests"), killing_tests=[])
+
+    @staticmethod
+    def survived(record, reason):
+        """Makes a record's kill or time-out, whose first run named no
+        failed test, a survivor, since its run again passed, for a reason."""
+        record.update(outcome="survived", first_outcome=record["outcome"], confirmation=reason, killing_tests=[])
 
     def this_run(self):
         """This run's flake record."""

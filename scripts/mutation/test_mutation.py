@@ -1220,6 +1220,41 @@ class ConfirmationTest(unittest.TestCase):
         self.assertEqual(native["ended"]["again"], {"exit_status": 255, "timed_out": False, "failed_tests": 0})
         self.assertEqual(summary["flakes"]["flaked"], [])
 
+    def test_a_survivor_whose_importers_run_fails_without_naming_a_test_once_is_a_survivor(self):
+        # The second weekly run's `definitions/response.mbt,File::read_response,
+        # BOOL,false,true,6`: it survived definitions' own tests; in its
+        # importers' run, engine's test program stopped on SIGSEGV, naming no
+        # test; run again, their tests passed. It is a survivor, unexplained
+        # until a test kills it or an entry covers it, not unconfirmed. units'
+        # `n >= high` survives every test that gives credit (UNITS). The
+        # runs of tests: units' two without a mutant, the self-test's and
+        # the mutant's; its importers' two without a mutant, the mutant's
+        # (which stops), then its run again.
+        mutant = "units/units.mbt,past,ROR,>,>=,0"
+        out, records, package, summary = self.run_scripted(
+            ["real"] * 6 + [{"crash": "signal: 11 (SIGSEGV) (core dumped)"}], "--mutant", mutant, package="units")
+        [record] = records
+        self.assertEqual((record["outcome"], record["killing_tests"], record["importers"]),
+                         ("survived", [], ["mutation/fixture/dial", "mutation/fixture/meter"]))
+        self.assertEqual(record["exclusion"], {"status": "unexplained"})
+        self.assertEqual((record["first_outcome"], record["confirmation"]),
+                         ("killed", "the run failed without naming a test, and passed when run again with the"
+                                    " mutant on"))
+        self.assertIn("The test executable exited with signal: 11 (SIGSEGV)", record["message"])
+        self.assertEqual(record["ended"], {
+            "run": {"exit_status": 0, "timed_out": False, "failed_tests": 0},
+            "importers": {"run": {"exit_status": 255, "timed_out": False, "failed_tests": 0},
+                          "again": {"exit_status": 0, "timed_out": False, "failed_tests": 0}}})
+        self.assertIn("diff", record)
+        self.assertEqual({k: package[k] for k in ("killed", "survived", "unconfirmed")},
+                         {"killed": 0, "survived": 1, "unconfirmed": 0})
+        self.assertEqual(package["exclusions"]["unexplained"], 1)
+        self.assertEqual((package["importers"]["reran"], package["importers"]["killed"]), (1, 0))
+        # No test is named, so none had a flaky result.
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked["tests"], [])
+        self.assertEqual(summary["flakes"]["flaked"], [])
+
     def test_a_kill_whose_tests_fail_without_the_mutant_is_not_counted(self):
         # `low < n` is killed by LOW, which then fails without it too.
         out, records, package, _ = self.run_scripted(["real", "real", "real", "real", "real", {"fail": [LOW]}],
