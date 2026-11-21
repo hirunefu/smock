@@ -795,6 +795,65 @@ sed -i "s|^  // The stream ends at smock's next write.\$|  // smock notices at i
 report comment
 empty comment
 
+# A test whose assertions span lines, with comments between the elements
+# of a debug_inspect call's array, in an assert_eq call and between the
+# lines of a snapshot. Two lines only look like comments: a string that
+# starts with // and a snapshot line of that text.
+counted() {
+  file add/counted_test.mbt <<'MBT'
+///|
+test "adds in lists" {
+  debug_inspect(
+    [
+      @add.add(1, 2),
+      // The second sum: two and three,
+      // as the first test adds them.
+      @add.add(2, 3),
+      @add.add(3, 4), // seven
+    ],
+    content=(
+      #|[3, 5, 7]
+    ),
+  )
+  assert_eq(
+    @add.add(4, 4),
+    // Eight, as the documents say.
+    8,
+  )
+  // Nine, as the documents say.
+  assert_eq(@add.add(4, 5), 9)
+}
+
+///|
+test "names the sums" {
+  inspect(
+    [
+      // An address, then a line that only looks like a comment.
+      "http://a.example/\{@add.add(1, 2)}",
+      "// \{@add.add(2, 3)}",
+    ].join("\n"),
+    content=(
+      #|http://a.example/3
+      // The second line, from the second element.
+      #|// 5
+    ),
+  )
+}
+MBT
+}
+
+# Comments reworded, and one added, inside assertions and a snapshot that
+# span lines change no code: nothing shows, as outside them (#428).
+tree
+package
+counted
+branch
+sed -i 's|^      // as the first test adds them\.$|      // as the first test adds them, which\n      // the documents give.|; s|^    // Eight, as the documents say\.$|    // Eight, the sum the documents give.|' "$repo/add/counted_test.mbt"
+sed -i 's/^      #|\[3, 5, 7\]$/      \/\/ The three sums.\n      #|[3, 5, 7]/' "$repo/add/counted_test.mbt"
+sed -i 's|^      // An address, then .*$|      // An address, then a string.|; s|^      // The second line, from .*$|      // The second line.\n      // It is the second element.|' "$repo/add/counted_test.mbt"
+report comment-inside
+empty comment-inside
+
 # The other lines of a helper of a test file show too, since a helper's
 # wait loosens every test that calls it; a changed comparison in it stays
 # with the assertions.

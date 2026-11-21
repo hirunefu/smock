@@ -394,7 +394,12 @@ def snapshot_spans(item, names):
 
 
 def is_comment(line):
-    """Whether a line holds no code: blank, or a comment alone."""
+    """Whether a line holds no code: blank, or a comment alone, its first
+    characters but spaces being //. A line of a multi-line string (#| or
+    $|) is text, and a line with code before its // or a // inside a
+    string holds code. A string cannot go on to the next line, and
+    MoonBit has no comment over several lines, so no line that starts
+    with // is inside one."""
     stripped = line.strip()
     return not stripped or stripped.startswith("//")
 
@@ -427,13 +432,16 @@ class Changes:
 
 
 def changes(before, after, names):
-    """The hunks in which after changes before, each in one section: those
-    that remove or change a snapshot's lines, or add lines inside one; of
-    the rest, those that remove or change an assertion; and every other
-    hunk that changes code, such as a wait or a condition computed before
-    it is asserted, or lines added inside an assertion, as extending a
-    test adds them. Lines are compared without their indentation, so that
-    a block moved deeper changes nothing."""
+    """The hunks in which after changes before, each in one section. A hunk
+    whose lines are comments and blank lines alone, in before and in
+    after, is not listed, wherever it sits: inside an assertion or a
+    snapshot too, since a comment there changes no value (#428). Of the
+    others: those that remove or change a snapshot's lines, or add lines
+    inside one; of the rest, those that remove or change an assertion; and
+    every other hunk, such as a wait or a condition computed before it is
+    asserted, or lines added inside an assertion, as extending a test adds
+    them. Lines are compared without their indentation, so that a block
+    moved deeper changes nothing."""
     snapshots = snapshot_spans(before, names)
     assertions = assertion_spans(before.lines)
     matcher = difflib.SequenceMatcher(None, compared(before), compared(after), autojunk=False)
@@ -442,6 +450,9 @@ def changes(before, after, names):
         if tag == "equal":
             continue
         hunk = Hunk(before.line + i1, before.lines[i1:i2], after.line + j1, after.lines[j1:j2])
+        if all(is_comment(line) for line in hunk.base + hunk.head):
+            found.comment.append(hunk)
+            continue
         if i1 == i2:
             snapshot = i1 > 0 and inside(snapshots, i1 - 1, i1)
             assertion = False
@@ -452,8 +463,6 @@ def changes(before, after, names):
             found.snapshot.append(hunk)
         elif assertion:
             found.assertion.append(hunk)
-        elif all(is_comment(line) for line in hunk.base + hunk.head):
-            found.comment.append(hunk)
         else:
             found.other.append(hunk)
     return found
