@@ -1003,9 +1003,12 @@ class ImportersTest(unittest.TestCase):
 # runs, from a script: a JSON list of answers, taken in turn. "real" runs
 # the real moon; {"fail": [test, ...]} prints what moon prints when those
 # tests fail, and exits as it does; {"sleep": s} waits s seconds, and the
-# runner stops it at its time limit. Once the script is used up, the real
-# moon answers. Its arguments: the script, a log of the command lines, the
-# real moon, then moon's own.
+# runner stops it at its time limit; {"crash": how} prints what moon prints
+# when a test program stops before its end, as one did in each weekly run
+# (#431: "The test executable exited with signal: 11 (SIGSEGV)"), naming no
+# test, and exits as moon 0.1.20261104 does then, with 255. Once the script
+# is used up, the real moon answers. Its arguments: the script, a log of the
+# command lines, the real moon, then moon's own.
 SCRIPTED_MOON = '''\
 import json, os, sys, time
 script, log, real, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
@@ -1026,6 +1029,12 @@ if args[:1] == ["test"] and "--build-only" not in args and "--dry-run" not in ar
             sys.exit(2)
         if isinstance(answer, dict) and "sleep" in answer:
             time.sleep(answer["sleep"])
+        if isinstance(answer, dict) and "crash" in answer:
+            target = args[args.index("--target") + 1]
+            print(f"Error: failed to run test for target {target}\\n\\nCaused by:\\n"
+                  f"    Failed to run the test: a test program\\n"
+                  f"    The test executable exited with {answer['crash']}")
+            sys.exit(255)
 os.execv(real, [real, *args])
 '''
 
@@ -1099,9 +1108,10 @@ class ConfirmationTest(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def run_scripted(self, answers, *args):
-        """Runs the runner on calc with the moon that answers from the
-        script: its result, records, package summary and whole summary."""
+    def run_scripted(self, answers, *args, package="calc"):
+        """Runs the runner on a package, calc unless given, with the moon
+        that answers from the script: its result, records, package summary
+        and whole summary."""
         type(self).runs += 1
         name = f"run-{self.runs}"
         script = self.tmp / f"{name}.json"
@@ -1110,7 +1120,7 @@ class ConfirmationTest(unittest.TestCase):
         out = self.tmp / name
         result = subprocess.run(
             [sys.executable, str(RUN), "--root", str(FIXTURE), "--work", str(self.tmp / "work"), "--out", str(out),
-             "--moon", moon, *args, "calc"],
+             "--moon", moon, *args, package],
             capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         records = [json.loads(line) for line in (out / "mutants.jsonl").read_text().splitlines()]
@@ -1141,6 +1151,35 @@ class ConfirmationTest(unittest.TestCase):
         report = (out / "report.md").read_text()
         self.assertIn("### Unconfirmed (1)", report)
         self.assertIn("the tests that failed passed when run again with the mutant on", report)
+
+    # #431 and the maintainer's twentieth round (2026-11-21), point 3: a run
+    # again that the time limit stops, or that fails without naming a test,
+    # repeats the kill; no test is flaky by it. Only a run again that
+    # finishes with the tests that failed now passing makes the kill
+    # unconfirmed. The record keeps how each run ended ("ended").
+
+    def test_a_kill_whose_run_again_the_time_limit_stops_is_confirmed(self):
+        # The second weekly run's `template/encoding.mbt,lossy_utf8_length,
+        # DEL,length += 1L,,0`: killed by two tests, then its run again was
+        # stopped by the time limit, naming no test. `low < n` is killed by
+        # LOW; its run again sleeps past the limit.
+        out, records, package, summary = self.run_scripted(["real", "real", "real", "real", {"sleep": 120}],
+                                                           "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,0")
+        [record] = records
+        self.assertEqual((record["outcome"], record["confirmation"]), ("killed", "confirmed"))
+        self.assertEqual([t["name"] for t in record["killing_tests"]], [LOW[3]])
+        self.assertGreaterEqual(record["timings"]["again_s"], record["timings"]["limit_s"])
+        self.assertLess(record["timings"]["without_s"], record["timings"]["limit_s"])
+        # moon exits with 2 when tests fail; the runner stops a run at its
+        # limit with SIGKILL, which Python gives as the exit status -9.
+        self.assertEqual(record["ended"], {"run": {"exit_status": 2, "timed_out": False, "failed_tests": 1},
+                                           "again": {"exit_status": -9, "timed_out": True, "failed_tests": 0},
+                                           "without": {"exit_status": 0, "timed_out": False, "failed_tests": 0}})
+        self.assertEqual((package["killed"], package["unconfirmed"]), (1, 0))
+        # No test had a flaky result: the run again did not pass.
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked, {"suites": {"mutation/fixture/calc": 3}, "tests": []})
+        self.assertEqual(summary["flakes"]["flaked"], [])
 
     def test_a_kill_whose_tests_fail_without_the_mutant_is_not_counted(self):
         # `low < n` is killed by LOW, which then fails without it too.

@@ -775,12 +775,14 @@ def run_mutant(worker, package, site, limit, comparison=None):
         else:
             status, output, run_s, timed_out = worker.moon_test(package, limit, build_only=False)
             timings["run_s"] = round(run_s, 3)
+            failed = failed_tests(output)
+            ended = {"run": confirm.ended(status, timed_out, failed)}
             if timed_out:
-                record.update(outcome="timed out", killing_tests=[], timings=timings)
+                record.update(outcome="timed out", killing_tests=[], timings=timings, ended=ended)
             elif status == 0:
-                record.update(outcome="survived", killing_tests=[], timings=timings)
+                record.update(outcome="survived", killing_tests=[], timings=timings, ended=ended)
             else:
-                record.update(outcome="killed", killing_tests=failed_tests(output), timings=timings)
+                record.update(outcome="killed", killing_tests=failed, timings=timings, ended=ended)
                 if not record["killing_tests"]:
                     record["message"] = output[-2000:]
     finally:

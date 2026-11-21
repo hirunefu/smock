@@ -70,6 +70,13 @@ def named(test_key):
     return dict(zip(("package", "file", "name"), test_key))
 
 
+def ended(status, timed_out, failed):
+    """How a run of tests ended, as a record keeps it ("ended"): its exit
+    status, whether the time limit stopped it, and how many failed tests
+    it named."""
+    return {"exit_status": status, "timed_out": timed_out, "failed_tests": len(failed)}
+
+
 class Judge:
     """What a run knows of flaky tests: the flake records it read, which
     tests give no kill credit, and what this run has seen."""
@@ -190,24 +197,33 @@ class Judge:
         elif record["outcome"] != "timed out":
             return
         timings = record["timings"]
+        runs = record.setdefault("ended", {})
         try:
             status, output, seconds, timed_out = self.run_with(worker, package, path, mutated, limit)
         finally:
             path.write_text(text, encoding="utf-8")
         timings["again_s"] = round(seconds, 3)
+        failed = self.failed_tests(output)
+        runs["again"] = ended(status, timed_out, failed)
         if record["outcome"] == "killed":
-            again = {key(t) for t in self.failed_tests(output)}
-            self.rerun(credited, again)
-            repeated = [t for t in credited if key(t) in again]
-            if credited and not repeated or not credited and (status == 0 or timed_out):
-                return self.unconfirmed(record, "the tests that failed passed when run again with the mutant on")
+            if timed_out:
+                # A run again that the limit stopped did not pass: it
+                # repeats the kill, and no test is flaky by it.
+                repeated = credited
+            else:
+                again = {key(t) for t in failed}
+                self.rerun(credited, again)
+                repeated = [t for t in credited if key(t) in again]
+                if credited and not repeated or not credited and status == 0:
+                    return self.unconfirmed(record, "the tests that failed passed when run again with the mutant on")
         elif not timed_out:
             return self.unconfirmed(record, "the mutant did not time out again")
         status, output, seconds, timed_out = self.run_with(worker, package, path, text, limit)
         timings["without_s"] = round(seconds, 3)
+        failed = self.failed_tests(output)
+        runs["without"] = ended(status, timed_out, failed)
         if timed_out:
             return self.unconfirmed(record, "the run without the mutant did not finish within the limit")
-        failed = self.failed_tests(output)
         self.suite(packages, failed)
         if record["outcome"] == "killed":
             without = {key(t) for t in failed}
