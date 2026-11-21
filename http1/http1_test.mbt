@@ -435,6 +435,40 @@ test "a request target in one of the four forms of RFC 9112 is accepted; any oth
       #|http://a.example/#x -> invalid 400
     ),
   )
+  // An absolute-form target is an absolute-URI (RFC 9112, section 3.2.2),
+  // `scheme ":" hier-part` (RFC 3986, section 4.3), and a scheme is a
+  // letter, then any letters, digits, `+`, `-` and `.` (RFC 3986, section
+  // 3.1: `scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`). So a
+  // scheme of one letter will do, and each of the others may come second;
+  // an empty scheme, one that begins with another character, or one that
+  // holds another, makes no absolute-URI, and the target is in no form.
+  let schemes = [
+    "a:x", "a1:x", "a+:x", "a-:x", "a.:x", ":x", ":/x", "1:x", "+a:x", "-a:x", ".a:x",
+    "a_:x", "a~:x", "a%2B:x",
+  ]
+  inspect(
+    schemes
+    .map(target => {
+      "\{target} -> \{first_verdict("OPTIONS \{target} HTTP/1.1\r\nHost: a\r\n\r\n")}"
+    })
+    .join("\n"),
+    content=(
+      #|a:x -> accepted
+      #|a1:x -> accepted
+      #|a+:x -> accepted
+      #|a-:x -> accepted
+      #|a.:x -> accepted
+      #|:x -> invalid 400
+      #|:/x -> invalid 400
+      #|1:x -> invalid 400
+      #|+a:x -> invalid 400
+      #|-a:x -> invalid 400
+      #|.a:x -> invalid 400
+      #|a_:x -> invalid 400
+      #|a~:x -> invalid 400
+      #|a%2B:x -> invalid 400
+    ),
+  )
 }
 
 ///|
