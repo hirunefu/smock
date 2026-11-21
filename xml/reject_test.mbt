@@ -331,9 +331,10 @@ test "a character XML does not allow is rejected wherever it is" {
   // UTF-8 (RFC 3629 §3: U+0000 to U+007F are one byte each), and the
   // README's Documents names bytes that are not UTF-8 and characters XML
   // does not allow as two rules: so the message is not the one a byte that
-  // is not UTF-8 gets in its place. xml's message texts wait for the
-  // maintainer (#411), so only the refusal, its position and that
-  // difference are written.
+  // is not UTF-8 gets in its place. Only the refusal, its position and
+  // that difference are written: at U+0000's byte, each gets the message
+  // of what the parser expected there, as another byte that cannot be
+  // where it is would.
   inspect(
     nul_positions([
       "<%a/>", "<a %='1'/>", "<a></%a>", "<?%?><a/>", "<a%b/>", "<a b%c='1'/>", "<a></a%>",
