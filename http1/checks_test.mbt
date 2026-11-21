@@ -381,6 +381,28 @@ test "the 100-continue check finds the expectation in any case, among other elem
       #|" , " false
     ),
   )
+  // Almost matches. RFC 9110, section 10.1.1: the one expectation is
+  // `100-continue`, and the field value is case-insensitive, which only
+  // letters have (RFC 5234, section 2.3). So another first character is
+  // another expectation, and so is a code unit that differs from a digit or
+  // the hyphen in bit 0x20 alone, as an upper-case letter differs from its
+  // lower case: U+0011 for `1`, U+0010 for `0`, CR for `-`.
+  let almost = [
+    "200-continue", "\u{11}00-continue", "1\u{10}0-continue", "10\u{10}-continue",
+    "100\rcontinue",
+  ]
+  inspect(
+    almost
+    .map(value => "\{shown(value)} \{@http1.expects_continue(value)}")
+    .join("\n"),
+    content=(
+      #|"200-continue" false
+      #|"\u{11}00-continue" false
+      #|"1\u{10}0-continue" false
+      #|"10\u{10}-continue" false
+      #|"100\rcontinue" false
+    ),
+  )
 }
 
 ///|
