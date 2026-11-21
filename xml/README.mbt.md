@@ -64,6 +64,18 @@ Both errors carry a position and a message, and show as
 the input, from 0. A `PathError`'s position is in characters (code points)
 from 0.
 
+Where a `ParseError` is, and which one is reported:
+
+- A byte that cannot be where it is is reported at that byte. For bytes
+  that are not well-formed UTF-8, that is the first byte of the
+  ill-formed sequence.
+- A construct refused as a whole is reported at its first byte: the `&`
+  of a reference, a name, the later of two attributes of one name, or
+  the `<` of a DOCTYPE or of a start tag past the depth limit.
+- When the input breaks more than one rule, the error found first,
+  reading from the left, is reported. So an `&` followed by a byte that
+  is not UTF-8 is reported at the `&`, which starts no reference.
+
 ```mbt check
 ///|
 test "errors say where the problem is" {
@@ -83,6 +95,10 @@ test "errors say where the problem is" {
   inspect(
     message(b"<a><b></a>"),
     content="position 6: end tag </a> does not match start tag <b>",
+  )
+  inspect(
+    message(b"<a>&\xFF;</a>"),
+    content="position 3: & starts a reference; write &amp; for &",
   )
   let error = try @xml.compile_path("/order//item") catch {
     e => e.to_string()
