@@ -11,13 +11,14 @@
 // "the input is not UTF-8" and "attribute <name> is repeated"), then, in
 // a second round, every other text of the parser but three, with
 // "U+<hex> is not a character XML allows" for every code point and
-// "&#<n>; is not a character XML allows" for a character reference. The
-// three, which no source words yet, are "encoding <e> is not supported;
-// the input must be UTF-8", "processing instruction target <t> is
-// reserved" and "only comments, processing instructions and whitespace
-// may follow the root element". What a cut-off `<?xml` gets is a defect
-// that #430 records. The condition each message reports keeps the source
-// its test cites.
+// "&#<n>; is not a character XML allows" for a character reference, and
+// in a third round those three: "encoding <e> is not supported; the
+// input must be UTF-8", "processing instruction target <t> is reserved"
+// and "only comments, processing instructions and whitespace may follow
+// the root element". So every text the parser can report is worded by
+// the README or confirmed by the maintainer, but for what a cut-off
+// `<?xml` gets, which is a defect that #430 records. The condition each
+// message reports keeps the source its test cites.
 //
 // The positions the tests pin follow the README's rule for where a
 // ParseError is and which one is reported (in its Use, after what the
