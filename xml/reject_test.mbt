@@ -80,6 +80,9 @@ test "input that is not well-formed UTF-8 is rejected where the bad byte is" {
     error_of(b"<a\xC3\xA9 b\xE9='1'/>"),
     content="position 6: the input is not UTF-8",
   )
+  // After the root element too, where only comments, processing
+  // instructions and whitespace may follow it (XML 1.0 §2.8 [27]).
+  inspect(error_of(b"<a/>\xE9"), content="position 4: the input is not UTF-8")
 }
 
 ///|
@@ -186,6 +189,20 @@ test "a character XML does not allow is rejected wherever it is" {
     text_error("<a><!-- \u{1B} --></a>"),
     content="position 8: U+001B \{not_allowed}",
   )
+  // U+0000, the first code point, is not one either (XML 1.0 §2.2 [2]),
+  // and it does not end the input: in a processing instruction, in a value
+  // of the XML declaration, and after the root element, where only
+  // comments, processing instructions and whitespace may follow (§2.8
+  // [27]), the error is at its byte, as anywhere else.
+  inspect(
+    text_error("<?pi \u{0}?><a/>"),
+    content="position 5: U+0000 \{not_allowed}",
+  )
+  inspect(
+    text_error("<?xml version='\u{0}'?><a/>"),
+    content="position 15: U+0000 \{not_allowed}",
+  )
+  inspect(text_error("<a/>\u{0}"), content="position 4: U+0000 \{not_allowed}")
 }
 
 ///|
