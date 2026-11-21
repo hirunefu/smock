@@ -272,8 +272,9 @@ The arguments:
   paths. It is not taken from the document's title, which changes between
   versions.
 - `--hosts <h1,h2>`: the Mock's Hosts, separated by commas, such as
-  `petstore.test,pets.internal:8080`. None by default. The document's
-  `servers` never become Hosts
+  `petstore.test,pets.internal:8080`. None by default. With
+  `--declare-mock on`, an empty `--hosts ""` gives none too, as leaving it
+  out does. The document's `servers` never become Hosts
   ([The Mock and its Hosts](#the-mock-and-its-hosts)).
 - `--declare-mock on|off`: whether the file declares the Mock. It is `on`
   by default. With `off`, the file holds only Stubs, for a Mock declared

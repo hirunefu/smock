@@ -197,6 +197,9 @@ test "import-openapi: --hosts lists Hosts a Definition file can declare, none th
       import_shows([], hosts),
       import_shows(["--hosts", "petstore.test,pets.internal:8080"], hosts),
       import_shows(["--hosts", "[::1]:8080"], hosts),
+      // docs/importing-openapi.md, the arguments, and docs/commands.md:
+      // "With --declare-mock on, an empty --hosts "" gives none too, as
+      // leaving it out does" (the maintainer, 2026-11-21, #329).
       import_shows(["--hosts="], hosts),
       import_shows(["--hosts", ":8080"], hosts),
       import_shows(["--hosts", "*.example.com"], hosts),
