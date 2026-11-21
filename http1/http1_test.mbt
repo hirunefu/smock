@@ -102,6 +102,74 @@ test "requests that follow each other on one connection come out in turn, each s
 }
 
 ///|
+/// A request with the method `meth`, the target `target` and a field named
+/// `name` after Host, then a field of 2,000 bytes.
+fn padded_request(meth : String, target : String, name : String) -> String {
+  "\{meth} \{target} HTTP/1.1\r\nHost: a.example\r\n\{name}: 1\r\nX-Pad: \{"p".repeat(2000)}\r\n\r\n"
+}
+
+///|
+test "a method, target or field name that begins as the one of the request before it, with more or fewer characters, is read as sent, however the second request is cut" {
+  // RFC 9112, section 3: a request line is the method, the request target
+  // and the version; section 5.1: a field line begins with the field name.
+  // The parser gives each as sent (the documentation of Request and Header),
+  // and the same requests however the bytes are split into pieces (Parser's
+  // documentation). Here the one before is the same text with 1 to 16
+  // characters more, or fewer. Each request carries a field of 2,000 bytes,
+  // so the two do not fit together in the 4,096 bytes the parser's first
+  // buffer holds: when the second arrives in a piece of its own, or cut
+  // within its first lines, the parser moves its bytes to the front of the
+  // buffer before it reads its head.
+  let more = "0123456789abcdef"
+  let wrong = []
+  for count in 1..<=16 {
+    let longer = more[:count].to_owned()
+    for pair in [(longer, ""), ("", longer)] {
+      let (before, after) = pair
+      let sent = [
+        ("GET" + before, "/items" + before, "X-Item" + before),
+        ("GET" + after, "/items" + after, "X-Item" + after),
+      ]
+      let expected = sent.map(request => {
+        let (meth, target, name) = request
+        "\{meth} \{target} \{name}"
+      })
+      expected.push("need more")
+      let first = padded_request(sent[0].0, sent[0].1, sent[0].2)
+      let second = padded_request(sent[1].0, sent[1].1, sent[1].2)
+      // Fed whole, then cut before the second request and at each byte of
+      // its request line, its Host field and the field named after it.
+      let lines = second.length() - 2000 - "X-Pad: \r\n\r\n".length()
+      for cut in -1..<=lines {
+        let pieces = if cut < 0 {
+          [first + second]
+        } else {
+          [first + second[:cut].to_owned(), second[cut:].to_owned()]
+        }
+        let parser = @http1.Parser()
+        let out = []
+        for piece in pieces {
+          parser.feed(@utf8.encode(piece))
+          while parser.next() is Complete(request) {
+            let name = if request.headers.length() > 1 {
+              request.headers[1].name
+            } else {
+              "(none)"
+            }
+            out.push("\{request.meth} \{request.target} \{name}")
+          }
+        }
+        out.push(render(parser.next()))
+        if out != expected {
+          wrong.push((count, before, cut, out))
+        }
+      }
+    }
+  }
+  debug_inspect(wrong, content="[]")
+}
+
+///|
 test "requests fed one byte at a time come out as when fed whole" {
   let stream = "GET /a HTTP/1.1\r\nHost: a.example\r\n\r\nPOST /b HTTP/1.1\r\nHost: a.example\r\nContent-Length: 4\r\n\r\n\r\n\r\nGET /c HTTP/1.1\r\nHost: a.example\r\n\r\n"
   let bytes = @utf8.encode(stream)
