@@ -37,6 +37,19 @@ test "child steps select every element of that name, in document order" {
       #|[]
     ),
   )
+  // Only the children of the elements selected so far: the item in the bag,
+  // which follows a box, is no item of a box (the README's "Paths";
+  // matching.md, "XML bodies": each further name selects the children with
+  // that name of the elements selected so far).
+  debug_inspect(
+    values(
+      "<order><box/><bag><item>b</item></bag><box><item>c</item></box></order>",
+      "/order/box/item",
+    ),
+    content=(
+      #|["c"]
+    ),
+  )
 }
 
 ///|
