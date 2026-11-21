@@ -41,8 +41,16 @@ test "eight digits of every unit are read without wrapping, and eight digits of 
   // nanoseconds than an `Int64` holds, so they saturate at
   // `0x7FFF_FFFF_FFFF_FFFF` rather than wrap." The maintainer confirmed
   // that value on 2026-11-21 (#327).
+  // The limit, and just past it, as the maintainer decided on 2026-11-21
+  // (#327): an hour is 3,600,000,000,000 ns (PROTOCOL-HTTP2's Hour, `H`),
+  // and 2^63 - 1 ns is 2,562,047 hours and a part of one. So 2562047H,
+  // 9,223,369,200,000,000,000 ns, is read exactly, and 2562048H,
+  // 9,223,372,800,000,000,000 ns, is the fewest hours that pass what an
+  // `Int64` holds, and saturates. No other unit reaches the limit: eight
+  // digits of minutes, the next unit, are 5,999,999,940,000,000,000 ns.
   let values = [
     "99999999H", "99999999M", "99999999S", "99999999m", "99999999u", "99999999n",
+    "2562047H", "2562048H",
   ]
   inspect(
     values.map(value => "\{value}: \{read(value)}").join("\n"),
@@ -53,6 +61,8 @@ test "eight digits of every unit are read without wrapping, and eight digits of 
       #|99999999m: 99999999000000
       #|99999999u: 99999999000
       #|99999999n: 99999999
+      #|2562047H: 9223369200000000000
+      #|2562048H: 9223372036854775807
     ),
   )
 }
@@ -123,8 +133,13 @@ test "eight digits of every unit convert to milliseconds without wrapping, and e
   // milliseconds, 9,223,372,036,855 ms (grpc/README.mbt.md, Timeouts). The
   // maintainer confirmed both that value and the rounding up on 2026-11-21
   // (#327).
+  // At the limit, 2562047H is 2,562,047 times the 3,600,000 ms of an hour,
+  // 9,223,369,200,000 ms, a whole number of them; just past it, 2562048H
+  // converts from the saturated nanoseconds, as eight digits of hours do
+  // (the maintainer's decision of 2026-11-21, #327).
   let values = [
     "99999999H", "99999999M", "99999999S", "99999999m", "99999999u", "99999999n",
+    "2562047H", "2562048H",
   ]
   inspect(
     values.map(value => "\{value}: \{read_ms(value)}").join("\n"),
@@ -135,6 +150,8 @@ test "eight digits of every unit convert to milliseconds without wrapping, and e
       #|99999999m: 99999999
       #|99999999u: 100000
       #|99999999n: 100
+      #|2562047H: 9223369200000
+      #|2562048H: 9223372036855
     ),
   )
 }
