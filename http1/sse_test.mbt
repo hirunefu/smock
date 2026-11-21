@@ -289,6 +289,34 @@ test "empty lines in data, and a line break at its end, are data fields of their
       #|
     ),
   )
+  // A CR or a CRLF at the very end of data is a line break too: an event
+  // stream ends a line at CRLF, LF or CR (the HTML Standard, 9.2.5 Parsing
+  // an event stream, `end-of-line = ( cr lf / cr / lf )`). A client
+  // appends each data field's value and an LF, then removes the last LF
+  // (9.2.6 Interpreting an event stream), so it gets `a\n` and `\n` back:
+  // the data with its line break as LF, as encode_sse_event's
+  // documentation says.
+  inspect(
+    [sse("a\r"), sse("a\r\n"), sse("\r"), sse("\r\n")].join("---\n"),
+    content=(
+      #|data: a
+      #|data:
+      #|
+      #|---
+      #|data: a
+      #|data:
+      #|
+      #|---
+      #|data:
+      #|data:
+      #|
+      #|---
+      #|data:
+      #|data:
+      #|
+      #|
+    ),
+  )
 }
 
 ///|
