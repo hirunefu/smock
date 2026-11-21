@@ -129,6 +129,28 @@ test "header values are written as UTF-8" {
     encoded(200, [("X-Name", "café")], ""),
     content="HTTP/1.1 200 OK\r\nX-Name: café\r\nContent-Length: 0\r\n\r\n",
   )
+  // The first and the last character that UTF-8 writes in two, three and
+  // four octets, U+0080 and U+07FF, U+0800 and U+FFFF, U+10000 and
+  // U+10FFFF, each as the octets RFC 3629 gives it (sections 3 and 4);
+  // Python's UTF-8 codec writes the same octets. Bytes show CR LF as
+  // \x0d\x0a.
+  inspect(
+    @http1.encode_response(
+      200,
+      [
+        ("A", "\u{80}"),
+        ("B", "\u{7ff}"),
+        ("C", "\u{800}"),
+        ("D", "\u{ffff}"),
+        ("E", "\u{10000}"),
+        ("F", "\u{10ffff}"),
+      ],
+      b"",
+    ),
+    content=(
+      #|b"HTTP/1.1 200 OK\x0d\x0aA: \xc2\x80\x0d\x0aB: \xdf\xbf\x0d\x0aC: \xe0\xa0\x80\x0d\x0aD: \xef\xbf\xbf\x0d\x0aE: \xf0\x90\x80\x80\x0d\x0aF: \xf4\x8f\xbf\xbf\x0d\x0aContent-Length: 0\x0d\x0a\x0d\x0a"
+    ),
+  )
 }
 
 ///|
