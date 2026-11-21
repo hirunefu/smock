@@ -345,10 +345,30 @@ test "UTF-8 of every length is read in text, names and attribute values; overlon
       #|[["😀é"], ["€"]]
     ),
   )
+  // The first and the last character of each row of RFC 3629's syntax
+  // (§4), each in an element of its own: U+007F, the last of UTF8-1; U+0080
+  // and U+07FF, UTF8-2; U+0800 and U+0FFF after E0, U+1000 and U+CFFF after
+  // E1 to EC, U+D000 and U+D7FF after ED, U+E000 and U+FFFD after EE and EF
+  // (U+FFFE and U+FFFF are no characters XML allows); U+10000 and U+3FFFF
+  // after F0, U+40000 and U+FFFFF after F1 to F3, U+100000 and U+10FFFF
+  // after F4. XML 1.0 §2.2 [2] allows each of them, though it discourages
+  // U+007F, U+0080, U+3FFFF, U+FFFFF and U+10FFFF.
+  let edges = @xml.parse(
+    b"<r><c>\x7F</c><c>\xC2\x80</c><c>\xDF\xBF</c><c>\xE0\xA0\x80</c><c>\xE0\xBF\xBF</c><c>\xE1\x80\x80</c><c>\xEC\xBF\xBF</c><c>\xED\x80\x80</c><c>\xED\x9F\xBF</c><c>\xEE\x80\x80</c><c>\xEF\xBF\xBD</c><c>\xF0\x90\x80\x80</c><c>\xF0\xBF\xBF\xBF</c><c>\xF1\x80\x80\x80</c><c>\xF3\xBF\xBF\xBF</c><c>\xF4\x80\x80\x80</c><c>\xF4\x8F\xBF\xBF</c></r>",
+  )
+  assert_eq(edges.select(@xml.compile_path("/r/c")), [
+    "\u{7F}", "\u{80}", "\u{7FF}", "\u{800}", "\u{FFF}", "\u{1000}", "\u{CFFF}",
+    "\u{D000}", "\u{D7FF}", "\u{E000}", "\u{FFFD}", "\u{10000}", "\u{3FFFF}", "\u{40000}",
+    "\u{FFFFF}", "\u{100000}", "\u{10FFFF}",
+  ])
+  // The last six have a tail byte past BF (RFC 3629 §4: UTF8-tail is
+  // %x80-BF), in each place that a tail may be.
   let rejected = [
     b"<a>\x80</a>", b"<a>\xC1\xBF</a>", b"<a>\xE0\x9F\xBF</a>", b"<a>\xF0\x8F\xBF\xBF</a>",
     b"<a>\xF4\x90\x80\x80</a>", b"<a>\xF5\x80\x80\x80</a>", b"<a>\xED\xBF\xBF</a>",
     b"<a>\xE2\x82</a>", b"<a>\xF0\x9F\x98</a>", b"<a\xE2\x82/>", b"<a>\xE2\x82",
+    b"<a>\xC2\xC0</a>", b"<a>\xE1\xC0\x80</a>", b"<a>\xE1\x80\xC0</a>", b"<a>\xF1\xC0\x80\x80</a>",
+    b"<a>\xF1\x80\xC0\x80</a>", b"<a>\xF1\x80\x80\xC0</a>",
   ]
   inspect(
     rejected.map(error_of).join("\n"),
@@ -363,6 +383,12 @@ test "UTF-8 of every length is read in text, names and attribute values; overlon
       #|position 3: the input is not UTF-8
       #|position 3: the input is not UTF-8
       #|position 2: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
       #|position 3: the input is not UTF-8
     ),
   )
