@@ -219,10 +219,17 @@ public, so nothing else needs doing in their settings.
 ### The weekly mutation run
 
 The weekly run over the pinned set runs on `main` every Friday at 20:23
-UTC ([Bulk runs on Actions](../CONTRIBUTING.md#bulk-runs-on-actions)).
-The release's check of it (`scripts/check-weekly-run.py`) reads only
-weekly runs on the tagged commit or on an ancestor of it on `main`,
-wherever they were started; of those, the latest that has ended decides.
+UTC ([Bulk runs on Actions](../CONTRIBUTING.md#bulk-runs-on-actions)),
+or when GitHub starts it, which may be hours later. GitHub started the
+second weekly run, the first that its schedule started, at 01:36 UTC on
+Saturday 2026-11-21, 5 h 13 min after its time, and it ended at 05:05
+UTC. A release that waits for Friday's run should not expect it before
+Saturday morning UTC.
+
+The release's check of the weekly run (`scripts/check-weekly-run.py`)
+reads only weekly runs on the tagged commit or on an ancestor of it on
+`main`, wherever they were started; of those, the latest that has ended
+decides.
 It reads the jobs of that run's latest attempt, and not the run's
 conclusion. Each job that decides a verdict must be there and have
 passed:
@@ -259,17 +266,26 @@ It needs:
 A release on `main`'s head after Friday's run waits for nothing more when
 each change since went through the branch checks or touches no source of
 a package at L4. The release commit touches none. Otherwise, start a
-weekly run on the release commit, and push the tag once it has passed.
-A weekly run of the pinned set holds the account's 20 jobs for about
-three hours. The first, started by hand on `main` on 2026-11-19
+weekly run on the release commit, and push the tag once it has passed,
+about three and a half hours later. The second weekly run
+([run 44851160701](https://github.com/hirunefu/smock/actions/runs/44851160701),
+on `main` at 65831e4e) had 18,403 mutants in 20 shards at once, planned
+at 16 s a mutant. Its report gives 3 h 28 min 41 s from its first job's
+start to its last job's end, 2 h 59 min 21 s for its longest shard's
+run, and 31 h 46 min of runner time over its 25 jobs. Its longest shard
+ran on a runner slower than the others, and another, nearly as long,
+started 36 minutes late: the canary's job, for 39 minutes, and two short
+ones take three of the account's 20 jobs as the run starts, so three
+shards wait for free jobs
+([Bulk runs on Actions](../CONTRIBUTING.md#bulk-runs-on-actions)).
+The first weekly run, started by hand on `main` on 2026-11-19
 ([run 44423781036](https://github.com/hirunefu/smock/actions/runs/44423781036)),
-had 18,403 mutants in 40 shards, two waves of 20, and its report gives
+had the same mutants in 40 shards, two waves of 20, and its report gives
 2 h 9 min from its first job's start to its last job's end, and 32 h
-44 min of runner time over its 44 jobs. Bulk runs now plan 16 s a
-mutant, which puts those mutants in 20 shards at once, and such a run is
-expected to take about 2 hours 50 minutes (*estimate*,
-[Bulk runs on Actions](../CONTRIBUTING.md#bulk-runs-on-actions)). A push
-meanwhile waits for free jobs.
+44 min of runner time over its 44 jobs. A weekly run holds all of the
+account's 20 jobs for its first 40 minutes or so, and fewer as its
+shards end: the second held half of them after an hour and a half, and
+two from 2 h 16 min on. A push meanwhile waits for free jobs.
 
 ```sh
 gh workflow run mutation-runs.yml -R hirunefu/smock --ref main -f mode=weekly     # while main is at the release commit
@@ -306,7 +322,8 @@ of the release workflow needs plan, so none of them runs.
   source of a package at L4 and no branch's changed-lines report covers
   that change, as for a change pushed straight to `main`. A weekly run on
   the tag covers the commit with no later change. Start one, or wait for
-  the one still running, and once it has passed, about three hours later
+  the one still running, and once it has passed, about three and a half
+  hours after it started
   ([The weekly mutation run](#the-weekly-mutation-run)), re-run the tag's
   release run, which reads the weekly runs again.
 
