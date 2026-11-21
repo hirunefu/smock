@@ -1258,3 +1258,158 @@ text = "bd6a40c7bc695d13"
 category = "ARID"
 reason = "A capacity hint: the StringBuilder that writes a Date value is made with a size hint of 30 instead of 29, the length of an IMF-fixdate with a four-digit year (RFC 9110, section 5.6.7). The builder grows as it is written, and its string is what was written, so the value is the same."
 reviewer = ""
+
+# http1/response.mbt, http1/sse.mbt and http1/stream.mbt (#408, part 4 of 5
+# of http1's triage for #324): survivors of the first weekly run
+# (44423781036) that no input can tell from the code, and four capacity
+# hints. Each argument is in its reason; each EQUIVALENT mutant agrees with
+# the code on every argument, white-box calls of the private functions
+# included. The compiler's output differs for each. The implementer also
+# folded into digests what http1's public functions answer where these
+# mutants could differ: field_octets of every pair of a high surrogate
+# with each code unit from 0xD700 to 0xE0FF and with every 251st, and of
+# every code unit alone and between two letters; is_token and
+# is_field_value of every code unit alone and between two letters;
+# encode_response with statuses at Int32's edges and around each power of
+# ten and bodies of 0 to 101 bytes, to HEAD and not; events of 0 to 40
+# characters with each line break, and stream parts of 1 to 300 bytes.
+# With each mutant applied by hand the digests were the code's, while
+# seven variants that are not equivalent changed them or aborted (a
+# scratch test, not committed). decimal_length's and write_decimal's
+# `n < 0` only chooses between two ways of writing a number that agree on
+# every n of 0 or more (the loop is the fast path every response takes),
+# so moving the boundary to 0 changes no octet; the check is needed for a
+# negative status, and no survivor makes it always true, so nothing here is
+# a candidate for deletion. is_token's and is_field_value's `c >= 0x80` and
+# `c < 0x80` are needed for code units of 0x100 and above, whose low byte
+# could otherwise pass for a tchar or a control; between 0x7F and 0xFF the
+# byte lookup gives the same answer.
+# `adversarial` stays "pending" until a separate agent context, which wrote
+# none of these entries, tries to kill each mutant from the specs and
+# smock's documents. The maintainer reads every entry, since http1 is a
+# protocol package.
+
+[[exclusion]]
+mutant = "http1/response.mbt,decimal_length,INT,0,1,0"
+text = "6462e0f39a3ad0fd"
+category = "EQUIVALENT"
+reason = "`if n < 0` becomes `if n < 1`, so decimal_length counts 0 as `n.to_string().length()` instead of with the loop. Both give 1, the length of `0`; every other n takes the same path as before. So encode_response gives the same octets for a status of 0 (it takes any Int32) and for the Content-Length of every empty body, and a white-box call of decimal_length(0) gives 1 both ways."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #408's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/response.mbt,decimal_length,ROR,<,<=,0"
+text = "6462e0f39a3ad0fd"
+category = "EQUIVALENT"
+reason = "`if n < 0` becomes `if n <= 0`, so decimal_length counts 0 as `n.to_string().length()` instead of with the loop. Both give 1, the length of `0`; every other n takes the same path as before. So encode_response gives the same octets for a status of 0 (it takes any Int32) and for the Content-Length of every empty body, and a white-box call of decimal_length(0) gives 1 both ways."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #408's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/response.mbt,write_decimal,INT,0,1,0"
+text = "764229a38d62109f"
+category = "EQUIVALENT"
+reason = "`if n < 0` becomes `if n < 1`, so write_decimal writes 0 with `write_utf8(out, at, n.to_string())` instead of with the loop. Both write the one octet `0` (0x30) at `at` and return `at + 1`; every other n takes the same path as before. So encode_response gives the same octets for a status of 0 (it takes any Int32) and for `Content-Length: 0`, and a white-box call of write_decimal with 0 writes the same octet and returns the same index."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #408's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/response.mbt,write_decimal,ROR,<,<=,0"
+text = "764229a38d62109f"
+category = "EQUIVALENT"
+reason = "`if n < 0` becomes `if n <= 0`, so write_decimal writes 0 with `write_utf8(out, at, n.to_string())` instead of with the loop. Both write the one octet `0` (0x30) at `at` and return `at + 1`; every other n takes the same path as before. So encode_response gives the same octets for a status of 0 (it takes any Int32) and for `Content-Length: 0`, and a white-box call of write_decimal with 0 writes the same octet and returns the same index."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #408's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/response.mbt,write_utf8,AOR,-,+,0"
+text = "1caeab2b6e274018"
+category = "EQUIVALENT"
+reason = "In the branch for a surrogate pair, `let c = 0x10000 + ((u - 0xD800) << 10) + ...` becomes `(u + 0xD800) << 10`. The branch runs only when is_pair holds, so u is a high surrogate (0xD800 to 0xDBFF), and the mutant's c is the code point plus 0x6C00000, which is 0x1B0 times 2^18 and stays far below 2^31. The second, third and fourth octets mask bits 12 to 17, 6 to 11 and 0 to 5 of c, which the addition leaves alone. The first is `(0xF0 | (c >> 18)).to_byte()`: c >> 18 gains 0x1B0, whose low eight bits 0xB0 are already within 0xF0, and `to_byte` keeps the low eight bits (core's Int32::to_byte), so it is 0xF0 to 0xF4 as before (c >> 18 is 0 to 4 for a code point up to U+10FFFF). So every pair is written as the same four octets, by encode_response, by field_octets and in a white-box call of write_utf8."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #408's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/response.mbt,is_token,INT,0x80,0x7f,0"
+text = "780a2ed18bed6cb2"
+category = "EQUIVALENT"
+reason = "`if c >= 0x80 || !is_tchar(c.to_byte())` becomes `c >= 0x7f`. The two differ only for the code unit 0x7F (DEL), which the mutant refuses at once and the code refuses through is_tchar: tchar (RFC 9110, section 5.6.2) holds no DEL, and the lookup takes only tchar. So is_token is false for a text with DEL either way. The check matters for code units of 0x100 and above, whose low byte may be a tchar (U+0141's is `A`), and those are refused at once by both. The test \"a token takes the octets of RFC 9110's tchar alone, ...\" tries every octet from 0 to 0xFF, alone and inside a name, and passes with the mutant."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #408's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/response.mbt,is_token,INT,0x80,0x81,0"
+text = "780a2ed18bed6cb2"
+category = "EQUIVALENT"
+reason = "`if c >= 0x80 || !is_tchar(c.to_byte())` becomes `c >= 0x81`. The two differ only for the code unit 0x80, which the code refuses at once and the mutant looks up as the byte 0x80: tchar (RFC 9110, section 5.6.2) is ASCII alone, and the lookup takes no byte from 0x80 to 0xFF. So is_token is false for a text with U+0080 either way. The check matters for code units of 0x100 and above, whose low byte may be a tchar (U+0141's is `A`), and those are refused at once by both. The test \"a token takes the octets of RFC 9110's tchar alone, ...\" tries every octet from 0 to 0xFF, alone and inside a name, and passes with the mutant."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #408's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/response.mbt,is_token,ROR,>=,>,0"
+text = "780a2ed18bed6cb2"
+category = "EQUIVALENT"
+reason = "`if c >= 0x80 || !is_tchar(c.to_byte())` becomes `c > 0x80`. The two differ only for the code unit 0x80, which the code refuses at once and the mutant looks up as the byte 0x80: tchar (RFC 9110, section 5.6.2) is ASCII alone, and the lookup takes no byte from 0x80 to 0xFF. So is_token is false for a text with U+0080 either way. The check matters for code units of 0x100 and above, whose low byte may be a tchar (U+0141's is `A`), and those are refused at once by both. The test \"a token takes the octets of RFC 9110's tchar alone, ...\" tries every octet from 0 to 0xFF, alone and inside a name, and passes with the mutant."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #408's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/response.mbt,is_field_value,INT,0x80,0x81,0"
+text = "39126fd865bfa3e6"
+category = "EQUIVALENT"
+reason = "`if c < 0x80 && !is_field_value_byte(c.to_byte())` becomes `c < 0x81`. The two differ only for the code unit 0x80, which the code takes at once and the mutant looks up as the byte 0x80: is_field_value_byte takes tab and every byte from 0x20 up but DEL, 0x80 among them (RFC 9110, section 5.5's obs-text). So is_field_value is true for U+0080 either way. The check matters for code units of 0x100 and above, whose low byte may be a control (U+010A's is LF), and those are taken at once by both. The test \"a token takes the octets of RFC 9110's tchar alone, and a field value all but the controls other than tab, and DEL\" tries every octet from 0 to 0xFF, alone and inside a value, and passes with the mutant."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #408's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/response.mbt,is_field_value,ROR,<,<=,0"
+text = "39126fd865bfa3e6"
+category = "EQUIVALENT"
+reason = "`if c < 0x80 && !is_field_value_byte(c.to_byte())` becomes `c <= 0x80`. The two differ only for the code unit 0x80, which the code takes at once and the mutant looks up as the byte 0x80: is_field_value_byte takes tab and every byte from 0x20 up but DEL, 0x80 among them (RFC 9110, section 5.5's obs-text). So is_field_value is true for U+0080 either way. The check matters for code units of 0x100 and above, whose low byte may be a control (U+010A's is LF), and those are taken at once by both. The test \"a token takes the octets of RFC 9110's tchar alone, and a field value all but the controls other than tab, and DEL\" tries every octet from 0 to 0xFF, alone and inside a value, and passes with the mutant."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #408's implementer, who wrote this entry and is not that context", tests = ["none yet; the implementer's own check: http1's tests and its wasm-gc importers' tests, which pass with the mutant (run 44423781036, and ticket/324-body-response's tests), and the scratch digests the batch's comment describes"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/sse.mbt,encode_sse_event,AOR,+,-,0"
+text = "11d1055641692779"
+category = "ARID"
+reason = "A capacity hint: the Buffer that writes an event is made with a size hint of `data.length() - 16` instead of `data.length() + 16`. core's Buffer takes a hint below 1 as 1, grows as it is written, and `to_bytes` copies only the bytes written, so the event's octets are the same."
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/sse.mbt,encode_sse_event,INT,16,17,0"
+text = "11d1055641692779"
+category = "ARID"
+reason = "A capacity hint: the Buffer that writes an event is made with a size hint of `data.length() + 17` instead of `data.length() + 16`. core's Buffer grows as it is written, and `to_bytes` copies only the bytes written, so the event's octets are the same."
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/stream.mbt,ResponseStream::ResponseStream,INT,128,129,0"
+text = "5bea325640dfd0b8"
+category = "ARID"
+reason = "A capacity hint: the Buffer that writes a streamed response's head is made with a size hint of 129 instead of 128. core's Buffer grows as it is written, and `to_bytes` copies only the bytes written, so the head's octets are the same."
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/stream.mbt,ResponseStream::part,AOR,+,-,0"
+text = "f4fb545820baec34"
+category = "ARID"
+reason = "A capacity hint: the Buffer that writes one chunk of a streamed body is made with a size hint of `data.length() - 12` instead of `data.length() + 12`. core's Buffer takes a hint below 1 as 1, grows as it is written, and `to_bytes` copies only the bytes written, so the chunk's octets are the same."
+reviewer = ""
+
+[[exclusion]]
+mutant = "http1/stream.mbt,ResponseStream::part,INT,12,13,0"
+text = "f4fb545820baec34"
+category = "ARID"
+reason = "A capacity hint: the Buffer that writes one chunk of a streamed body is made with a size hint of `data.length() + 13` instead of `data.length() + 12`. core's Buffer grows as it is written, and `to_bytes` copies only the bytes written, so the chunk's octets are the same."
+reviewer = ""
