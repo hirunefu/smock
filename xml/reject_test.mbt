@@ -23,8 +23,12 @@
 // The positions the tests pin follow the README's rule for where a
 // ParseError is and which one is reported (in its Use, after what the
 // errors carry): a byte that cannot be where it is, at that byte; a
-// construct refused as a whole, at its first byte; and when the input
-// breaks more than one rule, the error found first reading from the left.
+// construct refused as a whole, at its first byte; an input that ends too
+// soon, at its end, where the missing part would begin, or at the first
+// byte of the element, comment, CDATA section, processing instruction or
+// quoted value whose content it ends in, which is not closed; and when the
+// input breaks more than one rule, the error found first reading from the
+// left.
 
 ///|
 /// Parses `input` and shows the error, or `parsed`.
