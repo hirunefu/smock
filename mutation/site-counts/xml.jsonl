@@ -62,7 +62,7 @@
 {"file":"xml/select.mbt","definition":"content_end","text":"05724e8fb5f419a3","pinned":{"BODY":1,"IFC":4,"DEL":4,"BOOL":1,"AOR":6,"INT":12},"full":{"BODY":1,"IFC":8,"DEL":4,"BOOL":1,"AOR":6,"INT":18}}
 {"file":"xml/select.mbt","definition":"markup_end","text":"0113ef02541f6109","pinned":{"BODY":1,"IFC":1,"AOR":6,"INT":8,"STR":3},"full":{"BODY":1,"IFC":2,"AOR":6,"INT":16,"STR":6}}
 {"file":"xml/select.mbt","definition":"text_char","text":"3fa78e39bd33b54e","pinned":{"BODY":1,"ROR":2,"IFC":5,"DEL":3,"BOOL":2,"AOR":4,"INT":7,"STR":2},"full":{"BODY":1,"ROR":2,"IFC":10,"DEL":3,"BOOL":2,"AOR":4,"INT":14,"STR":4}}
-{"file":"xml/select.mbt","definition":"line_char","text":"cce6fe98c97420a4","pinned":{"BODY":1,"ROR":1,"IFC":2,"LCR":1,"AOR":5,"INT":6},"full":{"BODY":1,"ROR":1,"IFC":4,"LCR":1,"AOR":5,"INT":9}}
+{"file":"xml/select.mbt","definition":"line_char","text":"520017226e286458","pinned":{"BODY":1,"IFC":2,"AOR":4,"INT":4},"full":{"BODY":1,"IFC":4,"AOR":4,"INT":7}}
 {"file":"xml/select.mbt","definition":"attribute_value_is","text":"7fd971b9701525ed","pinned":{"BODY":1,"ROR":2,"IFC":2,"DEL":2,"BOOL":1,"AOR":1,"INT":4},"full":{"BODY":1,"ROR":2,"IFC":4,"DEL":2,"BOOL":1,"AOR":1,"INT":6}}
 {"file":"xml/select.mbt","definition":"attribute_utf8","text":"3118399c34837291","pinned":{"BODY":1,"ROR":1,"IFC":3,"DEL":3,"BOOL":2,"AOR":4,"INT":4},"full":{"BODY":1,"ROR":1,"IFC":6,"DEL":3,"BOOL":2,"AOR":4,"INT":6}}
 {"file":"xml/select.mbt","definition":"attribute_char","text":"fb92be04c3e2e051","pinned":{"BODY":1,"IFC":1,"AOR":5,"INT":5},"full":{"BODY":1,"IFC":2,"AOR":5,"INT":9}}

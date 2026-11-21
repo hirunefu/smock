@@ -387,11 +387,9 @@ fn text_char(input : BytesView, cursor : Int32, end : Int32) -> Int64 {
 /// LF, or a lone CR) is a line feed.
 fn line_char(input : BytesView, i : Int32) -> Int64 {
   if input[i] == b'\r' {
-    let next = if i + 1 < input.length() && input[i + 1] == b'\n' {
-      i + 2
-    } else {
-      i + 1
-    }
+    // Byte `i` is in an element's content, which the end tag that closes
+    // the element follows, so `i + 1` is in the input.
+    let next = if input[i + 1] == b'\n' { i + 2 } else { i + 1 }
     return packed_char('\n', next)
   }
   let decoded = decode(input, i)
