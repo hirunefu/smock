@@ -384,6 +384,20 @@ test "namespace declarations are not selectable attributes" {
       #|["2"]
     ),
   )
+  // Only `xmlns`, and `xmlns:` with a prefix after it, declare a namespace
+  // (Namespaces in XML 1.0 §3 [1]-[3]: DefaultAttName ::= 'xmlns',
+  // PrefixedAttName ::= 'xmlns:' NCName). Names that almost match are
+  // attributes: one with its first or last character changed, one shorter,
+  // one longer, one in other case, and prefixes that almost match.
+  let almost = "<a xmlns='urn:a' _mlns='1' xmlnx='2' xmln='3' xmlnsx='4' Xmlns='5' _mlns:r='6' xmlns_:s='7'/>"
+  debug_inspect(
+    ["_mlns", "xmlnx", "xmln", "xmlnsx", "Xmlns", "r", "s"].map(name => {
+      values(almost, "/a/@" + name)
+    }),
+    content=(
+      #|[["1"], ["2"], ["3"], ["4"], ["5"], ["6"], ["7"]]
+    ),
+  )
 }
 
 ///|
