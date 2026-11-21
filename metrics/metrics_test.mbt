@@ -1,5 +1,16 @@
 ///|
 test "a counter renders its help, its type and one sample per label set, in the order the sets first appeared" {
+  // The order of these lines is smock's own choice, which the text format
+  // 0.0.4 leaves free: its "Grouping and sorting" asks only that a metric's
+  // lines come as one group, "with the optional `HELP` and `TYPE` lines
+  // first (in no particular order)", and finds sorting "preferred but not
+  // required". smock writes `# HELP` before `# TYPE`, the series in the
+  // order they first appeared, `users` before `orders` here, and each
+  // series' label pairs in the order of the label names.
+  // `Registry::render`'s doc comment states the order of the metrics, of
+  // their `# HELP` and `# TYPE` lines and of their series. The maintainer
+  // confirmed on 2026-11-21 (#328) that the doc comment is the source and
+  // that the order is not a promise to users, so no document states it.
   let registry = @metrics.Registry()
   let requests = registry.counter(
     "smock_requests_total",
@@ -108,6 +119,18 @@ test "a metric with labels renders nothing but its help and type before its firs
 
 ///|
 test "a histogram renders cumulative buckets up to +Inf, then the sum and the count, for each label set" {
+  // The text format 0.0.4 fixes one order here, the buckets', "in
+  // increasing numerical order of their label values". The rest is smock's
+  // own choice, which the format leaves free ("Grouping and sorting"): the
+  // series in the order they first appeared, so all of `users`' lines
+  // before those of `orders`; `_sum` and `_count` after each series'
+  // buckets; `# HELP` before `# TYPE`; and each series' label pairs in the
+  // order of the label names, `le` last. `Registry::render`'s doc comment
+  // states the order of the metrics, of their `# HELP` and `# TYPE` lines,
+  // of their series and of a histogram's buckets, `_sum` and `_count`. The
+  // maintainer confirmed on 2026-11-21 (#328) that the doc comment is the
+  // source and that the order is not a promise to users, so no document
+  // states it.
   let registry = @metrics.Registry()
   let latency = registry.histogram(
     "smock_request_duration_seconds",
@@ -235,6 +258,14 @@ test "a metric name is a Prometheus metric name: one with a colon, a capital Z o
   // MUST start at 0" and "Metrics without labels MUST always be
   // initialized". `a0` has its digit as early as the regex allows one, as
   // the second character.
+  // The four groups come in the order the gauges were registered, each with
+  // `# HELP` before `# TYPE`: smock's own choice, which the text format
+  // 0.0.4 leaves free ("Grouping and sorting": the `HELP` and `TYPE` lines
+  // come first "in no particular order", and sorting is "preferred but not
+  // required"). `Registry::render`'s doc comment states that order. The
+  // maintainer confirmed on 2026-11-21 (#328) that the doc comment is the
+  // source and that the order is not a promise to users, so no document
+  // states it.
   let registry = @metrics.Registry()
   for name in ["job:smock_requests:sum", "smock_A_Z", "smock_0_9", "a0"] {
     let _ = registry.gauge(name, help="A name.")
