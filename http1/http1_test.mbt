@@ -170,6 +170,68 @@ test "a method, target or field name that begins as the one of the request befor
 }
 
 ///|
+test "a request that sends again the method, the target or a header field of the request before it gets the very string or field given for that request" {
+  // The parser's documentation of the head it parsed last: a client sends
+  // the same method, target and header fields on a connection again and
+  // again, "so the next head reuses its strings and fields where they are
+  // the same"; and of parse_head: "The method, the target and each header
+  // field that are the same as in the `previous` head, field by field in
+  // order, are its own strings and fields". A field whose name is the same
+  // text at the same place, but whose value is not, gets that name (the
+  // documentation of parse_field), and a value is compared without the
+  // white space around it (Header's documentation). The server reads which
+  // fields are the very ones of the request before, to decode each field
+  // once per connection (d66c05fa).
+  let stream = "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 1\r\n\r\n" +
+    "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 1\r\n\r\n" +
+    "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 2\r\n\r\n" +
+    "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: \t 2  \r\n\r\n" +
+    "GET /b HTTP/1.1\r\nHost: a.example\r\nX-Id: 2\r\nAccept: */*\r\n\r\n" +
+    "POST /b HTTP/1.1\r\nhost: a.example\r\nX-Id: 2\r\nAccept: */*\r\n\r\n" +
+    "POST /b HTTP/1.1\r\nhost: a.example\r\n\r\n" +
+    "POST /b HTTP/1.1\r\nhost: a.example\r\nX-New: 1\r\n\r\n"
+  let parser = @http1.Parser()
+  parser.feed(@utf8.encode(stream))
+  let same_or_new = (same : Bool) => if same { "same" } else { "new" }
+  let out = []
+  let mut before : @http1.Request? = None
+  while parser.next() is Complete(request) {
+    let line = StringBuilder()
+    line.write_string("\{request.meth} \{request.target}:")
+    if before is Some(earlier) {
+      line.write_string(
+        " method \{same_or_new(physical_equal(request.meth, earlier.meth))}, target \{same_or_new(physical_equal(request.target, earlier.target))}, fields",
+      )
+      for i, field in request.headers {
+        let kind = match earlier.headers.get(i) {
+          Some(other) if physical_equal(field, other) => "same"
+          Some(other) if physical_equal(field.name, other.name) => "same name"
+          _ => "new"
+        }
+        line.write_string(" \{field.name}=\{kind}")
+      }
+    } else {
+      line.write_string(" the first")
+    }
+    out.push(line.to_string())
+    before = Some(request)
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|GET /a: the first
+      #|GET /a: method same, target same, fields Host=same Accept=same X-Id=same
+      #|GET /a: method same, target same, fields Host=same Accept=same X-Id=same name
+      #|GET /a: method same, target same, fields Host=same Accept=same X-Id=same
+      #|GET /b: method same, target new, fields Host=same X-Id=new Accept=new
+      #|POST /b: method new, target same, fields host=new X-Id=same Accept=same
+      #|POST /b: method same, target same, fields host=same
+      #|POST /b: method same, target same, fields host=same X-New=new
+    ),
+  )
+}
+
+///|
 test "requests fed one byte at a time come out as when fed whole" {
   let stream = "GET /a HTTP/1.1\r\nHost: a.example\r\n\r\nPOST /b HTTP/1.1\r\nHost: a.example\r\nContent-Length: 4\r\n\r\n\r\n\r\nGET /c HTTP/1.1\r\nHost: a.example\r\n\r\n"
   let bytes = @utf8.encode(stream)
