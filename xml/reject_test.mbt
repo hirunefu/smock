@@ -129,6 +129,18 @@ test "an entity other than the five predefined ones is rejected, as are malforme
       #|<a>&#65</a> => position 7: expected ; to end the reference
     ),
   )
+  // A `&` that ends the input, in text or in an attribute value, starts no
+  // reference either: a name or `#` must follow it (XML 1.0 §4.1 [67],
+  // [68]), and a `&` may not stand for itself (§2.4). The error is at it,
+  // as for `a & b` and `v='&'` above: parsing ends with an error for every
+  // input (the README's Documents). Python's expat 2.10.0 refuses both.
+  inspect(
+    errors(["<a>&", "<a v='&"]),
+    content=(
+      #|<a>& => position 3: & starts a reference; write &amp; for &
+      #|<a v='& => position 6: & starts a reference; write &amp; for &
+    ),
+  )
 }
 
 ///|
