@@ -312,6 +312,11 @@ test "import-openapi: problems in other files are named under --ref-dir as given
   // its path under --ref-dir, such as ./api/responses/ok.yaml above.
   // Without --ref-dir, the directory part of the document's path, as given,
   // takes its place: api/responses/ok.yaml."
+  // The guide does not say whether that part keeps its last / (api/ and
+  // /srv/specs/api/ here), or what it is for a bare file name (empty here):
+  // the importer joins it with a / unless it is empty or ends in one, so
+  // these are the contract between the settings and the importer, which
+  // the maintainer confirmed on 2026-11-21 (#329).
   let shown = (settings : @settings.ImportOpenapiSettings) => {
     "\{settings.document}: \{settings.ref_dir_path()} \{settings.document_directory().escape()}"
   }
@@ -323,12 +328,17 @@ test "import-openapi: problems in other files are named under --ref-dir as given
       shown(
         import_settings("/srv/specs/api/openapi.json", ref_dir="/srv/specs"),
       ),
+      // The guide's rule at the root: the directory part of /openapi.yaml
+      // is /, so a problem in responses/ok.yaml is named
+      // /responses/ok.yaml (the maintainer, 2026-11-21, #329).
+      shown(import_settings("/openapi.yaml")),
     ].join("\n"),
     content=(
       #|api/openapi.yaml: api/ "api/"
       #|api/openapi.yaml: . "api/"
       #|openapi.yaml:  ""
       #|/srv/specs/api/openapi.json: /srv/specs "/srv/specs/api/"
+      #|/openapi.yaml: / "/"
     ),
   )
 }
