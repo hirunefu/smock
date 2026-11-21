@@ -389,6 +389,28 @@ test "endless chunk framing around a small body is decoded without counting towa
 }
 
 ///|
+/// What a parser made by `make` takes out of `pieces` fed one after
+/// another, shown as `fed_in_pieces` shows it.
+fn fed_as(make : () -> @http1.Parser, pieces : Array[String]) -> String {
+  let parser = make()
+  let out = []
+  for piece in pieces {
+    parser.feed(@utf8.encode(piece))
+    let taken = drain(parser)
+    for parsed in taken {
+      if !(parsed is NeedMore) {
+        out.push(brief(parsed))
+      }
+    }
+    if taken.last() is Some(Invalid(..)) {
+      return out.join(", ")
+    }
+  }
+  out.push("need more")
+  out.join(", ")
+}
+
+///|
 test "requests at and over the limits give the same outcome however they are split" {
   let make = () => {
     @http1.Parser(header_size_limit=80, header_count_limit=3, body_limit=16)
@@ -425,4 +447,24 @@ test "requests at and over the limits give the same outcome however they are spl
       #|POST /p body=16, invalid 413
     ),
   )
+  // In three pieces: a head at the header size limit and empty lines,
+  // 4,096 bytes in all; then a head, and a head at the header count limit,
+  // cut in two at every byte. The parser's first buffer holds 4,096 bytes,
+  // so the second piece does not fit beside the first: the parser moves the
+  // bytes it still needs, and bytes of the first piece stay behind them.
+  // However the rest is cut, the requests come out as when fed whole
+  // (Parser's documentation: "However the bytes are split into pieces, it
+  // takes out the same requests"), and the empty lines before a request
+  // line are ignored (RFC 9112, section 2.2).
+  let first = head_of_size(80) + "\r\n".repeat(2008)
+  let rest = head_with_fields(1) + head_with_fields(3)
+  let whole = fed_as(make, [first + rest])
+  let cuts = (0)
+    .until(rest.length(), inclusive=true)
+    .filter(i => {
+      fed_as(make, [first, rest[:i].to_owned(), rest[i:].to_owned()]) != whole
+    })
+    .collect()
+  debug_inspect(cuts, content="[]")
+  inspect(whole, content="GET / body=0, GET / body=0, GET / body=0, need more")
 }
