@@ -1,14 +1,23 @@
 // What `@xml.parse` refuses, and at which byte, through the module's
 // public interface. The conditions it refuses come from XML 1.0,
-// Namespaces in XML 1.0, RFC 3629 and the README's Documents. No
-// document words five of the messages: "expected version in the XML
-// declaration", "XML version <v> is not supported", "U+0000 is not a
-// character XML allows", "the input is not UTF-8" and "attribute <name>
-// is repeated". Those words are the code's, and the maintainer, who
-// confirmed on 2026-11-21 that they stay as they are (#325), is their
-// source. What each of them reports keeps the source its test cites:
-// XML 1.0 §2.8 [24] and [26], §2.2 [2], RFC 3629, and §3.1,
-// WFC: Unique Att Spec.
+// Namespaces in XML 1.0, RFC 3629 and the README's Documents.
+//
+// The README words two of the messages: "a DOCTYPE is not allowed" and
+// "end tag </a> does not match start tag <b>". No document words the
+// others. Their words are the code's, and the maintainer, who confirmed
+// on 2026-11-21 that they stay as the code has them (#325), is their
+// source: five first ("expected version in the XML declaration", "XML
+// version <v> is not supported", "U+0000 is not a character XML allows",
+// "the input is not UTF-8" and "attribute <name> is repeated"), then, in
+// a second round, every other text of the parser but three, with
+// "U+<hex> is not a character XML allows" for every code point and
+// "&#<n>; is not a character XML allows" for a character reference. The
+// three, which no source words yet, are "encoding <e> is not supported;
+// the input must be UTF-8", "processing instruction target <t> is
+// reserved" and "only comments, processing instructions and whitespace
+// may follow the root element". What a cut-off `<?xml` gets is a defect
+// that #430 records. The condition each message reports keeps the source
+// its test cites.
 
 ///|
 /// Parses `input` and shows the error, or `parsed`.
