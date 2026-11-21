@@ -146,6 +146,7 @@ empty() {
 
 # The headings of the report's sections that a test reads by name.
 other="Other lines changed in tests that stay"
+assertions="Assertions removed or changed in tests that stay"
 
 # A package with two tests and the function they test.
 package() {
@@ -853,6 +854,47 @@ sed -i 's/^      #|\[3, 5, 7\]$/      \/\/ The three sums.\n      #|[3, 5, 7]/' 
 sed -i 's|^      // An address, then .*$|      // An address, then a string.|; s|^      // The second line, from .*$|      // The second line.\n      // It is the second element.|' "$repo/add/counted_test.mbt"
 report comment-inside
 empty comment-inside
+
+# A hunk is left out only when every line of it is a comment or blank, in
+# the base and in the head. A line that only looks like a comment is
+# listed: a string that holds //, and a snapshot line (#|) whose text
+# starts with it.
+tree
+package
+counted
+branch
+sed -i 's|"http://a.example/|"http://b.example/|; s|^      "// \\{|      "//  \\{|; s/^      #|\/\/ 5$/      #|\/\/  5/' "$repo/add/counted_test.mbt"
+report comment-like
+mentions_in comment-like "$assertions" '+      "http://b.example/\{@add.add(1, 2)}",'
+mentions_in comment-like "$assertions" '+      "//  \{@add.add(2, 3)}",'
+mentions_in comment-like "Snapshot lines changed" '-      #|// 5'
+mentions_in comment-like "Snapshot lines changed" '+      #|//  5'
+
+# A comment changed in one hunk with a line of code, and a comment after
+# code on its line, are listed with the code.
+tree
+package
+counted
+branch
+sed -i 's|^    // Eight, as the documents say\.$|    // Eight or more.|; s|^    8,$|    @add.add(4, 4),|; s|^      @add.add(3, 4), // seven$|      @add.add(3, 4), // seven, or more|' "$repo/add/counted_test.mbt"
+report comment-and-code
+mentions_in comment-and-code "$assertions" '-    // Eight, as the documents say.'
+mentions_in comment-and-code "$assertions" '-    8,'
+mentions_in comment-and-code "$assertions" '+    @add.add(4, 4),'
+mentions_in comment-and-code "$assertions" '-      @add.add(3, 4), // seven'
+mentions_in comment-and-code "$assertions" '+      @add.add(3, 4), // seven, or more'
+
+# An assertion commented out, and one deleted beside a comment that is
+# reworded: the base's lines are code, so they are listed.
+tree
+package
+counted
+branch
+sed -i 's|^      @add.add(2, 3),$|      // @add.add(2, 3),|; s|^  // Nine, as the documents say\.$|  // Nine is checked elsewhere.|; /^  assert_eq(@add.add(4, 5), 9)$/d' "$repo/add/counted_test.mbt"
+report comment-out
+mentions_in comment-out "$assertions" '-      @add.add(2, 3),'
+mentions_in comment-out "$assertions" '+      // @add.add(2, 3),'
+mentions_in comment-out "$assertions" '-  assert_eq(@add.add(4, 5), 9)'
 
 # The other lines of a helper of a test file show too, since a helper's
 # wait loosens every test that calls it; a changed comparison in it stays
