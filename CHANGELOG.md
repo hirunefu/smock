@@ -811,6 +811,17 @@ of each GitHub release include its section
   a private key. A BEGIN line with white space before it is now no BEGIN
   line, as for OpenSSL, which then presents the certificate after it
   ([smock#389](https://github.com/hirunefu/smock/issues/389)).
+- A numeric setting now takes a value in its range whatever its leading
+  zeros. smock counted the zeros as digits, and refused a value with more
+  characters than its largest value has digits: `--port=00000008080` was
+  refused, and so were a seed of more than 16 characters and a response
+  index of more than 2, such as `smock render --response=007` and the
+  Admin render operation's `response=007`. A value is now read as the
+  integer it writes, and its range alone decides. This holds for every
+  integer setting of `smock serve`, `smock check` and `smock render`, by
+  its flag or its `SMOCK_` variable, and for the Admin render operation's
+  `seed` and `response`
+  ([smock#426](https://github.com/hirunefu/smock/issues/426)).
 
 ## [0.4.0] - 2026-11-01
 

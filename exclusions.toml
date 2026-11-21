@@ -15,13 +15,16 @@
 #
 # Which entries the maintainer reads: every entry in the protocol
 # packages (http1, grpc, yaml, re2, xml and protobuf) and in
-# serverparsers, and one in five of the others, which the maintainer
-# draws once the batch is frozen (the branch's last push), so that its
-# author cannot know which: `exclusions.py review --seed <seed>` lists
-# them. If a sampled entry is rejected, its author triages the whole batch
-# again, and the maintainer draws a new sample. Only the maintainer fills
-# in the reviewer, in a commit the maintainer makes or acknowledges at the
-# merge; the weakening report lists every entry whose reviewer changed.
+# serverparsers, and one in five of the others, drawn once the batch is
+# frozen (the branch's last push) with a seed that no agent can know
+# before, so that its author cannot know which: the run ID that GitHub
+# Actions gives the packages run of the bulk workflow on the frozen tip.
+# `exclusions.py review --seed <run ID>` lists them. If a sampled entry
+# is rejected, its author triages the whole batch again, and a new sample
+# is drawn with the ID of the packages run on the new frozen tip. Only
+# the maintainer fills in the reviewer, in a commit the maintainer makes
+# or acknowledges at the merge; the weakening report lists every entry
+# whose reviewer changed.
 
 # The first batch: the 28 entries below, all abort arms that an invariant
 # guards. The maintainer read its two entries in the protocol packages

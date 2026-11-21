@@ -12,7 +12,9 @@ kill fails with the mutant on and passes with it off (#306, second
 criterion; #275, "Kill confirmation"). The tool answers which tests alone
 kill some mutant, and which mutants a given set of tests kills (#306, third
 criterion); with one test left out of a run, the mutants only it killed
-are survivors (#306, fourth criterion).
+are survivors (#306, fourth criterion). It draws the tests of a snapshot
+audit as the first three audits were drawn, on small git workspaces of
+their own (#306, #275, "Snapshot audits").
 
 The fixture's package units has the importers meter, and dial through
 meter, whose tests build on wasm-gc, and probe, which builds only natively
@@ -27,6 +29,7 @@ usage: python3 -m unittest discover -s scripts/mutation -v
 """
 
 import json
+import os
 import shutil
 import stat
 import subprocess
@@ -432,6 +435,208 @@ class MatrixToolTest(unittest.TestCase):
         import matrix
         self.assertEqual([matrix.layer(p) for p in ("smock/smock/e2e", "smock/smock/engine", "smock/yaml")],
                          ["e2e", "in-process", "in-process"])
+
+
+# A workspace laid out as smock's: the root module smock/smock, whose
+# packages a and b sit in a/ and b/, and the module smock/proto in proto/.
+# At the base, a/a_test.mbt and b/b_test.mbt; the next commit deletes a
+# line of "a one", rewords the comment above "a two", and adds
+# proto/p_test.mbt. "a three", a's test with no name and b's tests are as
+# they were.
+WORKSPACE = {
+    "moon.work": 'members = [\n  ".",\n  "./proto",\n]\n',
+    "moon.mod": 'name = "smock/smock"\n',
+    "proto/moon.mod": 'name = "smock/proto"\n',
+    "a/a_test.mbt": '///|\ntest "a one" {\n  inspect(1, content="1")\n  inspect(-1, content="-1")\n}\n\n'
+                    '///|\n/// What two is.\ntest "a two" {\n  inspect(2, content="2")\n}\n\n'
+                    '///|\ntest "a three" {\n  inspect(3, content="3")\n}\n\n'
+                    '///|\ntest {\n  inspect(4, content="4")\n}\n',
+    "b/b_test.mbt": '///|\ntest "b one" {\n  inspect(true, content="true")\n}\n\n'
+                    '///|\ntest "b two" {\n  inspect(false, content="false")\n}\n',
+}
+CHANGES = [
+    ("a/a_test.mbt", '  inspect(-1, content="-1")\n', ""),
+    ("a/a_test.mbt", "/// What two is.\n", "/// What two is, in words.\n"),
+]
+PROTO_TESTS = '///|\ntest "p one" {\n  inspect(1, content="1")\n}\n'
+
+
+def test_entry(package, file, line, index, name):
+    """A test as a matrix lists it."""
+    test = {"package": package, "file": file, "line": line, "index": index, "name": name, "layer": "in-process"}
+    return dict(test=f"{package}/{file}:{name}" if name else f"{package}/{file}#{index}", **test)
+
+
+# The tests at HEAD, at the lines moon's outline would give.
+A_ONE = test_entry("smock/smock/a", "a_test.mbt", 2, 0, "a one")
+A_TWO = test_entry("smock/smock/a", "a_test.mbt", 8, 1, "a two")
+A_THREE = test_entry("smock/smock/a", "a_test.mbt", 13, 2, "a three")
+A_NAMELESS = test_entry("smock/smock/a", "a_test.mbt", 18, 3, "")
+B_ONE = test_entry("smock/smock/b", "b_test.mbt", 2, 0, "b one")
+B_TWO = test_entry("smock/smock/b", "b_test.mbt", 7, 1, "b two")
+P_ONE = test_entry("smock/proto", "p_test.mbt", 2, 0, "p one")
+
+# What the script that drew the first three snapshot audits gives on this
+# workspace with the seed 44737193027 (SnapshotDrawTest): each test drawn,
+# in order, and whether it is the work's. Four with the base before the
+# work, and three, of which half rounded up, two, are the work's; all six
+# when ten are asked; four with HEAD as the base.
+DRAWN_4 = [(P_ONE["test"], True), (A_ONE["test"], True), (A_NAMELESS["test"], False), (A_TWO["test"], True)]
+DRAWN_3 = [(P_ONE["test"], True), (A_ONE["test"], True), (A_NAMELESS["test"], False)]
+DRAWN_ALL = [(P_ONE["test"], True), (A_ONE["test"], True), (A_TWO["test"], True), (B_ONE["test"], False),
+             (A_NAMELESS["test"], False), (A_THREE["test"], False)]
+DRAWN_4_NO_WORK = [(A_NAMELESS["test"], False), (A_ONE["test"], False), (P_ONE["test"], False),
+                   (A_TWO["test"], False)]
+
+
+def git(root, *args):
+    """The output of a git command in root, with a fixed author and dates."""
+    environment = {**os.environ, "GIT_AUTHOR_DATE": "2026-11-21T00:00:00Z", "GIT_COMMITTER_DATE": "2026-11-21T00:00:00Z"}
+    return subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                           "-c", "commit.gpgsign=false", "-C", str(root), *args], check=True, capture_output=True,
+                          text=True, env=environment).stdout
+
+
+def committed(root, files, message):
+    """Writes files into root, a git repository made on the first call,
+    and commits them: the commit's id."""
+    if not root.is_dir():
+        root.mkdir(parents=True)
+        git(root, "init", "-q", "-b", "main")
+    for path, text in files.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text(text)
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", message)
+    return git(root, "rev-parse", "HEAD").strip()
+
+
+def write_matrix(path, package, tests, mutants):
+    """Writes a package's kill matrix, of the tests and mutants given."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "package": package, "directory": path.stem, "operator_set": "v1",
+                                "set": "pinned", "backend": "wasm-gc",
+                                "packages": sorted({t["package"] for t in tests}), "native_only": [],
+                                "tests": tests, "mutants": mutants}))
+
+
+class SnapshotDrawTest(unittest.TestCase):
+    """`draw` draws the tests of a snapshot audit (CONTRIBUTING.md,
+    "Snapshot audits"; #306, #275): about ten among the tests that alone
+    kill some mutant in the kill matrices, at least half of them from the
+    tests that the work added or changed since a base, with the kill-matrix
+    run's ID as the seed. The draws it must give are those that the script
+    which drew the first three audits (#327, #328, #329) gives for the same
+    matrices, seed and base; the expected orders below are that script's
+    output on this workspace."""
+
+    SEED = "44737193027"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="test-matrix-draw-"))
+        cls.root = cls.tmp / "workspace"
+        cls.base = committed(cls.root, WORKSPACE, "base")
+        changes = {}
+        for path, old, new in CHANGES:
+            changes[path] = changes.get(path, WORKSPACE[path]).replace(old, new, 1)
+        committed(cls.root, {**changes, "proto/p_test.mbt": PROTO_TESTS}, "the work")
+        # Two matrices: a's, whose tests are a's and b's, and proto's, whose
+        # tests are proto's and a's first test.
+        cls.matrices = cls.tmp / "matrices"
+        write_matrix(cls.matrices / "a.json", "smock/smock/a", [A_ONE, A_TWO, A_THREE, A_NAMELESS, B_ONE, B_TWO], [
+            {"id": "a/a.mbt,f,INT,1,2,0", "outcome": "killed", "killing_tests": [A_ONE["test"]]},
+            {"id": "a/a.mbt,f,INT,2,3,0", "outcome": "killed", "killing_tests": [A_TWO["test"]]},
+            {"id": "a/a.mbt,g,INT,2,3,0", "outcome": "duplicate", "duplicate_of": "a/a.mbt,f,INT,2,3,0",
+             "killing_tests": []},
+            {"id": "a/a.mbt,f,ROR,<,<=,0", "outcome": "killed", "killing_tests": [A_THREE["test"]]},
+            {"id": "a/a.mbt,h,NOT,!,,0", "outcome": "killed", "killing_tests": [A_NAMELESS["test"]]},
+            {"id": "a/a.mbt,h,INT,0,1,0", "outcome": "killed", "killing_tests": [B_ONE["test"]]},
+            {"id": "a/a.mbt,h,BOOL,true,false,0", "outcome": "killed", "killing_tests": [B_ONE["test"], B_TWO["test"]]},
+            {"id": "a/a.mbt,k,INT,7,8,0", "outcome": "survived", "killing_tests": []},
+        ])
+        write_matrix(cls.matrices / "proto.json", "smock/proto", [P_ONE, A_ONE], [
+            {"id": "proto/p.mbt,p,INT,1,2,0", "outcome": "killed", "killing_tests": [P_ONE["test"]]},
+            {"id": "proto/p.mbt,p,INT,2,3,0", "outcome": "killed", "killing_tests": [A_ONE["test"]]},
+        ])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def draw(self, *args, base=None):
+        result = subprocess.run([sys.executable, str(MATRIX_TOOL), "draw", "--root", str(self.root), "--seed",
+                                 self.SEED, "--base", base or self.base, *map(str, args), self.matrices],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [json.loads(line) for line in result.stdout.splitlines()], result.stderr
+
+    def test_half_is_drawn_from_the_works_tests_then_the_rest_from_every_test_not_yet_drawn(self):
+        drawn, said = self.draw("--size", "4")
+        self.assertEqual([(t["test"], t["work"]) for t in drawn], DRAWN_4)
+        self.assertIn("6 tests alone kill some mutant, 3 of them the work's", said)
+        # The same matrices, seed and base draw the same tests.
+        self.assertEqual(self.draw("--size", "4")[0], drawn)
+        self.assertEqual([(t["test"], t["work"]) for t in self.draw("--size", "3")[0]], DRAWN_3)
+
+    def test_a_test_is_the_works_when_its_block_holds_a_line_that_differs_from_the_base(self):
+        # Ten asked, six there: every one is drawn, the work's three first.
+        drawn, _ = self.draw()
+        self.assertEqual([(t["test"], t["work"]) for t in drawn], DRAWN_ALL)
+        by_test = {t["test"]: t for t in drawn}
+        # Each line is the test as the matrix lists it, its file in the
+        # checkout, and the mutants it alone kills, in every matrix.
+        self.assertEqual(by_test[A_ONE["test"]], dict(A_ONE, path="a/a_test.mbt", work=True,
+                                                      alone=["a/a.mbt,f,INT,1,2,0", "proto/p.mbt,p,INT,2,3,0"]))
+        self.assertEqual(by_test[A_TWO["test"]]["alone"], ["a/a.mbt,f,INT,2,3,0", "a/a.mbt,g,INT,2,3,0"])
+        self.assertEqual(by_test[P_ONE["test"]]["path"], "proto/p_test.mbt")
+        self.assertNotIn(B_TWO["test"], by_test)
+
+    def test_with_none_of_the_works_tests_every_test_is_drawn_from_the_rest(self):
+        drawn, said = self.draw("--size", "4", base="HEAD")
+        self.assertEqual([(t["test"], t["work"]) for t in drawn], DRAWN_4_NO_WORK)
+        self.assertIn("6 tests alone kill some mutant, 0 of them the work's", said)
+
+    def test_a_checkout_that_is_not_the_runs_commit_is_refused(self):
+        def refused(matrices):
+            result = subprocess.run([sys.executable, str(MATRIX_TOOL), "draw", "--root", str(self.root), "--seed",
+                                     self.SEED, "--base", self.base, matrices], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stdout)
+            return result.stderr
+
+        # A test whose line is past the end of its file.
+        moved = dict(P_ONE, line=99)
+        write_matrix(self.tmp / "moved" / "proto.json", "smock/proto", [moved], [
+            {"id": "proto/p.mbt,p,INT,1,2,0", "outcome": "killed", "killing_tests": [moved["test"]]}])
+        self.assertIn("HEAD's proto/p_test.mbt has no line 99", refused(self.tmp / "moved"))
+        # A test whose file is gone.
+        git(self.root, "rm", "-q", "proto/p_test.mbt")
+        git(self.root, "commit", "-q", "-m", "drop proto's tests")
+        try:
+            self.assertIn("proto/p_test.mbt", refused(self.matrices))
+        finally:
+            git(self.root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_a_package_is_found_in_the_directory_of_its_module(self):
+        # moon.work names each module's directory, and its moon.mod the
+        # module's name: here a root module of one part, whose package
+        # top/a/b is in a/b/, and the module smock/proto in wire/.
+        root = self.tmp / "modules"
+        committed(root, {"moon.work": 'members = [".", "./wire"]\n', "moon.mod": 'name = "top"\n',
+                         "wire/moon.mod.json": '{\n  "name": "smock/proto"\n}\n', "a/b/b_test.mbt": PROTO_TESTS,
+                         "wire/w_test.mbt": PROTO_TESTS}, "two modules")
+        nested = test_entry("top/a/b", "b_test.mbt", 2, 0, "p one")
+        wired = test_entry("smock/proto", "w_test.mbt", 2, 0, "p one")
+        matrices = self.tmp / "modules-matrices"
+        write_matrix(matrices / "b.json", "top/a/b", [nested, wired], [
+            {"id": "a/b/b.mbt,f,INT,1,2,0", "outcome": "killed", "killing_tests": [nested["test"]]},
+            {"id": "a/b/b.mbt,f,INT,2,3,0", "outcome": "killed", "killing_tests": [wired["test"]]},
+        ])
+        result = subprocess.run([sys.executable, str(MATRIX_TOOL), "draw", "--root", str(root), "--seed", self.SEED,
+                                 "--base", "HEAD", matrices], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(json.loads(line)["path"] for line in result.stdout.splitlines()),
+                         ["a/b/b_test.mbt", "wire/w_test.mbt"])
 
 
 class OutlineTest(unittest.TestCase):

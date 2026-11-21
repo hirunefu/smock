@@ -410,14 +410,30 @@ scripts/fetch-yaml-test-suite.sh     # the pinned release of the YAML test suite
 scripts/check-yaml-test-suite.sh     # the YAML test suite against smock/yaml in both modes, judged by yaml-test-suite/safe.txt and openapi.txt (fetches the suite first)
 scripts/check-llm-sdks.sh dist/smock # the official LLM SDKs, pinned by hash, read smock's LLM responses (needs python3 and PyPI)
 python3 -m unittest discover -s scripts/mutation -v   # the mutation runner and its site finder, on a module whose mutants are known, the exclusion list and the bulk runs' steps (needs git, moon and moonc)
-python3 scripts/mutation/exclusions.py check   # each entry of the exclusion list has a category and what it needs, and the stale ones are listed (needs moonc)
-python3 scripts/mutation/exclusions.py review --base origin/main   # the entries this branch adds or changes, and those the maintainer reads (--seed draws one in five)
+python3 scripts/mutation/exclusions.py check   # each entry of the exclusion list has a category and what it needs, no adversarial attempt is still pending, and the stale ones are listed (needs moonc)
+python3 scripts/mutation/exclusions.py check --allow-pending   # the same on a ticket branch before the separate context has made the adversarial attempts, listing the pending ones
+python3 scripts/mutation/exclusions.py review --base origin/main   # the entries this branch adds or changes, and those the maintainer reads (--seed <run ID of the packages run on the frozen tip> draws one in five)
 python3 scripts/check-e2e-helpers.py   # no e2e test file uses what another test file defines (needs moon and moonc)
 scripts/test-check-e2e-helpers.sh    # that check, on small modules (needs python3, moon and moonc)
 python3 scripts/mutation/run.py --root scripts/mutation/fixture --self-test-only calc log   # the mutation runner's self-test, on its fixture (needs git, moon and moonc)
 python3 scripts/mutation/ratchet.py write   # the site counts of each package, into mutation/site-counts/ (needs moonc)
 python3 scripts/mutation/ratchet.py check --base origin/main   # the site counts are the commit's, and no package's sites drop beyond what the change deletes or changes (needs git and moonc)
 ```
+
+To run one package's tests, name it with `-p`. The six protocol modules,
+`grpc`, `http1`, `protobuf`, `re2`, `xml` and `yaml`, are modules of their
+own in `moon.work`, so their packages are `smock/<name>`; every other
+package is `smock/smock/<directory>`:
+
+```sh
+moon test --target wasm-gc -p smock/grpc
+moon test --target native -p smock/smock/engine
+```
+
+A wrong package path runs no test and still exits with 0: moon only warns
+that the package is not found, and reports `Total tests: 0`. So
+`-p smock/smock/grpc` looks like a pass. Read the count of tests that the
+run reports.
 
 `scripts/test-helm-chart.sh` renders `charts/smock` for each delivery mode
 of the Definition files and each Admin API authentication and TLS option,
@@ -809,6 +825,16 @@ which appends one piece at a time. The harness writes a large file 1 MiB
 at a time. A check that must compute for longer, and needs no `smock`,
 goes in a package of its own, whose tests get a process of their own, as
 `schema` does.
+
+`server` runs its async tests one at a time instead
+(`max_concurrent_tests = 1` in its `moon.pkg`). Two of them check that the
+process's resident memory stays flat: the stopwatch's test and the test of
+stdout's lines. That memory counts what every test running beside them
+holds. The first certificate pair a process loads grows it by about 5 MiB,
+most of it OpenSSL's libraries read in, and a load that came between a
+test's two readings once made the stopwatch's test fail on CI
+([#427](https://github.com/hirunefu/smock/issues/427)). One at a time,
+`server`'s tests take about 7 s instead of about 3.
 
 A timing test that fails once in ten runs passes most single runs of CI.
 The e2e repeat workflow (`.github/workflows/e2e-repeat.yml`) runs the e2e
@@ -1355,13 +1381,30 @@ An equivalence claim reaches the maintainer in three steps:
    this before any test runs ([The compiler's
    output](#mutation-runner)).
 2. **Adversarial.** For each claim that remains, a separate agent context
-   tries to write a test that kills the mutant, from the spec.
+   tries to write a test that kills the mutant, from the spec. Who writes
+   what, and when:
+   - The context that proposes the entry writes it whole, with the
+     attempt still pending: its `adversarial` has a context that starts
+     with `pending`, and the tests it ran itself, as in
+     `adversarial = { context = "pending: a separate agent context, after <who proposed it>", tests = ["none yet; <its own check>"] }`.
+   - The separate context, one that did not propose the entry, then
+     replaces that with its own name and the tests it tried, which
+     passed, on the same ticket branch. A test that kills the mutant goes
+     in instead, and the entry goes.
+   - Nothing pending reaches the integration branch.
+     `exclusions.py check --allow-pending` passes a pending attempt on a
+     ticket branch until the separate context has run; CI's check runs
+     without it and fails on one, and a merger refuses a branch that
+     still holds one.
 3. **The maintainer.** What survives both goes to the maintainer: every
    entry in the protocol packages and in `serverparsers`, and one in five
-   of the others, as a sample. The maintainer draws the sample after the batch is frozen, so
-   that its author cannot know which entries will be read. If a sampled
-   entry is rejected, its author triages the whole batch again, and the
-   maintainer draws a new sample.
+   of the others, as a sample. The sample is drawn after the batch is
+   frozen, with a seed that no agent can know before: the run ID that
+   GitHub Actions gives the packages run of the bulk workflow on the
+   frozen tip. No one picks the seed, so the batch's author cannot know
+   which entries will be read. If a sampled entry is rejected, its author
+   triages the whole batch again, and a new sample is drawn with the ID
+   of the packages run on the batch's new frozen tip.
 
 The list is `exclusions.toml`, at the root, and
 `scripts/mutation/exclusions.py` reads it. Each entry is a table of the
@@ -1390,10 +1433,11 @@ reviewer = ""
   comparison found (`"differs"`, or `"not compared"` where the comparison
   cannot compare the mutant), and
   `adversarial = { context = "...", tests = ["..."] }`: the agent context
-  that made the attempt and the tests it tried, which passed. An
-  UNREACHABLE entry that is not a point at an abort adds `argument`, its
-  written argument. A DEFERRED entry adds `issue`, its issue's number.
-  UB-NATIVE is for a mutant only.
+  that made the attempt and the tests it tried, which passed, or a
+  context that starts with `pending` while the attempt is still to be
+  made (step 2 above). An UNREACHABLE entry that is not a point at an
+  abort adds `argument`, its written argument. A DEFERRED entry adds
+  `issue`, its issue's number. UB-NATIVE is for a mutant only.
 
 `python3 scripts/mutation/exclusions.py new <file>:<line>:<column>`, a
 point as the coverage report names it, or `new <mutant id>`, prints a new
@@ -1401,7 +1445,10 @@ entry's stanza with the definition's text, for the author to fill in.
 `python3 scripts/mutation/exclusions.py check`, in CI's job `checks`,
 fails an entry in another category, without what its category needs, with
 a field the list does not know, or a second entry for the same mutant or
-point; it lists the stale entries, and passes with them.
+point, and an EQUIVALENT entry whose adversarial attempt is still
+pending; it lists the stale entries, and passes with them.
+`check --allow-pending`, for a ticket branch before the separate context
+has run, passes the pending entries too and lists them.
 
 Both ledgers read the list. The coverage report and the coverage floors
 count only the uncovered points that no current entry other than
@@ -1419,9 +1466,12 @@ entry is triaged again.
 branch adds or changes against its merge base with `main`, the batch, and
 which of them the maintainer reads: every one in the protocol packages
 and in `serverparsers`, and one in five of the others. Once the batch is
-frozen (the branch's last push), the maintainer draws that sample with a
-seed of the maintainer's choosing: `review --seed <seed>`. The weakening
-report lists every entry whose reviewer changed.
+frozen (the branch's last push), a packages run of the bulk workflow
+(`-f mode=packages`, [Bulk runs on Actions](#bulk-runs-on-actions)) runs
+on the frozen tip, and its run ID is the seed of the sample:
+`review --seed <run ID>`. GitHub Actions gives that number only once the
+run starts, so no agent can know it before. The weakening report lists
+every entry whose reviewer changed.
 
 ### Rules for the work
 
@@ -1551,13 +1601,42 @@ report lists every entry whose reviewer changed.
 ### Snapshot audits
 
 When a package's turn comes to climb to L4, about ten of its snapshots
-are audited. They are drawn, with a seed the maintainer picks, among the
-tests that alone kill some mutant in a kill-matrix run of the package, at
-least half of them from tests that the work added. A separate agent
-context, one that wrote none of that package's tests under these rules,
-checks each against its source. The maintainer reads only the snapshots
-that this context finds in disagreement with their source, and each of
-those becomes an issue (a bug) or a corrected test.
+are audited. They are drawn among the tests that alone kill some mutant
+in a kill-matrix run of the package (`-f mode=matrix`,
+[Bulk runs on Actions](#bulk-runs-on-actions)), at least half of them
+from tests that the work added or changed. The seed of the draw is that
+kill-matrix run's ID, a number that GitHub Actions gives once the run
+starts, so no agent can know it before and no one picks it. A separate
+agent context, one that wrote none of that package's tests under these
+rules, checks each against its source. The maintainer reads only the
+snapshots that this context finds in disagreement with their source, and
+each of those becomes an issue (a bug) or a corrected test.
+
+`matrix.py draw` makes the draw from the run's matrices, in a checkout of
+the commit that the run ran on:
+
+```sh
+gh run download <run ID> --name mutation-report --dir mutation-report
+python3 scripts/mutation/matrix.py draw --seed <run ID> mutation-report/matrix/<package directory>.json...
+```
+
+- It draws among the tests that alone kill some mutant in the matrices
+  given ([The kill matrix](#the-kill-matrix)).
+- A test is the work's when its block, from the `///|` at or before its
+  line to the line before the next `///|`, holds a line that differs from
+  `d953f320`, the commit of `main` at which the test review began
+  (`--base` names another): a line that `git diff -U0 d953f320 HEAD` adds
+  or changes, or the line at which it deletes some.
+- It draws ten (`--size` names another number), or every one when there
+  are fewer. The tests are sorted by their names in the matrix.
+  `random.Random(<run ID>)`, with the ID as text, samples half of the
+  ten, rounded up, of the work's tests, or all of them when there are
+  fewer. The same generator then samples the rest of the ten from every
+  test not yet drawn. So the same matrices, run ID and base give the same
+  tests, in the same order.
+- It prints one JSON line per test, in the order of the draw: the test as
+  the matrix lists it, its file (`path`), whether it is the work's
+  (`work`), and the mutants it alone kills (`alone`).
 
 Step 1's tests close the gaps that the review found before it had any
 tooling. Every expected value they add is checked the same way: before
@@ -2326,6 +2405,7 @@ python3 scripts/mutation/matrix.py alone --none _build/mutation/out
 python3 scripts/mutation/matrix.py kills --without --test '<test>' _build/mutation/out
 python3 scripts/mutation/matrix.py kills --package smock/smock/usage _build/mutation/out
 python3 scripts/mutation/matrix.py kills --without --test '<test>' --layer in-process _build/mutation/out
+python3 scripts/mutation/matrix.py draw --seed <run ID> _build/mutation/out
 ```
 
 - `alone` lists the tests that alone kill some mutant, each with those
@@ -2339,6 +2419,8 @@ python3 scripts/mutation/matrix.py kills --without --test '<test>' --layer in-pr
   holds as killed survives unless a test of the set kills it. So, with one
   test left out, the mutants that only it killed show as survivors, as
   they do in a run without that test.
+- `draw` draws the tests of a snapshot audit, with the kill-matrix run's
+  ID as the seed: the rule is in [Snapshot audits](#snapshot-audits).
 
 The tests (`scripts/mutation/test_matrix.py`) run the mode on the
 fixture's package `units`, whose mutants the tests of `units`, `meter` and
@@ -2349,7 +2431,10 @@ makes one killing test flaky, or failing without the mutant, and the run
 leaves that test out of the matrix. One run leaves `meter`'s test out and
 gets the survivors that `kills --without` gives. The tool's other tests
 read a matrix written by hand, with an e2e test, a duplicate and a
-time-out.
+time-out. The draw's tests read two matrices written by hand against a
+small git workspace laid out as smock's, with a base commit and the work
+on top, and expect the draws that the script which drew the first three
+audits gave there.
 
 ### The canary
 

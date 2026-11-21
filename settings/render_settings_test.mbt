@@ -143,7 +143,9 @@ test "render: --seed takes 0 and 2^53 - 1, and refuses -1, 2^53 and a value that
   // docs/definition-files/templates.md, Rendering a template: --seed gives
   // what "a Stub with fault.seed: S" gets, and a Stub's seed is "from 0 to
   // 9007199254740991" (docs/definition-files/faults.md, Seeds). Without
-  // it, the rendering uses the Stub's seed or a fresh one.
+  // it, the rendering uses the Stub's seed or a fresh one. A value with
+  // leading zeros is the integer it writes (#426): 00000000000000007,
+  // seventeen characters, is 7.
   let seed = (settings : @settings.RenderSettings) => {
     match settings.seed {
       Some(seed) => seed.to_string()
@@ -158,6 +160,7 @@ test "render: --seed takes 0 and 2^53 - 1, and refuses -1, 2^53 and a value that
       render_shows(["--seed=-1"], seed),
       render_shows(["--seed=9007199254740992"], seed),
       render_shows(["--seed=0x2a"], seed),
+      render_shows(["--seed=00000000000000007"], seed),
     ].join("\n"),
     content=(
       #|none
@@ -166,6 +169,7 @@ test "render: --seed takes 0 and 2^53 - 1, and refuses -1, 2^53 and a value that
       #|invalid value "-1" for --seed: must be an integer from 0 to 9007199254740991
       #|invalid value "9007199254740992" for --seed: must be an integer from 0 to 9007199254740991
       #|invalid value "0x2a" for --seed: must be an integer from 0 to 9007199254740991
+      #|7
     ),
   )
 }
@@ -175,7 +179,9 @@ test "render: --response takes 0 and 99, and refuses -1, 100 and a value that is
   // docs/definition-files/templates.md, Rendering a template: --response
   // renders "the response at index i instead, from 0", and "a value that
   // is not an integer from 0 to 99 is refused before rendering: ... a usage
-  // error with status 2". Without it, the seed picks the response.
+  // error with status 2". Without it, the seed picks the response. A value
+  // with leading zeros is the integer it writes (#426): 007 is 7, and 0100
+  // is 100, which is refused.
   let response = (settings : @settings.RenderSettings) => {
     match settings.response_index {
       Some(index) => index.to_string()
@@ -190,6 +196,8 @@ test "render: --response takes 0 and 99, and refuses -1, 100 and a value that is
       render_shows(["--response=-1"], response),
       render_shows(["--response=100"], response),
       render_shows(["--response=x"], response),
+      render_shows(["--response=007"], response),
+      render_shows(["--response=0100"], response),
     ].join("\n"),
     content=(
       #|the seed's
@@ -198,6 +206,8 @@ test "render: --response takes 0 and 99, and refuses -1, 100 and a value that is
       #|invalid value "-1" for --response: must be an integer from 0 to 99
       #|invalid value "100" for --response: must be an integer from 0 to 99
       #|invalid value "x" for --response: must be an integer from 0 to 99
+      #|7
+      #|invalid value "0100" for --response: must be an integer from 0 to 99
     ),
   )
 }

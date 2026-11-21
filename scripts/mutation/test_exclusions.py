@@ -11,7 +11,9 @@ reviewer. The categories are EQUIVALENT, ARID, UNREACHABLE, FAULT,
 UB-NATIVE and DEFERRED; an entry in another category, or without what its
 category needs, fails the check: an EQUIVALENT entry records the
 comparison of the compiler's output and the adversarial attempt (the
-agent context that made it and the tests it tried, which passed);
+agent context that made it and the tests it tried, which passed), and
+fails while that attempt is still pending, unless a ticket branch asks
+the check to accept it before the separate context has run;
 UNREACHABLE holds an arm that an invariant guards with an abort, or
 carries a written argument; DEFERRED carries an issue number. An entry
 goes stale when the text of its definition changes.
@@ -201,6 +203,35 @@ class CategoriesTest(unittest.TestCase):
         self.fails("an EQUIVALENT entry should record the adversarial attempt",
                    filled(self.mutant, category='"EQUIVALENT"', reason='"Both read the same."',
                           compiler_output='"differs"', adversarial='{ context = "an agent", tests = [] }'))
+
+    def test_an_equivalent_entry_whose_attempt_is_still_pending_fails_unless_a_ticket_branch_allows_it(self):
+        # The context that proposes an entry writes a context that starts
+        # with "pending"; the separate context replaces it with what it
+        # tried, and nothing pending reaches the integration branch, whose
+        # CI runs the check without the option (#302, CONTRIBUTING.md,
+        # "Exclusions").
+        def equivalent(context):
+            return filled(self.mutant, category='"EQUIVALENT"', reason='"Both read the same."',
+                          compiler_output='"differs"',
+                          adversarial=f'{{ context = "{context}", tests = ["none yet; the author\'s own check"] }}')
+
+        for context in ("pending: a separate agent context, after the author", "Pending, after the author",
+                        " pending: after the author"):
+            self.fails("calc/calc.mbt,is_blank,NOT,!,,0: its adversarial attempt is still pending: the separate"
+                       " context replaces it with what it tried before the branch is merged (check --allow-pending"
+                       " passes it on a ticket branch until then)", equivalent(context))
+        self.tree.write(equivalent("pending: a separate agent context, after the author"))
+        result = self.tree.run("check", "--allow-pending")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("exclusions: pending: calc/calc.mbt,is_blank,NOT,!,,0 (EQUIVALENT): its adversarial attempt"
+                      " is still to be made", result.stdout)
+        self.assertIn("exclusions: 1 entries, none stale, 1 pending", result.stdout)
+        # A context that only names the word later made its attempt.
+        self.passes(equivalent("an agent that is no longer pending"))
+        # The option accepts a pending attempt, not one missing.
+        self.tree.write(filled(self.mutant, category='"EQUIVALENT"', reason='"Both read the same."',
+                               compiler_output='"differs"'))
+        self.assertEqual(self.tree.run("check", "--allow-pending").returncode, 1)
 
     def test_an_equivalent_entry_whose_outputs_are_the_same_fails(self):
         # The comparison marks such a mutant equivalent itself.
@@ -392,9 +423,10 @@ class ReviewTest(unittest.TestCase):
     """`review` lists the batch, the entries that a branch adds or changes
     against its merge base with main, and those the maintainer reads:
     every one in the protocol packages (http1, grpc, yaml, re2, xml and
-    protobuf) and in serverparsers, and one in five of the others, which
-    the maintainer draws with a seed after the batch is frozen (#302,
-    CONTRIBUTING.md, "Exclusions")."""
+    protobuf) and in serverparsers, and one in five of the others, drawn
+    once the batch is frozen with a seed that no agent can know before:
+    the run ID that GitHub Actions gives the packages run on the frozen
+    tip (#302, #275, CONTRIBUTING.md, "Exclusions")."""
 
     OTHERS = ["engine/a.mbt,a,INT,1,2,0", "engine/b.mbt,b,INT,1,2,0", "engine/c.mbt,c,INT,1,2,0",
               "engine/d.mbt,d,INT,1,2,0", "engine/e.mbt,e,INT,1,2,0", "protobuf-conformance/f.mbt,f,INT,1,2,0"]
@@ -454,8 +486,8 @@ class ReviewTest(unittest.TestCase):
     def test_without_a_seed_it_says_how_many_of_the_others_the_maintainer_draws(self):
         # The changed entry and the six others: one in five of seven is 2.
         text = self.review()
-        self.assertIn("One in five of the other 7: 2, which the maintainer draws once the batch is frozen,"
-                      " with `review --seed <seed>`.", text)
+        self.assertIn("One in five of the other 7: 2, drawn once the batch is frozen, with `review --seed <run ID>`:"
+                      " the ID of the packages run on the frozen tip, which no agent can know before.", text)
         self.assertNotIn("log/l.mbt,reviewed", text)
 
     def test_with_a_seed_it_draws_one_in_five_of_the_others(self):

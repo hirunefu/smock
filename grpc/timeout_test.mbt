@@ -37,6 +37,10 @@ test "a timeout is 1 to 8 digits and a unit, read as nanoseconds" {
 
 ///|
 test "eight digits of every unit are read without wrapping, and eight digits of hours saturate" {
+  // grpc/README.mbt.md, Timeouts: "Eight digits of hours are more
+  // nanoseconds than an `Int64` holds, so they saturate at
+  // `0x7FFF_FFFF_FFFF_FFFF` rather than wrap." The maintainer confirmed
+  // that value on 2026-11-21 (#327).
   let values = [
     "99999999H", "99999999M", "99999999S", "99999999m", "99999999u", "99999999n",
   ]
@@ -85,6 +89,10 @@ fn read_ms(value : String) -> String {
 
 ///|
 test "a timeout in milliseconds is rounded up, so that a timeout above 0 is never 0 ms" {
+  // grpc/README.mbt.md, Timeouts: "`@grpc.timeout_ms(value)` gives the same
+  // timeout in whole milliseconds, rounded up, so that a timeout above 0 is
+  // never 0 ms." The maintainer confirmed that rounding on 2026-11-21
+  // (#327): `1n` is 1 ms.
   let values = [
     "250m", "5S", "1M", "1H", "1n", "1u", "999999n", "1000000n", "1000001n", "1500u",
     "0m", "0n", "0H",
@@ -111,6 +119,10 @@ test "a timeout in milliseconds is rounded up, so that a timeout above 0 is neve
 
 ///|
 test "eight digits of every unit convert to milliseconds without wrapping, and eight digits of hours from their saturated nanoseconds" {
+  // Eight digits of hours give 0x7FFF_FFFF_FFFF_FFFF ns rounded up to whole
+  // milliseconds, 9,223,372,036,855 ms (grpc/README.mbt.md, Timeouts). The
+  // maintainer confirmed both that value and the rounding up on 2026-11-21
+  // (#327).
   let values = [
     "99999999H", "99999999M", "99999999S", "99999999m", "99999999u", "99999999n",
   ]
