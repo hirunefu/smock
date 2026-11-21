@@ -243,6 +243,20 @@ test "a chunked body gets 413 as soon as a chunk size takes it past the body lim
       #|invalid 413
     ),
   )
+  // The same near the top of what the body limit, an Int32, holds: at a
+  // limit of 2^31 - 2 bytes, a chunk size of eight hexadecimal digits equal
+  // to the limit (RFC 9112, section 7.1: chunk-size = 1*HEXDIG) is read
+  // exactly, and the parser waits for its data; one more gets 413.
+  inspect(
+    [
+      limited(@http1.Parser(body_limit=2147483646), chunked + "7ffffffe\r\n"),
+      limited(@http1.Parser(body_limit=2147483646), chunked + "7fffffff\r\n"),
+    ].join("\n"),
+    content=(
+      #|need more
+      #|invalid 413
+    ),
+  )
 }
 
 ///|
