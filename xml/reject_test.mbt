@@ -1,3 +1,15 @@
+// What `@xml.parse` refuses, and at which byte, through the module's
+// public interface. The conditions it refuses come from XML 1.0,
+// Namespaces in XML 1.0, RFC 3629 and the README's Documents. No
+// document words five of the messages: "expected version in the XML
+// declaration", "XML version <v> is not supported", "U+0000 is not a
+// character XML allows", "the input is not UTF-8" and "attribute <name>
+// is repeated". Those words are the code's, and the maintainer, who
+// confirmed on 2026-11-21 that they stay as they are (#325), is their
+// source. What each of them reports keeps the source its test cites:
+// XML 1.0 §2.8 [24] and [26], §2.2 [2], RFC 3629, and §3.1,
+// WFC: Unique Att Spec.
+
 ///|
 /// Parses `input` and shows the error, or `parsed`.
 fn error_of(input : Bytes) -> String {
