@@ -653,6 +653,29 @@ test "chunk extensions and trailer fields are accepted and ignored" {
       #|
     ),
   )
+  // White space may repeat around an extension: `chunk-ext = *( BWS ";"
+  // BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )` (RFC 9112, section
+  // 7.1.1), where BWS is `*( SP / HTAB )` (RFC 9110, section 5.6.3). So
+  // several spaces and tabs may come before an extension's `;` and after
+  // its name, and a name without a value may be followed by white space and
+  // the `;` of the next extension. A recipient ignores the extensions (RFC
+  // 9112, section 7.1.1), so the body is the chunks' data.
+  inspect(
+    parse_all([
+      "POST /a HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n" +
+      "5 \t ;name\r\nhello\r\n" +
+      "1;a \t =b\r\n,\r\n" +
+      "6;c\t ;d\r\n world\r\n" +
+      "0\t\t;last\r\n\r\n" +
+      "GET /b HTTP/1.1\r\nHost: a\r\n\r\n",
+    ]),
+    content=(
+      #|POST /a HTTP/1.1 | Host: a | Transfer-Encoding: chunked | body="hello, world" | keep-alive
+      #|GET /b HTTP/1.1 | Host: a | body="" | keep-alive
+      #|need more
+      #|
+    ),
+  )
 }
 
 ///|
