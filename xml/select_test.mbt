@@ -220,6 +220,18 @@ test "the five predefined entities and character references are decoded" {
       #|["<&>'\" AB"]
     ),
   )
+  // A hexadecimal reference's letters are in either case (XML 1.0 §4.1 [66]
+  // CharRef: '&#x' [0-9a-fA-F]+ ';'): the first and the last letter, a and
+  // f, in both. &#xfa; and &#xFA; are U+00FA, ú.
+  debug_inspect(
+    [
+      values("<a>&#xfa;&#xFA;&#x1f600;</a>", "/a"),
+      values("<a v='&#xfa;&#xFA;'/>", "/a/@v"),
+    ],
+    content=(
+      #|[["úú😀"], ["úú"]]
+    ),
+  )
 }
 
 ///|
