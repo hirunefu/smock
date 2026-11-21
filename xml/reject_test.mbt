@@ -340,6 +340,19 @@ test "an XML declaration must come first, and be well-formed" {
       #|<?xml  => position 6: expected version in the XML declaration
     ),
   )
+  // A version is `1.` and one or more digits (§2.8 [26]): the characters
+  // just before `0` and just after `9`, and a letter after a digit, make
+  // none, and the error is where `2.0` and `1.` have it above.
+  inspect(
+    errors([
+      "<?xml version='1./'?><a/>", "<?xml version='1.:'?><a/>", "<?xml version='1.0a'?><a/>",
+    ]),
+    content=(
+      #|<?xml version='1./'?><a/> => position 15: XML version 1./ is not supported
+      #|<?xml version='1.:'?><a/> => position 15: XML version 1.: is not supported
+      #|<?xml version='1.0a'?><a/> => position 15: XML version 1.0a is not supported
+    ),
+  )
   // Cut off right after `<?xml`, at the start or after a byte order mark,
   // the input holds no declaration, which needs whitespace and a version
   // there (§2.8 [23], [24]), and no root element (§2.1 [1]); parsing

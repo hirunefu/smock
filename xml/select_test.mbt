@@ -219,6 +219,16 @@ test "an XML declaration may name UTF-8, and a byte order mark may come first" {
       #|[["1"], ["2"], ["3"], ["4"], ["5"]]
     ),
   )
+  // Any version 1.x is read as 1.0 (XML 1.0 §2.8: VersionNum ::= '1.'
+  // [0-9]+): the last digit, and more than one.
+  debug_inspect(
+    ["<?xml version='1.9'?><a>6</a>", "<?xml version='1.10'?><a>7</a>"].map(xml => {
+      values(xml, "/a")
+    }),
+    content=(
+      #|[["6"], ["7"]]
+    ),
+  )
 }
 
 ///|
