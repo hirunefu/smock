@@ -1181,6 +1181,24 @@ class ConfirmationTest(unittest.TestCase):
         self.assertEqual(flaked, {"suites": {"mutation/fixture/calc": 3}, "tests": []})
         self.assertEqual(summary["flakes"]["flaked"], [])
 
+    def test_a_kill_whose_run_again_fails_without_naming_a_test_is_confirmed(self):
+        # The second weekly run's `engine/store.mbt,SessionStore::remove_where,
+        # AOR,+=,-=,4`: killed by two tests in 1.381 s, then its run again
+        # ended after 0.64 s naming no test. Here the test program of the
+        # run again stops with an exit status of 1, as an abort outside a
+        # test does on wasm-gc.
+        out, records, package, summary = self.run_scripted(
+            ["real", "real", "real", "real", {"crash": "exit status: 1"}],
+            "--mutant", "calc/calc.mbt,in_range,ROR,<=,<,0")
+        [record] = records
+        self.assertEqual((record["outcome"], record["confirmation"]), ("killed", "confirmed"))
+        self.assertEqual([t["name"] for t in record["killing_tests"]], [LOW[3]])
+        self.assertEqual(record["ended"]["again"], {"exit_status": 255, "timed_out": False, "failed_tests": 0})
+        self.assertEqual((package["killed"], package["unconfirmed"]), (1, 0))
+        flaked = json.loads((out / "flakes.json").read_text())["runs"][-1]
+        self.assertEqual(flaked, {"suites": {"mutation/fixture/calc": 3}, "tests": []})
+        self.assertEqual(summary["flakes"]["flaked"], [])
+
     def test_a_kill_whose_tests_fail_without_the_mutant_is_not_counted(self):
         # `low < n` is killed by LOW, which then fails without it too.
         out, records, package, _ = self.run_scripted(["real", "real", "real", "real", "real", {"fail": [LOW]}],

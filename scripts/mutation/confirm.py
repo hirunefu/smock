@@ -206,9 +206,10 @@ class Judge:
         failed = self.failed_tests(output)
         runs["again"] = ended(status, timed_out, failed)
         if record["outcome"] == "killed":
-            if timed_out:
-                # A run again that the limit stopped did not pass: it
-                # repeats the kill, and no test is flaky by it.
+            if timed_out or status != 0 and not failed:
+                # A run again that the limit stopped, or that failed
+                # without naming a test, did not pass: it repeats the kill,
+                # and no test is flaky by it.
                 repeated = credited
             else:
                 again = {key(t) for t in failed}
