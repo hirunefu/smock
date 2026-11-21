@@ -15,6 +15,30 @@ fn path_errors(paths : Array[String]) -> String {
 }
 
 ///|
+/// For each pair of paths, shows `path fails as other does` when both fail
+/// to compile with the same error, at the same position, and otherwise
+/// what each gives, as `path_errors` shows it.
+fn same_errors(pairs : Array[(String, String)]) -> String {
+  pairs
+  .map(pair => {
+    let (path, other) = pair
+    let error_of = path => {
+      try @xml.compile_path(path) catch {
+        error => Some(error)
+      } noraise {
+        _ => None
+      }
+    }
+    match (error_of(path), error_of(other)) {
+      (Some(error), Some(other_error)) if error == other_error =>
+        "\{path} fails as \{other} does"
+      _ => "\{path_errors([path])}, but \{path_errors([other])}"
+    }
+  })
+  .join("\n")
+}
+
+///|
 test "a path is / and element names separated by /, optionally ending in /@name" {
   inspect(
     path_errors([
@@ -55,6 +79,30 @@ test "XPath beyond child steps and a final attribute is a compile error" {
       #|/child::a => position 1: axis child:: is not supported in smock's XML paths
       #|/a/attribute::b => position 3: axis attribute:: is not supported in smock's XML paths
       #|/a | /b => position 2: expected / or the end of the path
+    ),
+  )
+  // Almost-matches beside matches: each fails as the form above that
+  // writes the same step or axis does. The README's compile errors name
+  // `.` and `..`, and axes (`child::`), apart from a prefix
+  // (`/soap:Envelope`). In XPath 1.0, `.` and `..` are two location steps
+  // (2.5, [12] AbbreviatedStep), each followed by further steps in its
+  // examples (`.//para`, `../title`), so a `.` before a `/` is still the
+  // step `.`. An axis is its name and `::` (2.1, [5] AxisSpecifier),
+  // whatever follows it, while a prefix is a name and one `:` before a
+  // local name, an NCName, which holds no `:` (Namespaces in XML 1.0,
+  // [4] NCName, [8] PrefixedName, [11] LocalPart).
+  inspect(
+    same_errors([
+      ("/a/./b", "/a/."),
+      ("/a/../b", "/a/.."),
+      ("/child::", "/child::a"),
+      ("/a/attribute::", "/a/attribute::b"),
+    ]),
+    content=(
+      #|/a/./b fails as /a/. does
+      #|/a/../b fails as /a/.. does
+      #|/child:: fails as /child::a does
+      #|/a/attribute:: fails as /a/attribute::b does
     ),
   )
 }
