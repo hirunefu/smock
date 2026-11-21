@@ -26,9 +26,13 @@ counts only when the tests that failed fail again with the mutant on and
 pass with it off, and a time-out only when it happens again and the run
 without the mutant finishes within the limit; a test that failed without
 a mutant in this run, or whose flake rate is above the flake threshold of
-mutation/flakes.toml, gives no kill credit. A fake moon answers the runs
-of tests from a script, so that a flaky failure and a time-out that does
-not repeat happen every time.
+mutation/flakes.toml, gives no kill credit. A run that the time limit
+stops, or that fails without naming a test, did not pass and names no
+test: run again, it repeats the kill, and when the first run ended so,
+the run again decides (#431, the maintainer's twentieth round, point 3).
+A fake moon answers the runs of tests from a script, so that a flaky
+failure, a time-out that does not repeat and a test program that stops
+happen every time.
 
 In the fixture's package same, each mutant of the pinned set has a known
 outcome and a known result of the comparison of the compiler's output,

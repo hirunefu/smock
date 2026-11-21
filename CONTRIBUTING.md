@@ -1309,12 +1309,23 @@ version.
   listed with the reason.
 - **Unviable**: the mutant does not compile. It counts neither as killed
   nor as survived.
-- **Survived**: every test passes.
+- **Survived**: every test passes: in the first run, or, when that run
+  names no test and does not pass, in the run again (kill confirmation,
+  below).
 
 **Kill confirmation.** A kill counts only when the failing tests fail
-again with the mutant on and pass with it off. A time-out counts only
-when the mutant times out again and the run without it finishes within
-the limit; otherwise it is recorded as unconfirmed. The baseline runs
+again with the mutant on and pass with it off; when they pass in the run
+again, or fail without the mutant too, the kill is recorded as
+unconfirmed. A run that the time limit stops, or that fails without
+naming a test (the test program stopped before its end), did not pass,
+but names no test (#431). Such a run again repeats the kill, and no test
+is counted as flaky by it. When the first run was such a run, the run
+again decides: if it passes, the mutant survived, and is unexplained
+until a test kills it or an entry covers it; if it does not, the mutant
+is killed, by the tests the run again names. A time-out counts only when
+the limit stopped both runs. The run without the mutant must finish
+within the limit and name the tests that fail, or pass; otherwise the
+kill or the time-out is unconfirmed. The baseline runs
 twice before any mutant, and a test that fails in either run gives no
 kill credit in that run. The runner records each test's flake rate, and a
 test above the flake threshold, which the maintainer sets, gives no kill
@@ -1865,21 +1876,46 @@ runs the binary of an earlier build, and it never passes `-u`.
 
 **Confirmation.** A kill and a time-out are each checked once more, as
 [Outcomes and kill credit](#outcomes-and-kill-credit) asks, by
-`scripts/mutation/confirm.py`. For a kill, the runner runs the tests
-again with the mutant on, then without it; the kill counts only if some
-of the tests that failed fail again and pass without the mutant, and the
-record then names those tests alone. For a time-out, the mutant must time
-out again, and the run without it must finish within the limit. A kill or
-a time-out that is not borne out is **unconfirmed**, and its record says
-why. Each run is the whole `moon test` of the package, as the first was,
-so properties run with their committed seeds every time; the runner sets
-no seed. A test whose failures all give no kill credit makes no kill: the
-mutant survives, and its record names those tests.
+`scripts/mutation/confirm.py`. The runner runs the tests again with the
+mutant on, then without it. A kill counts only if some of the tests that
+failed fail again and pass without the mutant, and the record then names
+those tests alone; a time-out only if the mutant times out again and the
+run without it finishes within the limit. A kill or a time-out that is
+not borne out is **unconfirmed**, and its record says why. But a run
+that the limit stops, or that fails without naming a test, did not pass,
+and names no test (#431, the maintainer's twentieth round):
+
+- a run again that ends so repeats the kill: the tests that failed in
+  the first run kill the mutant if they pass without it, and no test is
+  counted as flaky by it;
+- when the first run ended so, the run again decides: one that passes,
+  or in which only tests that give no kill credit fail, makes the mutant
+  a survivor, which its importers' tests then run as any survivor's do;
+  one that fails makes it killed, by the tests it names that pass
+  without the mutant, or by none when it names none;
+- the outcome is **timed out** only when the limit stopped both runs:
+  where one of them failed within the limit, the mutant is killed;
+- a run without the mutant that ends so shows neither that the tests
+  pass without it nor that they finish in time: the kill or the time-out
+  is unconfirmed.
+
+So only a run again that finishes with the tests that failed now passing
+makes a kill unconfirmed and counts those tests as flaky, whether the
+package's own tests or its importers' ran. Each run is the whole
+`moon test` of the package, as the first was, so properties run with
+their committed seeds every time; the runner sets no seed. Each record
+keeps how each of its runs ended (`ended`): the exit status, whether the
+limit stopped it, and how many failed tests it named. A test whose
+failures all give no kill credit makes no kill: the mutant survives, and
+its record names those tests.
 
 **Flake rates.** The runner counts each test's flaky results: a failure
 without a mutant, in the two runs before any mutant or in the run that
-confirms a kill, and a pass when a kill runs again with the mutant on.
-Every test of a package runs whenever its package's tests run without a
+confirms a kill, and a pass when a kill runs again with the mutant on. A
+run again that the limit stops, or that fails without naming a test, is
+no pass and no run of any test, nor is a run without the mutant that
+ends so a run of the package's tests. Every test of a package runs
+whenever its package's tests run without a
 mutant, so a run's record counts those runs per package, and per test its
 flaky results and its runs again with a mutant on. A test's flake rate is
 its flaky results over its runs, across the latest runs that
@@ -1929,7 +1965,9 @@ Each mutant's outcome, after both runs, is one of:
   with the reason and the mutant's diff;
 - **unviable**: the mutant does not build. It counts neither as killed
   nor as survived;
-- **survived**: every test that gives kill credit passed.
+- **survived**: every test that gives kill credit passed: in the first
+  run, or, when the limit stopped that run or it failed without naming a
+  test, in the run again (Confirmation, above).
 
 A mutant that the compiler's output shows **equivalent**, or a
 **duplicate** of another, has that outcome instead, and runs no tests
@@ -1938,7 +1976,9 @@ A mutant that the compiler's output shows **equivalent**, or a
 It writes into `_build/mutation/out/`: `mutants.jsonl`, one record per
 mutant with its site, the set that ran, its outcome, the tests that
 killed it, the importers whose tests ran it again, how its confirmation
-went, the backend and the timings; `summary.json`, the operator set's
+went, the backend, the timings, and how each run ended (`ended`: its
+run, its run again and its run without the mutant, and its importers'
+runs under `importers`); `summary.json`, the operator set's
 version and the set, the flake threshold with the tests above it and the
 tests with a flaky result in this run, and per package the counts of
 sites and positions in both sets, the sites each rule skipped, the counts
@@ -1949,9 +1989,11 @@ those on wasm-gc and those left out, the survivors their tests ran again
 and how many the tests of each importer killed, and, when BODY mutants
 ran, the **pseudo-tested functions**: those whose BODY mutant survived,
 each with its status after the exclusion list; `report.md`, the same
-counts, the time-outs, the unconfirmed mutants, the pseudo-tested
-functions, each survivor's diff with
-its whole enclosing definition, and the flaky tests, which the runner
+counts, the time-outs, the kills confirmed by a run again that ended
+otherwise than their run, the unconfirmed mutants, the pseudo-tested
+functions, each survivor's diff with its whole enclosing definition
+(and, for one whose run named no test and passed when run again, why
+that was no kill), and the flaky tests, which the runner
 also prints; and `flakes.json`, the flake records. A run of the full set counts
 the mutants at the pinned alternatives and at the other alternatives
 apart, and lists their survivors apart: L4 reads only the former.

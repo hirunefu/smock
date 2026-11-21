@@ -95,9 +95,13 @@ runs the binary of an earlier one, and it never passes -u.
 It confirms each kill and time-out (scripts/mutation/confirm.py): a kill
 counts only if some of the tests that failed fail again with the mutant
 on and pass with it off, and a time-out only if it happens again and the
-run without the mutant finishes within the limit. Nor does a test whose
-flake rate, in the flake records of earlier runs that --flakes names, is
-above the flake threshold of mutation/flakes.toml give kill credit.
+run without the mutant finishes within the limit. A run that the limit
+stops, or that fails without naming a test, did not pass but names no
+test: run again, it repeats the kill; when the first run ended so, the
+run again decides, and a mutant whose run again passes survived. Nor
+does a test whose flake rate, in the flake records of earlier runs that
+--flakes names, is above the flake threshold of mutation/flakes.toml
+give kill credit.
 
 Each mutant that survives the package's own tests runs again, the same
 way, with the tests of the package's importers that build on wasm-gc:
@@ -117,7 +121,9 @@ outcome, after both runs, is
                with the reason;
   unviable     the mutant does not build; outside the counts of killed
                and survived;
-  survived     every test that gives kill credit passed.
+  survived     every test that gives kill credit passed, in the first
+               run or, when that one named no test and did not pass, in
+               the run again.
 
 With --matrix, the kill-matrix mode (matrix.py), each mutant runs once
 with the tests of the package and of its importers that build on wasm-gc
@@ -168,10 +174,16 @@ It writes into <out> (<work>/out unless it is given):
                  (build_s, run_s and the run's limit_s, and the same of
                  the importers' run under "importers", and those of the
                  runs that confirm a kill or a time-out: again_s and
-                 without_s), how its confirmation went ("confirmation";
-                 for an unconfirmed one, its first outcome and the tests
-                 that failed then), the tests that failed but give no kill
-                 credit, the compiler's message for an unviable one, the
+                 without_s), how each of those runs ended ("ended": run,
+                 again and without, each with its exit status, whether
+                 the time limit stopped it and how many failed tests it
+                 named, and the importers' runs under "importers"), how
+                 its confirmation went ("confirmation"; for an
+                 unconfirmed one, its first outcome and the tests that
+                 failed then, and for a survivor whose run named no test
+                 and passed when run again, its first outcome), the
+                 tests that failed but give no kill credit, the
+                 compiler's message for an unviable one, the
                  diff of a survivor or of an unconfirmed one, and a
                  survivor's status after the exclusion list (exclusion,
                  below);
@@ -207,7 +219,9 @@ It writes into <out> (<work>/out unless it is given):
                  the counts with the package's own tests alone, its
                  importers and what their tests killed, the sites each
                  rule skipped, the tests that failed without a mutant,
-                 the time-outs, the unconfirmed mutants, the survivors
+                 the time-outs, the kills confirmed by a run again that
+                 ended otherwise than their run, the unconfirmed
+                 mutants, the survivors
                  after the exclusion list, the pseudo-tested functions,
                  and each survivor's status and
                  diff with its whole enclosing definition, the unexplained

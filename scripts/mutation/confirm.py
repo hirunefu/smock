@@ -8,10 +8,16 @@ A kill counts only when the tests that failed fail again with the mutant
 on and pass with it off. A time-out counts only when the mutant times out
 again and the run without it finishes within the limit. Otherwise the
 mutant is unconfirmed: it counts neither as killed nor as survived, and
-the record says why. The tests without a mutant run twice before any
-mutant, and a test that fails in either run gives no kill credit in that
-run. Nor does a test whose flake rate, over the latest runs whose flake
-records the runner reads, is above the flake threshold.
+the record says why. But a run that the time limit stops, or that fails
+without naming a test, did not pass, and names no test (#431): run
+again, it repeats the kill, and no test is flaky by it; when the first
+run ended so, the run again decides, and a mutant whose run again passes
+survived; and a run without the mutant that ends so confirms nothing.
+Each record keeps how each run ended ("ended"). The tests without a
+mutant run twice before any mutant, and a test that fails in either run
+gives no kill credit in that run. Nor does a test whose flake rate, over
+the latest runs whose flake records the runner reads, is above the flake
+threshold.
 
 A test's flake rate is the share of its runs that gave a flaky result: a
 failure without a mutant, in a run without a mutant or in the run without
