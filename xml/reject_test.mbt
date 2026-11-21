@@ -150,6 +150,46 @@ test "a character reference to a character XML does not allow is rejected" {
       #|<a v='&#x1F;'/> => position 6: &#x1F; is not a character XML allows
     ),
   )
+  // The ends of Char's ranges as hexadecimal references (XML 1.0 §2.2 [2]:
+  // #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]),
+  // their letters in lower case and in upper case, as §4.1 [66] allows both
+  // ('&#x' [0-9a-fA-F]+ ';'): each is a character XML allows, and the code
+  // points just outside the ranges are not (WFC: Legal Character). Python's
+  // expat 2.10.0 accepts and refuses the same references.
+  inspect(
+    errors([
+      "<a>&#x9;</a>", "<a>&#xa;</a>", "<a>&#xA;</a>", "<a>&#xd;</a>", "<a>&#xD;</a>",
+      "<a>&#x20;</a>", "<a>&#xd7ff;</a>", "<a>&#xD7FF;</a>", "<a>&#xe000;</a>", "<a>&#xE000;</a>",
+      "<a>&#xfffd;</a>", "<a>&#xFFFD;</a>", "<a>&#x10000;</a>", "<a>&#x10ffff;</a>",
+      "<a>&#x10FFFF;</a>", "<a>&#xb;</a>", "<a>&#xC;</a>", "<a>&#xe;</a>", "<a>&#x1f;</a>",
+      "<a>&#xd800;</a>", "<a>&#xdfff;</a>", "<a>&#xfffe;</a>", "<a>&#xffff;</a>",
+    ]),
+    content=(
+      #|<a>&#x9;</a> => parsed
+      #|<a>&#xa;</a> => parsed
+      #|<a>&#xA;</a> => parsed
+      #|<a>&#xd;</a> => parsed
+      #|<a>&#xD;</a> => parsed
+      #|<a>&#x20;</a> => parsed
+      #|<a>&#xd7ff;</a> => parsed
+      #|<a>&#xD7FF;</a> => parsed
+      #|<a>&#xe000;</a> => parsed
+      #|<a>&#xE000;</a> => parsed
+      #|<a>&#xfffd;</a> => parsed
+      #|<a>&#xFFFD;</a> => parsed
+      #|<a>&#x10000;</a> => parsed
+      #|<a>&#x10ffff;</a> => parsed
+      #|<a>&#x10FFFF;</a> => parsed
+      #|<a>&#xb;</a> => position 3: &#xb; is not a character XML allows
+      #|<a>&#xC;</a> => position 3: &#xC; is not a character XML allows
+      #|<a>&#xe;</a> => position 3: &#xe; is not a character XML allows
+      #|<a>&#x1f;</a> => position 3: &#x1f; is not a character XML allows
+      #|<a>&#xd800;</a> => position 3: &#xd800; is not a character XML allows
+      #|<a>&#xdfff;</a> => position 3: &#xdfff; is not a character XML allows
+      #|<a>&#xfffe;</a> => position 3: &#xfffe; is not a character XML allows
+      #|<a>&#xffff;</a> => position 3: &#xffff; is not a character XML allows
+    ),
+  )
 }
 
 ///|
