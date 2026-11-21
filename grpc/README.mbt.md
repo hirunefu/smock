@@ -104,10 +104,11 @@ microseconds or `n` nanoseconds.
 `@grpc.timeout_ns(value)` reads that value as nanoseconds, or gives `None`
 when it is malformed. A timeout of 0 is read, in any unit. Eight digits of
 hours are more nanoseconds than an `Int64` holds, so they saturate at
-`0x7FFF_FFFF_FFFF_FFFF` rather than wrap. PROTOCOL-HTTP2 gives only the
-value's form, so that saturated value, 9,223,372,036,855 ms in whole
-milliseconds, is the module's own: the maintainer confirmed it on
-2026-11-21 (#327).
+`0x7FFF_FFFF_FFFF_FFFF` rather than wrap: 2,562,047 hours is the most that
+is read exactly, and 2,562,048 hours and more saturate. PROTOCOL-HTTP2
+gives only the value's form, so that saturated value,
+9,223,372,036,855 ms in whole milliseconds, is the module's own: the
+maintainer confirmed it on 2026-11-21 (#327).
 
 ```mbt check
 ///|

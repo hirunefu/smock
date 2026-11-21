@@ -129,6 +129,27 @@ test "a final @name step selects that attribute of each selected element" {
       #|["", "", ""]
     ),
   )
+  // White space may come before the `/>` that ends an empty-element tag
+  // (XML 1.0 §3.1 [44]: EmptyElemTag ::= '<' Name (S Attribute)* S? '/>';
+  // [3]: S is spaces, tabs, line feeds and carriage returns), also when
+  // the tag is the root element's and ends the document: its first
+  // attribute and a later one are selected as anywhere else, and a name it
+  // lacks selects none (the README's "Paths").
+  debug_inspect(
+    [
+      ("<a x='1' />", "/a/@x"),
+      ("<a x='1'\t/>", "/a/@x"),
+      ("<a x='1'\n/>", "/a/@x"),
+      ("<a x='1'\r\n/>", "/a/@x"),
+      ("<a x='1' y='2' />", "/a/@x"),
+      ("<a x='1' y='2' />", "/a/@y"),
+      ("<a x='1' />", "/a/@y"),
+      ("<a />", "/a/@x"),
+    ].map(pair => values(pair.0, pair.1)),
+    content=(
+      #|[["1"], ["1"], ["1"], ["1"], ["1"], ["2"], [], []]
+    ),
+  )
 }
 
 ///|

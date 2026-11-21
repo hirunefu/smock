@@ -195,8 +195,9 @@ test "import-openapi: --hosts lists Hosts a Definition file can declare, none th
   // compares Hosts (in lower case, without the port and a trailing dot), is
   // a usage error", and with --declare-mock off, "--hosts is refused".
   // --hosts is "None by default" (docs/commands.md), and `--hosts ""` means
-  // no Hosts for a declared Mock (`ImportOpenapiSettings::from_matches`'s
-  // helper, `hosts_value`, documents it). The reason a Host cannot be
+  // no Hosts for a declared Mock (docs/importing-openapi.md, the arguments,
+  // and docs/commands.md: "With --declare-mock on, an empty --hosts ""
+  // gives none too, as leaving it out does"). The reason a Host cannot be
   // declared is the definitions package's, which its own tests assert.
   let hosts = (settings : @settings.ImportOpenapiSettings) => {
     "[\{settings.hosts.join(",")}]"
