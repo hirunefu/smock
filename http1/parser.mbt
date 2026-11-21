@@ -200,11 +200,7 @@ pub fn Parser::Parser(
 pub fn Parser::feed(self : Parser, data : BytesView) -> Unit {
   let used = self.end - self.start
   if self.buf.length() - self.end < data.length() {
-    let needed = used + data.length()
-    let mut capacity = self.buf.length()
-    while capacity < needed {
-      capacity = if capacity >= 0x40000000 { needed } else { capacity * 2 }
-    }
+    let capacity = grown_capacity(self.buf.length(), used + data.length())
     let target = if capacity == self.buf.length() {
       self.buf
     } else {
@@ -217,6 +213,28 @@ pub fn Parser::feed(self : Parser, data : BytesView) -> Unit {
   }
   self.buf.blit_from_bytesview(self.end, data)
   self.end += data.length()
+}
+
+///|
+/// The length of the buffer in which `Parser::feed` holds `needed` bytes,
+/// when its buffer has `capacity` bytes, a positive number. The length
+/// gives the bytes room: it is at least `needed`, for any `needed` up to
+/// the largest Int32, and it never passes what an Int32 holds.
+///
+/// - A buffer that holds the bytes keeps its length, so that `feed` moves
+///   them within the array it has.
+/// - While it is below 2^30 bytes, a buffer that does not hold them
+///   doubles, so that a request fed in many small pieces is copied a few
+///   times, not once a piece. Twice a length below 2^30 is at most
+///   2^31 - 2, which an Int32 holds.
+/// - Once it is 2^30 bytes or more, which doubling would take past the
+///   largest Int32, a buffer that does not hold them grows to `needed`.
+fn grown_capacity(capacity : Int32, needed : Int32) -> Int32 {
+  let mut capacity = capacity
+  while capacity < needed {
+    capacity = if capacity >= 0x40000000 { needed } else { capacity * 2 }
+  }
+  capacity
 }
 
 ///|
