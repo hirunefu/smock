@@ -85,6 +85,13 @@ test "--template-env lists names separated by commas, on serve, check and render
 
 ///|
 test "a name that is not letters, digits and _ starting with a letter or _, or that starts with SMOCK_, is a usage error" {
+  // docs/definition-files/templates.md, Environment variables: names are
+  // "separated by commas"; "A listed name is ASCII letters, digits and _,
+  // starting with a letter or _. A name that starts with SMOCK_ cannot be
+  // listed ... Either mistake is a usage error"; and smock check and smock
+  // render "take the same flag and environment variable". The words of the
+  // two reasons are the code's, which the maintainer decided on 2026-11-18
+  // to keep as they are (#320).
   inspect(
     [
       listed("serve", ["--template-env", "1REGION"]),
