@@ -167,6 +167,18 @@ test "value_is compares characters outside the BMP" {
     ],
     content="[[false], [false]]",
   )
+  // Nor is a text that ends half way through a surrogate pair, such as the
+  // high surrogate of U+1F600 alone, which a string may hold: the value
+  // U+1F600 is the whole pair, D83D DE00 (RFC 2781 §2.1).
+  let half = StringBuilder()
+  half.write_char("😀".code_unit_at(0).to_int().unsafe_to_char())
+  debug_inspect(
+    [
+      values_are("<a>😀</a>", "/a", half.to_string()),
+      values_are("<a v='😀'/>", "/a/@v", half.to_string()),
+    ],
+    content="[[false], [false]]",
+  )
 }
 
 ///|
