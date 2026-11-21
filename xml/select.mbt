@@ -502,7 +502,8 @@ fn text_continues(text : StringView, i : Int32, code_point : Int32) -> Int32 {
 ///|
 /// Whether `input` continues with `literal` at byte `i`.
 fn looking_at(input : BytesView, i : Int32, literal : Bytes) -> Bool {
-  i + literal.length() <= input.length() &&
+  // A slice is cut at the input's end (`[:]` clamps), so where fewer bytes
+  // than `literal` has are left, it is shorter than `literal`, and differs.
   input[i:i + literal.length()] == literal[:]
 }
 
