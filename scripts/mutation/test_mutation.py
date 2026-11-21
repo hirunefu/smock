@@ -1199,6 +1199,27 @@ class ConfirmationTest(unittest.TestCase):
         self.assertEqual(flaked, {"suites": {"mutation/fixture/calc": 3}, "tests": []})
         self.assertEqual(summary["flakes"]["flaked"], [])
 
+    def test_a_native_kill_whose_run_again_stops_on_a_signal_is_confirmed(self):
+        # The first weekly run's `protobuf/encode.mbt,Writer::utf8,AOR,+=,-=,5`
+        # at a site that uses an unchecked array access: natively, 26 tests
+        # failed, and its run again named none (in the second weekly run,
+        # its native runs stopped on SIGSEGV both times). bounds' BODY
+        # mutant runs natively too (test_native.py); natively, it is killed
+        # by its test of "a.b", then its run again stops on SIGSEGV. The
+        # runs of tests: on wasm-gc, the two without a mutant, the
+        # self-test's, the mutant's and its two confirming runs; natively,
+        # the two without a mutant, the mutant's, then its run again.
+        dot = ("mutation/fixture/bounds", "bounds_test.mbt", "a dot after the first characters")
+        _, records, _, summary = self.run_scripted(
+            ["real"] * 9 + [{"crash": "signal: 11 (SIGSEGV) (core dumped)"}],
+            "--mutant", "bounds/bounds.mbt,dot_after,BODY,{…},{ false },0", package="bounds")
+        [record] = records
+        native = record["verdicts"]["native"]
+        self.assertEqual((native["outcome"], native["confirmation"]), ("killed", "confirmed"))
+        self.assertEqual([(t["package"], t["file"], t["name"]) for t in native["killing_tests"]], [dot])
+        self.assertEqual(native["ended"]["again"], {"exit_status": 255, "timed_out": False, "failed_tests": 0})
+        self.assertEqual(summary["flakes"]["flaked"], [])
+
     def test_a_kill_whose_tests_fail_without_the_mutant_is_not_counted(self):
         # `low < n` is killed by LOW, which then fails without it too.
         out, records, package, _ = self.run_scripted(["real", "real", "real", "real", "real", {"fail": [LOW]}],

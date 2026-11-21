@@ -63,8 +63,8 @@ RAN = ("killed", "timed out", "survived", "unconfirmed")
 # The outcomes of a verdict, as the summary counts them.
 OUTCOMES = ("killed", "timed out", "survived", "unconfirmed")
 # The fields of a record that make one backend's verdict.
-VERDICT = ("outcome", "killing_tests", "timings", "importers", "confirmation", "first_outcome", "failed_first",
-           "no_credit", "message")
+VERDICT = ("outcome", "killing_tests", "timings", "ended", "importers", "confirmation", "first_outcome",
+           "failed_first", "no_credit", "message")
 
 # The variables this run unset, in the order it unset them.
 UNSET = []
