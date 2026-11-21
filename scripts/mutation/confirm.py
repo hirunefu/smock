@@ -311,6 +311,68 @@ class Judge:
         return summary_lines(self.summary())
 
 
+def kind(run):
+    """How a run of tests ended, as ended() keeps it, in one word: stopped
+    by the time limit, passed, failed naming tests, or failed naming none."""
+    if run["timed_out"]:
+        return "stopped"
+    if run["exit_status"] == 0:
+        return "passed"
+    return "named" if run["failed_tests"] else "unnamed"
+
+
+def described(run, seconds):
+    """How a run of tests ended, for the report, from ended() and its
+    seconds."""
+    found = kind(run)
+    if found == "stopped":
+        return f"was stopped at the time limit after {seconds:.2f} s"
+    if found == "unnamed":
+        return f"failed without naming a test, with exit status {run['exit_status']}"
+    if found == "named":
+        return f"failed naming {run['failed_tests']} test" + ("" if run["failed_tests"] == 1 else "s")
+    return "passed"
+
+
+def confirming(record):
+    """The runs that confirmed a record's verdict, as ended() keeps them,
+    and their timings: its importers' when their tests ran it again with a
+    confirmation, else its own. Records of runs before #431 keep none."""
+    runs, timings = record.get("ended", {}), record.get("timings", {})
+    if "again" in runs.get("importers", {}):
+        return runs["importers"], timings.get("importers", {})
+    return runs, timings
+
+
+def repeated_lines(records):
+    """The report's list of the kills and time-outs confirmed by a run again
+    that ended otherwise than their run: one that the time limit stopped,
+    or that failed without naming a test, beside one that did not (#431)."""
+    found = []
+    for record in records:
+        runs, timings = confirming(record)
+        if (record["outcome"] in ("killed", "timed out") and record.get("confirmation") == "confirmed"
+                and "run" in runs and "again" in runs and kind(runs["run"]) != kind(runs["again"])):
+            found.append(f"- `{record['id']}` ({record['outcome']}): its run"
+                         f" {described(runs['run'], timings.get('run_s', 0))}; its run again"
+                         f" {described(runs['again'], timings.get('again_s', 0))}.")
+    if not found:
+        return []
+    return [f"### Confirmed by a run again that ended otherwise ({len(found)})", "",
+            "A run that the time limit stopped, or that failed without naming a test, did not pass: it repeats a"
+            " kill, and names no test.", "", *found, ""]
+
+
+def survivor_line(record):
+    """The report's line on a survivor whose run failed without naming a
+    test, or was stopped by the time limit, and passed when run again: why
+    that was no kill. None for any other survivor."""
+    if "first_outcome" not in record:
+        return None
+    where = "with its importers' tests, " if "again" in record.get("ended", {}).get("importers", {}) else ""
+    return f"Not a kill: {where}{record['confirmation']}."
+
+
 def summary_lines(summary):
     """The report's section on flaky tests, from what the summary says of
     them."""

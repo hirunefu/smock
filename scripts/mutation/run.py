@@ -841,6 +841,7 @@ def report(operator_set, chosen, summaries, records):
             out += [f"- `{r['id']}` (run stopped after {r['timings'].get('importers', r['timings'])['run_s']:.2f} s)"
                     for r in timed_out]
             out += [""]
+        out += confirm.repeated_lines(mine)
         unconfirmed = [r for r in mine if r["outcome"] == "unconfirmed"]
         if unconfirmed:
             out += [f"### Unconfirmed ({len(unconfirmed)})", ""]
@@ -858,7 +859,9 @@ def report(operator_set, chosen, summaries, records):
             out += [f"### {title} ({len(group)})", ""]
             for record in exclusions.ordered(group):
                 status = exclusions.status_line(record)
+                no_kill = confirm.survivor_line(record)
                 out += [f"#### `{record['id']}`", "", *([status, ""] if status else []),
+                        *([no_kill, ""] if no_kill else []),
                         f"In `{record['definition']}`, {record['file']}"
                         f" lines {record['definition_lines'][0]} to {record['definition_lines'][1]}:", "",
                         "```diff", record["diff"].rstrip("\n"), "```", ""]
