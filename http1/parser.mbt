@@ -279,12 +279,13 @@ pub fn Parser::next(self : Parser) -> Parsed {
   }
   let (body, consumed) = match head.framing {
     Length(length) => {
-      let body_end = self.start + length
-      if self.end < body_end {
+      // Comparing the bytes at hand with the length adds nothing to a
+      // position, so no position wraps however long the body.
+      if self.end - self.start < length {
         return NeedMore
       }
       (
-        self.buf.unsafe_reinterpret_as_bytes()[self.start:body_end].to_owned(),
+        self.buf.unsafe_reinterpret_as_bytes()[self.start:self.start + length].to_owned(),
         length,
       )
     }

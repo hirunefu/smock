@@ -210,6 +210,54 @@ test "a declared Content-Length over the body limit gets 413 once the head has a
       #|invalid 413
     ),
   )
+  // Near the top of what an Int32 holds: a declared length within the body
+  // limit whose body would end more than 2^31 - 1 bytes into what the
+  // parser holds. The parser waits for the body ("The next request is not
+  // complete yet: feed more bytes", Parsed::NeedMore's documentation), and
+  // the bytes after the head are the body's, whether they come with the
+  // head or after it, so a request sent after the head is not read on its
+  // own (RFC 9112, section 6.2: Content-Length is the body's length in
+  // octets; #433). A limit of 2147483647 is taken as 2147483646
+  // (Parser::Parser's documentation), so a length of 2147483646 is within
+  // it. The head with 2147483591 is 57 bytes long, so its body would end at
+  // 2^31.
+  let get = "GET / HTTP/1.1\r\nHost: a\r\n\r\n"
+  let at_the_top = () => @http1.Parser(body_limit=2147483647)
+  inspect(
+    [
+      limited(at_the_top(), post("Content-Length: 2147483646\r\n") + get),
+      fed_as(at_the_top, [post("Content-Length: 2147483646\r\n"), get]),
+      limited(
+        @http1.Parser(body_limit=2147483646),
+        post("Content-Length: 2147483591\r\n"),
+      ),
+    ].join("\n"),
+    content=(
+      #|need more
+      #|need more
+      #|need more
+    ),
+  )
+  // The same where the body starts after a request already taken out: the
+  // 27 bytes of a GET, then one piece of 4,070 bytes, and one of 4,069,
+  // that begins with a 56-byte head whose Content-Length is 2147483580. The
+  // parser's first buffer holds 4,096 bytes, so it moves the second piece
+  // to the front of the buffer, or appends it after the GET where it just
+  // fits; either way the parser takes out the GET and waits for the body
+  // (Parser's documentation: "However the bytes are split into pieces, it
+  // takes out the same requests"). Found by reading the parser, for the
+  // twenty-second round of #275's answers (#433).
+  let post_after_get = (size : Int32) => {
+    let head = "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 2147483580\r\n\r\n"
+    fed_as(at_the_top, [get, head + "b".repeat(size - head.length())])
+  }
+  inspect(
+    [post_after_get(4070), post_after_get(4069)].join("\n"),
+    content=(
+      #|GET / body=0, need more
+      #|GET / body=0, need more
+    ),
+  )
 }
 
 ///|
