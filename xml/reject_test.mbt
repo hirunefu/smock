@@ -269,6 +269,25 @@ test "a repeated attribute is found among many" {
     text_error(repeated),
     content="position \{offset}: attribute a5 is repeated",
   )
+  // The names of a tag with more than eight attributes are sorted to find
+  // a repeated one (the README's Documents), and a few are checked in
+  // place. At eight attributes and at nine, whichever name the last one
+  // repeats, the error is at it (XML 1.0 §3.1, WFC: Unique Att Spec).
+  let names = ["a", "b", "c", "d", "e", "f", "g", "h"]
+  for count in [8, 9] {
+    let tag = StringBuilder()
+    tag.write_string("<t")
+    for name in names[:count - 1] {
+      tag.write_string(" \{name}=''")
+    }
+    let before = tag.to_string()
+    for name in names[:count - 1] {
+      inspect(
+        text_error(before + " \{name}=''/>"),
+        content="position \{before.length() + 1}: attribute \{name} is repeated",
+      )
+    }
+  }
 }
 
 ///|
