@@ -329,6 +329,26 @@ test "an XML declaration must come first, and be well-formed" {
       #|<?xml version=1.0?><a/> => position 14: expected a quoted value
     ),
   )
+  // Cut off one byte after `<?xml`, the declaration still lacks its
+  // version where XML 1.0 §2.8 [24] puts it, after whitespace: the error
+  // is the one `<?xml?><a/>` gives above, at the `?`, or at the input's
+  // end after the space.
+  inspect(
+    errors(["<?xml?", "<?xml "]),
+    content=(
+      #|<?xml? => position 5: expected version in the XML declaration
+      #|<?xml  => position 6: expected version in the XML declaration
+    ),
+  )
+  // Cut off right after `<?xml`, at the start or after a byte order mark,
+  // the input holds no declaration, which needs whitespace and a version
+  // there (§2.8 [23], [24]), and no root element (§2.1 [1]); parsing
+  // ends with an error for every input (the README's Documents). Only the
+  // refusal is asserted: which message fits there is put to the
+  // maintainer (#411).
+  for input in [b"<?xml", b"\xEF\xBB\xBF<?xml"] {
+    assert_true(error_of(input) != "parsed")
+  }
 }
 
 ///|
