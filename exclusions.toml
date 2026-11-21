@@ -1248,7 +1248,7 @@ reviewer = ""
 
 # http1/response.mbt, http1/sse.mbt and http1/stream.mbt (#408, part 4 of 5
 # of http1's triage for #324): survivors of the first weekly run
-# (44423781036) that no input can tell from the code, and four capacity
+# (44423781036) that no input can tell from the code, and five capacity
 # hints. Each argument is in its reason; each EQUIVALENT mutant agrees with
 # the code on every argument, white-box calls of the private functions
 # included. The compiler's output differs for each. The implementer also
@@ -1273,7 +1273,7 @@ reviewer = ""
 # byte lookup gives the same answer.
 # A separate agent context, which wrote neither these entries nor http1's
 # tests, then tried to kill each from the specs and smock's documents, and
-# `adversarial` records what it tried. It tried the four capacity hints
+# `adversarial` records what it tried. It tried the five capacity hints
 # too, which have no such field: core's Buffer takes a hint below 1 as 1,
 # grows to at least what each write needs, and `to_bytes` copies
 # `data[0:len]`, so events, heads and chunks are the same octets with each
