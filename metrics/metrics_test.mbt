@@ -8,9 +8,10 @@ test "a counter renders its help, its type and one sample per label set, in the 
   // order they first appeared, `users` before `orders` here, and each
   // series' label pairs in the order of the label names.
   // `Registry::render`'s doc comment states the order of the metrics, of
-  // their `# HELP` and `# TYPE` lines and of their series. The maintainer
-  // confirmed on 2026-11-21 (#328) that the doc comment is the source and
-  // that the order is not a promise to users, so no document states it.
+  // their `# HELP` and `# TYPE` lines, of their series and of each series'
+  // label pairs. The maintainer confirmed on 2026-11-21 (#328) that the doc
+  // comment is the source and that the order is not a promise to users, so
+  // no document states it.
   let registry = @metrics.Registry()
   let requests = registry.counter(
     "smock_requests_total",
@@ -127,10 +128,10 @@ test "a histogram renders cumulative buckets up to +Inf, then the sum and the co
   // buckets; `# HELP` before `# TYPE`; and each series' label pairs in the
   // order of the label names, `le` last. `Registry::render`'s doc comment
   // states the order of the metrics, of their `# HELP` and `# TYPE` lines,
-  // of their series and of a histogram's buckets, `_sum` and `_count`. The
-  // maintainer confirmed on 2026-11-21 (#328) that the doc comment is the
-  // source and that the order is not a promise to users, so no document
-  // states it.
+  // of their series, of a histogram's buckets, `_sum` and `_count`, and of
+  // each series' label pairs, `le` last. The maintainer confirmed on
+  // 2026-11-21 (#328) that the doc comment is the source and that the order
+  // is not a promise to users, so no document states it.
   // The counts and sums come from the text format's "Histograms and
   // summaries": a histogram `x` has a sample `x_bucket` with `{le="y"}` for
   // each bucket, "where `y` is the upper bound of the bucket", one with
