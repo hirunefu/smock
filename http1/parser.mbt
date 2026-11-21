@@ -473,9 +473,11 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
         break
       }
       if section is FieldValue {
-        // Eight bytes at a time while none of them ends the value.
+        // Eight bytes at a time while none of them ends the value. `at` is
+        // at most `end` and within the size limit, so at most `stop`, and
+        // `stop - at` cannot wrap, as `at + 8` could at the top of an Int32.
         let bytes = buf.unsafe_reinterpret_as_bytes()
-        while at + 8 <= stop && !has_control(bytes.unsafe_read_uint64_le(at)) {
+        while stop - at >= 8 && !has_control(bytes.unsafe_read_uint64_le(at)) {
           at += 8
         }
         while at < stop && is_field_value_byte(buf[at]) {
@@ -488,8 +490,9 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       }
     } else if scan is Target {
       // Eight bytes at a time while all of them are visible characters.
+      // As for a field value, `at` is at most `stop`: `stop - at` cannot wrap.
       let bytes = buf.unsafe_reinterpret_as_bytes()
-      while at + 8 <= stop && is_visible(bytes.unsafe_read_uint64_le(at)) {
+      while stop - at >= 8 && is_visible(bytes.unsafe_read_uint64_le(at)) {
         at += 8
       }
       while at < stop && is_visible_byte(buf[at]) {
