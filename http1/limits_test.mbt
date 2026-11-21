@@ -251,9 +251,14 @@ test "a chunked body gets 413 as soon as a chunk size takes it past the body lim
         chunked + "5\r\nhello\r\n0\r\n\r\n",
       ),
       limited(@http1.Parser(body_limit=2147483647), chunked + "80000000\r\n"),
-      // A chunk size of 2147483646 is within that limit, so the parser
-      // waits for the chunk's data.
+      // The parser takes a body limit of 2147483647 as 2147483646 (the
+      // doc comments of max_length, "One more than the longest body limit
+      // the parser takes", and of Chunks' limit, "The longest body allowed,
+      // below `max_length`"; the boundary ledger's L52). So a chunk size of
+      // 2147483646 is within it, and the parser waits for the chunk's data;
+      // a chunk size of 2147483647 is past it, and gets 413.
       limited(@http1.Parser(body_limit=2147483647), chunked + "7ffffffe\r\n"),
+      limited(@http1.Parser(body_limit=2147483647), chunked + "7fffffff\r\n"),
       limited(@http1.Parser(body_limit=0), chunked + "0\r\n\r\n"),
       limited(@http1.Parser(body_limit=0), chunked + "1\r\n"),
       limited(@http1.Parser(body_limit=-1), chunked + "0\r\n\r\n"),
@@ -270,6 +275,7 @@ test "a chunked body gets 413 as soon as a chunk size takes it past the body lim
       #|POST /p body=5, need more
       #|invalid 413
       #|need more
+      #|invalid 413
       #|POST /p body=0, need more
       #|invalid 413
       #|POST /p body=0, need more
