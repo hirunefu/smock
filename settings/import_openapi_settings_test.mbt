@@ -219,6 +219,11 @@ test "import-openapi: --hosts lists Hosts a Definition file can declare, none th
       // is then the same Host as the bracketed one" (the maintainer,
       // 2026-11-21, #329).
       import_shows(["--hosts", "[::1],::1"], hosts),
+      // docs/definition-files.md, Hosts and the Default Mock: "Without
+      // brackets every colon belongs to the address, so ::1:8080 is the
+      // Host [::1:8080], not [::1] with the port 8080" (the maintainer,
+      // 2026-11-21, #329), so it is not the same Host as [::1]:8080.
+      import_shows(["--hosts", "::1:8080,[::1]:8080"], hosts),
       import_shows(["--declare-mock", "off"], hosts),
       import_shows(["--declare-mock", "off", "--hosts", "a.test"], hosts),
       import_shows(["--declare-mock", "off", "--hosts="], hosts),
@@ -233,6 +238,7 @@ test "import-openapi: --hosts lists Hosts a Definition file can declare, none th
       #|invalid value "a.test,,b.test" for --hosts: "" must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
       #|invalid value "pets.test,b.test,PETS.test.:8080" for --hosts: "PETS.test.:8080" is the same Host as "pets.test": Hosts are compared in lower case, without the port and a trailing dot
       #|invalid value "[::1],::1" for --hosts: "::1" is the same Host as "[::1]": Hosts are compared in lower case, without the port and a trailing dot
+      #|[::1:8080,[::1]:8080]
       #|[]
       #|invalid value "a.test" for --hosts: must not be given with --declare-mock off: give the Hosts where the Mock is declared
       #|invalid value "" for --hosts: must not be given with --declare-mock off: give the Hosts where the Mock is declared
