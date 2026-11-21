@@ -4,6 +4,11 @@
 // flags of its own without variables (#320). `--template-env` has its own
 // tests, on the three commands. A flag without a variable is named alone in
 // a refusal, in the form `InvalidSetting::message` documents.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// What `smock render <argv>`, with the variables `env`, makes of its

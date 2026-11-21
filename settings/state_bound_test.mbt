@@ -2,6 +2,11 @@
 // memory limit of smock's cgroup by ADR 0004's rule with an eighth. The
 // native server reads the limit once at startup, for this bound and the
 // Journal's.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// The state bound the rule gives for `limit`, and what chose it, as

@@ -9,6 +9,11 @@
 // an integer from <min> to <max>`. No document gives those words: they are
 // the code's, which the maintainer confirmed on 2026-11-17 (#275), and the
 // e2e settings test pins them too.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// What `smock serve <argv>` makes of its settings: `show` of the settings

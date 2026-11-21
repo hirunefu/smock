@@ -6,6 +6,11 @@
 // takes, but not the words of a refusal's reason: those are the code's,
 // and the maintainer, who decided on 2026-11-18 that they stay as they are
 // (#320), is their source.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// What `smock import-openapi <argv>` makes of its settings, after the

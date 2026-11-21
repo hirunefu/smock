@@ -1,5 +1,10 @@
 // The `--template-env` setting of `smock serve`, `smock check` and
 // `smock render`: the environment variables templates may read.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// The names that `smock <command> <argv>` with the variables `env` lists
