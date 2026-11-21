@@ -387,11 +387,9 @@ fn text_char(input : BytesView, cursor : Int32, end : Int32) -> Int64 {
 /// LF, or a lone CR) is a line feed.
 fn line_char(input : BytesView, i : Int32) -> Int64 {
   if input[i] == b'\r' {
-    let next = if i + 1 < input.length() && input[i + 1] == b'\n' {
-      i + 2
-    } else {
-      i + 1
-    }
+    // Byte `i` is in an element's content, which the end tag that closes
+    // the element follows, so `i + 1` is in the input.
+    let next = if input[i + 1] == b'\n' { i + 2 } else { i + 1 }
     return packed_char('\n', next)
   }
   let decoded = decode(input, i)
@@ -504,7 +502,8 @@ fn text_continues(text : StringView, i : Int32, code_point : Int32) -> Int32 {
 ///|
 /// Whether `input` continues with `literal` at byte `i`.
 fn looking_at(input : BytesView, i : Int32, literal : Bytes) -> Bool {
-  i + literal.length() <= input.length() &&
+  // A slice is cut at the input's end (`[:]` clamps), so where fewer bytes
+  // than `literal` has are left, it is shorter than `literal`, and differs.
   input[i:i + literal.length()] == literal[:]
 }
 
@@ -593,6 +592,8 @@ fn reference_char(input : BytesView, i : Int32) -> Int64 {
     if hex {
       j += 1
     }
+    // parse refused every reference past U+10FFFF, and the value only grows
+    // from digit to digit, so it stays at U+10FFFF or below here.
     let mut code = 0
     while input[j] != b';' {
       let b = input[j].to_int()
@@ -606,9 +607,6 @@ fn reference_char(input : BytesView, i : Int32) -> Int64 {
       } else {
         code * 10 + (b - '0')
       }
-      // Past U+10FFFF, the value no longer matters; a well-formed document
-      // has none.
-      code = @cmp.minimum(code, 0x110000)
       j += 1
     }
     return packed_char(code, j + 1)
