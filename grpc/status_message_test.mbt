@@ -1,9 +1,13 @@
 // The percent-encoding of a status message, as `grpc-message` carries it,
-// through the module's public interface. The expected values are gRPC's
-// own: the rule of its HTTP/2 protocol document
-// (https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md), and the
-// message of its interop suite's `special_status_message` case with the
-// value grpc-go's tests encode it to.
+// through the module's public interface. The expected values follow the
+// rule of gRPC's HTTP/2 protocol document
+// (https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md): the
+// message's UTF-8, with `%` and each octet outside 0x20 to 0x7E written as
+// `%` and two upper-case hex digits. The message of gRPC's interop suite,
+// from its `special_status_message` case, is pinned in the encoded form
+// that the gRPC guide gives word for word (docs/grpc/metadata-and-status.md,
+// "The message"). Neither the suite nor grpc-go's tests state that form:
+// their clients compare the message after decoding it.
 
 ///|
 /// `bytes`, octets 0x20 to 0x7E, as text.
