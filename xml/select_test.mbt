@@ -219,6 +219,17 @@ test "utf8_value is a view of the input when the input holds the value as it is,
       #|]
     ),
   )
+  // White space around the `=` is not part of the value (XML 1.0 §2.3 [25]
+  // Eq ::= S? '=' S?, and §3.1 [41] Attribute ::= Name Eq AttValue), so a
+  // tab, a line feed or a CR LF before the quote leaves the value a view.
+  debug_inspect(
+    ["/a/@v", "/a/@w", "/a/@u"].map(path => {
+      utf8_values("<a v=\t'x y' w =\n\"x y\" u=\r\n'x'/>", path)
+    }),
+    content=(
+      #|[[("x y", true)], [("x y", true)], [("x", true)]]
+    ),
+  )
 }
 
 ///|
