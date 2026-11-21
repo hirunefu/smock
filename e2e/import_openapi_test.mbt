@@ -441,6 +441,9 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
     [
       "api.json", "--mock", "m", "--output", "m.json", "--hosts", "pets.test,b.test,PETS.test.:8080",
     ],
+    // docs/definition-files.md, Hosts and the Default Mock: "An IPv6 address
+    // without a port may also be written without brackets, and is then the
+    // same Host as the bracketed one" (the maintainer, 2026-11-21, #329).
     ["api.json", "--mock", "m", "--output", "m.json", "--hosts", "[::1],::1"],
     [
       "api.json", "--mock", "m", "--output", "m.json", "--hosts", "a.test", "--declare-mock",

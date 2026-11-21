@@ -202,6 +202,10 @@ test "import-openapi: --hosts lists Hosts a Definition file can declare, none th
       import_shows(["--hosts", "*.example.com"], hosts),
       import_shows(["--hosts", "a.test,,b.test"], hosts),
       import_shows(["--hosts", "pets.test,b.test,PETS.test.:8080"], hosts),
+      // docs/definition-files.md, Hosts and the Default Mock: "An IPv6
+      // address without a port may also be written without brackets, and
+      // is then the same Host as the bracketed one" (the maintainer,
+      // 2026-11-21, #329).
       import_shows(["--hosts", "[::1],::1"], hosts),
       import_shows(["--declare-mock", "off"], hosts),
       import_shows(["--declare-mock", "off", "--hosts", "a.test"], hosts),

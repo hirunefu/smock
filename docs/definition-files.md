@@ -192,7 +192,9 @@ mocks:
 - Hosts are exact names, with no wildcards. They are compared
   case-insensitively, without the port and without a trailing dot, so
   `Users.Example.com.:8080` is the Host `users.example.com`. An IPv6 address
-  is written in brackets, such as `[::1]:8080`.
+  is written in brackets, such as `[::1]:8080`. An IPv6 address without a
+  port may also be written without brackets, and is then the same Host as
+  the bracketed one: `::1` is the Host `[::1]`.
 - A Host is written as a request's `Host` header carries it, so a port is
   digits, and nothing but a port follows a bracketed address. A Host that
   leaves no name once normalised, such as `.` or `:8080`, could never match

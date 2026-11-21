@@ -366,7 +366,10 @@ Each Host must be one a Definition file can declare, as `smock check`
 checks it: a host name or an IP address, with a port of digits if any,
 and no wildcard. A Host that is not one, or that is the same as another
 once compared as smock compares Hosts (in lower case, without the port
-and a trailing dot), is a usage error, so it never reaches the file.
+and a trailing dot), is a usage error, so it never reaches the file. An
+IPv6 address without brackets is the same Host as the bracketed one, so
+`--hosts "[::1],::1"` is refused too ([Hosts and the Default
+Mock](definition-files.md#hosts-and-the-default-mock)).
 
 The command does not read the rest of the definitions directory. So run
 `smock check` on the directory after importing: a Mock declared twice, a
