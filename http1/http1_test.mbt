@@ -430,6 +430,45 @@ test "a chunked body is decoded, and the request after it comes out next" {
       #|
     ),
   )
+  // A chunk size is hexadecimal, `chunk-size = 1*HEXDIG` (RFC 9112, section
+  // 7.1), and HEXDIG's letters are "A" to "F" (RFC 5234, appendix B.1),
+  // which ABNF matches in either case (RFC 5234, section 2.3): A and a are
+  // 10, F and f are 15.
+  inspect(
+    parse_all([
+      "POST /a HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n" +
+      "A\r\nabcdefghij\r\na\r\nklmnopqrst\r\nF\r\nABCDEFGHIJKLMNO\r\nf\r\nPQRSTUVWXYZ0123\r\n0\r\n\r\n" +
+      "GET /b HTTP/1.1\r\nHost: a\r\n\r\n",
+    ]),
+    content=(
+      #|POST /a HTTP/1.1 | Host: a | Transfer-Encoding: chunked | body="abcdefghijklmnopqrstABCDEFGHIJKLMNOPQRSTUVWXYZ0123" | keep-alive
+      #|GET /b HTTP/1.1 | Host: a | body="" | keep-alive
+      #|need more
+      #|
+    ),
+  )
+  // The CRLF that ends the chunked body (RFC 9112, section 7.1:
+  // `chunked-body = *chunk last-chunk trailer-section CRLF`) ends it also
+  // when its LF comes first in the next piece, before a request much longer
+  // than all that came before it: however the bytes are split into pieces,
+  // the parser takes out the same requests (Parser).
+  let parser = @http1.Parser()
+  inspect(
+    [
+      limited(
+        parser,
+        post("Transfer-Encoding: chunked\r\n") + "5\r\nhello\r\n0\r\n\r",
+      ),
+      limited(
+        parser,
+        "\n" + post("Content-Length: 65536\r\n") + "b".repeat(65536),
+      ),
+    ].join("\n"),
+    content=(
+      #|need more
+      #|POST /p body=5, POST /p body=65536, need more
+    ),
+  )
 }
 
 ///|
@@ -535,6 +574,25 @@ test "a bad chunk size or broken chunk framing gets 400" {
       #|"0\r\n: 1\r\n\r\n" -> invalid 400
       #|"0\r\nX: \u{7f}\r\n\r\n" -> invalid 400
       #|"0\r\nX: 1\n\r\n" -> invalid 400
+    ),
+  )
+  // Each CR and LF that ends a chunk's two lines replaced by another byte:
+  // a chunk is `chunk-size [ chunk-ext ] CRLF chunk-data CRLF` (RFC 9112,
+  // section 7.1), so each is broken chunk framing, which gets 400
+  // (Parsed::Invalid), even though the bytes after it frame a body.
+  let replaced = [
+    "5X\nhello\r\n0\r\n\r\n", "5\rXhello\r\n0\r\n\r\n", "5\r\nhelloX\n0\r\n\r\n",
+    "5\r\nhello\rX0\r\n\r\n",
+  ]
+  inspect(
+    replaced
+    .map(case => "\{shown(case)} -> \{chunked_outcome(case)}")
+    .join("\n"),
+    content=(
+      #|"5X\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5\rXhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5\r\nhelloX\n0\r\n\r\n" -> invalid 400
+      #|"5\r\nhello\rX0\r\n\r\n" -> invalid 400
     ),
   )
 }
