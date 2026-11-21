@@ -4,6 +4,11 @@
 // flags of its own without variables (#320). `--template-env` has its own
 // tests, on the three commands. A flag without a variable is named alone in
 // a refusal, in the form `InvalidSetting::message` documents.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// What `smock render <argv>`, with the variables `env`, makes of its
@@ -87,6 +92,10 @@ test "render: without --dir or SMOCK_DIR, or without --request, the command line
   // Stub ID and a sample request" pins too: the maintainer decided on
   // 2026-11-18 that the words of usage errors stay as they are (#320). The
   // usage and the help that follow the first line are the help's own test.
+  // These words are moonbitlang/core's argparse's, not smock's: the
+  // maintainer confirmed on 2026-11-21 (#329) that the decision of
+  // 2026-11-18 covers them, as the reasons of usage errors that no document
+  // words.
   let shown = (settings : @settings.RenderSettings) => {
     "\{settings.dir} \{settings.request_file}"
   }

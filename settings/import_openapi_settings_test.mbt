@@ -6,6 +6,11 @@
 // takes, but not the words of a refusal's reason: those are the code's,
 // and the maintainer, who decided on 2026-11-18 that they stay as they are
 // (#320), is their source.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// What `smock import-openapi <argv>` makes of its settings, after the
@@ -135,6 +140,10 @@ test "import-openapi: without --mock or without --output, the command line is re
   // with exit status 2" pins too: the maintainer decided on 2026-11-18 that
   // the words of usage errors stay as they are (#320). The usage and the
   // help that follow the first line are the help's own test.
+  // These words are moonbitlang/core's argparse's, not smock's: the
+  // maintainer confirmed on 2026-11-21 (#329) that the decision of
+  // 2026-11-18 covers them, as the reasons of usage errors that no document
+  // words.
   let mock = (settings : @settings.ImportOpenapiSettings) => settings.mock
   let first_line = (text : String) => text.split("\n").next().unwrap_or("")
   inspect(
@@ -197,12 +206,24 @@ test "import-openapi: --hosts lists Hosts a Definition file can declare, none th
       import_shows([], hosts),
       import_shows(["--hosts", "petstore.test,pets.internal:8080"], hosts),
       import_shows(["--hosts", "[::1]:8080"], hosts),
+      // docs/importing-openapi.md, the arguments, and docs/commands.md:
+      // "With --declare-mock on, an empty --hosts "" gives none too, as
+      // leaving it out does" (the maintainer, 2026-11-21, #329).
       import_shows(["--hosts="], hosts),
       import_shows(["--hosts", ":8080"], hosts),
       import_shows(["--hosts", "*.example.com"], hosts),
       import_shows(["--hosts", "a.test,,b.test"], hosts),
       import_shows(["--hosts", "pets.test,b.test,PETS.test.:8080"], hosts),
+      // docs/definition-files.md, Hosts and the Default Mock: "An IPv6
+      // address without a port may also be written without brackets, and
+      // is then the same Host as the bracketed one" (the maintainer,
+      // 2026-11-21, #329).
       import_shows(["--hosts", "[::1],::1"], hosts),
+      // docs/definition-files.md, Hosts and the Default Mock: "Without
+      // brackets every colon belongs to the address, so ::1:8080 is the
+      // Host [::1:8080], not [::1] with the port 8080" (the maintainer,
+      // 2026-11-21, #329), so it is not the same Host as [::1]:8080.
+      import_shows(["--hosts", "::1:8080,[::1]:8080"], hosts),
       import_shows(["--declare-mock", "off"], hosts),
       import_shows(["--declare-mock", "off", "--hosts", "a.test"], hosts),
       import_shows(["--declare-mock", "off", "--hosts="], hosts),
@@ -217,6 +238,7 @@ test "import-openapi: --hosts lists Hosts a Definition file can declare, none th
       #|invalid value "a.test,,b.test" for --hosts: "" must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
       #|invalid value "pets.test,b.test,PETS.test.:8080" for --hosts: "PETS.test.:8080" is the same Host as "pets.test": Hosts are compared in lower case, without the port and a trailing dot
       #|invalid value "[::1],::1" for --hosts: "::1" is the same Host as "[::1]": Hosts are compared in lower case, without the port and a trailing dot
+      #|[::1:8080,[::1]:8080]
       #|[]
       #|invalid value "a.test" for --hosts: must not be given with --declare-mock off: give the Hosts where the Mock is declared
       #|invalid value "" for --hosts: must not be given with --declare-mock off: give the Hosts where the Mock is declared
@@ -308,6 +330,11 @@ test "import-openapi: problems in other files are named under --ref-dir as given
   // its path under --ref-dir, such as ./api/responses/ok.yaml above.
   // Without --ref-dir, the directory part of the document's path, as given,
   // takes its place: api/responses/ok.yaml."
+  // The guide does not say whether that part keeps its last / (api/ and
+  // /srv/specs/api/ here), or what it is for a bare file name (empty here):
+  // the importer joins it with a / unless it is empty or ends in one, so
+  // these are the contract between the settings and the importer, which
+  // the maintainer confirmed on 2026-11-21 (#329).
   let shown = (settings : @settings.ImportOpenapiSettings) => {
     "\{settings.document}: \{settings.ref_dir_path()} \{settings.document_directory().escape()}"
   }
@@ -319,12 +346,17 @@ test "import-openapi: problems in other files are named under --ref-dir as given
       shown(
         import_settings("/srv/specs/api/openapi.json", ref_dir="/srv/specs"),
       ),
+      // The guide's rule at the root: the directory part of /openapi.yaml
+      // is /, so a problem in responses/ok.yaml is named
+      // /responses/ok.yaml (the maintainer, 2026-11-21, #329).
+      shown(import_settings("/openapi.yaml")),
     ].join("\n"),
     content=(
       #|api/openapi.yaml: api/ "api/"
       #|api/openapi.yaml: . "api/"
       #|openapi.yaml:  ""
       #|/srv/specs/api/openapi.json: /srv/specs "/srv/specs/api/"
+      #|/openapi.yaml: / "/"
     ),
   )
 }
