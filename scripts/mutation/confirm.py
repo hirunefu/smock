@@ -245,6 +245,9 @@ class Judge:
         runs["without"] = ended(status, timed_out, failed)
         if timed_out:
             return self.unconfirmed(record, "the run without the mutant did not finish within the limit")
+        if status != 0 and not failed:
+            # Nor does one that names no test show which tests pass.
+            return self.unconfirmed(record, "the run without the mutant failed without naming a test")
         self.suite(packages, failed)
         without = {key(t) for t in failed}
         confirmed = [t for t in tests if key(t) not in without]
