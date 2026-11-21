@@ -984,8 +984,16 @@ imagePullSecrets:
   - name: registry
 podAnnotations:
   prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+service:
+  annotations:
+    example.com/id: "0012"
+adminService:
+  annotations:
+    example.com/id: "0013"
 nodeSelector:
   pool: mocks
+  rack: "12"
 tolerations:
   - key: mocks
     operator: Exists
@@ -1004,8 +1012,10 @@ render pod --values "$tmp/values-token.yaml" --values "$tmp/values-pod.yaml"
 check pod "the image, pull Secrets, annotations and scheduling come from the values" \
   'smock.image == "registry.example.com/smock:1.0.0" and smock.imagePullPolicy == "Always"
    and pod.imagePullSecrets == [{"name": "registry"}]
-   and (deployment | .spec.template.metadata.annotations) == {"prometheus.io/scrape": "true"}
-   and pod.nodeSelector == {"pool": "mocks"}
+   and (deployment | .spec.template.metadata.annotations) == {"prometheus.io/scrape": "true", "prometheus.io/port": "9090"}
+   and (service("smock") | .metadata.annotations["example.com/id"]) == "0012"
+   and (service("smock-admin") | .metadata.annotations["example.com/id"]) == "0013"
+   and pod.nodeSelector == {"pool": "mocks", "rack": "12"}
    and pod.tolerations == [{"key": "mocks", "operator": "Exists", "effect": "NoSchedule"}]
    and pod.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight == 1'
 

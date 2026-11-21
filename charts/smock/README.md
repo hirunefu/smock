@@ -485,6 +485,12 @@ tag `20261119`. Some values change before the chart sees them, though:
 Quote such a value in the values file (`tag: "1.10"`), or give it with
 `--set-string`. `--set` keeps these as written too.
 
+Kubernetes requires string values in `podAnnotations`, `service.annotations`,
+`adminService.annotations`, and `nodeSelector`. The chart preserves the YAML
+types in these four maps. Quote numeric or boolean values in a values file,
+for example `podAnnotations: {prometheus.io/port: "9090"}`. On the command
+line, use `--set-string nodeSelector.rack=12`.
+
 | Value | Default | Description |
 |---|---|---|
 | `replicas` | `1` | How many smock Pods to run; also smock's replica count for the Admin API warning. Stale under an autoscaler or `kubectl scale`. |
