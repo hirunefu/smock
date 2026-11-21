@@ -157,6 +157,16 @@ test "value_is compares characters outside the BMP" {
     ],
     content="[[true], [true]]",
   )
+  // A value is the text only when all of it matches: a character outside
+  // the BMP that the text does not have makes it another value, even when
+  // the rest of the value is the text.
+  debug_inspect(
+    [
+      values_are("<a>😀x</a>", "/a", "x"),
+      values_are("<a v='😀x'/>", "/a/@v", "x"),
+    ],
+    content="[[false], [false]]",
+  )
 }
 
 ///|
