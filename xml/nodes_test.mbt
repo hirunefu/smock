@@ -145,6 +145,18 @@ test "value_is compares characters outside the BMP" {
     values_are("<a v='é&#x1F600;'/>", "/a/@v", "é😀"),
     content="[true]",
   )
+  // The first and the last character outside the BMP, U+10000 and U+10FFFF,
+  // and the last inside it that XML allows, U+FFFD (XML 1.0 §2.2 [2] Char).
+  // A string holds each of the first two as a surrogate pair (RFC 2781
+  // §2.1), U+10000 as D800 DC00 and U+10FFFF as DBFF DFFF.
+  let edges = "\u{FFFD}\u{10000}\u{10FFFF}"
+  debug_inspect(
+    [
+      values_are("<a>\{edges}</a>", "/a", edges),
+      values_are("<a v='\{edges}'/>", "/a/@v", edges),
+    ],
+    content="[[true], [true]]",
+  )
 }
 
 ///|
