@@ -76,7 +76,7 @@
 {"file":"xml/select.mbt","definition":"is_name_byte","text":"85dceb8b3510c097","pinned":{"BODY":1,"NOT":1},"full":{"BODY":1,"NOT":1}}
 {"file":"xml/select.mbt","definition":"skip_spaces","text":"e4875ed1777727eb","pinned":{"BODY":1,"ROR":1,"IFC":1,"LCR":1,"DEL":1,"AOR":1,"INT":1},"full":{"BODY":1,"ROR":1,"IFC":2,"LCR":1,"DEL":1,"AOR":1,"INT":2}}
 {"file":"xml/select.mbt","definition":"is_namespace_declaration","text":"a72fb5b23e4a5e41","pinned":{"BODY":1,"ROR":1,"LCR":2,"INT":4,"STR":2},"full":{"BODY":1,"ROR":1,"LCR":2,"INT":6,"STR":4}}
-{"file":"xml/select.mbt","definition":"reference_char","text":"eb06dea128848658","pinned":{"BODY":1,"IFC":5,"DEL":6,"AOR":17,"INT":13},"full":{"BODY":1,"IFC":10,"DEL":6,"AOR":17,"INT":31}}
+{"file":"xml/select.mbt","definition":"reference_char","text":"f8ec0dc1acd4e6ee","pinned":{"BODY":1,"IFC":5,"DEL":5,"AOR":17,"INT":12},"full":{"BODY":1,"IFC":10,"DEL":5,"AOR":17,"INT":28}}
 {"file":"xml/select.mbt","definition":"packed_char","text":"a387f091ed0a40b8","pinned":{"BODY":1,"INT":2},"full":{"BODY":1,"INT":6}}
 {"file":"xml/select.mbt","definition":"char_of","text":"3b9ff213161df053","pinned":{"BODY":1,"INT":1},"full":{"BODY":1,"INT":3}}
 {"file":"xml/select.mbt","definition":"next_of","text":"0bf852541eef9856","pinned":{"BODY":1,"INT":1},"full":{"BODY":1,"INT":3}}

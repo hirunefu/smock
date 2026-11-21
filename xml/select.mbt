@@ -592,6 +592,8 @@ fn reference_char(input : BytesView, i : Int32) -> Int64 {
     if hex {
       j += 1
     }
+    // parse refused every reference past U+10FFFF, and the value only grows
+    // from digit to digit, so it stays at U+10FFFF or below here.
     let mut code = 0
     while input[j] != b';' {
       let b = input[j].to_int()
@@ -605,9 +607,6 @@ fn reference_char(input : BytesView, i : Int32) -> Int64 {
       } else {
         code * 10 + (b - '0')
       }
-      // Past U+10FFFF, the value no longer matters; a well-formed document
-      // has none.
-      code = @cmp.minimum(code, 0x110000)
       j += 1
     }
     return packed_char(code, j + 1)
