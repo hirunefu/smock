@@ -153,8 +153,7 @@ pub fn MemoryLimit::parse(text : String) -> MemoryLimit? {
   if value == "max" {
     return Some(Unlimited)
   }
-  // Nineteen digits hold every Int64, and more.
-  match decimal(value, max_digits=19) {
+  match decimal(value) {
     Some(bytes) if bytes <= 0x7fffffffffffffffUL =>
       Some(Limited(bytes.reinterpret_as_int64()))
     _ => None

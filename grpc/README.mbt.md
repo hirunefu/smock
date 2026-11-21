@@ -104,7 +104,10 @@ microseconds or `n` nanoseconds.
 `@grpc.timeout_ns(value)` reads that value as nanoseconds, or gives `None`
 when it is malformed. A timeout of 0 is read, in any unit. Eight digits of
 hours are more nanoseconds than an `Int64` holds, so they saturate at
-`0x7FFF_FFFF_FFFF_FFFF` rather than wrap.
+`0x7FFF_FFFF_FFFF_FFFF` rather than wrap. PROTOCOL-HTTP2 gives only the
+value's form, so that saturated value, 9,223,372,036,855 ms in whole
+milliseconds, is the module's own: the maintainer confirmed it on
+2026-11-21 (#327).
 
 ```mbt check
 ///|
@@ -120,8 +123,9 @@ test "read a call's timeout" {
 ```
 
 `@grpc.timeout_ms(value)` gives the same timeout in whole milliseconds,
-rounded up, so that a timeout above 0 is never 0 ms. A server that keeps
-time in milliseconds counts a call's deadline with it.
+rounded up, so that a timeout above 0 is never 0 ms: `1n` is 1 ms. The
+maintainer confirmed that rounding on 2026-11-21 (#327). A server that
+keeps time in milliseconds counts a call's deadline with it.
 
 ```mbt check
 ///|

@@ -5,7 +5,7 @@
 {"file":"settings/byte_bounds.mbt","definition":"ByteBoundSource::name","text":"0b20005425e12318","pinned":{"BODY":1},"full":{"BODY":1}}
 {"file":"settings/byte_bounds.mbt","definition":"ByteBound::log_fields","text":"ab694539271865ac","pinned":{"BODY":1},"full":{"BODY":1}}
 {"file":"settings/byte_bounds.mbt","definition":"memory_max_file","text":"9e12f62b373b57b2","pinned":{"BODY":1},"full":{"BODY":1}}
-{"file":"settings/byte_bounds.mbt","definition":"MemoryLimit::parse","text":"67ce4a898c820bd4","pinned":{"BODY":1,"ROR":1,"IFC":2,"INT":3},"full":{"BODY":1,"ROR":1,"IFC":4,"INT":6}}
+{"file":"settings/byte_bounds.mbt","definition":"MemoryLimit::parse","text":"52e14880d1b12d1d","pinned":{"BODY":1,"ROR":1,"IFC":2,"INT":2},"full":{"BODY":1,"ROR":1,"IFC":4,"INT":3}}
 {"file":"settings/settings.mbt","definition":"InvalidSetting::message","text":"3a9c3e70fd9b7785","pinned":{"BODY":1},"full":{"BODY":1}}
 {"file":"settings/settings.mbt","definition":"serve_settings","text":"9d083c35e4797860","pinned":{"IFC":1},"full":{"IFC":2}}
 {"file":"settings/settings.mbt","definition":"env_name","text":"6cfd1571736bea0b","pinned":{"BODY":1},"full":{"BODY":1}}
@@ -16,11 +16,11 @@
 {"file":"settings/settings.mbt","definition":"mock_certs_value","text":"15e6c513411ccfa0","pinned":{"BODY":1,"IFC":1,"LCR":1,"DEL":1,"INT":2},"full":{"BODY":1,"IFC":5,"LCR":1,"DEL":1,"INT":3}}
 {"file":"settings/settings.mbt","definition":"seed_value","text":"72afa69393c2fcc6","pinned":{"BODY":1},"full":{"BODY":1,"IFC":1}}
 {"file":"settings/settings.mbt","definition":"seed_reason","text":"04d16b455fe99280","pinned":{"BODY":1},"full":{"BODY":1}}
-{"file":"settings/settings.mbt","definition":"parse_seed","text":"310dbd6cbc319463","pinned":{"BODY":1,"ROR":1,"IFC":1,"INT":1},"full":{"BODY":1,"ROR":1,"IFC":2,"INT":3}}
-{"file":"settings/settings.mbt","definition":"parse_response_index","text":"1127fa766a17bfed","pinned":{"BODY":1,"ROR":1,"IFC":1,"INT":1},"full":{"BODY":1,"ROR":1,"IFC":2,"INT":3}}
+{"file":"settings/settings.mbt","definition":"parse_seed","text":"a0c73f7d84f92ec2","pinned":{"BODY":1,"ROR":1,"IFC":1},"full":{"BODY":1,"ROR":1,"IFC":2}}
+{"file":"settings/settings.mbt","definition":"parse_response_index","text":"e068f1bd05d1f7e7","pinned":{"BODY":1,"ROR":1,"IFC":1},"full":{"BODY":1,"ROR":1,"IFC":2}}
 {"file":"settings/settings.mbt","definition":"response_index_reason","text":"095a2a70704433db","pinned":{"BODY":1,"AOR":1,"INT":1},"full":{"BODY":1,"AOR":1,"INT":2}}
 {"file":"settings/settings.mbt","definition":"random_seed","text":"d7438a78693ef3a1","pinned":{"BODY":1},"full":{"BODY":1}}
-{"file":"settings/settings.mbt","definition":"decimal","text":"ba93b60a48cd3d06","pinned":{"BODY":1,"ROR":3,"IFC":1,"LCR":3,"NOT":1,"AOR":3,"INT":2},"full":{"BODY":1,"ROR":3,"IFC":2,"LCR":3,"NOT":1,"AOR":3,"INT":4}}
+{"file":"settings/settings.mbt","definition":"decimal","text":"bf515927d9f5ee1a","pinned":{"BODY":1,"ROR":3,"IFC":2,"LCR":2,"NOT":1,"AOR":3,"INT":4},"full":{"BODY":1,"ROR":3,"IFC":4,"LCR":2,"NOT":1,"AOR":3,"INT":7}}
 {"file":"settings/settings.mbt","definition":"max_size","text":"6def0b9126bb6486","pinned":{"AOR":2,"INT":3},"full":{"AOR":2,"INT":9}}
 {"file":"settings/settings.mbt","definition":"max_http2_streams","text":"ad21aafc7c49dc50","pinned":{"INT":1},"full":{"INT":3}}
 {"file":"settings/settings.mbt","definition":"max_replicas","text":"0171845748c16351","pinned":{"INT":1},"full":{"INT":3}}
@@ -43,6 +43,6 @@
 {"file":"settings/settings.mbt","definition":"token_value","text":"98e47fe11c17faad","pinned":{"BODY":1,"IFC":1,"NOT":1},"full":{"BODY":1,"IFC":2,"NOT":1}}
 {"file":"settings/settings.mbt","definition":"file_value","text":"483d45ceb5ff8dd4","pinned":{"BODY":1},"full":{"BODY":1}}
 {"file":"settings/settings.mbt","definition":"header_size_limit_value","text":"ef9084f325070cd9","pinned":{"BODY":1,"INT":1},"full":{"BODY":1,"INT":2}}
-{"file":"settings/settings.mbt","definition":"int_value","text":"571021582499cb67","pinned":{"BODY":1,"ROR":2,"IFC":1,"LCR":1,"INT":1},"full":{"BODY":1,"ROR":2,"IFC":2,"LCR":1,"INT":3}}
+{"file":"settings/settings.mbt","definition":"int_value","text":"c8a262a8193e4eaf","pinned":{"BODY":1,"ROR":2,"IFC":1,"LCR":1},"full":{"BODY":1,"ROR":2,"IFC":2,"LCR":1}}
 {"file":"settings/settings.mbt","definition":"on_off_value","text":"7444a993b5847133","pinned":{"BODY":1,"BOOL":2},"full":{"BODY":1,"BOOL":2}}
 {"file":"settings/settings.mbt","definition":"is_inner_relative_path","text":"8ac88e78faf120fa","pinned":{"BODY":1,"LCR":3},"full":{"BODY":1,"LCR":3}}

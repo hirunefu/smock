@@ -18,6 +18,9 @@ test "process CPU: utime and stime of /proc/<pid>/stat, in seconds, after a comm
       // are the only fields read (`cpu_seconds`: "fields 14 (`utime`) and
       // 15 (`stime`)"), though the kernel writes 52. The first of the lines
       // below, one field shorter, ends at utime.
+      // That a line which ends at stime is read, the maintainer confirmed on
+      // 2026-11-21 (#328): "a /proc/<pid>/stat line that ends at field 15
+      // (stime) is read".
       @usage.cpu_seconds("1 (smock) R 0 1 1 0 -1 0 0 0 0 0 7 3\n"),
       // Too few fields, a field that is not a number, and no line.
       @usage.cpu_seconds("1 (smock) R 0 1 1 0 -1 0 0 0 0 0 7\n"),
