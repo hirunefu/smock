@@ -138,12 +138,11 @@ let fragments : Array[Bytes] = [
 
 ///|
 /// Starts for garbage, so that it also reaches the header section, a
-/// chunked body, a transfer coding, the bytes after a whole request, and a
-/// body of 64 bytes after one.
+/// chunked body, a transfer coding (for 501), and a body of 64 bytes after
+/// a whole request (for a request, then more needed).
 let starts : Array[Bytes] = [
   b"", b"POST / HTTP/1.1\r\nHost: a\r\n", b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n",
-  b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: ", b"GET / HTTP/1.1\r\nHost: a\r\n\r\n",
-  b"GET / HTTP/1.1\r\nHost: a\r\n\r\nPOST / HTTP/1.1\r\nHost: a\r\nContent-Length: 64\r\n\r\n",
+  b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: ", b"GET / HTTP/1.1\r\nHost: a\r\n\r\nPOST / HTTP/1.1\r\nHost: a\r\nContent-Length: 64\r\n\r\n",
 ]
 
 ///|
@@ -312,8 +311,18 @@ test "random garbage is parsed the same way however it is split, and never crash
   )
   // The garbage reaches every part of the parser: some of it even holds
   // whole requests.
+  let endings = reached.keys().collect()
+  endings.sort_by((a, b) => a.lexical_compare(b))
   debug_inspect(
-    garbage_endings.filter(ending => !reached.contains(ending)),
-    content="[]",
+    endings,
+    content=(
+      #|[
+      #|  "complete, then invalid 400",
+      #|  "complete, then need more",
+      #|  "invalid 400",
+      #|  "invalid 501",
+      #|  "need more",
+      #|]
+    ),
   )
 }
