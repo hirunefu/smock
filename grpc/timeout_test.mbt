@@ -39,8 +39,9 @@ test "a timeout is 1 to 8 digits and a unit, read as nanoseconds" {
 test "eight digits of every unit are read without wrapping, and eight digits of hours saturate" {
   // grpc/README.mbt.md, Timeouts: "Eight digits of hours are more
   // nanoseconds than an `Int64` holds, so they saturate at
-  // `0x7FFF_FFFF_FFFF_FFFF` rather than wrap." The maintainer confirmed
-  // that value on 2026-11-21 (#327).
+  // `0x7FFF_FFFF_FFFF_FFFF` rather than wrap: 2,562,047 hours is the most
+  // that is read exactly, and 2,562,048 hours and more saturate." The
+  // maintainer confirmed that value on 2026-11-21 (#327).
   // The limit, and just past it, as the maintainer decided on 2026-11-21
   // (#327): an hour is 3,600,000,000,000 ns (PROTOCOL-HTTP2's Hour, `H`),
   // and 2^63 - 1 ns is 2,562,047 hours and a part of one. So 2562047H,
