@@ -171,17 +171,16 @@ test "a method, target or field name that begins as the one of the request befor
 
 ///|
 test "a request that sends again the method, the target or a header field of the request before it gets the very string or field given for that request" {
-  // The parser's documentation of the head it parsed last: a client sends
-  // the same method, target and header fields on a connection again and
-  // again, "so the next head reuses its strings and fields where they are
-  // the same"; and of parse_head: "The method, the target and each header
-  // field that are the same as in the `previous` head, field by field in
-  // order, are its own strings and fields". A field whose name is the same
-  // text at the same place, but whose value is not, gets that name (the
-  // documentation of parse_field), and a value is compared without the
-  // white space around it (Header's documentation). The server reads which
-  // fields are the very ones of the request before, to decode each field
-  // once per connection (d66c05fa).
+  // Parser's documentation: "On one connection, a request's method, target
+  // and header fields that are the same as in the request before, field by
+  // field in order, are the very strings and `Header`s of that request,
+  // which `physical_equal` tells; a field with the same name in its place
+  // but another value is a new `Header` with that request's very name. A
+  // name is the same only in the same case, and a value is compared
+  // without the white space around it." The server relies on it to decode
+  // a field that a client sends with every request once per connection
+  // (DecodedHeaders::of in server/server.mbt; d66c05fa). The maintainer
+  // made it a promise of the interface on 2026-11-21 (#324).
   let stream = "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 1\r\n\r\n" +
     "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 1\r\n\r\n" +
     "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 2\r\n\r\n" +

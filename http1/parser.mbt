@@ -16,6 +16,14 @@
 /// takes. Timeouts are the caller's; `Parser::in_request` tells which one
 /// runs.
 ///
+/// On one connection, a request's method, target and header fields that
+/// are the same as in the request before, field by field in order, are the
+/// very strings and `Header`s of that request, which `physical_equal`
+/// tells; a field with the same name in its place but another value is a
+/// new `Header` with that request's very name. A name is the same only in
+/// the same case, and a value is compared without the white space around
+/// it.
+///
 /// ```mbt check
 /// test {
 ///   let parser = @http1.Parser()
