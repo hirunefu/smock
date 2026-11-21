@@ -142,6 +142,65 @@ test "an attribute's value is normalised: each whitespace character becomes a sp
 }
 
 ///|
+/// For each node that `path` selects in `xml`, given as text and encoded as
+/// UTF-8, in document order: its value from `utf8_value`, and whether that
+/// value is a view of the input's own bytes rather than new bytes.
+fn utf8_values(xml : String, path : String) -> Array[(String, Bool)] raise {
+  let input = @utf8.encode(xml)
+  let document = @xml.parse(input)
+  let path = @xml.compile_path(path)
+  let out = []
+  let mut node = document.first_node(path)
+  while node >= 0 {
+    let value = document.utf8_value(path, node)
+    out.push((@utf8.decode(value), physical_equal(value.data(), input)))
+    node = document.next_node(path, node)
+  }
+  out
+}
+
+///|
+test "utf8_value is a view of the input when the input holds the value as it is, and new bytes otherwise" {
+  // utf8_value's documentation: the value is a view of the input when the
+  // input holds it as it is, as it does for an element that holds only
+  // text without references or carriage returns, and for an attribute
+  // without references or whitespace other than spaces; otherwise it is
+  // decoded into new bytes. The README: none of the walking functions
+  // allocates, except utf8_value for a value that needs decoding, such as
+  // text with a reference or CDATA. In an element, a line feed and a tab
+  // are text as written, and a carriage return is not: it is a line end.
+  let elements = "<r><a> x y </a><a>x\ny\tz</a><a>é😀</a><a>x&amp;y</a><a><![CDATA[x]]></a><a>x\r\ny</a><a>x<!---->y</a></r>"
+  debug_inspect(
+    utf8_values(elements, "/r/a"),
+    content=(
+      #|[
+      #|  ("x y", true),
+      #|  ("x\ny\tz", true),
+      #|  ("é😀", true),
+      #|  ("x&y", false),
+      #|  ("x", false),
+      #|  ("x\ny", false),
+      #|  ("xy", false),
+      #|]
+    ),
+  )
+  let attributes = "<a v='x y' w='x&amp;y' u='x\ty' t='x\ny'/>"
+  debug_inspect(
+    ["/a/@v", "/a/@w", "/a/@u", "/a/@t"].map(path => {
+      utf8_values(attributes, path)
+    }),
+    content=(
+      #|[
+      #|  [("x y", true)],
+      #|  [("x&y", false)],
+      #|  [("x y", false)],
+      #|  [("x y", false)],
+      #|]
+    ),
+  )
+}
+
+///|
 test "the five predefined entities and character references are decoded" {
   debug_inspect(
     values("<a>&lt;b&gt; &amp; &apos;c&apos; &quot;d&quot;</a>", "/a"),
