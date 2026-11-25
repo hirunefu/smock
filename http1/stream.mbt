@@ -21,7 +21,15 @@
 /// - A response with status 1xx, 204 or 304 has no body, so it needs no
 ///   framing (RFC 9110, sections 15.2, 15.3.5 and 15.4.5): the parts and
 ///   `end` are empty, and the connection stays open as for
-///   `encode_response`.
+///   `encode_response`. Even to an HTTP/1.0 request, when that request
+///   keeps the connection open, such a response says
+///   `Connection: keep-alive` and keeps it open unless `close` is true, as
+///   `encode_response` documents for its responses.
+///
+/// A ResponseStream made with no request is written as to an HTTP/1.1
+/// request other than HEAD that keeps the connection open: its body, when
+/// its status allows one, is chunked, and the connection stays open unless
+/// `close` is true.
 ///
 /// The caller passes valid field names (`is_token`) and values
 /// (`is_field_value`), and does not pass Connection, Content-Length or
