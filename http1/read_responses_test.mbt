@@ -438,6 +438,16 @@ fn Response::to_http10(self : Response) -> Bool {
 /// true or the request does not keep it open; and never after a streamed
 /// response with content to HTTP/1.0, whose body ends when the connection
 /// closes.
+///
+/// Two cases of a streamed response rest on sentences of `ResponseStream`'s
+/// doc comment, which the maintainer confirmed on 2026-11-26 (#324). To no
+/// parsed request, it stays open unless `close` is true: "A ResponseStream
+/// made with no request is written as to an HTTP/1.1 request other than
+/// HEAD that keeps the connection open". With status 1xx, 204 or 304 to an
+/// HTTP/1.0 request that keeps the connection open, it stays open unless
+/// `close` is true: "Even to an HTTP/1.0 request, when that request keeps
+/// the connection open, such a response says `Connection: keep-alive` and
+/// keeps it open unless `close` is true".
 fn Response::keeps(self : Response) -> Bool {
   !self.close &&
   !(self.request is Some({ keep_alive: false, .. })) &&
@@ -452,6 +462,17 @@ fn Response::keeps(self : Response) -> Bool {
 /// keep-alive` when it stays open after an HTTP/1.0 request; with content,
 /// the Content-Length of the body (even to HEAD) or, streamed to HTTP/1.1
 /// or to no parsed request, `Transfer-Encoding: chunked`.
+///
+/// Streamed, two of these rest on sentences of `ResponseStream`'s doc
+/// comment (#324, confirmed on 2026-11-26): to no parsed request,
+/// `Transfer-Encoding: chunked` with content, and no Connection field while
+/// the connection stays open ("A ResponseStream made with no request is
+/// written as to an HTTP/1.1 request other than HEAD that keeps the
+/// connection open"); with status 1xx, 204 or 304 to an HTTP/1.0 request
+/// that keeps the connection open, `Connection: keep-alive` unless `close`
+/// is true ("Even to an HTTP/1.0 request, when that request keeps the
+/// connection open, such a response says `Connection: keep-alive` and keeps
+/// it open unless `close` is true").
 fn Response::added(self : Response) -> Array[(Bytes, Bytes)] {
   let out = []
   if self.date is Some(date) &&
@@ -751,6 +772,16 @@ test "responses that the encoder and the response stream write, read as RFC 9112
         @quickcheck.classify(to_head, "to HEAD"),
         @quickcheck.classify(response.to_http10(), "to HTTP/1.0"),
         @quickcheck.classify(response.request is None, "to no parsed request"),
+        @quickcheck.classify(
+          response.streamed && response.request is None,
+          "streamed to no parsed request",
+        ),
+        @quickcheck.classify(
+          response.streamed &&
+          !response.content() &&
+          response.request is Some({ version: Http10, keep_alive: true, .. }),
+          "streamed without content to HTTP/1.0 that keeps the connection open",
+        ),
         @quickcheck.classify(!response.keeps(), "the connection closes"),
         @quickcheck.classify(response.date is Some(_), "a date given"),
         @quickcheck.classify(
