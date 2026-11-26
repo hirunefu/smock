@@ -268,6 +268,13 @@ test "data with several lines becomes one data field per line, whatever ends the
 
 ///|
 test "empty lines in data, and a line break at its end, are data fields of their own" {
+  // Which data fields an event has, one per line of data, is the HTML
+  // Standard's: how a client reads the lines (9.2.5 and 9.2.6, below). An
+  // empty one, here and in the snapshot below, is written `data:`, with no
+  // space after the colon, by encode_sse_event's documentation: "A field
+  // whose value is empty, such as an empty `event` or `id` or an empty
+  // line of `data`, is written as its name and a colon, with no space
+  // after it (`data:`)."
   inspect(
     [sse(""), sse("a\n\nb"), sse("a\n"), sse("\n")].join("---\n"),
     content=(
