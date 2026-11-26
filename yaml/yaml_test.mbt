@@ -474,6 +474,45 @@ test "a literal block scalar keeps its lines; chomping decides the final line br
       #|"- |+\n   \n" -> ["\n"]
     ),
   )
+  // "If a block scalar consists only of empty lines, then these lines are
+  // considered as trailing lines and hence are affected by chomping"
+  // (YAML 1.2.2, section 8.1.1.2), as Example 8.6 shows with its value.
+  // Such a scalar has no first line of text, so none of its empty lines has
+  // more spaces than one ("If there is no non-empty line then the content
+  // indentation level is equal to the number of spaces on the longest
+  // line", section 8.1.1.1), and a last line of fewer spaces with no line
+  // break after it is no empty line, as above.
+  inspect(
+    each(["strip: >-\n\nclip: >\n\nkeep: |+\n\n", "- |+\n   \n ", "- |\n   \n "]),
+    content=(
+      #|"strip: >-\n\nclip: >\n\nkeep: |+\n\n" -> {"strip":"","clip":"","keep":"\n"}
+      #|"- |+\n   \n " -> ["\n"]
+      #|"- |\n   \n " -> [""]
+    ),
+  )
+  // A line of as many spaces as the indentation is an empty line when a
+  // line break ends it (`l-empty`, section 6.4), and holds no text at the
+  // end of the input either: a line of text is the indentation and then at
+  // least one character ("l-nb-literal-text(n) ::= l-empty(n,BLOCK-IN)*
+  // s-indent(n) nb-char+", production 171). So chomping alone decides the
+  // final line breaks: "the final line break and any trailing empty lines
+  // are excluded" with `-`, the final line break is kept without an
+  // indicator and with `+` (section 8.1.1.2), and a folded scalar folds
+  // nothing into that line. Example 8.5, whose first scalar is followed by
+  // such an empty line and each scalar by comment lines, reads as the
+  // specification gives it.
+  inspect(
+    each([
+      "a: |-\n  x\n  ", "a: |\n  x\n  ", "a: |+\n  x\n  ", "a: >\n  x\n  ", "# Strip\n  # Comments:\nstrip: |-\n  # text\n  \n # Clip\n  # comments:\n\nclip: |\n  # text\n \n # Keep\n  # comments:\n\nkeep: |+\n  # text\n\n # Trail\n  # comments.",
+    ]),
+    content=(
+      #|"a: |-\n  x\n  " -> {"a":"x"}
+      #|"a: |\n  x\n  " -> {"a":"x\n"}
+      #|"a: |+\n  x\n  " -> {"a":"x\n"}
+      #|"a: >\n  x\n  " -> {"a":"x\n"}
+      #|"# Strip\n  # Comments:\nstrip: |-\n  # text\n  \n # Clip\n  # comments:\n\nclip: |\n  # text\n \n # Keep\n  # comments:\n\nkeep: |+\n  # text\n\n # Trail\n  # comments." -> {"strip":"# text","clip":"# text\n","keep":"# text\n\n"}
+    ),
+  )
 }
 
 ///|
@@ -500,6 +539,18 @@ test "a folded block scalar joins lines with a space, except around empty and mo
     ),
     content=(
       #|{"folded":"one two\nthree\n  more indented\nfour\n","strip":"a b","keep":"a\n\n","end":"x"}
+    ),
+  )
+  // YAML 1.2.2's Example 6.6 (section 6.5), a whole document, reads as the
+  // specification gives it: "If a line break is followed by an empty line,
+  // it is trimmed; the first line break is discarded and the rest are
+  // retained as content." Its three empty lines hold as many spaces as the
+  // indentation, fewer, and none (`l-empty`, section 6.4), and each is one
+  // line feed.
+  inspect(
+    each([">-\n  trimmed\n  \n \n\n  as\n  space"]),
+    content=(
+      #|">-\n  trimmed\n  \n \n\n  as\n  space" -> "trimmed\n\n\nas space"
     ),
   )
 }
@@ -877,6 +928,21 @@ test "malformed indentation gives an error at the deepest node reached, or a val
       #|"a: [1]\n  b: 2" -> error /a/0: bad indentation
       #|"a: |\n    \n  x" -> error /a: a leading empty line of a block scalar has more spaces than its first line
       #|"a: |\n  \n  x" -> {"a":"\nx"}
+    ),
+  )
+  // "It is an error for any of the leading empty lines to contain more
+  // spaces than the first non-empty line" (YAML 1.2.2, section 8.1.1.1):
+  // the first item of Example 8.3, an error, and the same with a later
+  // leading empty line of fewer spaces, or of none, before the first line
+  // of text, which leaves the first empty line in error. The message is the
+  // one above for that; the pointer is the scalar, the deepest node
+  // reached.
+  inspect(
+    each(["- |\n  \n text", "- |\n  \n \n text", "- |\n  \n\n text"]),
+    content=(
+      #|"- |\n  \n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
+      #|"- |\n  \n \n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
+      #|"- |\n  \n\n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
     ),
   )
   // A sequence item where the mapping expects its next key, and a key
