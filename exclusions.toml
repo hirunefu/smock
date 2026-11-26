@@ -1925,3 +1925,97 @@ category = "UNREACHABLE"
 reason = "The arm for a section that has Ended or is Broken (`Ended | Broken => Broken`), which no caller passes: Parser::scan_head and Chunks::decode, its only callers, stop at either."
 argument = "Section is private to http1, and after has two callers (the white-box reference parser has a section of its own). (1) Parser::scan_head's Fields arm, `section = before.after(c)`. `scan` becomes Fields only in the VersionLf arm, which sets `section = FieldStart` with it. After the call, a Broken section sets `scan = Broken`, which ends the loop with Rejected(400); an Ended section ends it at the size and count check (Rejected(431)) or at `if section is Ended { result = Ended(at); break }`; the runs of a name's or a value's bytes after it change only `at`. So no pass in Fields starts with an Ended or Broken section, and scan_head saves Fields with an Ended section only when it returns Ended or Rejected (a Broken section saves the scan Broken). On Rejected, and on Ended when parse_head fails, Parser::next sets `self.invalid` and never calls scan_head again (`if self.invalid is Some(status)` comes first); on Ended with a parsed head, next sets `self.scan = Method`, so the next head reaches Fields again only through VersionLf, which sets FieldStart. (2) Chunks::decode's Trailer arm, `match section.after(c)`: its arms return on Ended and on Broken, so the state Trailer holds only FieldStart (set by SizeLf) or a section after returned that is neither. So no call passes Ended or Broken."
 reviewer = ""
+
+# yaml/parser.mbt (#397, part 1 of 8 of yaml's triage for #323): survivors
+# of the first weekly run (44423781036) in the parser's construction, its
+# check of characters, documents, indentation, quoted scalars and line
+# handling that no input can tell from the code. Each argument is in its
+# reason; the compiler's output differs for each but block_node's, which it
+# does not compare. None of these definitions uses an unchecked access, so
+# wasm-gc decides. Four move the bounds by which quoted tells a run of
+# white space's first character (`blank_start` is -1 or an index after the
+# opening quote, never 0); two stop check_indentation's scan back before
+# index 0, where no tab can be by then; one deletes next_content's step
+# past a line break, which from_line_start, next, takes as an empty line's;
+# one deletes block_node's `self.reached = pointer`, which every caller has
+# already made: that statement decides nothing, so it is a deletion
+# candidate for the maintainer. The implementer compared digests of what
+# parse reads, in both modes, from every quoted scalar of up to six of
+# seven characters in six places, from every text of up to seven of eight
+# characters of block structure, and from 600,000 random texts and
+# documents, with each mutant applied by hand and without it: the same for
+# each, on wasm-gc, while six variants that are not equivalent changed
+# them (a scratch test, not committed). The adversarial attempt is pending.
+# The maintainer reads every entry, since yaml is a protocol package.
+
+[[exclusion]]
+mutant = "yaml/parser.mbt,Parser::next_content,DEL,self.bump(),,0"
+text = "2363ef00c59aeeb3"
+category = "EQUIVALENT"
+reason = "next_content's `self.bump()` past the line break that ends the current line is deleted: from_line_start, which comes right after it, then starts at that line break, finds no space, no tab, no comment and no end of the input there, and bumps past it as the end of an empty line, setting `line_start` as the deleted bump does (Parser::bump sets it for every `\\n`). Its next pass starts where the code's first pass starts, so every caller gets the same answer, position and line start. It differs nowhere, a white-box call included, since from_line_start always follows. The step says where the next line starts, and its deletion works only because the next loop reads the line break as an empty line's, so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #397's implementer", tests = ["none yet; the implementer's own check: a scratch test of yaml, not committed, that folds what parse reads, in both modes, into three digests: every quoted content of up to six of space, tab, `a`, a line break, a backslash and both quotes, in six places (a whole document, a mapping's value, a sequence item, a flow sequence's item and a key; 1,647,084 parses); every text of up to seven of `-`, space, tab, `a`, `:`, a line break, `[` and `#` (4,793,490 parses); 300,000 random texts of up to 24 characters over 24 characters of YAML's syntax and 300,000 documents of up to six lines of block structure, quoted lines, `---` and `...` (1,200,000 parses). With each of #397's 8 entries' mutants applied by hand the three digests are the code's, on wasm-gc; six variants that are not equivalent change them (`blank_start < 2`, `blank_start >= 2`, `i >= 2`, next_content's bump made `self.pos += 1`, block_sequence's and block_mapping's `reached` left out)"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/parser.mbt,Parser::block_node,DEL,self.reached = pointer,,0"
+text = "077bed59189fb637"
+category = "EQUIVALENT"
+reason = "block_node's `self.reached = pointer` is deleted: each of its three callers has already set `reached` to the `pointer` it passes. document passes `\"\"` while `reached` is still the `\"\"` that Parser::Parser gives (check_characters, from_line_start and next_content, which run before, set nothing); block_sequence sets `reached = item_pointer` and then calls `block_node(column, item_pointer)`, and block_mapping sets `reached = key_pointer` before mapping_value calls `block_node(column, key_pointer)`, with only white space, comments and line breaks skipped in between. So every error names the same node, and every value is the same. It differs only for a white-box call of block_node with a pointer other than the parser's `reached`, which no caller makes. The statement decides nothing: a deletion candidate (#397's report)."
+compiler_output = "not compared"
+adversarial = { context = "pending: a separate agent context, after #397's implementer", tests = ["none yet; the implementer's own check, the digests of next_content's entry above: the same with this mutant applied, on wasm-gc; leaving out block_sequence's or block_mapping's own `reached` instead changes them"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/parser.mbt,Parser::check_indentation,INT,0,1,0"
+text = "ba6a75c0e50f9e2a"
+category = "EQUIVALENT"
+reason = "`i >= 0` becomes `i >= 1`: the scan back over the white space before a block collection stops before index 0 instead of reading it. Index 0 is the text's first character (Parser::Parser drops a byte order mark before it), and the scan reaches it only when nothing but white space comes before the collection on the text's first line. from_line_start has read that white space before any node starts on that line, and rejects a tab in it (\"tabs are not allowed in indentation\", the message check_indentation gives), so index 0 holds a space there, past which the code steps without a word. So every answer is the same. It differs only for a white-box call with a tab at index 0 before `start`, which no caller makes. The bound stays: without it the scan would read index -1 when white space starts the text, so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #397's implementer", tests = ["none yet; the implementer's own check, the digests of next_content's entry above (every text of up to seven of `-`, space, tab, `a`, `:`, a line break, `[` and `#`, among them): the same with this mutant applied, on wasm-gc; `i >= 2` changes them"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/parser.mbt,Parser::check_indentation,ROR,>=,>,0"
+text = "ba6a75c0e50f9e2a"
+category = "EQUIVALENT"
+reason = "`i >= 0` becomes `i > 0`: the scan back over the white space before a block collection stops before index 0 instead of reading it. Index 0 is the text's first character (Parser::Parser drops a byte order mark before it), and the scan reaches it only when nothing but white space comes before the collection on the text's first line. from_line_start has read that white space before any node starts on that line, and rejects a tab in it (\"tabs are not allowed in indentation\", the message check_indentation gives), so index 0 holds a space there, past which the code steps without a word. So every answer is the same. It differs only for a white-box call with a tab at index 0 before `start`, which no caller makes. The bound stays: without it the scan would read index -1 when white space starts the text, so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #397's implementer", tests = ["none yet; the implementer's own check, the digests of next_content's entry above (every text of up to seven of `-`, space, tab, `a`, `:`, a line break, `[` and `#`, among them): the same with this mutant applied, on wasm-gc; `i >= 2` changes them"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/parser.mbt,Parser::quoted,INT,0,1,0"
+text = "53cf93e48f5d8248"
+category = "EQUIVALENT"
+reason = "`blank_start < 0` becomes `blank_start < 1`, where quoted records the first space or tab of a run. `blank_start` is -1, or the index of a space or tab inside the quotes, which comes after the opening quote: quoted bumps past the quote before its loop reads, so that index is 1 or more, and the line-break arm and the writing of a run set -1 again. `< 1` and `< 0` are both true for -1 and both false for 1 or more, so every run starts at the same index and every scalar is the same. It differs nowhere, a white-box call included, since any call bumps once before it reads."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #397's implementer", tests = ["none yet; the implementer's own check, the digests of next_content's entry above (every quoted content of up to six of space, tab, `a`, a line break, a backslash and both quotes, in six places, among them): the same with this mutant applied, on wasm-gc; `blank_start < 2` changes them"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/parser.mbt,Parser::quoted,ROR,<,<=,0"
+text = "53cf93e48f5d8248"
+category = "EQUIVALENT"
+reason = "`blank_start < 0` becomes `blank_start <= 0`, where quoted records the first space or tab of a run. `blank_start` is -1, or the index of a space or tab inside the quotes, which comes after the opening quote: quoted bumps past the quote before its loop reads, so that index is 1 or more, and the line-break arm and the writing of a run set -1 again. `<= 0` and `< 0` are both true for -1 and both false for 1 or more, so every run starts at the same index and every scalar is the same. It differs nowhere, a white-box call included, since any call bumps once before it reads."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #397's implementer", tests = ["none yet; the implementer's own check, the digests of next_content's entry above (every quoted content of up to six of space, tab, `a`, a line break, a backslash and both quotes, in six places, among them): the same with this mutant applied, on wasm-gc; `blank_start < 2` changes them"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/parser.mbt,Parser::quoted,INT,0,1,3"
+text = "53cf93e48f5d8248"
+category = "EQUIVALENT"
+reason = "`blank_start >= 0` becomes `blank_start >= 1`, where quoted writes a run of white space that no line break follows before the next character. `blank_start` is -1, or the index of a space or tab inside the quotes, which comes after the opening quote: quoted bumps past the quote before its loop reads, so that index is 1 or more. `>= 1` and `>= 0` are both false for -1 and both true for 1 or more, so the same runs are written and every scalar is the same. It differs nowhere, a white-box call included, since any call bumps once before it reads."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #397's implementer", tests = ["none yet; the implementer's own check, the digests of next_content's entry above (every quoted content of up to six of space, tab, `a`, a line break, a backslash and both quotes, in six places, among them): the same with this mutant applied, on wasm-gc; `blank_start >= 2` changes them"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/parser.mbt,Parser::quoted,ROR,>=,>,0"
+text = "53cf93e48f5d8248"
+category = "EQUIVALENT"
+reason = "`blank_start >= 0` becomes `blank_start > 0`, where quoted writes a run of white space that no line break follows before the next character. `blank_start` is -1, or the index of a space or tab inside the quotes, which comes after the opening quote: quoted bumps past the quote before its loop reads, so that index is 1 or more. `> 0` and `>= 0` are both false for -1 and both true for 1 or more, so the same runs are written and every scalar is the same. It differs nowhere, a white-box call included, since any call bumps once before it reads."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #397's implementer", tests = ["none yet; the implementer's own check, the digests of next_content's entry above (every quoted content of up to six of space, tab, `a`, a line break, a backslash and both quotes, in six places, among them): the same with this mutant applied, on wasm-gc; `blank_start >= 2` changes them"] }
+reviewer = ""
