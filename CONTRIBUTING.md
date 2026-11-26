@@ -1638,9 +1638,10 @@ When a package's turn comes to climb to L4, about ten of its snapshots
 are audited. They are drawn among the tests that alone kill some mutant
 in a kill-matrix run of the package (`-f mode=matrix`,
 [Bulk runs on Actions](#bulk-runs-on-actions)), at least half of them
-from tests that the work added or changed. The seed of the draw is that
-kill-matrix run's ID, a number that GitHub Actions gives once the run
-starts, so no agent can know it before and no one picks it. A separate
+from the work's tests: a test is the work's when the work added it, or
+changed a line of its block that is not a comment. The seed of the draw
+is that kill-matrix run's ID, a number that GitHub Actions gives once the
+run starts, so no agent can know it before and no one picks it. A separate
 agent context, one that wrote none of that package's tests under these
 rules, checks each against its source. The maintainer reads only the
 snapshots that this context finds in disagreement with their source, and
@@ -1656,11 +1657,16 @@ python3 scripts/mutation/matrix.py draw --seed <run ID> mutation-report/matrix/<
 
 - It draws among the tests that alone kill some mutant in the matrices
   given ([The kill matrix](#the-kill-matrix)).
-- A test is the work's when its block, from the `///|` at or before its
-  line to the line before the next `///|`, holds a line that differs from
-  `d953f320`, the commit of `main` at which the test review began
-  (`--base` names another): a line that `git diff -U0 d953f320 HEAD` adds
-  or changes, or the line at which it deletes some.
+- A test is the work's when the work added it, or changed a line of its
+  block that is not a comment, since `d953f320`, the commit of `main` at
+  which the test review began (`--base` names another). Its block runs
+  from the `///|` at or before its line to the line before the next
+  `///|`. A line whose first characters, after white space, are `//` is a
+  comment, and a blank line is none of the test's lines. The lines added
+  or changed are those that `git diff -U0 d953f320 HEAD` adds or changes,
+  and the line at which it deletes some. Each counts when it is neither a
+  comment nor blank, or when a line that the diff changes or deletes there
+  was neither.
 - It draws ten (`--size` names another number), or every one when there
   are fewer. The tests are sorted by their names in the matrix.
   `random.Random(<run ID>)`, with the ID as text, samples half of the
