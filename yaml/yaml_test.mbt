@@ -597,6 +597,20 @@ test "flow collections are arrays and objects, and may span lines" {
   )
   inspect(yaml("[1, two]"), content="[1,\"two\"]")
   inspect(yaml("{a: b}\n"), content="{\"a\":\"b\"}")
+  // White space may come between a key of a flow mapping and its `:`:
+  // "ns-flow-map-yaml-key-entry(n,c) ::= ns-flow-yaml-node(n,c) ( (
+  // s-separate(n,c)? c-ns-flow-map-separate-value(n,c) ) | e-node )", and
+  // the same for a JSON-like key (YAML 1.2.2, productions 145 and 148), as
+  // the first entry of Example 7.17 shows, for the first key as for later
+  // ones.
+  inspect(
+    each(["{unquoted : \"separate\"}", "{\"a\"\t: 1}", "{'a' : b, c : d}"]),
+    content=(
+      #|"{unquoted : \"separate\"}" -> {"unquoted":"separate"}
+      #|"{\"a\"\t: 1}" -> {"a":1}
+      #|"{'a' : b, c : d}" -> {"a":"b","c":"d"}
+    ),
+  )
 }
 
 ///|
