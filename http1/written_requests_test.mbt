@@ -50,12 +50,12 @@ priv struct Chunk {
 
 ///|
 /// How a written request's body is framed (RFC 9112, section 6): none, a
-/// Content-Length with `zeros` leading zeros and `data`, or chunked with
-/// its chunks, a last-chunk of `last_zeros` zeros and its chunk-ext
-/// elements, and its trailer fields.
+/// Content-Length with `zeros` leading zeros and `data` followed by
+/// `padding` octets of padding, or chunked with its chunks, a last-chunk of
+/// `last_zeros` zeros and its chunk-ext elements, and its trailer fields.
 priv enum Body {
   NoBody
-  Length(zeros~ : Int32, data~ : Bytes)
+  Length(zeros~ : Int32, data~ : Bytes, padding~ : Int32)
   Chunked(
     chunks~ : Array[Chunk],
     last_zeros~ : Int32,
@@ -80,12 +80,28 @@ priv struct Written {
 }
 
 ///|
+/// The octets a parser's buffer holds before it first makes room, as
+/// `Parser::Parser` makes it today (4,096 bytes). When a stream passes them,
+/// `Parser::feed` moves the bytes it holds to the front of its buffer, and
+/// grows the buffer when they do not fit. No document states this length:
+/// the writer only aims some streams past it, so that the property reaches
+/// that code, and what the property expects does not depend on it.
+let first_buffer : Int32 = 4096
+
+///|
+/// `length` octets of padding: the octets 0 to 250 in turn, so that a
+/// copy that starts at another octet of it is not the same.
+fn padding_octets(length : Int32) -> Bytes {
+  Bytes::makei(length, i => (i % 251).to_byte())
+}
+
+///|
 /// The value written for `field`: for a Content-Length, the length of the
 /// body in decimal (RFC 9110, section 8.6), after its leading zeros.
 fn Written::value(self : Written, field : Field) -> Bytes {
   match (field.role, self.body) {
-    (Framing, Length(zeros~, data~)) =>
-      @utf8.encode("0".repeat(zeros) + data.length().to_string())
+    (Framing, Length(zeros~, data~, padding~)) =>
+      @utf8.encode("0".repeat(zeros) + (data.length() + padding).to_string())
     _ => field.value
   }
 }
@@ -99,11 +115,10 @@ fn write_field(out : @buffer.Buffer, field : Field, value : Bytes) -> Unit {
 }
 
 ///|
-/// The request's bytes: RFC 9112's `HTTP-message`, `start-line CRLF *(
-/// field-line CRLF ) CRLF [ message-body ]` (section 2.1), after its empty
-/// lines, with the request line `method SP request-target SP HTTP-version`
-/// (section 3) and a chunked body as section 7.1 writes it.
-fn Written::bytes(self : Written) -> Bytes {
+/// The request's head: its empty lines, then RFC 9112's `start-line CRLF *(
+/// field-line CRLF ) CRLF` (section 2.1), with the request line `method SP
+/// request-target SP HTTP-version` (section 3).
+fn Written::head(self : Written) -> Bytes {
   let out = @buffer.Buffer()
   for _ in 0..<self.empty_lines {
     out.write_bytes(b"\r\n")
@@ -117,9 +132,19 @@ fn Written::bytes(self : Written) -> Bytes {
     write_field(out, field, self.value(field))
   }
   out.write_bytes(b"\r\n")
+  out.to_bytes()
+}
+
+///|
+/// The request's bytes: RFC 9112's `HTTP-message`, `start-line CRLF *(
+/// field-line CRLF ) CRLF [ message-body ]` (section 2.1), after its empty
+/// lines, with a chunked body as section 7.1 writes it.
+fn Written::bytes(self : Written) -> Bytes {
+  let out = @buffer.Buffer()
+  out.write_bytes(self.head())
   match self.body {
     NoBody => ()
-    Length(data~, ..) => out.write_bytes(data)
+    Length(..) => out.write_bytes(self.content())
     Chunked(chunks~, last_zeros~, last_exts~, trailers~) => {
       for chunk in chunks {
         let size = chunk.data.length().to_string(radix=16)
@@ -147,12 +172,29 @@ fn Written::bytes(self : Written) -> Bytes {
 }
 
 ///|
-/// The body the request carries, decoded (RFC 9112, section 7.1.3): the
-/// chunk-data of its chunks, in order.
+/// The request's bytes as a failure shows them: a bytes literal, and the
+/// padding of a Content-Length body by its length.
+fn Written::shown(self : Written) -> String {
+  let bytes = self.bytes()
+  match self.body {
+    Length(padding~, ..) if padding > 0 =>
+      "\{literal(bytes[:bytes.length() - padding])} + \{padding} octets of padding"
+    _ => literal(bytes)
+  }
+}
+
+///|
+/// The body the request carries: its data and padding, or, decoded (RFC
+/// 9112, section 7.1.3), the chunk-data of its chunks, in order.
 fn Written::content(self : Written) -> Bytes {
   match self.body {
     NoBody => b""
-    Length(data~, ..) => data
+    Length(data~, padding~, ..) => {
+      let out = @buffer.Buffer()
+      out.write_bytes(data)
+      out.write_bytes(padding_octets(padding))
+      out.to_bytes()
+    }
     Chunked(chunks~, ..) => {
       let out = @buffer.Buffer()
       for chunk in chunks {
@@ -308,15 +350,108 @@ fn Requests::expected(self : Requests) -> Array[Read] {
 }
 
 ///|
+/// Whether a Content-Length body of more than the octets a parser's buffer
+/// holds at first arrives in more than one piece: the parser gives such a
+/// body only whole, so it holds more than those octets at once and grows
+/// its buffer.
+fn Requests::grows(self : Requests, pieces : Array[BytesView]) -> Bool {
+  pieces.length() > 1 &&
+  self.requests
+  .iter()
+  .any(request => {
+    request.body is Length(data~, padding~, ..) &&
+    data.length() + padding > first_buffer
+  })
+}
+
+///|
+/// Whether, when the first piece that ends past the octets a parser's
+/// buffer holds at first arrives, a request has been taken out and part of
+/// the next one's head, past its empty lines, has arrived: the parser holds
+/// those bytes until the head ends, behind the request taken out, and
+/// moves them to the front of its buffer when it makes room.
+fn Requests::held_behind(self : Requests, pieces : Array[BytesView]) -> Bool {
+  // The octets that arrive before that piece.
+  let mut before = 0
+  for piece in pieces {
+    if before + piece.length() > first_buffer {
+      break
+    }
+    before += piece.length()
+  }
+  let mut start = 0
+  for request in self.requests {
+    let end = start + request.bytes().length()
+    if end > before {
+      return start > 0 &&
+        before > start + 2 * request.empty_lines &&
+        before < start + request.head().length()
+    }
+    start = end
+  }
+  false
+}
+
+///|
+/// Whether the first piece that ends past the octets a parser's buffer
+/// holds at first makes the parser hold more than those octets at once,
+/// while the octets it holds begin after a request or a head taken out:
+/// the parser then grows its buffer and copies into it the octets it
+/// holds, from where they begin. It holds a Content-Length body from the
+/// end of its head, a head from its request line, and none of a chunked
+/// body, which it decodes as it arrives.
+fn Requests::grows_behind(self : Requests, pieces : Array[BytesView]) -> Bool {
+  // The octets that arrive before that piece, and with it.
+  let mut before = 0
+  let mut after = 0
+  for piece in pieces {
+    after = before + piece.length()
+    if after > first_buffer {
+      break
+    }
+    before = after
+  }
+  guard after > first_buffer else { return false }
+  let mut start = 0
+  for request in self.requests {
+    let end = start + request.bytes().length()
+    if end > before {
+      let head_end = start + request.head().length()
+      // Where the octets the parser holds begin.
+      let held = if before < head_end {
+        start + 2 * request.empty_lines
+      } else if request.body is Length(..) {
+        head_end
+      } else {
+        before
+      }
+      return held > 0 && held < before && after - held > first_buffer
+    }
+    start = end
+  }
+  false
+}
+
+///|
 /// The property: the parser reads back what the writer wrote.
 fn Requests::holds(self : Requests) -> Bool {
   read_requests(self.pieces()) == self.expected()
 }
 
 ///|
-/// A read as a failure shows it, as `render` renders a parse.
+/// A read as a failure shows it, as `render` renders a parse; a body of
+/// more than 1,024 octets by its first and last 32 and its length.
 fn shown_read(read : Read) -> String {
   match read {
+    Took(request) if request.body.length() > 1024 => {
+      let body = request.body
+      let brief = @buffer.Buffer()
+      brief.write_bytes(body[:32])
+      brief.write_bytes(b"...")
+      brief.write_bytes(body[body.length() - 32:])
+      let shown = render(Complete({ ..request, body: brief.to_bytes(), }))
+      "\{shown} (a body of \{body.length()} octets)"
+    }
     Took(request) => render(Complete(request))
     Asked => "continue"
     Needs => "need more"
@@ -332,14 +467,15 @@ fn Requests::describe(self : Requests) -> String {
   let lengths = @debug.to_string(pieces.map(piece => piece.length()))
   let written = self.expected().map(shown_read).join("\n  ")
   let read = read_requests(pieces).map(shown_read).join("\n  ")
-  "stream \{literal(self.stream())}\npieces of \{lengths} bytes\nwritten:\n  \{written}\nread:\n  \{read}"
+  let stream = self.requests.map(Written::shown).join(" + ")
+  "stream \{stream}\npieces of \{lengths} bytes\nwritten:\n  \{written}\nread:\n  \{read}"
 }
 
 ///|
 /// Requests as a failure shows them: each request's bytes, then its cuts.
 impl @debug.Debug for Requests with fn to_repr(self) {
   let requests = self.requests.map(request => {
-    "\{literal(request.bytes())} cut at \{@debug.to_string(request.cuts)}"
+    "\{request.shown()} cut at \{@debug.to_string(request.cuts)}"
   })
   @debug.Repr::literal("[\{requests.join(", ")}]")
 }
@@ -795,8 +931,10 @@ fn written(state : @quickcheck.RandomState, last~ : Bool) -> Written {
       Length(
         zeros=if pick(state, 5) == 0 { 1 } else { 0 },
         data=body_data(state, 300),
+        padding=0,
       )
-    _ if version is Http10 => Length(zeros=0, data=body_data(state, 300))
+    _ if version is Http10 =>
+      Length(zeros=0, data=body_data(state, 300), padding=0)
     _ =>
       Chunked(
         chunks=Array::makei(pick(state, 4), _ => chunk(state)),
@@ -853,14 +991,72 @@ fn written(state : @quickcheck.RandomState, last~ : Bool) -> Written {
 }
 
 ///|
+/// The requests, one connection in three with a Content-Length body
+/// padded, when one of its requests has such a body, so that the stream
+/// passes the octets a parser's buffer holds at first. Either the body
+/// grows past them by 1 to 2,048 octets, so that the parser holds more at
+/// once; or, when a request follows, the padded request ends so that the
+/// first octet past them is in the next request's head, after the first
+/// octet of its request line, so that bytes of that head can be held
+/// behind a request taken out when the parser makes room.
+fn lengthened(
+  state : @quickcheck.RandomState,
+  requests : Array[Written],
+) -> Array[Written] {
+  guard pick(state, 3) == 0 else { return requests }
+  let framed = []
+  for i, request in requests {
+    if request.body is Length(..) {
+      framed.push(i)
+    }
+  }
+  guard !framed.is_empty() else { return requests }
+  let i = framed[pick(state, framed.length())]
+  guard requests[i].body is Length(zeros~, data~, ..) else { return requests }
+  let padding = if i + 1 < requests.length() && pick(state, 2) == 0 {
+    let mut end = 0
+    for request in requests[:i + 1] {
+      end += request.bytes().length()
+    }
+    // How many octets of the next request fit before the first octet past
+    // the buffer: more than its empty lines, fewer than its head.
+    let next = requests[i + 1]
+    let before = 2 * next.empty_lines
+    let fit = before + 1 + pick(state, next.head().length() - before - 1)
+    first_buffer - fit - end
+  } else {
+    first_buffer + 1 + pick(state, 2048) - data.length()
+  }
+  guard padding > 0 else { return requests }
+  let changed = requests.copy()
+  changed[i] = { ..requests[i], body: Length(zeros~, data~, padding~), }
+  changed
+}
+
+///|
 /// One to four requests, the stream cut into pieces of one byte, of up to
-/// 7 or up to 100 bytes, or not cut.
+/// 7 or up to 100 bytes, or not cut. A stream that passes the octets a
+/// parser's buffer holds at first is not cut a byte at a time, so that the
+/// property stays quick and a failure shrinks in few steps. Half of those
+/// that would not be cut are cut into pieces of up to that many octets
+/// instead, so that the piece that passes them can make the parser hold
+/// more than them at once, behind what it has taken out.
 impl @quickcheck.Arbitrary for Requests with fn arbitrary(_size, state) {
   let count = 1 + pick(state, 4)
   let requests = Array::makei(count, i => written(state, last=i == count - 1))
-  let longest = [1, 7, 100, 0][pick(state, 4)]
+  let requests = lengthened(state, requests)
   let mut base = 0
   let length = { requests, }.stream().length()
+  let longest = if length > first_buffer {
+    let longest = [7, 100, 0][pick(state, 3)]
+    if longest == 0 && pick(state, 2) == 0 {
+      first_buffer
+    } else {
+      longest
+    }
+  } else {
+    [1, 7, 100, 0][pick(state, 4)]
+  }
   let cuts = if longest == 0 {
     []
   } else {
@@ -891,7 +1087,8 @@ fn Written::without_expect(self : Written) -> Written {
 /// must; no empty lines; the target `/` and the method GET where the method
 /// and the form allow them; a smaller body (half its data, a chunk,
 /// chunk-ext or trailer field left out, or no body), with Expect left out
-/// when no content is left; each cut left out.
+/// when no content is left; half the cuts or each cut left out. Less
+/// padding is `less_padding`'s.
 fn Written::smaller(self : Written, last~ : Bool) -> Array[Written] {
   let out : Array[Written] = []
   for i, field in self.fields {
@@ -953,15 +1150,17 @@ fn Written::smaller(self : Written, last~ : Bool) -> Array[Written] {
   }
   match self.body {
     NoBody => ()
-    Length(zeros~, data~) => {
+    Length(zeros~, data~, padding~) => {
       out.push(with_body(NoBody).without_framing())
       if !data.is_empty() {
         out.push(
-          with_body(Length(zeros~, data=data[:data.length() / 2].to_owned())),
+          with_body(
+            Length(zeros~, data=data[:data.length() / 2].to_owned(), padding~),
+          ),
         )
       }
       if zeros > 0 {
-        out.push(with_body(Length(zeros=0, data~)))
+        out.push(with_body(Length(zeros=0, data~, padding~)))
       }
     }
     Chunked(chunks~, last_zeros~, last_exts~, trailers~) => {
@@ -1013,6 +1212,13 @@ fn Written::smaller(self : Written, last~ : Bool) -> Array[Written] {
       }
     }
   }
+  // The first or the second half of the cuts left out, before each cut
+  // alone, so that the many cuts of a long stream go in few steps.
+  if self.cuts.length() > 2 {
+    let half = self.cuts.length() / 2
+    out.push({ ..self, cuts: self.cuts[half:].to_owned(), })
+    out.push({ ..self, cuts: self.cuts[:half].to_owned(), })
+  }
   for i in 0..<self.cuts.length() {
     let cuts = self.cuts.copy()
     cuts.remove(i) |> ignore
@@ -1029,10 +1235,40 @@ fn Written::without_framing(self : Written) -> Written {
 }
 
 ///|
+/// The request with less padding after its Content-Length body's data: all
+/// of it left out, then half of it, a quarter, and so on down to one octet,
+/// so that a failure that needs the stream to pass the first buffer shrinks
+/// to the padding it needs in few steps; with Expect left out when no
+/// content is left.
+fn Written::less_padding(self : Written) -> Array[Written] {
+  guard self.body is Length(zeros~, data~, padding~) else { return [] }
+  let out = []
+  let mut less = padding
+  while less > 0 {
+    let request = {
+      ..self,
+      body: Length(zeros~, data~, padding=padding - less),
+    }
+    out.push(
+      if request.content().is_empty() {
+        request.without_expect()
+      } else {
+        request
+      },
+    )
+    less = less / 2
+  }
+  out
+}
+
+///|
 /// Smaller streams: each without one of its requests, and each with one
 /// request made smaller. Each has fewer requests, or a request with fewer
 /// fields, chunks, chunk-ext elements, trailer fields, octets or cuts, or
 /// with GET for another method, and none with more, so shrinking ends.
+/// Less padding comes last, so that while a stream passes the first buffer
+/// by more than a failure needs, the requests after the padded one lose
+/// their fields first.
 impl @quickcheck.Shrink for Requests with fn shrink(self) {
   let out : Array[Requests] = []
   for i in 0..<self.requests.length() {
@@ -1040,11 +1276,19 @@ impl @quickcheck.Shrink for Requests with fn shrink(self) {
     rest.remove(i) |> ignore
     out.push({ requests: rest, })
   }
+  let changed = (i : Int32, request : Written) => {
+    let requests = self.requests.copy()
+    requests[i] = request
+    out.push({ requests, })
+  }
   for i, request in self.requests {
     for smaller in request.smaller(last=i == self.requests.length() - 1) {
-      let changed = self.requests.copy()
-      changed[i] = smaller
-      out.push({ requests: changed, })
+      changed(i, smaller)
+    }
+  }
+  for i, request in self.requests {
+    for smaller in request.less_padding() {
+      changed(i, smaller)
     }
   }
   out.iter()
@@ -1059,6 +1303,7 @@ test "requests written as RFC 9112 defines them are read back as written, howeve
       let fields = (f : (Field) -> Bool) => {
         any(request => request.fields.iter().any(f))
       }
+      let pieces = requests.pieces()
       [
         @quickcheck.classify(requests.requests.length() > 1, "several requests"),
         @quickcheck.classify(any(r => r.body is NoBody), "no body"),
@@ -1100,10 +1345,22 @@ test "requests written as RFC 9112 defines them are read back as written, howeve
           "an empty field value",
         ),
         @quickcheck.classify(
-          requests.pieces().iter().all(piece => piece.length() <= 1),
+          pieces.iter().all(piece => piece.length() <= 1),
           "one byte at a time",
         ),
-        @quickcheck.classify(requests.pieces().length() == 1, "fed whole"),
+        @quickcheck.classify(pieces.length() == 1, "fed whole"),
+        @quickcheck.classify(
+          requests.grows(pieces),
+          "a body of more than 4,096 octets, in pieces",
+        ),
+        @quickcheck.classify(
+          requests.held_behind(pieces),
+          "part of a head held behind a request taken out, past 4,096 octets",
+        ),
+        @quickcheck.classify(
+          requests.grows_behind(pieces),
+          "more than 4,096 octets held at once, behind what was taken out",
+        ),
       ]
     },
     counterexample_context=Requests::describe,

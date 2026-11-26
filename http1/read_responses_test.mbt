@@ -134,10 +134,103 @@ fn reader_list(fields : Array[(Bytes, Bytes)], name : String) -> Array[String] {
 }
 
 ///|
+/// Where the BWS that starts at `at` in `line` ends: spaces and tabs (RFC
+/// 9110, section 5.6.3, where BWS is OWS).
+fn reader_bws(line : BytesView, at : Int32) -> Int32 {
+  let mut at = at
+  while at < line.length() && line[at] is (b' ' | b'\t') {
+    at += 1
+  }
+  at
+}
+
+///|
+/// Where the token that starts at `at` in `line` ends, or `at` when none
+/// starts there (RFC 9110, section 5.6.2: `token = 1*tchar`).
+fn reader_token_end(line : BytesView, at : Int32) -> Int32 {
+  let mut at = at
+  while at < line.length() && reader_tchar(line[at]) {
+    at += 1
+  }
+  at
+}
+
+///|
+/// Where the quoted-string that starts at `at` in `line` ends, after its
+/// closing DQUOTE, or `None` when none starts there (RFC 9110, section
+/// 5.6.4): `DQUOTE *( qdtext / quoted-pair ) DQUOTE`, where qdtext is HTAB,
+/// SP, VCHAR but `"` and `\`, or obs-text, and a quoted-pair is `\` before
+/// HTAB, SP, VCHAR or obs-text.
+fn reader_quoted_end(line : BytesView, at : Int32) -> Int32? {
+  guard at < line.length() && line[at] == b'"' else { return None }
+  let mut at = at + 1
+  while at < line.length() {
+    match line[at] {
+      b'"' => return Some(at + 1)
+      b'\\' => {
+        guard at + 1 < line.length() && reader_field_byte(line[at + 1]) else {
+          return None
+        }
+        at += 2
+      }
+      c => {
+        guard reader_field_byte(c) else { return None }
+        at += 1
+      }
+    }
+  }
+  None
+}
+
+///|
+/// Reads a chunk's first line, without its CRLF (RFC 9112, section 7.1):
+/// `chunk-size [ chunk-ext ]`, where chunk-size is `1*HEXDIG`, and a
+/// last-chunk's, `1*("0") [ chunk-ext ]`, which is a size of 0. chunk-ext
+/// is `*( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )`, its
+/// name a token and its value a token or a quoted-string (section 7.1.1).
+/// Returns the size, at most `most`, the octets left in the message; a line
+/// that holds anything else is no chunk's.
+fn reader_chunk_line(line : BytesView, most : Int32) -> Result[Int32, String] {
+  let mut size = 0
+  let mut at = 0
+  while at < line.length() && reader_hex(line[at]) is Some(digit) {
+    size = size * 16 + digit
+    guard size <= most else {
+      return Err("a chunk size past the end of the message")
+    }
+    at += 1
+  }
+  guard at > 0 else { return Err("a chunk size without a digit") }
+  while at < line.length() {
+    at = reader_bws(line, at)
+    guard at < line.length() && line[at] == b';' else {
+      return Err("a chunk size followed by bytes of no chunk extension")
+    }
+    let name = reader_bws(line, at + 1)
+    at = reader_token_end(line, name)
+    guard at > name else { return Err("a chunk extension without a name") }
+    let equals = reader_bws(line, at)
+    if equals < line.length() && line[equals] == b'=' {
+      let value = reader_bws(line, equals + 1)
+      at = reader_token_end(line, value)
+      if at == value {
+        guard reader_quoted_end(line, value) is Some(end) else {
+          return Err(
+            "a chunk extension's value that is no token or quoted-string",
+          )
+        }
+        at = end
+      }
+    }
+  }
+  Ok(size)
+}
+
+///|
 /// Reads a chunked body from `at` (RFC 9112, section 7.1): chunks of a
-/// hexadecimal size, chunk extensions, which it ignores, and data, then the
-/// last chunk and the trailer section. Returns the data and where the bytes
-/// after the body start.
+/// hexadecimal size, chunk extensions, which it reads by their grammar and
+/// ignores, and data, then the last chunk and the trailer section. Returns
+/// the data and where the bytes after the body start.
 fn reader_chunked(bytes : Bytes, at : Int32) -> Result[(Bytes, Int32), String] {
   let out = @buffer.Buffer()
   let mut at = at
@@ -145,13 +238,10 @@ fn reader_chunked(bytes : Bytes, at : Int32) -> Result[(Bytes, Int32), String] {
     guard reader_line(bytes, at) is Some((line, next)) else {
       return Err("a chunk size line that does not end")
     }
-    let mut size = 0
-    let mut digits = 0
-    while digits < line.length() && reader_hex(line[digits]) is Some(digit) {
-      size = size * 16 + digit
-      digits += 1
+    let size = match reader_chunk_line(line, bytes.length() - next) {
+      Ok(size) => size
+      Err(error) => return Err(error)
     }
-    guard digits > 0 else { return Err("a chunk size without a digit") }
     at = next
     if size == 0 {
       // The trailer section, whose fields are not the body's.
@@ -348,6 +438,16 @@ fn Response::to_http10(self : Response) -> Bool {
 /// true or the request does not keep it open; and never after a streamed
 /// response with content to HTTP/1.0, whose body ends when the connection
 /// closes.
+///
+/// Two cases of a streamed response rest on sentences of `ResponseStream`'s
+/// doc comment, which the maintainer confirmed on 2026-11-26 (#324). To no
+/// parsed request, it stays open unless `close` is true: "A ResponseStream
+/// made with no request is written as to an HTTP/1.1 request other than
+/// HEAD that keeps the connection open". With status 1xx, 204 or 304 to an
+/// HTTP/1.0 request that keeps the connection open, it stays open unless
+/// `close` is true: "Even to an HTTP/1.0 request, when that request keeps
+/// the connection open, such a response says `Connection: keep-alive` and
+/// keeps it open unless `close` is true".
 fn Response::keeps(self : Response) -> Bool {
   !self.close &&
   !(self.request is Some({ keep_alive: false, .. })) &&
@@ -362,6 +462,17 @@ fn Response::keeps(self : Response) -> Bool {
 /// keep-alive` when it stays open after an HTTP/1.0 request; with content,
 /// the Content-Length of the body (even to HEAD) or, streamed to HTTP/1.1
 /// or to no parsed request, `Transfer-Encoding: chunked`.
+///
+/// Streamed, two of these rest on sentences of `ResponseStream`'s doc
+/// comment (#324, confirmed on 2026-11-26): to no parsed request,
+/// `Transfer-Encoding: chunked` with content, and no Connection field while
+/// the connection stays open ("A ResponseStream made with no request is
+/// written as to an HTTP/1.1 request other than HEAD that keeps the
+/// connection open"); with status 1xx, 204 or 304 to an HTTP/1.0 request
+/// that keeps the connection open, `Connection: keep-alive` unless `close`
+/// is true ("Even to an HTTP/1.0 request, when that request keeps the
+/// connection open, such a response says `Connection: keep-alive` and keeps
+/// it open unless `close` is true").
 fn Response::added(self : Response) -> Array[(Bytes, Bytes)] {
   let out = []
   if self.date is Some(date) &&
@@ -661,6 +772,16 @@ test "responses that the encoder and the response stream write, read as RFC 9112
         @quickcheck.classify(to_head, "to HEAD"),
         @quickcheck.classify(response.to_http10(), "to HTTP/1.0"),
         @quickcheck.classify(response.request is None, "to no parsed request"),
+        @quickcheck.classify(
+          response.streamed && response.request is None,
+          "streamed to no parsed request",
+        ),
+        @quickcheck.classify(
+          response.streamed &&
+          !response.content() &&
+          response.request is Some({ version: Http10, keep_alive: true, .. }),
+          "streamed without content to HTTP/1.0 that keeps the connection open",
+        ),
         @quickcheck.classify(!response.keeps(), "the connection closes"),
         @quickcheck.classify(response.date is Some(_), "a date given"),
         @quickcheck.classify(
