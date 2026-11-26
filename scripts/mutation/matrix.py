@@ -60,25 +60,30 @@ in each. Each command prints JSON lines.
   draw     the tests of a snapshot audit (CONTRIBUTING.md, "Snapshot
            audits"): <n> (10 unless given, or all when there are fewer)
            of the tests that alone kill some mutant, at least half of them
-           from the work's tests, those whose block holds a line that
-           differs from <commit> (d953f320, where the test review began,
-           unless given). The seed is the run ID of the kill-matrix run on
-           Actions, which no agent can know before the run. A test's
-           block runs from the `///|` at or before its line to the line
-           before the next `///|`, in its file as HEAD of <dir> (the
-           current directory unless given) has it; a line that differs is
-           one that `git diff -U0 <commit> HEAD` adds or changes, or the
-           line at which it deletes some. So <dir> is a checkout of the
-           commit the run ran on. The draw: the tests sorted by their
-           names in the matrix; random.Random(<run ID>), with the seed as
-           text, samples half of <n>, rounded up, of the work's tests (all
-           of them when there are fewer), then, the same generator going
-           on, the rest of the <n> from every test not yet drawn. Each
-           line, in the order of the draw, is the test as the matrix lists
-           it, with its file in <dir> ("path"), whether it is the work's
-           ("work") and the mutants it alone kills ("alone"). It also
-           prints, on standard error, how many tests alone kill some
-           mutant and how many of them are the work's.
+           from the work's tests: a test is the work's when the work added
+           it, or changed a line of its block that is not a comment, since
+           <commit> (d953f320, where the test review began, unless given).
+           The seed is the run ID of the kill-matrix run on Actions, which
+           no agent can know before the run. A test's block runs from the
+           `///|` at or before its line to the line before the next
+           `///|`, in its file as HEAD of <dir> (the current directory
+           unless given) has it. A line whose first characters, after
+           white space, are `//` is a comment, and a blank line is none of
+           the test's lines. The lines the work added or changed are those
+           that `git diff -U0 <commit> HEAD` adds or changes, and the line
+           at which it deletes some. Each counts when it is neither a
+           comment nor blank, or when a line that the diff changes or
+           deletes there was neither. So <dir> is a checkout of the commit
+           the run ran on. The draw: the tests sorted by their names in
+           the matrix; random.Random(<run ID>), with the seed as text,
+           samples half of <n>, rounded up, of the work's tests (all of
+           them when there are fewer), then, the same generator going on,
+           the rest of the <n> from every test not yet drawn. Each line, in
+           the order of the draw, is the test as the matrix lists it, with
+           its file in <dir> ("path"), whether it is the work's ("work")
+           and the mutants it alone kills ("alone"). It also prints, on
+           standard error, how many tests alone kill some mutant and how
+           many of them are the work's.
 
 A duplicate counts as the mutant it compiles as, when the same matrix
 holds that one. The tool exits with 0 when it answered, and with 1 when a
@@ -117,8 +122,9 @@ LAYERS = ("in-process", "e2e")
 # The last part of the name of the package whose tests are e2e tests.
 E2E = "e2e"
 # The commit of main at which the test review began (#275): a snapshot
-# audit draws at least half of its tests from those that the work added
-# or changed since.
+# audit draws at least half of its tests from the work's, those that the
+# work added, or of whose block it changed a line that is not a comment,
+# since.
 WORK_BASE = "d953f320e0bb4fad15352224d01c365a02c0ab79"
 # How many tests a snapshot audit draws: about ten of a package's.
 AUDIT_SIZE = 10
@@ -437,14 +443,32 @@ def git(root, *args):
     return result.stdout
 
 
+def is_code(line):
+    """Whether a line of a test file is neither a comment, whose first
+    characters after white space are `//`, nor blank."""
+    text = line.strip()
+    return text != "" and not text.startswith("//")
+
+
 def changed_lines(root, base, path):
-    """The lines of HEAD's file at path that differ from base: the lines
-    added or changed, and the line at which a deletion sits."""
+    """The lines of HEAD's file at path at which the work added or changed
+    a line that is not a comment since base. Of the lines that
+    `git diff -U0` adds or changes, and the line at which it deletes some,
+    each that is neither a comment nor blank, or where a line that the
+    diff changes or deletes was neither."""
     out = git(root, "diff", "--no-color", "--no-ext-diff", "-U0", base, "HEAD", "--", path)
     lines = set()
-    for hunk in HUNK.finditer(out):
-        start, count = int(hunk.group(1)), int(hunk.group(2) or "1")
-        lines.update(range(start, start + max(count, 1)))
+    hunks = []
+    for text in out.split("\n"):
+        hunk = HUNK.match(text)
+        if hunk:
+            hunks.append((int(hunk.group(1)), int(hunk.group(2) or "1"), [], []))
+        elif hunks and text[:1] in ("-", "+"):
+            hunks[-1][2 if text[0] == "-" else 3].append(text[1:])
+    for start, count, deleted, added in hunks:
+        lines.update(start + i for i, line in enumerate(added) if is_code(line))
+        if any(is_code(line) for line in deleted):
+            lines.update(range(start, start + max(count, 1)))
     return lines
 
 
@@ -465,7 +489,8 @@ def drawn_tests(root, matrices, seed, base, size):
     """The tests of a snapshot audit (CONTRIBUTING.md, "Snapshot audits"):
     size of those that alone kill some mutant of the matrices (all, when
     there are fewer), at least half of them from the work's tests, those
-    whose block in HEAD's file holds a line that differs from base. Each is
+    that the work added, or of whose block in HEAD's file it changed a line
+    that is not a comment, since base (changed_lines). Each is
     the test as the matrices list it, with its file in the workspace
     ("path"), whether it is the work's ("work"), and the mutants it alone
     kills ("alone"), in the order of the draw; and how many tests alone
@@ -567,8 +592,9 @@ def main():
     drawing.add_argument("--seed", required=True,
                          help="the run ID of the kill-matrix run on Actions, which no agent knows before the run")
     drawing.add_argument("--base", default=WORK_BASE,
-                         help="the work's tests are those whose block differs from this commit (where the test"
-                              " review began unless given)")
+                         help="the work's tests are those that the work added, or of whose block it changed a"
+                              " line that is not a comment, since this commit (where the test review began unless"
+                              " given)")
     drawing.add_argument("--size", type=int, default=AUDIT_SIZE, help=f"how many to draw ({AUDIT_SIZE} unless given)")
     drawing.add_argument("--root", default=".", help="the workspace, checked out at the commit the run ran on")
     drawing.add_argument("matrices", nargs="+", help="matrix files, or runs' output directories")

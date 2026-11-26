@@ -460,12 +460,36 @@ CHANGES = [
     ("a/a_test.mbt", '  inspect(2, content="2")\n', '  inspect(1 + 1, content="2")\n'),
 ]
 PROTO_TESTS = '///|\ntest "p one" {\n  inspect(1, content="1")\n}\n'
+# The root module's package c, whose tests no matrix above holds, at the
+# base and after the work. The work rewords both comments of "c one",
+# deletes its other comment line and adds one, and a blank line; turns a
+# line of "c two" into a comment; deletes the line of "c three" that
+# follows its comment; and rewords the comment at the end of a line of "c
+# five". "c four" is as it was, a line higher.
+C_TESTS_BASE = ('///|\n/// What c one is.\ntest "c one" {\n  // One.\n  // Gone.\n  inspect(1, content="1")\n}\n\n'
+                '///|\ntest "c two" {\n  inspect(2, content="2")\n  inspect(-2, content="-2")\n}\n\n'
+                '///|\ntest "c three" {\n  // Three.\n  inspect(3, content="3")\n  inspect(-3, content="-3")\n}\n\n'
+                '///|\ntest "c four" {\n  inspect(4, content="4")\n}\n\n'
+                '///|\ntest "c five" {\n  inspect(5, content="5") // Five.\n}\n')
+C_TESTS_WORK = ('///|\n/// What c one is, in words.\ntest "c one" {\n  // One, the first.\n  // And more.\n\n'
+                '  inspect(1, content="1")\n}\n\n'
+                '///|\ntest "c two" {\n  inspect(2, content="2")\n  // inspect(-2, content="-2")\n}\n\n'
+                '///|\ntest "c three" {\n  // Three.\n  inspect(-3, content="-3")\n}\n\n'
+                '///|\ntest "c four" {\n  inspect(4, content="4")\n}\n\n'
+                '///|\ntest "c five" {\n  inspect(5, content="5") // Five, the last.\n}\n')
 
 
 def test_entry(package, file, line, index, name):
     """A test as a matrix lists it."""
     test = {"package": package, "file": file, "line": line, "index": index, "name": name, "layer": "in-process"}
     return dict(test=f"{package}/{file}:{name}" if name else f"{package}/{file}#{index}", **test)
+
+
+def c_entry(index, name):
+    """Package c's test of that name as a matrix lists it, at its line in
+    C_TESTS_WORK."""
+    line = C_TESTS_WORK.split("\n").index(f'test "{name}" {{') + 1
+    return test_entry("smock/smock/c", "c_test.mbt", line, index, name)
 
 
 # The tests at HEAD, at the lines moon's outline would give.
@@ -476,6 +500,7 @@ A_NAMELESS = test_entry("smock/smock/a", "a_test.mbt", 18, 3, "")
 B_ONE = test_entry("smock/smock/b", "b_test.mbt", 2, 0, "b one")
 B_TWO = test_entry("smock/smock/b", "b_test.mbt", 7, 1, "b two")
 P_ONE = test_entry("smock/proto", "p_test.mbt", 2, 0, "p one")
+C_TESTS = [c_entry(i, name) for i, name in enumerate(["c one", "c two", "c three", "c four", "c five"])]
 
 # What the script that drew the first three snapshot audits gives on this
 # workspace with the seed 44737193027 (SnapshotDrawTest): each test drawn,
@@ -525,11 +550,15 @@ class SnapshotDrawTest(unittest.TestCase):
     """`draw` draws the tests of a snapshot audit (CONTRIBUTING.md,
     "Snapshot audits"; #306, #275): about ten among the tests that alone
     kill some mutant in the kill matrices, at least half of them from the
-    tests that the work added or changed since a base, with the kill-matrix
-    run's ID as the seed. The draws it must give are those that the script
-    which drew the first three audits (#327, #328, #329) gives for the same
-    matrices, seed and base; the expected orders below are that script's
-    output on this workspace."""
+    work's tests, with the kill-matrix run's ID as the seed. A test is the
+    work's when the work added it, or changed a line of its block that is
+    not a comment, since a base (the maintainer's twenty-sixth round, point
+    3). The draws it must give are those that the script which drew the
+    first three audits (#327, #328, #329) gives for the same matrices, seed
+    and base; the expected orders below are that script's output on this
+    workspace, in which no test of a's, b's or proto's differs from the base
+    in comments alone. Package c's tests, whose comments and blank lines do,
+    are classed by hand from the rule."""
 
     SEED = "44737193027"
 
@@ -537,11 +566,11 @@ class SnapshotDrawTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="test-matrix-draw-"))
         cls.root = cls.tmp / "workspace"
-        cls.base = committed(cls.root, WORKSPACE, "base")
+        cls.base = committed(cls.root, {**WORKSPACE, "c/c_test.mbt": C_TESTS_BASE}, "base")
         changes = {}
         for path, old, new in CHANGES:
             changes[path] = changes.get(path, WORKSPACE[path]).replace(old, new, 1)
-        committed(cls.root, {**changes, "proto/p_test.mbt": PROTO_TESTS}, "the work")
+        committed(cls.root, {**changes, "proto/p_test.mbt": PROTO_TESTS, "c/c_test.mbt": C_TESTS_WORK}, "the work")
         # Two matrices: a's, whose tests are a's and b's, and proto's, whose
         # tests are proto's and a's first test.
         cls.matrices = cls.tmp / "matrices"
@@ -560,14 +589,19 @@ class SnapshotDrawTest(unittest.TestCase):
             {"id": "proto/p.mbt,p,INT,1,2,0", "outcome": "killed", "killing_tests": [P_ONE["test"]]},
             {"id": "proto/p.mbt,p,INT,2,3,0", "outcome": "killed", "killing_tests": [A_ONE["test"]]},
         ])
+        # c's matrix, in which each of its tests alone kills a mutant.
+        cls.c_matrices = cls.tmp / "c-matrices"
+        write_matrix(cls.c_matrices / "c.json", "smock/smock/c", C_TESTS, [
+            {"id": f"c/c.mbt,f,INT,{i},{i + 1},0", "outcome": "killed", "killing_tests": [test["test"]]}
+            for i, test in enumerate(C_TESTS)])
 
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def draw(self, *args, base=None):
+    def draw(self, *args, base=None, matrices=None):
         result = subprocess.run([sys.executable, str(MATRIX_TOOL), "draw", "--root", str(self.root), "--seed",
-                                 self.SEED, "--base", base or self.base, *map(str, args), self.matrices],
+                                 self.SEED, "--base", base or self.base, *map(str, args), matrices or self.matrices],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         return [json.loads(line) for line in result.stdout.splitlines()], result.stderr
@@ -580,8 +614,10 @@ class SnapshotDrawTest(unittest.TestCase):
         self.assertEqual(self.draw("--size", "4")[0], drawn)
         self.assertEqual([(t["test"], t["work"]) for t in self.draw("--size", "3")[0]], DRAWN_3)
 
-    def test_a_test_is_the_works_when_its_block_holds_a_line_that_differs_from_the_base(self):
-        # Ten asked, six there: every one is drawn, the work's three first.
+    def test_a_test_is_the_works_when_the_work_added_it_or_changed_a_line_of_its_block_that_is_not_a_comment(self):
+        # Ten asked, six there: every one is drawn, the work's three first:
+        # "p one", which the work added, and "a one" and "a two", in each of
+        # which it deleted or changed a line of code.
         drawn, _ = self.draw()
         self.assertEqual([(t["test"], t["work"]) for t in drawn], DRAWN_ALL)
         by_test = {t["test"]: t for t in drawn}
@@ -592,6 +628,19 @@ class SnapshotDrawTest(unittest.TestCase):
         self.assertEqual(by_test[A_TWO["test"]]["alone"], ["a/a.mbt,f,INT,2,3,0", "a/a.mbt,g,INT,2,3,0"])
         self.assertEqual(by_test[P_ONE["test"]]["path"], "proto/p_test.mbt")
         self.assertNotIn(B_TWO["test"], by_test)
+        # A line whose first characters, after white space, are // is a
+        # comment, and a blank line is none of the test's lines. So "c one",
+        # whose block differs from the base in comments and a blank line
+        # alone, is not the work's, nor is "c four", which only moved up. A
+        # line of code turned into a comment ("c two"), a line of code
+        # deleted after a comment ("c three") and a line of code with a
+        # comment at its end ("c five") are lines of code that the work
+        # changed.
+        drawn, said = self.draw(matrices=self.c_matrices)
+        self.assertEqual({t["test"]: t["work"] for t in drawn}, {
+            C_TESTS[0]["test"]: False, C_TESTS[1]["test"]: True, C_TESTS[2]["test"]: True,
+            C_TESTS[3]["test"]: False, C_TESTS[4]["test"]: True})
+        self.assertIn("5 tests alone kill some mutant, 3 of them the work's", said)
 
     def test_with_none_of_the_works_tests_every_test_is_drawn_from_the_rest(self):
         drawn, said = self.draw("--size", "4", base="HEAD")
