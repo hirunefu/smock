@@ -2001,3 +2001,56 @@ reason = "YAML 1.1's base 8 form, `s.char('0') && s.run(c => is_octal_digit(c) |
 compiler_output = "differs"
 adversarial = { context = "pending: a separate agent context, after #400's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of yaml, not committed, that folds into digests what resolve, resolve_core and is_yaml_number give for every string of up to five of `0179_.eE+-xob:aé` and of up to seven of `01_.eE+-` (3,515,226 texts): with this mutant applied by hand, and with the form's check left out, the code's digests on wasm-gc, and yaml's 55 tests pass; the same form's `> 1` changes the digests of resolve and is_yaml_number"] }
 reviewer = ""
+
+# yaml/scalar.mbt, Scan::str, Scan::digits and Scan::sexagesimal (#401,
+# part 5 of 8 of yaml's triage for #323): three survivors of the first
+# weekly run (44423781036) in how a plain scalar's syntax is matched that
+# no input can tell from the code. Each argument is in its reason; the
+# compiler's output differs for each. None of these definitions uses an
+# unchecked access, so wasm-gc decides. Scan is the private cursor by which
+# is_yaml_number and is_timestamp match a scalar against the number forms
+# of YAML 1.1 and 1.2 and YAML 1.1's timestamp; resolve calls both for a
+# plain scalar of the safe subset (Definition files), and the writer quotes
+# a string by resolve. Two entries delete the step back of a match that
+# fails, in Scan::str and Scan::digits: each of their callers ends its
+# match with false when they fail and reads that cursor no more, so only a
+# white-box call that reads the position after the failure tells them
+# apart. The step back is what their doc comments say, so neither is a
+# deletion candidate, as xml's decode kept the -1 it documents. The third
+# changes the step of a count that is only compared with 0. The
+# implementer folded into digests what is_yaml_number gives for every
+# string of up to five of `0159_.:-+eEobxT Z` and of up to seven of
+# `01_.:+eo` (3,905,343 texts), and what is_timestamp gives for the first
+# of those sets and for every string one or two edits away from seven
+# timestamps (2,007,688 texts), with each mutant applied by hand and
+# without it: the same for each on wasm-gc and natively, while four
+# variants that are not equivalent changed them (a scratch test, not
+# committed). The adversarial attempts are pending. The maintainer reads
+# every entry, since yaml is a protocol package.
+
+[[exclusion]]
+mutant = "yaml/scalar.mbt,Scan::str,DEL,self.i = start,,0"
+text = "ac51269dcb3a15ff"
+category = "EQUIVALENT"
+reason = "Scan::str's step back, `self.i = start` when the text it looks for does not come next, is deleted, so a failed call leaves the cursor after the characters that did match. Scan::str's only callers are three forms of is_yaml_number, `s.str(\"0o\") && ...`, `s.str(\"0b\") && ...` and `s.str(\"0x\") && ...`, each on a Scan of its own inside `matches`, whose result is then `false && s.done()`: after a failed call nothing reads that cursor. So is_yaml_number gives the same answer for every text, a white-box call included, and so do resolve, parse and write. They differ only in a white-box call of the private Scan::str that reads the position after it fails: `Scan(\"0x\").str(\"0o\")` leaves the position at 1, where the code leaves it at 0. The step back is what Scan::str's doc comment says (it consumes `s` if `s` comes next), so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #401's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of yaml, not committed, that folds into digests what is_yaml_number gives for every string of up to five of `0159_.:-+eEobxT Z` and of up to seven of `01_.:+eo` (3,905,343 texts), and what is_timestamp gives for the first of those sets and for every string one or two edits away from seven timestamps (2,007,688 texts): with this mutant applied by hand, the code's digests on wasm-gc and natively, and yaml's 55 tests pass; Scan::sexagesimal's step back deleted, and is_yaml_number's `!s.char('.')` made `s.char('.')`, change is_yaml_number's digest"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/scalar.mbt,Scan::digits,DEL,self.i = start,,0"
+text = "8634d1d9ab02a222"
+category = "EQUIVALENT"
+reason = "Scan::digits' step back, `self.i = start` when fewer than `min` digits come next, is deleted, so a failed call leaves the cursor after the digits it read. Scan::digits' only caller is is_timestamp, where each call is a term of an `&&` chain that its failure ends with false, and nothing reads that Scan again: the date's three fields (a failed date ends the test of a date alone and the test of a date and a time, which each start on a Scan of their own), and the hour, the minute, the second and the time zone's hour and minute, after which only `&&` follows (the time zone's `||` tries `s.done()` and `s.char('Z')` before the term that calls it). So is_timestamp gives the same answer for every text, a white-box call included, and so do resolve, parse and write. They differ only in a white-box call of the private Scan::digits that reads the position after it fails: `Scan(\"1\").digits(2, 2)` leaves the position at 1, where the code leaves it at 0. The step back keeps Scan::digits to its doc comment, which consumes `min` to `max` digits and so nothing when fewer come, so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #401's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of yaml, not committed, that folds into digests what is_yaml_number gives for every string of up to five of `0159_.:-+eEobxT Z` and of up to seven of `01_.:+eo` (3,905,343 texts), and what is_timestamp gives for the first of those sets and for every string one or two edits away from seven timestamps (2,007,688 texts): with this mutant applied by hand, the code's digests on wasm-gc and natively, and yaml's 55 tests pass; is_timestamp's second, and its time zone's minute, taken with up to three digits change is_timestamp's digest"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/scalar.mbt,Scan::sexagesimal,INT,1,2,0"
+text = "3c2214438689a245"
+category = "EQUIVALENT"
+reason = "Scan::sexagesimal counts the groups it consumes, and `groups += 1` becomes `groups += 2`. `groups` is local, and only the last line reads it, `groups > 0`: after n groups it holds n with the code and 2n with the mutant, and 2n > 0 exactly when n > 0. 2n cannot wrap: each group takes at least two characters, its colon and a digit, and a string holds fewer than 2^31 characters, so n is below 2^30. So Scan::sexagesimal returns the same for every scan, a white-box call included, and so do is_yaml_number, resolve, parse and write. No deletion candidate: the count's step is a value the statement needs, and without the statement no text would be a base 60 number."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #401's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of yaml, not committed, that folds into digests what is_yaml_number gives for every string of up to five of `0159_.:-+eEobxT Z` and of up to seven of `01_.:+eo` (3,905,343 texts), and what is_timestamp gives for the first of those sets and for every string one or two edits away from seven timestamps (2,007,688 texts): with this mutant applied by hand, the code's digests on wasm-gc and natively, and yaml's 55 tests pass; Scan::sexagesimal's step back deleted, and `groups` started at 1, change is_yaml_number's digest"] }
+reviewer = ""
