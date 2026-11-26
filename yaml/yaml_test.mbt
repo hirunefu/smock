@@ -962,6 +962,70 @@ test "line breaks may be CRLF or CR; a byte order mark may start the text; other
       #|LINE SEPARATOR quoted -> error : U+2028 is a line break in YAML 1.1 only; write it as an escape in a double-quoted value
     ),
   )
+  // The first and last character of each range of YAML 1.2.2's character
+  // set, and the characters just outside them: "c-printable ::= x09 | x0A
+  // | x0D | [x20-x7E] | x85 | [xA0-xD7FF] | [xE000-xFFFD] |
+  // [x010000-x10FFFF]" (section 5.1, production 1). "The allowed character
+  // range explicitly excludes the C0 control block [x00-x1F] (except for
+  // TAB x09, LF x0A, and CR x0D which are allowed), DEL x7F, the C1 control
+  // block [x80-x9F] (except for NEL x85 which is allowed), the surrogate
+  // block [xD800-xDFFF], xFFFE, and xFFFF" (same section); `parse` rejects
+  // control characters ("Rejected, each with a message naming it: ...
+  // control characters"). U+2028 and U+2029 are line breaks in YAML 1.1
+  // (its `b-char`, section 5.4 of YAML 1.1), and YAML 1.2 reads them, and
+  // NEL, as other characters (YAML 1.2.2, section 5.4), so they would mean
+  // something else in each version: the subset "keeps a document's meaning
+  // the same in every YAML version" (`parse`), and the messages are the
+  // ones the cases above give. Each character stands between `x` and `y`
+  // in a plain value.
+  let edges = [
+    0x1F, 0x20, 0x7E, 0x80, 0x84, 0x86, 0x9F, 0xA0, 0x2027, 0x2029, 0x202A, 0xD7FF,
+    0xE000, 0xFFFD, 0xFFFF, 0x10000, 0x10FFFF,
+  ]
+  inspect(
+    edges
+    .map(code => {
+      let c = code.to_char().unwrap()
+      let hex = code.to_string(radix=16).to_upper()
+      let label = if hex.length() < 4 {
+        "U+" + "0".repeat(4 - hex.length()) + hex
+      } else {
+        "U+" + hex
+      }
+      let text = "a: x\{c}y"
+      let result = try @yaml.parse(text) catch {
+        @yaml.ParseError(pointer~, message~) => "error \{pointer}: \{message}"
+      } noraise {
+        tree =>
+          if tree == Json::object({ "a": Json::string("x\{c}y") }) {
+            "read as written"
+          } else {
+            tree.stringify()
+          }
+      }
+      "\{label} -> \{result}"
+    })
+    .join("\n"),
+    content=(
+      #|U+001F -> error : U+001F is a control character; write it as an escape in a double-quoted value
+      #|U+0020 -> read as written
+      #|U+007E -> read as written
+      #|U+0080 -> error : U+0080 is a control character; write it as an escape in a double-quoted value
+      #|U+0084 -> error : U+0084 is a control character; write it as an escape in a double-quoted value
+      #|U+0086 -> error : U+0086 is a control character; write it as an escape in a double-quoted value
+      #|U+009F -> error : U+009F is a control character; write it as an escape in a double-quoted value
+      #|U+00A0 -> read as written
+      #|U+2027 -> read as written
+      #|U+2029 -> error : U+2029 is a line break in YAML 1.1 only; write it as an escape in a double-quoted value
+      #|U+202A -> read as written
+      #|U+D7FF -> read as written
+      #|U+E000 -> read as written
+      #|U+FFFD -> read as written
+      #|U+FFFF -> error : U+FFFF is a control character; write it as an escape in a double-quoted value
+      #|U+10000 -> read as written
+      #|U+10FFFF -> read as written
+    ),
+  )
 }
 
 ///|
