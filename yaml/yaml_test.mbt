@@ -572,6 +572,34 @@ test "numbers that are not in JSON syntax must be quoted" {
       #|190:20:30.15 -> error /a: "190:20:30.15" may be read as a number; quote this value
     ),
   )
+  // Each number form at its shortest, and forms that only one YAML version
+  // types. YAML 1.2.2's core schema (section 10.3.2): octal `0o [0-7]+`, as
+  // in its Example 10.9's `0o7`; hexadecimal `0x [0-9a-fA-F]+`; a float may
+  // start with a point and its exponent's sign is optional, so `.5e3` is
+  // one, though YAML 1.1 needs the sign. YAML 1.1 (yaml.org/type/int.html
+  // and float.html): base 2 `[-+]?0b[0-1_]+`; base 8 `[-+]?0[0-7_]+`, whose
+  // digits may be `_` alone; base 16 `[-+]?0x[0-9a-fA-F_]+`; base 10 float
+  // `[-+]?([0-9][0-9_]*)?\.[0-9.]*([eE][-+][0-9]+)?`, whose part after the
+  // point may be points alone, and whose `_` and signed exponent YAML 1.2
+  // does not have. docs/definition-files.md rejects each with "quote this
+  // value", in the words the maintainer confirmed on 2026-11-17 (#275).
+  inspect(
+    as_value([
+      "0o7", "0b1", "0xA", "0_", "0_17", "1..", "1_0.5e+3", "1_0.5E-3", ".5e3", "-.5E3",
+    ]),
+    content=(
+      #|0o7 -> error /a: "0o7" may be read as a number; quote this value
+      #|0b1 -> error /a: "0b1" may be read as a number; quote this value
+      #|0xA -> error /a: "0xA" may be read as a number; quote this value
+      #|0_ -> error /a: "0_" may be read as a number; quote this value
+      #|0_17 -> error /a: "0_17" may be read as a number; quote this value
+      #|1.. -> error /a: "1.." may be read as a number; quote this value
+      #|1_0.5e+3 -> error /a: "1_0.5e+3" may be read as a number; quote this value
+      #|1_0.5E-3 -> error /a: "1_0.5E-3" may be read as a number; quote this value
+      #|.5e3 -> error /a: ".5e3" may be read as a number; quote this value
+      #|-.5E3 -> error /a: "-.5E3" may be read as a number; quote this value
+    ),
+  )
 }
 
 ///|
