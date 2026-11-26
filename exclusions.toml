@@ -1925,3 +1925,80 @@ category = "UNREACHABLE"
 reason = "The arm for a section that has Ended or is Broken (`Ended | Broken => Broken`), which no caller passes: Parser::scan_head and Chunks::decode, its only callers, stop at either."
 argument = "Section is private to http1, and after has two callers (the white-box reference parser has a section of its own). (1) Parser::scan_head's Fields arm, `section = before.after(c)`. `scan` becomes Fields only in the VersionLf arm, which sets `section = FieldStart` with it. After the call, a Broken section sets `scan = Broken`, which ends the loop with Rejected(400); an Ended section ends it at the size and count check (Rejected(431)) or at `if section is Ended { result = Ended(at); break }`; the runs of a name's or a value's bytes after it change only `at`. So no pass in Fields starts with an Ended or Broken section, and scan_head saves Fields with an Ended section only when it returns Ended or Rejected (a Broken section saves the scan Broken). On Rejected, and on Ended when parse_head fails, Parser::next sets `self.invalid` and never calls scan_head again (`if self.invalid is Some(status)` comes first); on Ended with a parsed head, next sets `self.scan = Method`, so the next head reaches Fields again only through VersionLf, which sets FieldStart. (2) Chunks::decode's Trailer arm, `match section.after(c)`: its arms return on Ended and on Broken, so the state Trailer holds only FieldStart (set by SizeLf) or a section after returned that is neither. So no call passes Ended or Broken."
 reviewer = ""
+
+# yaml/scalar.mbt, resolve, resolve_core and is_yaml_number (#400, part 4 of
+# 8 of yaml's triage for #323): survivors of the first weekly run
+# (44423781036) in how a plain scalar is resolved that no input can tell
+# from the code, one in an arm no input reaches and one abort message. Each
+# argument is in its reason; the compiler's output differs for each. None of
+# these definitions uses an unchecked access, so wasm-gc decides. resolve
+# types a plain scalar of the safe subset (Definition files), resolve_core
+# one of the mode for OpenAPI documents, and is_yaml_number tells resolve
+# whether YAML 1.1 or 1.2 reads a scalar as a number; the writer quotes a
+# string by resolve too. is_yaml_number is the `||` of one test per number
+# form, each of which only reads the text: three entries change a form
+# within what another form matches anyway. The decimal integer form `[0-9]+`
+# decides nothing, since YAML 1.2's float form matches every body of digits
+# too: a deletion candidate, for the maintainer. resolve_core's first check
+# is a shortcut for a text no number can start with, which the rest of
+# resolve_core reads as the same string. The implementer folded into digests
+# what resolve, resolve_core and is_yaml_number give for every string of up
+# to five of `0179_.eE+-xob:aé` and of up to seven of `01_.eE+-` (3,515,226
+# texts), with each mutant applied by hand and without it: the same for
+# each on wasm-gc (natively too without a mutant), as with the decimal
+# integer form left out and with the base 8 form's check left out, while
+# three variants that are not equivalent changed them (a scratch test, not
+# committed). The
+# adversarial attempts are pending. The maintainer reads every entry, since
+# yaml is a protocol package.
+
+[[exclusion]]
+mutant = "yaml/scalar.mbt,resolve,STR,\"a number\",\"_ number\",0"
+text = "25c6bcff5ec64fe4"
+category = "UNREACHABLE"
+reason = "The arm that catches an error of `@json.parse(text)` in resolve (`_ => Ambiguous(\"a number\")`), whose kind \"a number\" becomes \"_ number\": no text reaches the arm, so no message shows it, a white-box call of resolve included."
+argument = "resolve calls `@json.parse(text)` only when is_json_number(text), which accepts exactly a number of JSON's grammar (RFC 8259, section 6: `-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][-+]?[0-9]+)?`, in ASCII digits) and nothing before or after it. The JSON parser of moonbitlang/core (json/lex_number.mbt) raises only on text outside that grammar: once a number is lexed, its value is read without raising, a decimal integer beyond 2^53 keeping its digits as `repr` and a number beyond a Double's range its text (yaml's tests read `1e400` back as `1e400`). So the arm runs only if a later core refuses a number in JSON syntax. The same argument removed the OpenAPI mode's message \"is not a number JSON can hold\" (#280; the use-case ledger's M07), whose deletion the maintainer approved on 2026-11-17, and #280's notes name this arm as unreachable. The implementer's check (not committed): @json.parse read every one of the 130,833 texts that is_json_number accepts among the 5,380,857 strings of up to seven of `0129.eE+-`, numbers of 400 digits, exponents of 20 digits either way and the edges of a Double's range, without raising, on wasm-gc and natively."
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/scalar.mbt,resolve_core,IFC,!(text.get_char(0) is Some('0'..<='9' | '+' | '-' | '.')),false,0"
+text = "1836af689293fe31"
+category = "EQUIVALENT"
+reason = "resolve_core's shortcut, `if !(text.get_char(0) is Some('0'..<='9' | '+' | '-' | '.')) { return Ok(Json::string(text)) }`, is never taken. The rest of resolve_core then reads such a text as the same string: core_decimal needs a digit, or a point and a digit, after an optional sign, so it gives None, and the hexadecimal and octal arms need `0x` or `0o`, which start with a digit, so resolve_core returns `Ok(Json::string(text))`, the shortcut's result, the empty text included. Only time and allocation change: the text is copied into an array and scanned once more. Every plain scalar of the mode for OpenAPI documents reads as the same value, a white-box call of resolve_core included."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #400's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of yaml, not committed, that folds into digests what resolve, resolve_core and is_yaml_number give for every string of up to five of `0179_.eE+-xob:aé` and of up to seven of `01_.eE+-` (3,515,226 texts): with this mutant applied by hand, the code's digests on wasm-gc, and yaml's 55 tests pass; the shortcut without `.` or without `+` changes resolve_core's digest"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/scalar.mbt,resolve_core,STR,\"core_decimal gives a number in JSON syntax\",\"_ore_decimal gives a number in JSON syntax\",0"
+text = "1836af689293fe31"
+category = "ARID"
+reason = "An abort message: the message of the abort after `@json.parse(json)` in resolve_core, \"core_decimal gives a number in JSON syntax\", becomes \"_ore_decimal gives a number in JSON syntax\". The arm is one that an invariant guards (core_decimal gives a number in JSON syntax, which the JSON parser always reads), which this list accepts as UNREACHABLE (the point resolve_core 29:12, reviewed on 2026-11-18). No input reaches it, and no caller reads an abort's message."
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/scalar.mbt,is_yaml_number,INT,0,1,4"
+text = "fa6b0f9b15760f8c"
+category = "EQUIVALENT"
+reason = "YAML 1.2's decimal integer form, `matches(s => s.run(is_digit) > 0)` (`[0-9]+` after the sign), becomes `> 1`, so it no longer matches a body of one digit. YAML 1.2's float form, the last one (`[-+]? ( \\. [0-9]+ | [0-9]+ ( \\. [0-9]* )? ) ( [eE] [-+]? [0-9]+ )?`, YAML 1.2.2, section 10.3.2), matches every body of digits too, since its point and exponent are optional; and is_yaml_number is the `||` of its forms, each of which only reads the text. So is_yaml_number gives the same answer for every text, a white-box call included, and so do resolve, parse and write. The form left out entirely gives the same answers too: it decides nothing, so its deletion is a candidate, for the maintainer."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #400's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of yaml, not committed, that folds into digests what resolve, resolve_core and is_yaml_number give for every string of up to five of `0179_.eE+-xob:aé` and of up to seven of `01_.eE+-` (3,515,226 texts): with this mutant applied by hand, and with the form left out, the code's digests on wasm-gc, and yaml's 55 tests pass; the base 8 form's `> 1` changes the digests of resolve and is_yaml_number"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/scalar.mbt,is_yaml_number,ROR,>,>=,3"
+text = "fa6b0f9b15760f8c"
+category = "EQUIVALENT"
+reason = "YAML 1.1's base 8 form, `s.char('0') && s.run(c => is_octal_digit(c) || c == '_') > 0` (`[-+]?0[0-7_]+`, yaml.org/type/int.html), takes `>= 0`, so it matches `0[0-7_]*`. The one body it adds is `0`, which the decimal forms match anyway (`[0-9]+`, and YAML 1.2's float); is_yaml_number is the `||` of its forms, each of which only reads the text. So it gives the same answer for every text, a white-box call included. The check is no deletion candidate: it is the `+` of the base 8 form, and the form decides other bodies, such as `0_` and `0_17`."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #400's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of yaml, not committed, that folds into digests what resolve, resolve_core and is_yaml_number give for every string of up to five of `0179_.eE+-xob:aé` and of up to seven of `01_.eE+-` (3,515,226 texts): with this mutant applied by hand, the code's digests on wasm-gc, and yaml's 55 tests pass; the same form's `> 1` changes the digests of resolve and is_yaml_number"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/scalar.mbt,is_yaml_number,INT,0,-1,3"
+text = "fa6b0f9b15760f8c"
+category = "EQUIVALENT"
+reason = "YAML 1.1's base 8 form, `s.char('0') && s.run(c => is_octal_digit(c) || c == '_') > 0` (`[-+]?0[0-7_]+`, yaml.org/type/int.html), takes `> -1`; a count is never negative, so it matches `0[0-7_]*`. The one body it adds is `0`, which the decimal forms match anyway (`[0-9]+`, and YAML 1.2's float); is_yaml_number is the `||` of its forms, each of which only reads the text. So it gives the same answer for every text, a white-box call included. The check is no deletion candidate: it is the `+` of the base 8 form, and the form decides other bodies, such as `0_` and `0_17`."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #400's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of yaml, not committed, that folds into digests what resolve, resolve_core and is_yaml_number give for every string of up to five of `0179_.eE+-xob:aé` and of up to seven of `01_.eE+-` (3,515,226 texts): with this mutant applied by hand, and with the form's check left out, the code's digests on wasm-gc, and yaml's 55 tests pass; the same form's `> 1` changes the digests of resolve and is_yaml_number"] }
+reviewer = ""
