@@ -615,6 +615,19 @@ test "numbers that are not in JSON syntax must be quoted" {
       #|1:0.5 -> error /a: "1:0.5" may be read as a number; quote this value
     ),
   )
+  // A float with a fraction and an exponent without a sign: YAML 1.2.2's
+  // core schema reads it (section 10.3.2, `[-+]? ( \. [0-9]+ | [0-9]+ ( \.
+  // [0-9]* )? ) ( [eE] [-+]? [0-9]+ )?`), though YAML 1.1's float does not
+  // (its exponent has a sign, `[eE][-+][0-9]+`), and a leading zero or a `+`
+  // keeps it out of JSON's syntax (RFC 8259, section 6). Rejected with
+  // "quote this value", as above.
+  inspect(
+    as_value(["01.5e3", "+1.5e3"]),
+    content=(
+      #|01.5e3 -> error /a: "01.5e3" may be read as a number; quote this value
+      #|+1.5e3 -> error /a: "+1.5e3" may be read as a number; quote this value
+    ),
+  )
 }
 
 ///|
