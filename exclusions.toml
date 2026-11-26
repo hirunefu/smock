@@ -2050,3 +2050,59 @@ text = "1520a37ffef3f9c3"
 category = "UB-NATIVE"
 reason = "In is_plain_safe, a high surrogate's test `i + 1 < length && is_low_surrogate(s.unsafe_get(i + 1).to_int())` becomes `i - 1 < length && ...`, whose first half holds for every i of the loop. Where i + 1 < length, both read the same code unit and agree. For a high surrogate that ends the string, the unchecked `s.unsafe_get(i + 1)` reads past the string's end. On wasm-gc that read traps, and the test \"a string with an unpaired surrogate is an error at its pointer\" (U+D800 alone, and at the end of a key) fails with the mutant. Natively a read out of bounds is undefined behaviour, so no test can pin what it gives: today's runtime keeps a zero code unit after a string's last one (moonbit_make_string and its kin write `result[len] = 0`), so the test program reads 0, which is no low surrogate, and the string is quoted and refused as by the code. By hand on arm64, yaml's tests pass natively with the mutant; the verdict that decides is CI's amd64 runner's."
 reviewer = ""
+
+# yaml/writer.mbt, is_plain_safe's test of a surrogate pair (#403, part 7 of
+# 8 of yaml's triage for #323): four survivors of the first weekly run
+# (44423781036) that differ from the code only where they read a code unit
+# outside the string, which only the native binary survives. is_plain_safe
+# uses unchecked accesses (unsafe_get), so the native verdict, taken on CI's
+# amd64 runner, decides its mutants. On wasm-gc each of these reads traps,
+# and the test "a string with an unpaired surrogate is an error at its
+# pointer" fails with the trap, its only kill. Natively the read is
+# undefined behaviour, so no test can pin it there; on today's runtime it
+# gives the code's result for every string, of any length, so no reason
+# rests on a size. Two mutants make the high half's test read the code unit
+# after a string's last one, where every String the runtime makes keeps a
+# zero (#402's UB-NATIVE entry, is_plain_safe's AOR, is the same kind); two
+# make the low half's test read the code unit before its first, which is
+# the upper half of the 32-bit length in the string's header, at most
+# 0x7FFF. The compiler's output differs for each. By hand on arm64 (for
+# information), yaml's tests pass natively with each mutant applied, the
+# tests of this ticket included, and fail on wasm-gc only by the trap. A
+# scratch test (not committed) that writes each half alone at the start and
+# at the end of strings of 1 to 2^20 + 1 code units, around each multiple of
+# 65,536, as a value and as a key, gives the code's errors natively with
+# each mutant applied. The other 18 survivors of #403 are killed by tests.
+# The maintainer reads every entry, since yaml is a protocol package.
+#
+# The adversarial step is still to be made (pending: a separate agent
+# context, after #403's implementer). UB-NATIVE takes no `adversarial`
+# field, so its attempt is to be recorded here, as #402's was.
+
+[[exclusion]]
+mutant = "yaml/writer.mbt,is_plain_safe,INT,1,0,1"
+text = "1520a37ffef3f9c3"
+category = "UB-NATIVE"
+reason = "In is_plain_safe, a high surrogate's test `i + 1 < length && is_low_surrogate(s.unsafe_get(i + 1).to_int())` becomes `i + 0 < length && ...`, whose first half holds for every i of the loop. Where i + 1 < length, both read the same code unit and agree. For a high surrogate that ends the string, the unchecked `s.unsafe_get(i + 1)` reads past the string's end. On wasm-gc that read traps, and the test \"a string with an unpaired surrogate is an error at its pointer\" (U+D800 alone, and at the end of a key) fails with the mutant. Natively a read out of bounds is undefined behaviour, so no test can pin what it gives: today's runtime keeps a zero code unit after a string's last one (moonbit_make_string, moonbit_make_string_raw and their kin write `result[len] = 0`, and the C backend emits each string literal with a trailing 0), so the test program reads 0, which is no low surrogate, and the string is quoted and refused as by the code, whatever its length. By hand on arm64, yaml's tests pass natively with the mutant; the verdict that decides is CI's amd64 runner's."
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/writer.mbt,is_plain_safe,ROR,<,<=,0"
+text = "1520a37ffef3f9c3"
+category = "UB-NATIVE"
+reason = "In is_plain_safe, a high surrogate's test `i + 1 < length && is_low_surrogate(s.unsafe_get(i + 1).to_int())` becomes `i + 1 <= length && ...`, whose first half holds for every i of the loop. Where i + 1 < length, both read the same code unit and agree. For a high surrogate that ends the string, the unchecked `s.unsafe_get(i + 1)` reads past the string's end. On wasm-gc that read traps, and the test \"a string with an unpaired surrogate is an error at its pointer\" (U+D800 alone, and at the end of a key) fails with the mutant. Natively a read out of bounds is undefined behaviour, so no test can pin what it gives: today's runtime keeps a zero code unit after a string's last one (moonbit_make_string, moonbit_make_string_raw and their kin write `result[len] = 0`, and the C backend emits each string literal with a trailing 0), so the test program reads 0, which is no low surrogate, and the string is quoted and refused as by the code, whatever its length. By hand on arm64, yaml's tests pass natively with the mutant; the verdict that decides is CI's amd64 runner's."
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/writer.mbt,is_plain_safe,ROR,>,>=,0"
+text = "1520a37ffef3f9c3"
+category = "UB-NATIVE"
+reason = "In is_plain_safe, a low surrogate's test `i > 0 && is_high_surrogate(s.unsafe_get(i - 1).to_int())` becomes `i >= 0 && ...`, whose first half holds for every i of the loop. Where i > 0, both read the same code unit and agree. For a low surrogate that starts the string, the unchecked `s.unsafe_get(i - 1)` reads the code unit before the string's first. On wasm-gc that read traps, and the test \"a string with an unpaired surrogate is an error at its pointer\" (U+DFFF alone) fails with the mutant. Natively a read out of bounds is undefined behaviour, so no test can pin what it gives: on today's runtime the two bytes before a string's first code unit are the upper half of the 32-bit length in its header (`meta`, which moonbit_malloc_array sets to the length, as the C backend does for each string literal), read little-endian on amd64 and arm64: the length divided by 65,536, at most 0x7FFF for any length below 2^31, so never a high surrogate (U+D800 to U+DBFF). The mutant then finds no high surrogate before the low one, and the string is quoted and refused as by the code, whatever its length. By hand on arm64, yaml's tests pass natively with the mutant; the verdict that decides is CI's amd64 runner's."
+reviewer = ""
+
+[[exclusion]]
+mutant = "yaml/writer.mbt,is_plain_safe,INT,0,-1,3"
+text = "1520a37ffef3f9c3"
+category = "UB-NATIVE"
+reason = "In is_plain_safe, a low surrogate's test `i > 0 && is_high_surrogate(s.unsafe_get(i - 1).to_int())` becomes `i > -1 && ...`, whose first half holds for every i of the loop. Where i > 0, both read the same code unit and agree. For a low surrogate that starts the string, the unchecked `s.unsafe_get(i - 1)` reads the code unit before the string's first. On wasm-gc that read traps, and the test \"a string with an unpaired surrogate is an error at its pointer\" (U+DFFF alone) fails with the mutant. Natively a read out of bounds is undefined behaviour, so no test can pin what it gives: on today's runtime the two bytes before a string's first code unit are the upper half of the 32-bit length in its header (`meta`, which moonbit_malloc_array sets to the length, as the C backend does for each string literal), read little-endian on amd64 and arm64: the length divided by 65,536, at most 0x7FFF for any length below 2^31, so never a high surrogate (U+D800 to U+DBFF). The mutant then finds no high surrogate before the low one, and the string is quoted and refused as by the code, whatever its length. By hand on arm64, yaml's tests pass natively with the mutant; the verdict that decides is CI's amd64 runner's."
+reviewer = ""
