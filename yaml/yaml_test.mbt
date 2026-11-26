@@ -652,6 +652,25 @@ test "one document may start with --- and end with ..." {
       #|"|\n%!PS-Adobe-2.0 # Not the first line\n" -> "%!PS-Adobe-2.0 # Not the first line\n"
     ),
   )
+  // Such a block scalar ends at a `...` at the start of a line: "the actual
+  // content lines are therefore forbidden to begin with either of these
+  // markers" (YAML 1.2.2, c-forbidden, production 206), which a document's
+  // content excludes (production 207). The first row is the first document
+  // of Example 9.5 (section 9.1.5) without its directive, which the safe
+  // subset rejects, and its value is the example's. The content's
+  // indentation "is equal to the number of leading spaces on the first
+  // non-empty line" (section 8.1.1.1), 0 here, so every later line is
+  // content, at column 0 or after spaces, which are content too: "all
+  // (indented) characters are considered to be content, including white
+  // space characters" (section 8.1.2).
+  inspect(
+    each(["--- |\n%!PS-Adobe-2.0\n...\n", "|\na\nb\n", "|\na\n b\n"]),
+    content=(
+      #|"--- |\n%!PS-Adobe-2.0\n...\n" -> "%!PS-Adobe-2.0\n"
+      #|"|\na\nb\n" -> "a\nb\n"
+      #|"|\na\n b\n" -> "a\n b\n"
+    ),
+  )
 }
 
 ///|
