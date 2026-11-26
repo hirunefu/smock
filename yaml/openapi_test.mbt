@@ -257,6 +257,18 @@ test "in the OpenAPI mode, hexadecimal and octal integers above 2^53 - 1, .inf a
       #|[".inf",".nan","0x20000000000000"]
     ),
   )
+  // 2^53 - 1 with one more digit after it, 0x1FFFFFFFFFFFFF0 (2^57 - 16)
+  // and 0o3777777777777777770 (2^56 - 8), is above 2^53 - 1 too, so an
+  // error as docs/openapi/references-and-yaml.md says ("a hexadecimal or
+  // octal integer above 2^53 - 1: write it in decimal"), with the message
+  // of the rows above.
+  inspect(
+    openapi_values(["0x1FFFFFFFFFFFFF0", "0o3777777777777777770"]),
+    content=(
+      #|0x1FFFFFFFFFFFFF0 -> error /a: "0x1FFFFFFFFFFFFF0" is above 2^53 - 1; write it in decimal, or quote this value
+      #|0o3777777777777777770 -> error /a: "0o3777777777777777770" is above 2^53 - 1; write it in decimal, or quote this value
+    ),
+  )
 }
 
 ///|
