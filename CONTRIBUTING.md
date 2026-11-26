@@ -1506,8 +1506,11 @@ runs on the frozen tip, the tip where that batch was frozen, and its run
 ID is the seed of the sample: `review --seed <run ID>`. GitHub Actions
 gives that number only once the run starts, so no agent can know it
 before. Later pushes of the branch, for other packages, do not draw that
-package's sample again. The weakening report lists every entry whose
-reviewer changed.
+package's sample again. A later batch of the branch is drawn alone:
+`review --base <the tip where the batch before it was frozen> --seed <run ID>`
+takes only the entries added or changed since that tip, so that one in
+five is read among the new entries. The weakening report lists every
+entry whose reviewer changed.
 
 ### Rules for the work
 
