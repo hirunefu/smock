@@ -407,6 +407,20 @@ test "a plain scalar continues on more indented lines, folded like a quoted one"
       #|"k: a\n  ... b" -> {"k":"a ... b"}
     ),
   )
+  // The same at the end of the text: "a plain scalar must not be empty or
+  // contain leading or trailing white space characters" (YAML 1.2.2,
+  // section 7.3.3), and white space may end a line at the end of the input
+  // ("b-comment ::= b-non-content | <end-of-input>", production 76, after
+  // s-separate-in-line in s-b-comment, production 77).
+  inspect(
+    each(["a: b ", "a: b\t", "- x  ", "x \t"]),
+    content=(
+      #|"a: b " -> {"a":"b"}
+      #|"a: b\t" -> {"a":"b"}
+      #|"- x  " -> ["x"]
+      #|"x \t" -> "x"
+    ),
+  )
 }
 
 ///|
