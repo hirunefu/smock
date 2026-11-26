@@ -577,7 +577,8 @@ test "one document may start with --- and end with ..." {
   // marks 9KBC, `--- key1: value1` and a second key, as an error. The
   // messages are those that a nested mapping or sequence on the line of
   // its key gives (the test of malformed indentation); no node is reached
-  // above the root, so the pointer is `""`.
+  // above the root, so the pointer is `""`. A flow collection may start
+  // there (s-l+flow-in-block, production 197), as the last case shows.
   inspect(
     each(["--- a: 1", "--- - a", "--- \"a\": 1", "--- [a]\n"]),
     content=(
