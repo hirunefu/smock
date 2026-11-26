@@ -28,6 +28,21 @@ test "a block mapping of plain scalars is an object of strings, nested by indent
       #|{"name":"users","request":{"method":"GET","path":"/users/1"},"response":{"headers":{"Content-Type":"application/json"},"body":"hello world"}}
     ),
   )
+  // White space may come between a key and its `:`: "ns-s-implicit-yaml-key(c)
+  // ::= ns-flow-yaml-node(0,c) s-separate-in-line?" and
+  // "c-s-implicit-json-key(c) ::= c-flow-json-node(0,c) s-separate-in-line?"
+  // (YAML 1.2.2, productions 154 and 155), for the first key of a mapping
+  // as for the others.
+  inspect(
+    each(["a : b", "\"a\"\t: b", "'a' : b", "a : 1\nb\t: 2", "x:\n  a  : b"]),
+    content=(
+      #|"a : b" -> {"a":"b"}
+      #|"\"a\"\t: b" -> {"a":"b"}
+      #|"'a' : b" -> {"a":"b"}
+      #|"a : 1\nb\t: 2" -> {"a":1,"b":2}
+      #|"x:\n  a  : b" -> {"x":{"a":"b"}}
+    ),
+  )
 }
 
 ///|
@@ -1008,6 +1023,18 @@ test "empty values, empty documents and stray indicators give an error" {
     each(["[- a]"]),
     content=(
       #|"[- a]" -> error /0: a block sequence cannot be inside a flow collection
+    ),
+  )
+  // A key that is a collection is rejected on purpose (`parse`: "a key that
+  // is a collection, such as `[a, b]: 1`"), also with white space before its
+  // `:`, which an implicit key may have ("c-s-implicit-json-key(c) ::=
+  // c-flow-json-node(0,c) s-separate-in-line?", YAML 1.2.2, production
+  // 155): the same errors as `[a]: b` and `{a: 1}: b` above.
+  inspect(
+    each(["[a] : b", "{a: 1}\t: b"]),
+    content=(
+      #|"[a] : b" -> error /0: a key must be a plain or quoted scalar
+      #|"{a: 1}\t: b" -> error /a: a key must be a plain or quoted scalar
     ),
   )
 }
