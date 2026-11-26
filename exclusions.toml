@@ -1948,9 +1948,8 @@ reviewer = ""
 # each on wasm-gc (natively too without a mutant), as with the decimal
 # integer form left out and with the base 8 form's check left out, while
 # three variants that are not equivalent changed them (a scratch test, not
-# committed). The
-# adversarial attempts are pending. The maintainer reads every entry, since
-# yaml is a protocol package.
+# committed). The adversarial attempts are pending. The maintainer reads
+# every entry, since yaml is a protocol package.
 
 [[exclusion]]
 mutant = "yaml/scalar.mbt,resolve,STR,\"a number\",\"_ number\",0"
