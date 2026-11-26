@@ -1499,13 +1499,15 @@ entry is triaged again.
 `python3 scripts/mutation/exclusions.py review` lists the entries that a
 branch adds or changes against its merge base with `main`, the batch, and
 which of them the maintainer reads: every one in the protocol packages
-and in `serverparsers`, and one in five of the others. Once the batch is
-frozen (the branch's last push), a packages run of the bulk workflow
-(`-f mode=packages`, [Bulk runs on Actions](#bulk-runs-on-actions)) runs
-on the frozen tip, and its run ID is the seed of the sample:
-`review --seed <run ID>`. GitHub Actions gives that number only once the
-run starts, so no agent can know it before. The weakening report lists
-every entry whose reviewer changed.
+and in `serverparsers`, and one in five of the others. Once a package's
+batch of entries is frozen for its review, a packages run of the bulk
+workflow (`-f mode=packages`, [Bulk runs on Actions](#bulk-runs-on-actions))
+runs on the frozen tip, the tip where that batch was frozen, and its run
+ID is the seed of the sample: `review --seed <run ID>`. GitHub Actions
+gives that number only once the run starts, so no agent can know it
+before. Later pushes of the branch, for other packages, do not draw that
+package's sample again. The weakening report lists every entry whose
+reviewer changed.
 
 ### Rules for the work
 
