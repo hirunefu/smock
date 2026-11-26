@@ -330,6 +330,21 @@ test "a plain scalar continues on more indented lines, folded like a quoted one"
       #|{"folded":"first second\nthird","list":["a b","c","d"]}
     ),
   )
+  // YAML 1.2.2's Example 7.12 (section 7.3.3), a whole document, reads as
+  // the specification gives it: "All leading and trailing white space
+  // characters are excluded from the content", a tab after a line's spaces
+  // included (s-flow-line-prefix, production 69), and the root continues
+  // on lines at column 0 (production 207). `---` and `...` mark a document
+  // only at the start of a line (production 206), so after the indentation
+  // of a continuation line they are text.
+  inspect(
+    each(["1st non-empty\n\n 2nd non-empty \n\t3rd non-empty", "k: a\n  --- b", "k: a\n  ... b"]),
+    content=(
+      #|"1st non-empty\n\n 2nd non-empty \n\t3rd non-empty" -> "1st non-empty\n2nd non-empty 3rd non-empty"
+      #|"k: a\n  --- b" -> {"k":"a --- b"}
+      #|"k: a\n  ... b" -> {"k":"a ... b"}
+    ),
+  )
 }
 
 ///|
@@ -1293,6 +1308,21 @@ test "every other plain scalar is a string" {
     ),
     content=(
       #|["GET","/users/1?x=y","http://a.example:8080/x","a#b","a:b","truex","nullable","1.2.3-rc","1e","-a",".","0x","12:30 pm","v1"]
+    ),
+  )
+  // A document marker is three characters, `---` or `...` (YAML 1.2.2,
+  // productions 203 and 204), so two of them at the start of a line, at the
+  // end of the text, mark nothing: they are a plain scalar (ns-plain-first,
+  // production 126: a `-` followed by a character that is safe in a plain
+  // scalar may start one, and `.` is no indicator), alone or as the
+  // continuation line of one at the top (production 207).
+  inspect(
+    each(["--", "..", "a\n--", "a\n.."]),
+    content=(
+      #|"--" -> "--"
+      #|".." -> ".."
+      #|"a\n--" -> "a --"
+      #|"a\n.." -> "a .."
     ),
   )
 }
