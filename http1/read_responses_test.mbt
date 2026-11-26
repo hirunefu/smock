@@ -446,8 +446,9 @@ fn Response::to_http10(self : Response) -> Bool {
 /// HEAD that keeps the connection open". With status 1xx, 204 or 304 to an
 /// HTTP/1.0 request that keeps the connection open, it stays open unless
 /// `close` is true: "Even to an HTTP/1.0 request, when that request keeps
-/// the connection open, such a response says `Connection: keep-alive` and
-/// keeps it open unless `close` is true".
+/// the connection open, such a response keeps it open and says
+/// `Connection: keep-alive`; with `close` it says `Connection: close` and
+/// closes it".
 fn Response::keeps(self : Response) -> Bool {
   !self.close &&
   !(self.request is Some({ keep_alive: false, .. })) &&
@@ -471,8 +472,9 @@ fn Response::keeps(self : Response) -> Bool {
 /// connection open"); with status 1xx, 204 or 304 to an HTTP/1.0 request
 /// that keeps the connection open, `Connection: keep-alive` unless `close`
 /// is true ("Even to an HTTP/1.0 request, when that request keeps the
-/// connection open, such a response says `Connection: keep-alive` and keeps
-/// it open unless `close` is true").
+/// connection open, such a response keeps it open and says
+/// `Connection: keep-alive`; with `close` it says `Connection: close` and
+/// closes it").
 fn Response::added(self : Response) -> Array[(Bytes, Bytes)] {
   let out = []
   if self.date is Some(date) &&
