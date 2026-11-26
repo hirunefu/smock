@@ -348,6 +348,44 @@ test "inside double quotes, quotes, backslashes, line breaks, tabs and other con
   // Keys too.
   let tree = Json::object(Map::from_array(strings.map(s => (s, Json::null()))))
   assert_eq(@yaml.parse(written(tree)), tree)
+  // Every C0 control character, then DEL and every C1 control character:
+  // none is in YAML 1.2.2's c-printable (production 1), and "all
+  // non-printable characters must be escaped" (section 5.7). Each is the
+  // escape of section 5.7's table where it has one (`\0`, `\a`, `\b`, `\t`,
+  // `\n`, `\v`, `\f`, `\r`, `\e`, `\N`), else `\x` and two hexadecimal
+  // digits (production 59), in upper case as `write`'s doc writes `\x01`
+  // and `\uFEFF`.
+  let c0 = StringBuilder()
+  for code in 0x00..<0x20 {
+    c0.write_char(code.unsafe_to_char())
+  }
+  let c1 = StringBuilder()
+  for code in 0x7F..<0xA0 {
+    c1.write_char(code.unsafe_to_char())
+  }
+  let tree = Json::array([
+    Json::string(c0.to_string()),
+    Json::string(c1.to_string()),
+  ])
+  let text = written(tree)
+  inspect(
+    text,
+    content=(
+      #|- "\0\x01\x02\x03\x04\x05\x06\a\b\t\n\v\f\r\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\e\x1C\x1D\x1E\x1F"
+      #|- "\x7F\x80\x81\x82\x83\x84\N\x86\x87\x88\x89\x8A\x8B\x8C\x8D\x8E\x8F\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9A\x9B\x9C\x9D\x9E\x9F"
+      #|
+    ),
+  )
+  assert_eq(@yaml.parse(text), tree)
+  // The first and the last character of each range of c-printable above
+  // U+009F, U+00A0 to U+D7FF, U+E000 to U+FFFD and U+10000 to U+10FFFF,
+  // are written as themselves ("every other character", in `write`'s doc).
+  // The leading space puts the string in double quotes.
+  let edges = " \u{A0}\u{D7FF}\u{E000}\u{FFFD}\u{10000}\u{10FFFF}"
+  let tree = Json::array([Json::string(edges)])
+  let text = written(tree)
+  assert_eq(text, "- \"\{edges}\"\n")
+  assert_eq(@yaml.parse(text), tree)
 }
 
 ///|
@@ -431,6 +469,20 @@ test "a string with an unpaired surrogate is an error at its pointer" {
       $|error /k/\{lone}: U+DC00 is half of a surrogate pair; UTF-8 cannot hold it alone
     ),
   )
+  // U+D800 and U+DFFF, the first and the last code unit of the surrogate
+  // range, are halves of a pair too (YAML 1.2.2's c-printable, production
+  // 1, skips U+D800 to U+DFFF), in a value or a key, alone or at the end of
+  // a string. U+D7FF and U+E000 around the range are characters, written
+  // as themselves (the test of escapes inside double quotes).
+  for unit in [0xD800, 0xDFFF] {
+    let lone = StringBuilder()
+    lone.write_char(unit.unsafe_to_char())
+    let lone = lone.to_string()
+    let tree = Json::array([Json::string("a"), Json::string(lone)])
+    assert_eq(error_pointer(tree), Some("/1"))
+    let tree = Json::object(Map::from_array([("a" + lone, Json::null())]))
+    assert_eq(error_pointer(tree), Some("/a\{lone}"))
+  }
 }
 
 ///|
