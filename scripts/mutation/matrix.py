@@ -69,16 +69,17 @@ in each. Each command prints JSON lines.
            `///|`, in its file as HEAD of <dir> (the current directory
            unless given) has it. A line whose first characters, after
            white space, are `//` is a comment, and a blank line is none of
-           the test's lines. The lines the work added or changed are those
-           that `git diff -U0 <commit> HEAD` adds or changes, and the line
-           at which it deletes some. Each counts when it is neither a
-           comment nor blank, or when a line that the diff changes or
-           deletes there was neither. So <dir> is a checkout of the commit
-           the run ran on. The draw: the tests sorted by their names in
-           the matrix; random.Random(<run ID>), with the seed as text,
-           samples half of <n>, rounded up, of the work's tests (all of
-           them when there are fewer), then, the same generator going on,
-           the rest of the <n> from every test not yet drawn. Each line, in
+           the test's lines. The lines the work added or changed are read
+           from `git diff -U0 <commit> HEAD`: a line that it adds or
+           changes counts when it is neither a comment nor blank; where a
+           hunk changes or deletes a line that was neither, every line that
+           the hunk adds counts too, or, when it adds none, the line at
+           which it deletes. So <dir> is a checkout of the commit the run
+           ran on. The draw: the tests sorted by their names in the
+           matrix; random.Random(<run ID>), with the seed as text, samples
+           half of <n>, rounded up, of the work's tests (all of them when
+           there are fewer), then, the same generator going on, the rest
+           of the <n> from every test not yet drawn. Each line, in
            the order of the draw, is the test as the matrix lists it, with
            its file in <dir> ("path"), whether it is the work's ("work")
            and the mutants it alone kills ("alone"). It also prints, on
@@ -452,10 +453,11 @@ def is_code(line):
 
 def changed_lines(root, base, path):
     """The lines of HEAD's file at path at which the work added or changed
-    a line that is not a comment since base. Of the lines that
-    `git diff -U0` adds or changes, and the line at which it deletes some,
-    each that is neither a comment nor blank, or where a line that the
-    diff changes or deletes was neither."""
+    a line that is not a comment since base, read from `git diff -U0`:
+    each line that it adds or changes that is neither a comment nor blank,
+    and, in a hunk that changes or deletes a line that was neither, every
+    line that the hunk adds, or the line at which it deletes when it adds
+    none."""
     out = git(root, "diff", "--no-color", "--no-ext-diff", "-U0", base, "HEAD", "--", path)
     lines = set()
     hunks = []

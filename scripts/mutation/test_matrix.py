@@ -464,12 +464,13 @@ PROTO_TESTS = '///|\ntest "p one" {\n  inspect(1, content="1")\n}\n'
 # base and after the work. The work rewords both comments of "c one",
 # deletes its other comment line and adds one, and a blank line; turns a
 # line of "c two" into a comment; deletes the line of "c three" that
-# follows its comment; and rewords the comment at the end of a line of "c
-# five". "c four" is as it was, a line higher.
+# follows its comment; deletes the comment that follows the line of "c
+# four", which is otherwise as it was, a line higher; and rewords the
+# comment at the end of a line of "c five".
 C_TESTS_BASE = ('///|\n/// What c one is.\ntest "c one" {\n  // One.\n  // Gone.\n  inspect(1, content="1")\n}\n\n'
                 '///|\ntest "c two" {\n  inspect(2, content="2")\n  inspect(-2, content="-2")\n}\n\n'
                 '///|\ntest "c three" {\n  // Three.\n  inspect(3, content="3")\n  inspect(-3, content="-3")\n}\n\n'
-                '///|\ntest "c four" {\n  inspect(4, content="4")\n}\n\n'
+                '///|\ntest "c four" {\n  inspect(4, content="4")\n  // Four.\n}\n\n'
                 '///|\ntest "c five" {\n  inspect(5, content="5") // Five.\n}\n')
 C_TESTS_WORK = ('///|\n/// What c one is, in words.\ntest "c one" {\n  // One, the first.\n  // And more.\n\n'
                 '  inspect(1, content="1")\n}\n\n'
@@ -631,11 +632,12 @@ class SnapshotDrawTest(unittest.TestCase):
         # A line whose first characters, after white space, are // is a
         # comment, and a blank line is none of the test's lines. So "c one",
         # whose block differs from the base in comments and a blank line
-        # alone, is not the work's, nor is "c four", which only moved up. A
-        # line of code turned into a comment ("c two"), a line of code
-        # deleted after a comment ("c three") and a line of code with a
-        # comment at its end ("c five") are lines of code that the work
-        # changed.
+        # alone, is not the work's, nor is "c four", which moved up and lost
+        # the comment after its line of code: the diff puts that deletion at
+        # the line of code, but it deletes no line of code. A line of code
+        # turned into a comment ("c two"), a line of code deleted after a
+        # comment ("c three") and a line of code with a comment at its end
+        # ("c five") are lines of code that the work changed.
         drawn, said = self.draw(matrices=self.c_matrices)
         self.assertEqual({t["test"]: t["work"] for t in drawn}, {
             C_TESTS[0]["test"]: False, C_TESTS[1]["test"]: True, C_TESTS[2]["test"]: True,

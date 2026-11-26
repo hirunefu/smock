@@ -1665,10 +1665,11 @@ python3 scripts/mutation/matrix.py draw --seed <run ID> mutation-report/matrix/<
   from the `///|` at or before its line to the line before the next
   `///|`. A line whose first characters, after white space, are `//` is a
   comment, and a blank line is none of the test's lines. The lines added
-  or changed are those that `git diff -U0 d953f320 HEAD` adds or changes,
-  and the line at which it deletes some. Each counts when it is neither a
-  comment nor blank, or when a line that the diff changes or deletes there
-  was neither.
+  or changed are read from `git diff -U0 d953f320 HEAD`. A line that it
+  adds or changes counts when it is neither a comment nor blank. Where a
+  hunk changes or deletes a line that was neither, every line that the
+  hunk adds counts too, or, when it adds none, the line at which it
+  deletes. So a deletion of comments alone counts for no line.
 - It draws ten (`--size` names another number), or every one when there
   are fewer. The tests are sorted by their names in the matrix.
   `random.Random(<run ID>)`, with the ID as text, samples half of the
