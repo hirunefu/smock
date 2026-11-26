@@ -673,6 +673,21 @@ test "the same values quoted are strings, and look-alikes that no YAML version t
       #|2001-12-14 21:59:4x -> {"a":"2001-12-14 21:59:4x"}
     ),
   )
+  // More near misses of the same types: YAML 1.1's base 2 needs a digit or
+  // `_` after `0b` (`[-+]?0b[0-1_]+`); a float's digits before the point
+  // start with a digit even when there is one (`([0-9][0-9_]*)?\.`); `0_8`
+  // is no base 8 (`0[0-7_]+`), no base 10 (`0|[1-9][0-9_]*`) and no float
+  // (it has no point); an exponent needs digits. YAML 1.2.2's core schema
+  // (section 10.3.2) types none of them either, so each is a string.
+  inspect(
+    as_value(["0b", "_.5", "0_8", "1.5e"]),
+    content=(
+      #|0b -> {"a":"0b"}
+      #|_.5 -> {"a":"_.5"}
+      #|0_8 -> {"a":"0_8"}
+      #|1.5e -> {"a":"1.5e"}
+    ),
+  )
 }
 
 ///|
