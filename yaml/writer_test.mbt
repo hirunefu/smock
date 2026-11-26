@@ -14,6 +14,18 @@ fn written(
 }
 
 ///|
+/// The pointer of the error `write` raises for `value`, or `None` when it
+/// writes `value`. The message is left out: `write`'s doc names each error
+/// and says it comes with the pointer of the value, but words no message.
+fn error_pointer(value : Json) -> String? {
+  try @yaml.write(value) catch {
+    @yaml.WriteError(pointer~, ..) => Some(pointer)
+  } noraise {
+    _ => None
+  }
+}
+
+///|
 test "a tree is written in block style, two spaces per level, quoting only what needs it" {
   let stub = @json.parse(
     (
@@ -462,6 +474,23 @@ test "a tree nested deeper than the parser accepts is an error, never written" {
     "error \{segments("0", 1024)}: nesting is deeper than 1024 levels",
     content="true",
   )
+  // Leaving a collection gives its level back (`write`'s doc: the limit is
+  // 1024 nested collections, empty ones included, the limit of `parse`).
+  // After a mapping, a sequence, `{}` or `[]`, the next item nests as deep
+  // as the first could: 1024 collections with the sequence around both,
+  // and the 1025th is the error, at its pointer.
+  for
+    before in [
+      Json::object({ "a": Json::number(1) }),
+      Json::array([Json::number(1)]),
+      Json::object({}),
+      Json::array([]),
+    ] {
+    let tree = Json::array([before, nested(1023, Json::number(1))])
+    assert_eq(@yaml.parse(written(tree)), tree)
+    let tree = Json::array([before, nested(1024, Json::number(1))])
+    assert_eq(error_pointer(tree), Some("/1\{segments("0", 1023)}"))
+  }
 }
 
 ///|
