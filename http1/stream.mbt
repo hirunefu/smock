@@ -22,9 +22,9 @@
 ///   framing (RFC 9110, sections 15.2, 15.3.5 and 15.4.5): the parts and
 ///   `end` are empty, and the connection stays open as for
 ///   `encode_response`. Even to an HTTP/1.0 request, when that request
-///   keeps the connection open, such a response says
-///   `Connection: keep-alive` and keeps it open unless `close` is true, as
-///   `encode_response` documents for its responses.
+///   keeps the connection open, such a response keeps it open and says
+///   `Connection: keep-alive`; with `close` it says `Connection: close` and
+///   closes it, as `encode_response` documents for its responses.
 ///
 /// A ResponseStream made with no request is written as to an HTTP/1.1
 /// request other than HEAD that keeps the connection open: its body, when
