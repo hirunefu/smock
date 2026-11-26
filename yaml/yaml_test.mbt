@@ -482,6 +482,54 @@ test "one document may start with --- and end with ..." {
       #|"--- \"text\"\n..." -> "text"
     ),
   )
+  // White space and a comment may follow `...` on its line:
+  // "l-document-suffix ::= c-document-end s-l-comments" (YAML 1.2.2,
+  // production 205), and s-l-comments starts with white space and an
+  // optional comment (productions 79 and 77).
+  inspect(
+    each(["a: 1\n... # the end\n", "a: 1\n...\t\n", "a: 1\n...  "]),
+    content=(
+      #|"a: 1\n... # the end\n" -> {"a":1}
+      #|"a: 1\n...\t\n" -> {"a":1}
+      #|"a: 1\n...  " -> {"a":1}
+    ),
+  )
+  // A block collection cannot start on the line of `---`: before its first
+  // entry comes s-l-comments, a line break or the start of a line
+  // ("s-l+block-collection(n,c) ::= ( s-separate(n+1,c)
+  // c-ns-properties(n+1,c) )? s-l-comments ( seq-space(n,c) |
+  // l+block-mapping(n) )", YAML 1.2.2, production 200). yaml-test-suite
+  // marks 9KBC, `--- key1: value1` and a second key, as an error. The
+  // messages are those that a nested mapping or sequence on the line of
+  // its key gives (the test of malformed indentation); no node is reached
+  // above the root, so the pointer is `""`.
+  inspect(
+    each(["--- a: 1", "--- - a", "--- \"a\": 1", "--- [a]\n"]),
+    content=(
+      #|"--- a: 1" -> error : unexpected ':' after a value; a nested mapping must start on its own line
+      #|"--- - a" -> error : a block sequence must start on its own line
+      #|"--- \"a\": 1" -> error : unexpected ':' after a value; a nested mapping must start on its own line
+      #|"--- [a]\n" -> ["a"]
+    ),
+  )
+  // A bare document's root node is "s-l+block-node(-1,BLOCK-IN)" (YAML
+  // 1.2.2, production 207): its lines are indented by more than -1 spaces,
+  // so a scalar at the top continues on lines that start at column 0, and a
+  // block scalar at the top may have its content there. These are the two
+  // documents of Example 9.3 (section 9.1.3), each alone. The first reads
+  // "Bare document", the example's value. In the second, the `%` is not at
+  // the start of the document, so it starts no directive, and "inside
+  // literal scalars, all (indented) characters are considered to be
+  // content, including white space characters" (section 8.1.2), the `#`
+  // too: yaml-test-suite's M7A3, the same example, reads "%!PS-Adobe-2.0 #
+  // Not the first line\n" (the example prints only "%!PS-Adobe-2.0\n").
+  inspect(
+    each(["Bare\ndocument\n...\n", "|\n%!PS-Adobe-2.0 # Not the first line\n"]),
+    content=(
+      #|"Bare\ndocument\n...\n" -> "Bare document"
+      #|"|\n%!PS-Adobe-2.0 # Not the first line\n" -> "%!PS-Adobe-2.0 # Not the first line\n"
+    ),
+  )
 }
 
 ///|
