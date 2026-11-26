@@ -1439,6 +1439,39 @@ test "nesting as deep as the JSON parser allows gives a value; deeper nesting gi
   }
   guard @yaml.parse(indented(1024)) is Object(_) else { fail("not an object") }
   inspect(message(indented(1025)), content="nesting is deeper than 1024 levels")
+  // A collection that has ended encloses nothing after it, in YAML as in
+  // JSON, so "nesting deeper than 1024 collections" (`parse`) counts only
+  // the collections around a node. After a member whose value is a block
+  // sequence, a block mapping, a flow sequence or a flow mapping, the next
+  // member may hold 1023 nested collections, 1024 with the top mapping,
+  // and reads as the JSON parser reads the same document; 1024 of them are
+  // one too many, with the message above.
+  let siblings = [
+    ("block sequence", "\n- x", "[\"x\"]"),
+    ("block mapping", "\n  x: 1", "{\"x\": 1}"),
+    ("flow sequence", " [x]", "[\"x\"]"),
+    ("flow mapping", " {x: 1}", "{\"x\": 1}"),
+  ]
+  let after = []
+  for sibling in siblings {
+    let (kind, first, json) = sibling
+    let text = (depth : Int32) => "a:\{first}\nb: \{flow(depth)}"
+    assert_eq(
+      @yaml.parse(text(1023)),
+      @json.parse("{\"a\": \{json}, \"b\": \{flow(1023)}}"),
+      msg=kind,
+    )
+    after.push("\{kind}: \{message(text(1023))}; \{message(text(1024))}")
+  }
+  inspect(
+    after.join("\n"),
+    content=(
+      #|block sequence: no error; nesting is deeper than 1024 levels
+      #|block mapping: no error; nesting is deeper than 1024 levels
+      #|flow sequence: no error; nesting is deeper than 1024 levels
+      #|flow mapping: no error; nesting is deeper than 1024 levels
+    ),
+  )
 }
 
 ///|
