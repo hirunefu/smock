@@ -174,6 +174,52 @@ test "a double-quoted scalar has the escapes of JSON and YAML" {
     @yaml.parse(separators),
     Json::string("N\u{85} _\u{a0} L\u{2028} P\u{2029}"),
   )
+  // "Each escape sequence must be parsed into the appropriate Unicode
+  // character" (YAML 1.2.2, section 5.7), and `parse` reads "the escapes of
+  // YAML 1.2 (which include those of JSON)". JSON writes a character beyond
+  // U+FFFF as "a 12-character sequence, encoding the UTF-16 surrogate pair"
+  // (RFC 8259, section 7, whose example is U+1D11E as `\uD834\uDD1E`), and
+  // RFC 2781, section 2.2, decodes a pair: a high surrogate, 0xD800 to
+  // 0xDBFF, then a low one, 0xDC00 to 0xDFFF; the 10 low bits of each, plus
+  // 0x10000. So the first pair and the last give U+10000 and U+10FFFF, and
+  // U+D7FF, the code point just below the surrogates, is a character of its
+  // own (c-printable, production 1). A high surrogate after which no low
+  // one comes "is in error" (section 2.2, step 3): here another high
+  // surrogate, U+E000 just past the low ones, and an escape other than
+  // `\u`. The rows show the code points read, or the pointer of the value
+  // that is rejected, as `ParseError` documents; the message of a rejected
+  // pair is put to the maintainer (#398).
+  let code_points = (text : String) => {
+    let result = try @yaml.parse(text) catch {
+      @yaml.ParseError(pointer~, ..) => "error \{pointer}"
+    } noraise {
+      Object(members) if members.get("a") is Some(String(value)) =>
+        value
+        .iter()
+        .map(c => "U+\{c.to_int().to_string(radix=16).to_upper()}")
+        .collect()
+        .join(" ")
+      tree => tree.stringify()
+    }
+    "\{text.escape()} -> \{result}"
+  }
+  inspect(
+    [
+      "a: \"\\uD7FF\"", "a: \"\\uD800\\uDC00\"", "a: \"\\uD834\\uDD1E\"", "a: \"\\uDBFF\\uDFFF\"",
+      "a: \"\\uD800\\uDBFF\"", "a: \"\\uD800\\uE000\"", "a: \"\\uD800\\xDC00\"",
+    ]
+    .map(code_points)
+    .join("\n"),
+    content=(
+      #|"a: \"\\uD7FF\"" -> U+D7FF
+      #|"a: \"\\uD800\\uDC00\"" -> U+10000
+      #|"a: \"\\uD834\\uDD1E\"" -> U+1D11E
+      #|"a: \"\\uDBFF\\uDFFF\"" -> U+10FFFF
+      #|"a: \"\\uD800\\uDBFF\"" -> error /a
+      #|"a: \"\\uD800\\uE000\"" -> error /a
+      #|"a: \"\\uD800\\xDC00\"" -> error /a
+    ),
+  )
 }
 
 ///|
