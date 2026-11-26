@@ -972,21 +972,6 @@ test "malformed indentation gives an error at the deepest node reached, or a val
       #|"a: |\n  \n  x" -> {"a":"\nx"}
     ),
   )
-  // "It is an error for any of the leading empty lines to contain more
-  // spaces than the first non-empty line" (YAML 1.2.2, section 8.1.1.1):
-  // the first item of Example 8.3, an error, and the same with a later
-  // leading empty line of fewer spaces, or of none, before the first line
-  // of text, which leaves the first empty line in error. The message is the
-  // one above for that; the pointer is the scalar, the deepest node
-  // reached.
-  inspect(
-    each(["- |\n  \n text", "- |\n  \n \n text", "- |\n  \n\n text"]),
-    content=(
-      #|"- |\n  \n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
-      #|"- |\n  \n \n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
-      #|"- |\n  \n\n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
-    ),
-  )
   // A sequence item where the mapping expects its next key, and a key
   // continued on a more indented line: YAML limits an implicit key to a
   // single line (YAML 1.2.2, section 8.2.2). The messages are those
@@ -1017,6 +1002,21 @@ test "malformed indentation gives an error at the deepest node reached, or a val
       #|"\"a\n b\": 1" -> error /a b: a key must be on a single line
       #|"'a\n b': 1" -> error /a b: a key must be on a single line
       #|"\"a\\\n  b\": 1" -> error /ab: a key must be on a single line
+    ),
+  )
+  // "It is an error for any of the leading empty lines to contain more
+  // spaces than the first non-empty line" (YAML 1.2.2, section 8.1.1.1):
+  // the first item of Example 8.3, an error, and the same with a later
+  // leading empty line of fewer spaces, or of none, before the first line
+  // of text, which leaves the first empty line in error. The message is the
+  // one above for that; the pointer is the scalar, the deepest node
+  // reached.
+  inspect(
+    each(["- |\n  \n text", "- |\n  \n \n text", "- |\n  \n\n text"]),
+    content=(
+      #|"- |\n  \n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
+      #|"- |\n  \n \n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
+      #|"- |\n  \n\n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
     ),
   )
 }
