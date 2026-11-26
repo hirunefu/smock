@@ -483,6 +483,67 @@ test "a string with an unpaired surrogate is an error at its pointer" {
     let tree = Json::object(Map::from_array([("a" + lone, Json::null())]))
     assert_eq(error_pointer(tree), Some("/a\{lone}"))
   }
+  // Code units at the edges of the surrogate ranges, after `a`: U+D7FF, the
+  // last unit before them; U+D800 and U+DBFF, the first and the last high
+  // half; U+DC00 and U+DFFF, the first and the last low half; U+E000, the
+  // first unit after them. In UTF-16 a high half followed by a low half is
+  // one character, U+10000 + (high - U+D800) * 0x400 + (low - U+DC00), and
+  // any other half is in error (RFC 2781, section 2.2, steps 2 to 5). Such a
+  // character, and U+D7FF and U+E000, are in YAML 1.2.2's c-printable
+  // (production 1), so they are an ns-char (production 34), which a plain
+  // scalar holds (productions 126 and 130). `write` writes them plain ("plain
+  // when `parse` reads it back, in that place, as the same string", its
+  // doc), in a value and in a key. A half alone is the error, at the pointer
+  // of the value or of the key (`write`'s doc: "a string or key with half of
+  // a surrogate pair, which UTF-8 cannot hold").
+  let cases : Array[(Array[Int32], String?)] = [
+    ([0xD7FF, 0xDBFF], None),
+    ([0xD7FF, 0xDC00], None),
+    ([0xD7FF, 0xDFFF], None),
+    ([0xD7FF, 0xE000], Some("a\u{D7FF}\u{E000}")),
+    ([0xD800, 0xDBFF], None),
+    ([0xD800, 0xDC00], Some("a\u{10000}")),
+    ([0xD800, 0xDFFF], Some("a\u{103FF}")),
+    ([0xD800, 0xE000], None),
+    ([0xDBFF, 0xDBFF], None),
+    ([0xDBFF, 0xDC00], Some("a\u{10FC00}")),
+    ([0xDBFF, 0xDFFF], Some("a\u{10FFFF}")),
+    ([0xDBFF, 0xE000], None),
+    ([0xDC00, 0xDBFF], None),
+    ([0xDC00, 0xDC00], None),
+    ([0xDC00, 0xDFFF], None),
+    ([0xDC00, 0xE000], None),
+    // A high half before a pair that starts with a high half, and a low half
+    // after a pair: alone each time.
+    ([0xD800, 0xDBFF, 0xDC00], None),
+    ([0xDBFF, 0xDBFF, 0xDFFF], None),
+    ([0xD800, 0xDC00, 0xDC00], None),
+  ]
+  for row in cases {
+    let (codes, expected) = row
+    let s = StringBuilder()
+    s.write_char('a')
+    for code in codes {
+      s.write_char(code.unsafe_to_char())
+    }
+    let s = s.to_string()
+    let label = codes
+      .map(code => "U+" + code.to_string(radix=16).to_upper())
+      .join(" ")
+    let value = Json::object({ "k": Json::string(s) })
+    let key = Json::object(Map::from_array([(s, Json::number(1))]))
+    match expected {
+      Some(text) => {
+        assert_eq(s, text)
+        assert_eq(written(value), "k: \{text}\n", msg=label)
+        assert_eq(written(key), "\{text}: 1\n", msg=label)
+      }
+      None => {
+        assert_eq(error_pointer(value), Some("/k"), msg=label)
+        assert_eq(error_pointer(key), Some("/\{s}"), msg=label)
+      }
+    }
+  }
 }
 
 ///|
