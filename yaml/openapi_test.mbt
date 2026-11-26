@@ -288,6 +288,16 @@ test "in the OpenAPI mode, an empty value is null" {
       #|"a: {x}\n" -> {"a":{"x":null}}
     ),
   )
+  // YAML 1.2.2's Example 8.15 (section 8.2.1), whose first item is empty
+  // with a comment after its `-`, reads as the specification gives it.
+  inspect(
+    openapi_each([
+      "- # Empty\n- |\n block node\n- - one # Compact\n  - two # sequence\n- one: two # Compact mapping",
+    ]),
+    content=(
+      #|"- # Empty\n- |\n block node\n- - one # Compact\n  - two # sequence\n- one: two # Compact mapping" -> [null,"block node\n",["one","two"],{"one":"two"}]
+    ),
+  )
 }
 
 ///|

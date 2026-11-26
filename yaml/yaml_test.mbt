@@ -354,6 +354,20 @@ test "comments run from a # after white space to the end of the line" {
       #|"[a#b, c]" -> ["a#b","c"]
     ),
   )
+  // A comment may also follow a sequence's `-`, with the item's node on a
+  // later line. The node of a block sequence entry may be an
+  // s-l+block-node (YAML 1.2.2, productions 184 and 185): a flow node
+  // after s-separate, whose s-separate-lines may hold a comment and the
+  // line break after it (productions 197, 81 and 79), or a block
+  // collection after s-l-comments (production 200). Example 8.15 starts
+  // with such an item, which is empty (`- # Empty`).
+  inspect(
+    each(["- # a comment\n  x", "- # a comment\n  a: 1"]),
+    content=(
+      #|"- # a comment\n  x" -> ["x"]
+      #|"- # a comment\n  a: 1" -> [{"a":1}]
+    ),
+  )
 }
 
 ///|
@@ -1145,6 +1159,19 @@ test "tabs in indentation give an error; tabs elsewhere are white space" {
       #|"\ta: 1" -> error : tabs are not allowed in indentation
       #|" \ta: 1" -> error : tabs are not allowed in indentation
       #|"---\n\ta: 1" -> error : tabs are not allowed in indentation
+    ),
+  )
+  // The same tab on the line after a `-` with nothing else on its line: the
+  // parser has reached that item, whose node is to come, so the error names
+  // the item ("For a syntax error, it names the deepest node the parser
+  // reached", `ParseError`), as it names the member after `a:` in the first
+  // case of this test. In the second input, the first item is a node read
+  // whole before it.
+  inspect(
+    each(["-\n\tx", "- a\n-\n\tb"]),
+    content=(
+      #|"-\n\tx" -> error /0: tabs are not allowed in indentation
+      #|"- a\n-\n\tb" -> error /1: tabs are not allowed in indentation
     ),
   )
 }
