@@ -338,7 +338,9 @@ test "a plain scalar continues on more indented lines, folded like a quoted one"
   // only at the start of a line (production 206), so after the indentation
   // of a continuation line they are text.
   inspect(
-    each(["1st non-empty\n\n 2nd non-empty \n\t3rd non-empty", "k: a\n  --- b", "k: a\n  ... b"]),
+    each([
+      "1st non-empty\n\n 2nd non-empty \n\t3rd non-empty", "k: a\n  --- b", "k: a\n  ... b",
+    ]),
     content=(
       #|"1st non-empty\n\n 2nd non-empty \n\t3rd non-empty" -> "1st non-empty\n2nd non-empty 3rd non-empty"
       #|"k: a\n  --- b" -> {"k":"a --- b"}
@@ -989,7 +991,9 @@ test "tabs in indentation give an error; tabs elsewhere are white space" {
   // here a space comes between the tab and the nested mapping or sequence.
   // The messages and pointers are those of the cases above.
   inspect(
-    each(["-\t a: 1", "-\t - x", "- -\t a: 1", "stubs:\n-\t  id: a\n    mock: m"]),
+    each([
+      "-\t a: 1", "-\t - x", "- -\t a: 1", "stubs:\n-\t  id: a\n    mock: m",
+    ]),
     content=(
       #|"-\t a: 1" -> error /0: tabs are not allowed in indentation
       #|"-\t - x" -> error /0: tabs are not allowed in indentation
