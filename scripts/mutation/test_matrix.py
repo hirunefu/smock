@@ -440,9 +440,9 @@ class MatrixToolTest(unittest.TestCase):
 # A workspace laid out as smock's: the root module smock/smock, whose
 # packages a and b sit in a/ and b/, and the module smock/proto in proto/.
 # At the base, a/a_test.mbt and b/b_test.mbt; the next commit deletes a
-# line of "a one", rewords the comment above "a two", and adds
-# proto/p_test.mbt. "a three", a's test with no name and b's tests are as
-# they were.
+# line of "a one", rewords the comment above "a two" and changes a line of
+# its body, and adds proto/p_test.mbt. "a three" and a's test with no name
+# are as they were, a line higher, and b's tests as they were.
 WORKSPACE = {
     "moon.work": 'members = [\n  ".",\n  "./proto",\n]\n',
     "moon.mod": 'name = "smock/smock"\n',
@@ -457,6 +457,7 @@ WORKSPACE = {
 CHANGES = [
     ("a/a_test.mbt", '  inspect(-1, content="-1")\n', ""),
     ("a/a_test.mbt", "/// What two is.\n", "/// What two is, in words.\n"),
+    ("a/a_test.mbt", '  inspect(2, content="2")\n', '  inspect(1 + 1, content="2")\n'),
 ]
 PROTO_TESTS = '///|\ntest "p one" {\n  inspect(1, content="1")\n}\n'
 
