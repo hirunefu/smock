@@ -427,8 +427,12 @@ test "the 100-continue check finds the expectation in any case, among other elem
     ),
   )
   // Almost matches. RFC 9110, section 10.1.1: the one expectation is
-  // `100-continue`, and the field value is case-insensitive, which only
-  // letters have (RFC 5234, section 2.3). So another first character is
+  // `100-continue`, and the Expect field value is case-insensitive. An
+  // expectation is a token (section 10.1.1), whose characters are all
+  // US-ASCII (section 5.6.2: tchar), so an element with a character beyond
+  // US-ASCII is no expectation, as in the rows of U+0130 above. In US-ASCII
+  // only the letters have a case: the Unicode Character Database maps no
+  // other character of it to another case. So another first character is
   // another expectation, and so is a code unit that differs from a digit or
   // the hyphen in bit 0x20 alone, as an upper-case letter differs from its
   // lower case: U+0011 for `1`, U+0010 for `0`, CR for `-`.
