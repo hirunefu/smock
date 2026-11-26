@@ -393,6 +393,46 @@ fn Requests::held_behind(self : Requests, pieces : Array[BytesView]) -> Bool {
 }
 
 ///|
+/// Whether the first piece that ends past the octets a parser's buffer
+/// holds at first makes the parser hold more than those octets at once,
+/// while the octets it holds begin after a request or a head taken out:
+/// the parser then grows its buffer and copies into it the octets it
+/// holds, from where they begin. It holds a Content-Length body from the
+/// end of its head, a head from its request line, and none of a chunked
+/// body, which it decodes as it arrives.
+fn Requests::grows_behind(self : Requests, pieces : Array[BytesView]) -> Bool {
+  // The octets that arrive before that piece, and with it.
+  let mut before = 0
+  let mut after = 0
+  for piece in pieces {
+    after = before + piece.length()
+    if after > first_buffer {
+      break
+    }
+    before = after
+  }
+  guard after > first_buffer else { return false }
+  let mut start = 0
+  for request in self.requests {
+    let end = start + request.bytes().length()
+    if end > before {
+      let head_end = start + request.head().length()
+      // Where the octets the parser holds begin.
+      let held = if before < head_end {
+        start + 2 * request.empty_lines
+      } else if request.body is Length(..) {
+        head_end
+      } else {
+        before
+      }
+      return held > 0 && held < before && after - held > first_buffer
+    }
+    start = end
+  }
+  false
+}
+
+///|
 /// The property: the parser reads back what the writer wrote.
 fn Requests::holds(self : Requests) -> Bool {
   read_requests(self.pieces()) == self.expected()
@@ -997,7 +1037,10 @@ fn lengthened(
 /// One to four requests, the stream cut into pieces of one byte, of up to
 /// 7 or up to 100 bytes, or not cut. A stream that passes the octets a
 /// parser's buffer holds at first is not cut a byte at a time, so that the
-/// property stays quick and a failure shrinks in few steps.
+/// property stays quick and a failure shrinks in few steps. Half of those
+/// that would not be cut are cut into pieces of up to that many octets
+/// instead, so that the piece that passes them can make the parser hold
+/// more than them at once, behind what it has taken out.
 impl @quickcheck.Arbitrary for Requests with fn arbitrary(_size, state) {
   let count = 1 + pick(state, 4)
   let requests = Array::makei(count, i => written(state, last=i == count - 1))
@@ -1005,7 +1048,12 @@ impl @quickcheck.Arbitrary for Requests with fn arbitrary(_size, state) {
   let mut base = 0
   let length = { requests, }.stream().length()
   let longest = if length > first_buffer {
-    [7, 100, 0][pick(state, 3)]
+    let longest = [7, 100, 0][pick(state, 3)]
+    if longest == 0 && pick(state, 2) == 0 {
+      first_buffer
+    } else {
+      longest
+    }
   } else {
     [1, 7, 100, 0][pick(state, 4)]
   }
@@ -1308,6 +1356,10 @@ test "requests written as RFC 9112 defines them are read back as written, howeve
         @quickcheck.classify(
           requests.held_behind(pieces),
           "part of a head held behind a request taken out, past 4,096 octets",
+        ),
+        @quickcheck.classify(
+          requests.grows_behind(pieces),
+          "more than 4,096 octets held at once, behind what was taken out",
         ),
       ]
     },
