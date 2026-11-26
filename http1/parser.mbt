@@ -462,7 +462,7 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       break
     }
     // The rest of a run of bytes that leave the scan where it is.
-    let stop = if end - start < size_limit { end } else { start + size_limit }
+    let stop = shortcut_stop(start, end, size_limit)
     if scan is EmptyLine {
       // An empty line before the request line is consumed and ignored.
       start = at
@@ -473,11 +473,12 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
         break
       }
       if section is FieldValue {
-        // Eight bytes at a time while none of them ends the value. `at` is
-        // at most `end` and within the size limit, so at most `stop`, and
-        // `stop - at` cannot wrap, as `at + 8` could at the top of an Int32.
+        // Eight bytes at a time while all of them lie before `stop` and
+        // none of them ends the value. `at` is at most `end` and within the
+        // size limit, so at most `stop`.
         let bytes = buf.unsafe_reinterpret_as_bytes()
-        while stop - at >= 8 && !has_control(bytes.unsafe_read_uint64_le(at)) {
+        while word_fits(at, stop) &&
+              !has_control(bytes.unsafe_read_uint64_le(at)) {
           at += 8
         }
         while at < stop && is_field_value_byte(buf[at]) {
@@ -489,10 +490,10 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
         }
       }
     } else if scan is Target {
-      // Eight bytes at a time while all of them are visible characters.
-      // As for a field value, `at` is at most `stop`: `stop - at` cannot wrap.
+      // Eight bytes at a time while all of them lie before `stop` and are
+      // visible characters. As for a field value, `at` is at most `stop`.
       let bytes = buf.unsafe_reinterpret_as_bytes()
-      while stop - at >= 8 && is_visible(bytes.unsafe_read_uint64_le(at)) {
+      while word_fits(at, stop) && is_visible(bytes.unsafe_read_uint64_le(at)) {
         at += 8
       }
       while at < stop && is_visible_byte(buf[at]) {
@@ -507,6 +508,46 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
   self.section = section
   self.fields = fields
   result
+}
+
+///|
+/// The position up to which the head scan's shortcuts may take bytes, for
+/// a head that starts at `start`, bytes held up to `end` and a header size
+/// limit of `size_limit`: the smaller of `end` and `start + size_limit`.
+/// So a shortcut takes no byte that has not been fed and none past the
+/// limit, and the byte past the limit is checked as it would be alone.
+///
+/// Where `Parser::scan_head` calls it, `start` and `end` are positions in
+/// its buffer, `start` before `end`, and the limit is at least the bytes
+/// the scan has taken after `start`, so at least 1, since the size check
+/// has passed: the bound is then at or past the position the scan has
+/// reached. For any `start` and `end` that are not negative and any limit
+/// it is the smaller of the two as well, a limit of 0 or less giving a
+/// position at or below `start`; for a negative position it promises
+/// nothing. The sum is made only when it is at most `end`, so it cannot
+/// pass the largest Int32, however large the limit.
+fn shortcut_stop(start : Int32, end : Int32, size_limit : Int32) -> Int32 {
+  if end - start < size_limit {
+    end
+  } else {
+    start + size_limit
+  }
+}
+
+///|
+/// Whether the eight bytes from position `at` lie before position `stop`,
+/// so that a word loop of the head scan may read them as one word: whether
+/// `at + 8` is at most `stop`, as integers. So it is false for a position
+/// past `stop` and for one fewer than eight bytes before it, at any size.
+///
+/// `Parser::scan_head` passes positions in its buffer, `at` at most `stop`
+/// (`shortcut_stop`). The answer holds for any two positions that are not
+/// negative: their difference is within an Int32, so `stop - at` cannot
+/// wrap, where `at + 8` would pass the largest Int32 for `at` in the last
+/// eight positions below 2^31. For a negative position it promises
+/// nothing.
+fn word_fits(at : Int32, stop : Int32) -> Bool {
+  stop - at >= 8
 }
 
 ///|
