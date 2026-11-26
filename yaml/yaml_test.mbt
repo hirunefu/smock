@@ -198,6 +198,49 @@ test "quoted scalars fold line breaks: one becomes a space, each empty line a ne
       #|{"single":"a b\nc","double":"a b\n\nc de"}
     ),
   )
+  // The examples of YAML 1.2.2 for folding in quoted scalars, each a whole
+  // document, read as the specification gives them: Example 6.8 (section
+  // 6.5), Examples 7.5 and 7.6 (section 7.3.1) and Example 7.9 (section
+  // 7.3.2). "All leading and trailing white space characters on each line
+  // are excluded from the content" (7.3.1), a tab after a line's spaces
+  // included (s-flow-line-prefix, production 69), but the white space
+  // before an escaped line break is kept. A document's root continues on
+  // lines at column 0 (production 207), as their last lines do.
+  inspect(
+    each([
+      "\"\n  foo \n \n  \t bar\n\n  baz\n\"", "\"folded \nto a space,\t\n \nto a line feed, or \t\\\n \\ \tnon-content\"",
+      "\" 1st non-empty\n\n 2nd non-empty \n\t3rd non-empty \"", "' 1st non-empty\n\n 2nd non-empty \n\t3rd non-empty '",
+    ]),
+    content=(
+      #|"\"\n  foo \n \n  \t bar\n\n  baz\n\"" -> " foo\nbar\nbaz "
+      #|"\"folded \nto a space,\t\n \nto a line feed, or \t\\\n \\ \tnon-content\"" -> "folded to a space,\nto a line feed, or \t \tnon-content"
+      #|"\" 1st non-empty\n\n 2nd non-empty \n\t3rd non-empty \"" -> " 1st non-empty\n2nd non-empty 3rd non-empty "
+      #|"' 1st non-empty\n\n 2nd non-empty \n\t3rd non-empty '" -> " 1st non-empty\n2nd non-empty 3rd non-empty "
+    ),
+  )
+  // Empty lines after an escaped line break are line feeds:
+  // "s-double-escaped(n) ::= s-white* c-escape b-non-content
+  // l-empty(n,FLOW-IN)* s-flow-line-prefix(n)" (YAML 1.2.2, production
+  // 112), and each l-empty ends with b-as-line-feed (production 70). The
+  // escaped line break itself is excluded from the content (section 7.3.1).
+  inspect(
+    each(["a: \"x\\\n\n  y\"", "a: \"x\\\n\n\n  y\""]),
+    content=(
+      #|"a: \"x\\\n\n  y\"" -> {"a":"x\ny"}
+      #|"a: \"x\\\n\n\n  y\"" -> {"a":"x\n\ny"}
+    ),
+  )
+  // `---` and `...` mark a document only at the start of a line
+  // ("c-forbidden ::= <start-of-line> ( c-directives-end | c-document-end )
+  // ...", YAML 1.2.2, production 206); on a continuation line of a quoted
+  // scalar, after its indentation, they are text.
+  inspect(
+    each(["k: \"a\n  --- b\"", "k: 'a\n  ... b'"]),
+    content=(
+      #|"k: \"a\n  --- b\"" -> {"k":"a --- b"}
+      #|"k: 'a\n  ... b'" -> {"k":"a ... b"}
+    ),
+  )
 }
 
 ///|
@@ -768,6 +811,21 @@ test "malformed indentation gives an error at the deepest node reached, or a val
     content=(
       #|"a: 1\n- b" -> error /a: expected a key, found a sequence item; check the indentation
       #|"a\n b: 1" -> error /a b: a key must be on a single line
+    ),
+  )
+  // The same for a quoted key: "Double-quoted scalars are restricted to a
+  // single line when contained inside an implicit key" (YAML 1.2.2,
+  // section 7.3.1; production 110 gives nb-double-one-line in BLOCK-KEY),
+  // and single-quoted ones too (section 7.3.2), whether the line break is
+  // folded or escaped. The pointer names the member by its folded key, as
+  // `ParseError` documents: a line break folds into a space, and an escaped
+  // one is "excluded from the content" (section 7.3.1).
+  inspect(
+    each(["\"a\n b\": 1", "'a\n b': 1", "\"a\\\n  b\": 1"]),
+    content=(
+      #|"\"a\n b\": 1" -> error /a b: a key must be on a single line
+      #|"'a\n b': 1" -> error /a b: a key must be on a single line
+      #|"\"a\\\n  b\": 1" -> error /ab: a key must be on a single line
     ),
   )
 }
