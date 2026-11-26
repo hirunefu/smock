@@ -600,6 +600,21 @@ test "numbers that are not in JSON syntax must be quoted" {
       #|-.5E3 -> error /a: "-.5E3" may be read as a number; quote this value
     ),
   )
+  // YAML 1.1's base 60, as an integer (yaml.org/type/int.html,
+  // `[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+`) and as a float (float.html,
+  // `[-+]?[0-9][0-9_]*(:[0-5]?[0-9])+\.[0-9_]*`): each group after a colon
+  // is one digit, 0 to 9, or two whose first is at most 5, 00 to 59. Rejected
+  // with "quote this value", as above.
+  inspect(
+    as_value(["1:0", "1:9", "1:00", "1:59", "1:0.5"]),
+    content=(
+      #|1:0 -> error /a: "1:0" may be read as a number; quote this value
+      #|1:9 -> error /a: "1:9" may be read as a number; quote this value
+      #|1:00 -> error /a: "1:00" may be read as a number; quote this value
+      #|1:59 -> error /a: "1:59" may be read as a number; quote this value
+      #|1:0.5 -> error /a: "1:0.5" may be read as a number; quote this value
+    ),
+  )
 }
 
 ///|
@@ -715,6 +730,17 @@ test "the same values quoted are strings, and look-alikes that no YAML version t
       #|2001-12-14t21:59:43.10-005:00 -> {"a":"2001-12-14t21:59:43.10-005:00"}
       #|2001-12-14t21:59:43.10-05:000 -> {"a":"2001-12-14t21:59:43.10-05:000"}
       #|2001-12-1421:59:43.10-05:00 -> {"a":"2001-12-1421:59:43.10-05:00"}
+    ),
+  )
+  // A group of YAML 1.1's base 60 needs a digit after its colon
+  // (`:[0-5]?[0-9]`, yaml.org/type/int.html and float.html): a colon right
+  // before the point or before another colon makes no group. YAML 1.2.2's
+  // core schema types neither, so each is a string.
+  inspect(
+    as_value(["1:.5", "1::30"]),
+    content=(
+      #|1:.5 -> {"a":"1:.5"}
+      #|1::30 -> {"a":"1::30"}
     ),
   )
 }
