@@ -2090,9 +2090,54 @@ reviewer = ""
 # each mutant applied. The other 18 survivors of #403 are killed by tests.
 # The maintainer reads every entry, since yaml is a protocol package.
 #
-# The adversarial step is still to be made (pending: a separate agent
-# context, after #403's implementer). UB-NATIVE takes no `adversarial`
-# field, so its attempt is to be recorded here, as #402's was.
+# The adversarial step (2026-11-26): a separate agent context, which wrote
+# none of these entries nor any of yaml's tests, tried to kill each of the
+# four; none was killed, and each entry stands as written, category and
+# reason. UB-NATIVE takes no `adversarial`, so the attempt is recorded
+# here, as #402's was. It read YAML 1.2.2 (production 1, c-printable, holds
+# U+10000 to U+10FFFF and no surrogate; section 5.2, a character above
+# U+FFFF is a surrogate pair in UTF-16), RFC 2781 section 2.2 (a high half
+# followed by a low half is one character, any other half is in error) and
+# `write`'s doc (a string or key with half of a surrogate pair is an error
+# with the pointer of the value). The high half's two mutants differ from
+# the code only for a high half that ends the string while the code unit
+# read after the end is a low half; the low half's two only for a low half
+# that starts the string while the unit read before the start is a high
+# half. On wasm-gc that read traps ("array element access out of bounds",
+# at the test's U+D800 and U+DFFF alone), the only place they differ.
+# Natively neither can hold for a String that MoonBit code makes without
+# itself writing out of bounds: moonbit_malloc_array pads a 2-byte array by
+# one element, every way a String is made writes 0 there
+# (moonbit_make_string, which String::make and to_upper reach;
+# moonbit_make_string_raw, which StringBuilder, String::from_array and
+# interpolation reach; moonbit_add_string; moonbit_unsafe_bytes_sub_string,
+# which Bytes::to_unchecked_string and a view's to_owned reach; each
+# literal the C backend emits),
+# and the two bytes before the first unit are the upper half of the
+# header's `meta`, the length (moonbit.h), which is a high half only for a
+# length of 0xD800 * 65,536 or more, beyond Int32. So natively they differ
+# only for a memory state that no caller of the package can make. Tried,
+# with a scratch white-box test (not committed): natively on arm64, the
+# unit after the end and the one before the start of 1,057 strings made
+# ten ways (those above, `+`, join, String::make and the parser, and
+# literals; core's JSON parser refuses an escaped lone half), of lengths
+# 1 to 4,194,305 around each multiple of 65,536: 0 and the length divided
+# by 65,536 each time. Copies of is_plain_safe with each mutation, #402's
+# AOR and four controls, beside the real function, on 17,610,040 calls
+# (every code unit alone, first, last and inside; every string of up to
+# five of `a`, space, `:`, `-`, `#`, U+D7FF, U+D800, U+DBFF, U+DC00, U+DFFF
+# and U+E000; each half at either end of the strings above; four ways each
+# of key and column zero): the mutants' copies agree on every call
+# natively, while the controls `i + 2 < length` (5,024 calls differ) and
+# `i > 1` (5,608), and copies that make the very unit read out of bounds a
+# half (27,404 and 29,716), are caught. The real `write` on 246,480 trees
+# (every surrogate code unit alone, first, last and inside, and pairs and
+# triples, made six ways, as a document, an item, a value, a key and a
+# nested key) gives one digest on wasm-gc and natively. Each mutant
+# applied by hand: natively yaml's 55 tests and the harness pass with that
+# digest; on wasm-gc the test above and the harness fail by the trap
+# alone. The two controls applied the same way fail natively (4 and 3 of
+# the tests, yaml's own among them). CI's amd64 native verdict decides.
 
 [[exclusion]]
 mutant = "yaml/writer.mbt,is_plain_safe,INT,1,0,1"
