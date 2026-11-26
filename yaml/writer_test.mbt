@@ -689,6 +689,27 @@ test "in a comment, control characters and the line breaks of YAML 1.1 become sp
     ),
   )
   assert_eq(@yaml.parse(text), Json::array([Json::number(1)]))
+  // A half of a surrogate pair alone is no character YAML allows (YAML
+  // 1.2.2's c-printable, production 1, skips U+D800 to U+DFFF), so it
+  // becomes a space, as `write`'s doc says of "the other characters that
+  // YAML does not allow": U+D800 and U+DBFF, the first and the last high
+  // half, and U+DC00 and U+DFFF, the first and the last low half, each
+  // before a `|`. The first and the last character of each range of
+  // c-printable above U+009F, U+00A0 to U+D7FF, U+E000 to U+FFFD and U+10000
+  // to U+10FFFF, are characters YAML allows in a comment (nb-char,
+  // production 27, in c-nb-comment-text, production 75), and stay.
+  let halves = StringBuilder()
+  for code in [0xD800, 0xDBFF, 0xDC00, 0xDFFF] {
+    halves.write_char(code.unsafe_to_char())
+    halves.write_char('|')
+  }
+  let edges = "\u{A0}\u{D7FF}\u{E000}\u{FFFD}\u{10000}\u{10FFFF}|"
+  let text = written(Json::array([Json::number(1)]), comment=[
+    halves.to_string(),
+    edges,
+  ])
+  assert_eq(text, "#  | | | |\n# \{edges}\n- 1\n")
+  assert_eq(@yaml.parse(text), Json::array([Json::number(1)]))
 }
 
 ///|
