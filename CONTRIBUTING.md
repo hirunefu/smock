@@ -1499,13 +1499,15 @@ entry is triaged again.
 `python3 scripts/mutation/exclusions.py review` lists the entries that a
 branch adds or changes against its merge base with `main`, the batch, and
 which of them the maintainer reads: every one in the protocol packages
-and in `serverparsers`, and one in five of the others. Once the batch is
-frozen (the branch's last push), a packages run of the bulk workflow
-(`-f mode=packages`, [Bulk runs on Actions](#bulk-runs-on-actions)) runs
-on the frozen tip, and its run ID is the seed of the sample:
-`review --seed <run ID>`. GitHub Actions gives that number only once the
-run starts, so no agent can know it before. The weakening report lists
-every entry whose reviewer changed.
+and in `serverparsers`, and one in five of the others. Once a package's
+batch of entries is frozen for its review, a packages run of the bulk
+workflow (`-f mode=packages`, [Bulk runs on Actions](#bulk-runs-on-actions))
+runs on the frozen tip, the tip where that batch was frozen, and its run
+ID is the seed of the sample: `review --seed <run ID>`. GitHub Actions
+gives that number only once the run starts, so no agent can know it
+before. Later pushes of the branch, for other packages, do not draw that
+package's sample again. The weakening report lists every entry whose
+reviewer changed.
 
 ### Rules for the work
 
@@ -1638,9 +1640,10 @@ When a package's turn comes to climb to L4, about ten of its snapshots
 are audited. They are drawn among the tests that alone kill some mutant
 in a kill-matrix run of the package (`-f mode=matrix`,
 [Bulk runs on Actions](#bulk-runs-on-actions)), at least half of them
-from tests that the work added or changed. The seed of the draw is that
-kill-matrix run's ID, a number that GitHub Actions gives once the run
-starts, so no agent can know it before and no one picks it. A separate
+from the work's tests: a test is the work's when the work added it, or
+changed a line of its block that is not a comment. The seed of the draw
+is that kill-matrix run's ID, a number that GitHub Actions gives once the
+run starts, so no agent can know it before and no one picks it. A separate
 agent context, one that wrote none of that package's tests under these
 rules, checks each against its source. The maintainer reads only the
 snapshots that this context finds in disagreement with their source, and
@@ -1656,11 +1659,17 @@ python3 scripts/mutation/matrix.py draw --seed <run ID> mutation-report/matrix/<
 
 - It draws among the tests that alone kill some mutant in the matrices
   given ([The kill matrix](#the-kill-matrix)).
-- A test is the work's when its block, from the `///|` at or before its
-  line to the line before the next `///|`, holds a line that differs from
-  `d953f320`, the commit of `main` at which the test review began
-  (`--base` names another): a line that `git diff -U0 d953f320 HEAD` adds
-  or changes, or the line at which it deletes some.
+- A test is the work's when the work added it, or changed a line of its
+  block that is not a comment, since `d953f320`, the commit of `main` at
+  which the test review began (`--base` names another). Its block runs
+  from the `///|` at or before its line to the line before the next
+  `///|`. A line whose first characters, after white space, are `//` is a
+  comment, and a blank line is none of the test's lines. The lines added
+  or changed are read from `git diff -U0 d953f320 HEAD`. A line that it
+  adds or changes counts when it is neither a comment nor blank. Where a
+  hunk changes or deletes a line that was neither, every line that the
+  hunk adds counts too, or, when it adds none, the line at which it
+  deletes. So a deletion of comments alone counts for no line.
 - It draws ten (`--size` names another number), or every one when there
   are fewer. The tests are sorted by their names in the matrix.
   `random.Random(<run ID>)`, with the ID as text, samples half of the

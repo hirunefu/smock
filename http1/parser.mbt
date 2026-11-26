@@ -159,9 +159,12 @@ pub(all) struct Request {
 ///   empty body fits. A limit of 2^31 - 1, the largest an Int32 holds, is
 ///   taken as 2^31 - 2. A declared Content-Length over it gets 413 before
 ///   any of the body is read, and a chunked body gets 413 as soon as a chunk
-///   size would take it past the limit, before that chunk's data. The parser
-///   keeps the body and not the framing around it, so neither the framing
-///   nor the body can make it hold much more than the body limit.
+///   size, once read, would take it past the limit, before that chunk's
+///   data. A chunk size is read when the LF that ends its line arrives,
+///   after any chunk extensions, so its digits alone wait for more, even
+///   when every size they can still become is past the limit. The
+///   parser keeps the body and not the framing around it, so neither the
+///   framing nor the body can make it hold much more than the body limit.
 ///
 /// The defaults are 16 KiB, 100 header fields and 10 MiB.
 pub fn Parser::Parser(

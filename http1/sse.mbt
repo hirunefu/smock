@@ -7,6 +7,11 @@
 /// the client gets `data` back with each line break as LF. The text is
 /// written as UTF-8.
 ///
+/// A field whose value is empty, such as an empty `event` or `id` or an
+/// empty line of `data`, is written as its name and a colon, with no space
+/// after it (`data:`). A client reads a line with nothing after the colon
+/// as that field with an empty value ("Interpreting an event stream").
+///
 /// The caller passes an `event` without CR or LF, and an `id` without CR,
 /// LF or NUL: a client would read anything else differently.
 ///

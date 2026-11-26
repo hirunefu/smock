@@ -389,6 +389,14 @@ test "a request target in one of the four forms of RFC 9112 is accepted; any oth
   ]
   let targets = [
     // origin-form, absolute-form, authority-form and asterisk-form
+    // `/a|b^c` is in none of them by RFC 9112's grammar, since a path
+    // segment holds no `|` or `^` (RFC 3986, section 3.3: pchar). It is
+    // accepted by smock's documented choice, as origin-form whose
+    // characters are checked as visible ASCII only: is_visible_ascii's
+    // documentation, "Every visible character passes, even those RFC 3986
+    // leaves out of a URI, such as `|` and `^`, since clients send them",
+    // and is_origin_or_asterisk_form's, "Only the form is checked, as by
+    // the parser: `is_visible_ascii` checks the characters".
     "/", "/users/1?x=y", "/a|b^c", "http://a.example", "http://a.example:8080/x?y",
     "urn:a", "a.example:443", "127.0.0.1:8080", "[::1]:80", "[v1.x]:80", "*", // in none of them
      "users/1", "a", "?x", "127.0.0.1", "[::1]", "[::1:80", "a/b:80", "a@b:80", "1http://a/",

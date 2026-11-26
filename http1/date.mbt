@@ -18,7 +18,8 @@ pub struct DateCache {
 }
 
 ///|
-/// A cache that has formatted no time yet.
+/// A new cache. The first call of `at` gives the value of its own second,
+/// whatever the time it is given.
 pub fn DateCache::DateCache() -> DateCache {
   { second: 0L, value: http_date(0L), }
 }
