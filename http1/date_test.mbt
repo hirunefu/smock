@@ -70,9 +70,9 @@ test "the Date value is formatted once per second: within a second the same valu
   inspect(dates.at(1792679831000L), content="Thu, 22 Oct 2026 14:37:11 GMT")
   // A clock set back gets the value of its own second.
   inspect(dates.at(1792679830500L), content="Thu, 22 Oct 2026 14:37:10 GMT")
-  // A new cache has formatted no time yet (DateCache::DateCache), so the
-  // first time it is asked for gets its own value, the first second of the
-  // epoch and the one after it too (GNU date).
+  // The first call of a new cache's `at` gives the value of its own second
+  // (DateCache::DateCache): the first second of the epoch, and the one
+  // after it too (GNU date).
   inspect(
     [
       @http1.DateCache().at(0L),
