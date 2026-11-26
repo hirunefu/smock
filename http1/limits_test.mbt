@@ -281,6 +281,12 @@ test "a chunked body gets 413 as soon as a chunk size takes it past the body lim
         @http1.Parser(body_limit=16),
         chunked + "a\r\n\{"b".repeat(10)}\r\n7\r\n",
       ),
+      // The digit 7 alone, with its line not yet ended, waits for more,
+      // though every size it can still become takes the body past 16:
+      // Parser::Parser's documentation, "A chunk size is read when the LF
+      // that ends its line arrives, after any chunk extensions, so its
+      // digits alone wait for more, even when every size they can still
+      // become is past the limit."
       limited(
         @http1.Parser(body_limit=16),
         chunked + "a\r\n\{"b".repeat(10)}\r\n7",
@@ -290,10 +296,10 @@ test "a chunked body gets 413 as soon as a chunk size takes it past the body lim
       // The largest body limit an Int32 holds, 2147483647: a body within it
       // is read, and a chunk size of 2^31, past it and past what an Int32
       // holds, gets 413. Parser::Parser's documentation: "a chunked body
-      // gets 413 as soon as a chunk size would take it past the limit,
-      // before that chunk's data"; RFC 9112, section 7.1: "recipients MUST
-      // anticipate potentially large hexadecimal numerals and prevent
-      // parsing errors due to integer conversion overflows".
+      // gets 413 as soon as a chunk size, once read, would take it past the
+      // limit, before that chunk's data"; RFC 9112, section 7.1:
+      // "recipients MUST anticipate potentially large hexadecimal numerals
+      // and prevent parsing errors due to integer conversion overflows".
       limited(
         @http1.Parser(body_limit=2147483647),
         chunked + "5\r\nhello\r\n0\r\n\r\n",
