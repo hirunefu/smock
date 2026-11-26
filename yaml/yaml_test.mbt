@@ -846,6 +846,35 @@ test "tabs in indentation give an error; tabs elsewhere are white space" {
       #|"a: |\n  x\n# end\n \t\n" -> {"a":"x\n"}
     ),
   )
+  // "Both the "-" indicator and the following spaces are considered to be
+  // part of the indentation of the nested collection" (YAML 1.2.2, section
+  // 8.2.1), all of that white space, so a tab anywhere in it is a tab in
+  // indentation (section 6.1), not only one right before the collection:
+  // here a space comes between the tab and the nested mapping or sequence.
+  // The messages and pointers are those of the cases above.
+  inspect(
+    each(["-\t a: 1", "-\t - x", "- -\t a: 1", "stubs:\n-\t  id: a\n    mock: m"]),
+    content=(
+      #|"-\t a: 1" -> error /0: tabs are not allowed in indentation
+      #|"-\t - x" -> error /0: tabs are not allowed in indentation
+      #|"- -\t a: 1" -> error /0/0: tabs are not allowed in indentation
+      #|"stubs:\n-\t  id: a\n    mock: m" -> error /stubs/0: tabs are not allowed in indentation
+    ),
+  )
+  // A tab in the white space at the start of the first line is rejected
+  // too ("a tab in the white space at the start of a line", among the valid
+  // YAML that `parse` rejects on purpose). No node has been reached there,
+  // so the error names the whole document: "For a syntax error, it names
+  // the deepest node the parser reached. It is `""` for the whole
+  // document" (`ParseError`), the empty pointer of RFC 6901, section 5.
+  inspect(
+    each(["\ta: 1", " \ta: 1", "---\n\ta: 1"]),
+    content=(
+      #|"\ta: 1" -> error : tabs are not allowed in indentation
+      #|" \ta: 1" -> error : tabs are not allowed in indentation
+      #|"---\n\ta: 1" -> error : tabs are not allowed in indentation
+    ),
+  )
 }
 
 ///|
