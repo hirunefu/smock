@@ -49,6 +49,12 @@ test "RE2 syntax left out of the subset is rejected as not supported in it" {
       #|(?P<é>x) => position 0: non-ASCII capture group name (?P<é> is not supported in smock's RE2 subset
     ),
   )
+  // U+0080, the first code point past ASCII, makes a non-ASCII group name,
+  // which the README lists as not in the subset ("non-ASCII group names").
+  inspect(
+    error_of("(?P<\u{80}>x)"),
+    content="position 0: non-ASCII capture group name (?P<\u{80}> is not supported in smock's RE2 subset",
+  )
 }
 
 ///|
