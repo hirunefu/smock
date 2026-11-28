@@ -2387,49 +2387,42 @@ reviewer = ""
 
 # yaml/writer.mbt (#402, part 6 of 8 of yaml's triage for #323): survivors
 # of the first weekly run (44423781036) in the writer's documents, pointers,
-# collections and escapes that no input can tell from the code, and one
-# read past a string's end that only the native binary survives. Each
-# argument is in its reason; the compiler's output differs for each. Of
-# these definitions only is_plain_safe uses an unchecked access
-# (unsafe_get), so the native verdict decides its mutant, and wasm-gc
-# decides the others. The implementer folded into two digests what `write`
-# gives, its bytes or its error's pointer and message: for 4,000 random
-# trees, each written with no comment, with a header, with item comments
-# on some items and on every item, and with a pointer that names no item;
-# and for every code point inside double quotes, in chunks of 256, and each
-# surrogate code unit alone, first, last and inside a string, as a value
-# and as a key. With each EQUIVALENT mutant applied by hand the digests
-# were the code's, on wasm-gc and natively, while six variants that are not
-# equivalent changed them (a scratch test, not committed). Three of the
-# checks decide nothing a caller can see, and are candidates for deletion,
-# for the maintainer: Writer::document's `None` for a write without item
-# comments, its `used.length() < item_comments.length()` before the loop,
-# and Writer::item_pointer's guard, which member_pointer repeats. Each only
-# saves work. The writer runs only in `smock import-openapi`, which writes
-# a Definition file: not on the request path, nor when Definition files
-# load. The maintainer reads every entry, since yaml is a protocol package.
+# collections and escapes that no input can tell from the code. Each
+# argument is in its reason; the compiler's output differs for each. None of
+# these definitions uses an unchecked access, so wasm-gc decides. The
+# implementer folded into two digests what `write` gives, its bytes or its
+# error's pointer and message: for 4,000 random trees, each written with no
+# comment, with a header, with item comments on some items and on every
+# item, and with a pointer that names no item; and for every code point
+# inside double quotes, in chunks of 256, and each surrogate code unit
+# alone, first, last and inside a string, as a value and as a key. With each
+# EQUIVALENT mutant applied by hand the digests were the code's, on wasm-gc
+# and natively, while six variants that are not equivalent changed them (a
+# scratch test, not committed). Three of the checks decide nothing a caller
+# can see, and are candidates for deletion, for the maintainer:
+# Writer::document's `None` for a write without item comments, its
+# `used.length() < item_comments.length()` before the loop, and
+# Writer::item_pointer's guard, which member_pointer repeats. Each only
+# saves work. The writer runs only in `smock import-openapi`, which writes a
+# Definition file: not on the request path, nor when Definition files load.
+# The maintainer reads every entry, since yaml is a protocol package.
 #
 # The adversarial step (2026-11-26): a separate agent context, which wrote
 # none of these entries nor any of yaml's tests, tried to kill each of the
-# nine; none was killed, and each EQUIVALENT entry's `adversarial` says
-# what it tried. Document's `<=` differs only for a Writer literal whose
-# `used` holds a pointer that `item_comments` lacks (its reason now says
-# so). The UB-NATIVE entry takes no `adversarial`, so its attempt is here:
-# is_plain_safe's `i - 1 < length` differs from the code only for a high
-# surrogate that ends the string, where it reads the code unit after the
-# string's last one. On wasm-gc that read traps, the only kill. Natively,
-# every String the runtime makes has a zero code unit there:
-# moonbit_make_string, moonbit_make_string_raw (which StringBuilder's
-# to_string and core's uninitialized UInt16 arrays use), moonbit_add_string
-# and moonbit_unsafe_bytes_sub_string write it, and the C backend emits
-# each string literal with a trailing 0. So the mutant reads 0, no low
-# surrogate, and the string is quoted and refused as by the code: applied
-# by hand on arm64, yaml's 55 tests and the scratch harness's 65,556 writes
-# of every surrogate code unit alone, first, last, inside and beside
-# another half give the code's results natively. A copy that reads U+DC00
-# past the end instead writes the lone half plain, as the bytes ED A0 80,
-# where the code raises its error; no MoonBit code can put a low surrogate
-# after a string's end, so no test can pin that, and UB-NATIVE stands.
+# nine; none was killed, and each EQUIVALENT entry's `adversarial` says what
+# it tried. Document's `<=` differs only for a Writer literal whose `used`
+# holds a pointer that `item_comments` lacks (its reason now says so).
+#
+# The ninth entry, UB-NATIVE, accepted is_plain_safe's AOR, `i - 1 < length`
+# in a high surrogate's test, which read the code unit after a high
+# surrogate that ends the string: wasm-gc trapped there, and natively the
+# read gave the zero that the runtime keeps after a string's last unit. The
+# maintainer's twenty-seventh round (2026-11-26, point 4) made is_plain_safe
+# read a neighbouring unit with a checked access (`s[i + 1]`, `s[i - 1]`),
+# so that such a read aborts natively too. The test "a string with an
+# unpaired surrogate is an error at its pointer" now kills the AOR on both
+# backends (by key, natively on arm64 by the abort), and the entry went,
+# with #403's four of the same kind.
 
 [[exclusion]]
 mutant = "yaml/writer.mbt,Writer::document,IFC,self.item_comments.is_empty(),false,0"
@@ -2501,13 +2494,6 @@ category = "EQUIVALENT"
 reason = "In Writer::string, `} else if code <= 0xFF {`, which writes a character as `\\x` and two hexadecimal digits rather than as `\\u` and four, becomes `code <= 0xFE`. That branch is reached only by a character that has no escape of its own and that is_printable refuses, a surrogate having raised its error before: U+0001 to U+001F but those with escapes, U+007F to U+009F but U+0085, and U+FEFF, U+FFFE and U+FFFF. None lies between U+00A0 and U+FEFE, so every bound from 0x9F to 0xFEFE sends each of them the same way; U+00FF is printable, and written as itself. So `write` gives the same bytes for every string, and Writer::string does for every argument, a white-box call included."
 compiler_output = "differs"
 adversarial = { context = "a separate agent context of #275's step 3, on 2026-11-26, which wrote neither this entry nor any of yaml's tests", tests = ["read YAML 1.2.2 section 5.7 (\"All non-printable characters must be escaped\"; `\\x` and two hexadecimal digits, production 59, and `\\u` and four, production 60, with no preference between them) and production 1 (c-printable), and `write`'s doc comment (inside double quotes, control characters, U+2028, U+2029, U+FEFF, U+FFFE and U+FFFF are escapes, such as `\\x01` and `\\uFEFF`), then looked for a character that reaches the choice between `\\x` and `\\u` and that the bound `code <= 0xFE`, which moves U+00FF, sends the other way. The choice is reached only by a character with no escape of its own that is_printable refuses, the surrogates having raised first: U+0001 to U+0006, U+000E to U+001A, U+001C to U+001F, U+007F to U+0084, U+0086 to U+009F, U+FEFF, U+FFFE and U+FFFF (U+2028 and U+2029 are `\\L` and `\\P`). Every character from U+00A0 to U+FEFE is printable or has an escape, so any bound from 0x9F to 0xFEFE writes the same bytes. Each character is written alone, nothing carried to the next, so it differs nowhere, a white-box call of Writer::string included. Tried: every code point but the surrogates inside double quotes, as an item and as a key; each of U+0000 to U+02FF, U+2000 to U+20FF and U+FE00 to U+FFFF alone, as a document, an item and a key; and string called on U+0001, U+009F, U+00A0, U+00FE, U+00FF, U+0100, U+0101, U+FEFE, U+FEFF, U+FFFE and U+FFFF as a key and a value, at column zero and not", "a scratch white-box test of yaml, not committed: a copy of writer.mbt's Writer with each of #402's eight EQUIVALENT mutations and controls behind a number, compared with the real `write` (its bytes, or its error's pointer and message) on 2,000 random trees, each written eight ways (no item comments, without and with a header; every item; a third of the items; a third and a pointer that names no item, first or last in the map; the first item of each sequence; that pointer alone; every item and every member: 16,000 writes, 4,958 of them errors), 310 hand cases (`write`'s example, pointers with `~0`, `~1`, the empty key's `/`, `00`, `-`, one past a sequence's end, no leading `/`, the root's `\"\"`, each kind of root with comments on its first items, trees 1022 to 1025 deep with a comment at the bottom), every code point but the surrogates inside double quotes, 256 at a time, as an item and as a key (8,704 writes), each of U+0000 to U+02FF, U+2000 to U+20FF and U+FE00 to U+FFFF alone, as a document, an item and a key (4,608), and every surrogate code unit alone, first, last, inside and beside another half, and valid pairs, in four places (65,556). The copy of the code and each of the eight mutants give the real writer's result on every input. The controls each change it: the root's pointer always `None` (2,128 of the random writes), the check after the root never made (4,358) or one short (3,942), item_pointer's index plus one (2,156) or its guard turned round (2,128), the top mapping at indent 2 (1,445), a member's mapping or sequence written inline (1,080; 1,290), the top sequence's item 0 without its comment when inline (1,210, and `[1]` with a comment on `/0`), the `\\x` bound at 0x9E (U+009F becomes `\\u009F`), at 0xFEFF (U+FEFF becomes `\\xFF`) and at 0x7F (U+0080 to U+009F but U+0085), and is_plain_safe's pair test at `i + 2` (12,304). Then each mutant applied by hand to writer.mbt: yaml's 55 tests and the harness pass, the harness's five digests of the real writer's results being the code's, on wasm-gc and natively (arm64; the digests are the same on both); white-box calls of the private functions (document on Writer literals and twice on one Writer, item_pointer with `None` and i of 0, 1, -1 and both ends of Int32, root on a buffer that already holds text, string on the code points around each bound) print the code's results. Six controls applied the same way fail 1 to 7 of yaml's tests"] }
-reviewer = ""
-
-[[exclusion]]
-mutant = "yaml/writer.mbt,is_plain_safe,AOR,+,-,0"
-text = "1520a37ffef3f9c3"
-category = "UB-NATIVE"
-reason = "In is_plain_safe, a high surrogate's test `i + 1 < length && is_low_surrogate(s.unsafe_get(i + 1).to_int())` becomes `i - 1 < length && ...`, whose first half holds for every i of the loop. Where i + 1 < length, both read the same code unit and agree. For a high surrogate that ends the string, the unchecked `s.unsafe_get(i + 1)` reads past the string's end. On wasm-gc that read traps, and the test \"a string with an unpaired surrogate is an error at its pointer\" (U+D800 alone, and at the end of a key) fails with the mutant. Natively a read out of bounds is undefined behaviour, so no test can pin what it gives: today's runtime keeps a zero code unit after a string's last one (moonbit_make_string and its kin write `result[len] = 0`), so the test program reads 0, which is no low surrogate, and the string is quoted and refused as by the code. By hand on arm64, yaml's tests pass natively with the mutant; the verdict that decides is CI's amd64 runner's."
 reviewer = ""
 
 # yaml/writer.mbt, is_plain_safe's test of a surrogate pair (#403, part 7 of
