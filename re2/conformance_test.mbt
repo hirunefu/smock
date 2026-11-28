@@ -30,6 +30,11 @@ let rows : Array[(String, String, String, Bool)] = [
   ("a{1, 2}", "a{1, 2}", "0-7", true),
   ("}", "}", "0-1", true),
   ("]", "]", "0-1", true),
+  // U+0000 is a character like any other: alone, in a class, escaped
+  ("a\u{0}b", "a\u{0}b", "0-3", true),
+  ("a\u{0}b", "ab", "none", false),
+  ("[\u{0}]", "\u{0}", "0-1", true),
+  ("\\\u{0}", "\u{0}", "0-1", true),
   // . matches one code point other than \n
   (".", "a", "0-1", true),
   (".", "", "none", false),
