@@ -27,6 +27,22 @@ test "classes and . consume one code point of any length" {
   inspect(on("\\W+", "a€😀b"), content="search 1-8, full false")
   inspect(on("€", "a€b"), content="search 1-4, full false")
   inspect(on("[€-€]", "€"), content="search 0-3, full true")
+  // The first and last code point of each kind of well-formed sequence of
+  // one to three bytes that RFC 3629, section 4, lists (UTF8-1, UTF8-2 and
+  // the four kinds of UTF8-3, around the surrogates U+D800 to U+DFFF, which
+  // UTF-8 does not encode). The same results as RE2.
+  inspect(on("^.$", "\u{0}"), content="search 0-1, full true")
+  inspect(on("^.$", "\u{7F}"), content="search 0-1, full true")
+  inspect(on("^.$", "\u{80}"), content="search 0-2, full true")
+  inspect(on("^.$", "\u{7FF}"), content="search 0-2, full true")
+  inspect(on("^.$", "\u{800}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{FFF}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{1000}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{CFFF}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{D000}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{D7FF}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{E000}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{FFFF}"), content="search 0-3, full true")
 }
 
 ///|
