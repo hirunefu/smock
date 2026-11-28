@@ -3134,8 +3134,8 @@ the head, none passed, none covered the whole diff, the run compared the
 head with another base than `main` or from another merge base than the
 head's with `main` now, or its report shows an unexplained survivor on
 the changed lines of a package at L4: one that `mutation/l4-packages.txt`
-names, on `main` or on the branch. The list starts empty, so at first the
-check only reports. It prints the unexplained survivors in the other
+names, on `main` or on the branch. The list started empty, so at first
+the check only reported. It prints the unexplained survivors in the other
 packages, and each stale-covered survivor with the id of its stale entry,
 which does not block either: the stale entries are re-triaged in a batch.
 Last, it prints the branch's weakening report, which the same run kept,

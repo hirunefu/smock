@@ -51,7 +51,7 @@ unexplained survivor in a package at L4
 ([The changed-lines job](../CONTRIBUTING.md#the-changed-lines-job)). A
 source change of a package at L4 pushed straight to `main` has no such
 report. The monthly run over the full set is never read. While the list
-names no package, as now, the check reads no run and passes.
+names no package, the check reads no run and passes.
 [The weekly mutation run](#the-weekly-mutation-run) says what the check
 needs and how long a run takes.
 

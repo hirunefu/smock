@@ -13,4 +13,5 @@
 #
 # A package joins the list only with the maintainer's approval, in the
 # ticket that takes it to L4. The weakening report shows every change to
-# the list. It starts empty, so at first the merge check only reports.
+# the list. It started empty, so at first the merge check only reported.
+settings
