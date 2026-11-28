@@ -1065,9 +1065,9 @@ test "the same values quoted are strings, and look-alikes that no YAML version t
       #|1::30 -> {"a":"1::30"}
     ),
   )
-  // `_` after a float's point is a digit's place, not a digit (#438): with
-  // the `_` that yaml.org/type/float.html ignores left out, these are points
-  // alone, which docs/definition-files.md says are strings, and PyYAML
+  // `_` after a float's point is no digit (#438): with the `_` that
+  // yaml.org/type/float.html ignores left out, these are points with no
+  // digit, which docs/definition-files.md says are strings, and PyYAML
   // 6.0.3's float resolver needs a digit before the point or right after it.
   // YAML 1.2.2's core schema (section 10.3.2) types none of them either.
   inspect(
