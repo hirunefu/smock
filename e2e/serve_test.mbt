@@ -79,6 +79,9 @@ async test "any other request gets the no-match response" {
 
 ///|
 async test "with an invalid definition set, smock logs every error with its file and JSON Pointer and exits with status 1" {
+  // No document states the words of smock/yaml's "unterminated double-quoted
+  // value"; the maintainer confirmed them as the code has them on 2026-11-26
+  // (the twenty-seventh round of #275's answers, #323).
   with_definitions(
     [
       ("users.json", users),

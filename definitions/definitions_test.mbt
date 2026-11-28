@@ -96,6 +96,10 @@ test "every problem is reported, each with its file and JSON Pointer" {
 
 ///|
 test "a YAML file outside the safe subset gets a diagnostic with its file and the JSON Pointer of the offending value" {
+  // No document states the words of smock/yaml's "unterminated double-quoted
+  // value" and "tabs are not allowed in indentation"; the maintainer
+  // confirmed them as the code has them on 2026-11-26 (the twenty-seventh
+  // round of #275's answers, #323).
   inspect(
     problems([
       (

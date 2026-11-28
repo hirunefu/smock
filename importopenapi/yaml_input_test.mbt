@@ -251,6 +251,10 @@ fn with_yaml_responses(responses : String) -> String {
 
 ///|
 test "each YAML problem is an error at its JSON Pointer, with smock/yaml's message, and nothing is written; an alias suggests $ref" {
+  // No document states the words of smock/yaml's "invalid escape: a high
+  // surrogate must be followed by a low surrogate" and "tabs are not allowed
+  // in indentation"; the maintainer confirmed them as the code has them on
+  // 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   let cases = [
     // an anchor
     (
