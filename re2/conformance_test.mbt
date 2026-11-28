@@ -228,6 +228,11 @@ let rows : Array[(String, String, String, Bool)] = [
   ("(?:$)*a", "a", "0-1", true),
   ("(?:^)+a", "ba", "none", false),
   ("(?:\\b)*a", "a", "0-1", true),
+  // A sequence can match empty when each of its parts can
+  ("(?:a*?b*?)*", "ab", "0-0", true),
+  ("(a??b??)*", "ab", "0-0", true),
+  ("(?:(?:|a)(?:|b))*", "ab", "0-0", true),
+  ("(?:a*?b*?)*c", "abc", "0-3", true),
   // A class can be empty
   ("[^\\D\\d]", "a", "none", false),
   ("a[^\\D\\d]|b", "ab", "1-2", false),
