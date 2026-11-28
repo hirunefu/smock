@@ -39,6 +39,11 @@ let rows : Array[(String, String, String, Bool)] = [
   ("a{1000000000}", "a{1000000000}", "0-13", true),
   ("a{1,1000000000}", "a{1,1000000000}", "0-15", true),
   ("a{1000000000,}", "a{1000000000,}", "0-14", true),
+  // U+007F, the last ASCII code point, escaped stands for itself, alone and
+  // in a class
+  ("\\\u{7f}", "\u{7f}", "0-1", true),
+  ("\\\u{7f}", "~", "none", false),
+  ("[\\\u{7f}]", "\u{7f}", "0-1", true),
   // . matches one code point other than \n
   (".", "a", "0-1", true),
   (".", "", "none", false),
