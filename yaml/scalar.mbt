@@ -223,7 +223,10 @@ fn is_yaml_number(text : String) -> Bool {
     s.char('.') &&
     s.skip_while(is_digit_or_underscore)
   }) ||
-  // YAML 1.1 float: 1_000.5, .5, 1.2.3, 1.5e+3
+  // YAML 1.1 float: 1_000.5, .5, 1.2.3, 1.5e+3, 685.230_15e+03. After the
+  // point come digits, points and `_`: float.html's regex has `[0-9.]*`,
+  // but the page ignores `_` in a number and its example has one there, as
+  // PyYAML's `[0-9_]*` has (#438).
   matches(s => {
     let before = s.run(is_digit_or_underscore)
     if before > 0 && !is_digit(s.chars[0]) {
@@ -233,7 +236,7 @@ fn is_yaml_number(text : String) -> Bool {
       return false
     }
     let after = s.i
-    let _ = s.run(c => is_digit(c) || c == '.')
+    let _ = s.run(c => is_digit_or_underscore(c) || c == '.')
     (before > 0 || s.chars[after:s.i].iter().any(is_digit)) &&
     (
       !(s.char('e') || s.char('E')) ||
