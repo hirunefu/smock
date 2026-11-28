@@ -63,6 +63,14 @@ test "RE2 syntax left out of the subset is rejected as not supported in it" {
     error_of("\\17"),
     content="position 0: octal escape \\17 is not supported in smock's RE2 subset",
   )
+  // Without braces a Unicode class's name is one letter (RE2's syntax page:
+  // "\pN Unicode character class (one-letter name)"), so \pLu is \pL, then u
+  // (RE2 2024-07-02 matches \pLu on "Au", not on "AU"); the README lists \pL
+  // as left out, and its example words the message.
+  inspect(
+    error_of("\\pLu"),
+    content="position 0: Unicode class \\pL is not supported in smock's RE2 subset",
+  )
 }
 
 ///|
