@@ -22,11 +22,11 @@ fn answer(name : String, input : Bytes) -> String {
 }
 
 ///|
-/// What the parser reads from `input` in one mode. A Definition file is
-/// decoded as UTF-8 as it is; an OpenAPI document after a byte order mark,
-/// which the decoder drops.
+/// What the parser reads from `input` in one mode. A Definition file and an
+/// OpenAPI document in YAML are both decoded as UTF-8 as they are, with any
+/// byte order mark: the parser drops one that starts the text.
 fn reading(input : Bytes, openapi~ : Bool) -> Json {
-  let text = @utf8.decode(input, ignore_bom=openapi) catch {
+  let text = @utf8.decode(input) catch {
     _ => return { "skipped": "not valid UTF-8" }
   }
   let value = @yaml.parse(text, openapi~) catch {

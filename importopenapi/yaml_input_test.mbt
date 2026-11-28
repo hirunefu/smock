@@ -251,6 +251,10 @@ fn with_yaml_responses(responses : String) -> String {
 
 ///|
 test "each YAML problem is an error at its JSON Pointer, with smock/yaml's message, and nothing is written; an alias suggests $ref" {
+  // No document states the words of smock/yaml's "invalid escape: a high
+  // surrogate must be followed by a low surrogate" and "tabs are not allowed
+  // in indentation"; the maintainer confirmed them as the code has them on
+  // 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   let cases = [
     // an anchor
     (
@@ -349,6 +353,16 @@ test "a YAML document must be UTF-8, one document without directives, and a mapp
     b"# only a comment\n",
     b"- openapi: 3.1.0\n",
     b"openapi 3.1.0\n",
+    // A leading byte order mark is skipped, and only one: YAML 1.2.2 allows
+    // one before a document ("l-document-prefix ::= c-byte-order-mark?
+    // l-comment*", production 202), and the maintainer decided on
+    // 2026-11-28 that `smock import-openapi` drops one leading mark and no
+    // more (#437, the thirtieth round of #275's answers), as smock/yaml
+    // does for a Definition file. A second is refused with smock/yaml's
+    // message for a mark outside quotes, whose words the maintainer
+    // confirmed the same day; the whole document is the deepest node
+    // reached.
+    b"\xef\xbb\xbf\xef\xbb\xbf" + document,
   ]
   let options = @importopenapi.Options(
     root="api.yaml",
@@ -369,6 +383,7 @@ test "a YAML document must be UTF-8, one document without directives, and a mapp
       #|docs/api.yaml: the document is empty
       #|docs/api.yaml: must be an object
       #|docs/api.yaml: must be an object
+      #|docs/api.yaml: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
     ),
   )
 }

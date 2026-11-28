@@ -92,11 +92,20 @@ SH
 chmod +x "$tmp/bin/gh"
 export FAKE_GH_DIR="$tmp"
 
-# The repository: main with the list of packages at L4 as committed, the
+# no_package: writes the repository's list of packages at L4 as the
+# committed list's lines that name no package, its header: each is blank
+# once its comment is cut off, as the check reads a line. The committed
+# list's packages are smock's, which no canned report here names.
+no_package() {
+  awk '{ line = $0; sub(/#.*/, "", line) } line ~ /^[[:space:]]*$/' mutation/l4-packages.txt \
+    >"$repo/mutation/l4-packages.txt"
+}
+
+# The repository: main with a list of packages at L4 that names none, the
 # branch integration/x from it with a change, and a later commit on main.
 git init --quiet --initial-branch=main "$repo"
 mkdir -p "$repo/mutation"
-cp mutation/l4-packages.txt "$repo/mutation/l4-packages.txt"
+no_package
 printf 'let a : Int = 1\n' >"$repo/calc.mbt"
 git -C "$repo" add --all
 git -C "$repo" commit --quiet -m base
@@ -304,7 +313,7 @@ says by-hand-first "may be merged into main, by the branch checks on its head: $
 # l4 <package>...: main's list of packages at L4 names these packages.
 l4() {
   git -C "$repo" checkout --quiet main
-  cp mutation/l4-packages.txt "$repo/mutation/l4-packages.txt"
+  no_package
   printf '%s\n' "$@" >>"$repo/mutation/l4-packages.txt"
   git -C "$repo" commit --quiet --allow-empty -am "packages at L4: $*"
 }

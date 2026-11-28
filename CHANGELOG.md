@@ -840,17 +840,21 @@ of each GitHub release include its section
   block scalar's content loaded, and is now rejected with "U+FEFF is a
   byte order mark; write it as an escape in a double-quoted value". So is
   an OpenAPI document that holds one there inside the document.
-  `smock import-openapi` drops one more mark at the start of an OpenAPI
-  document, as before, so two marks there still import. Inside a quoted
-  value, the mark is text, as before
+  `smock import-openapi` dropped two marks at the start of an OpenAPI
+  document in YAML, and now drops one, so a second is rejected there too,
+  with the same message; a JSON document, as before, may start with one
+  mark and no more. Inside a quoted value, the mark is text, as before
   ([smock#437](https://github.com/hirunefu/smock/issues/437)).
-- In a YAML Definition file, a YAML 1.1 float with `_` after its point,
-  such as `685.230_15e+03`, the example of yaml.org's page on floats, is
-  now rejected with "quote this value", as the documents say of every
-  plain value that YAML 1.1 would type: YAML 1.1 tools such as PyYAML read
-  it as a number. smock read it as a string, so a file that loads today
-  may be refused: quote the value. As a key it is rejected with "quote
-  this key", and `smock import-openapi` now quotes such a string. OpenAPI
+- In a YAML Definition file, a plain value with `_` after its point, such
+  as `685.230_15e+03`, the example of yaml.org's page on YAML 1.1 floats,
+  or `._5`, is now rejected with "quote this value" when that page's
+  pattern for floats matches it once the `_` between its point and any
+  exponent are left out, as the page says they are, and it has a digit
+  outside its exponent. PyYAML reads some of these as numbers, such as
+  `685.230_15e+03` and `1._5`, and others as strings, such as `._5` and
+  `1._.5`. smock read them all as strings, so a file that loads today may
+  be refused: quote the value. As a key it is rejected with "quote this
+  key", and `smock import-openapi` now quotes such a string. OpenAPI
   documents are read as before
   ([smock#438](https://github.com/hirunefu/smock/issues/438)).
 

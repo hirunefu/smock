@@ -36,7 +36,7 @@
 {"file":"importopenapi/decimal.mbt","definition":"Decimal::floor","text":"00f8671e08e4b63d","pinned":{"AOR":1},"full":{"AOR":1}}
 {"file":"importopenapi/decimal.mbt","definition":"Decimal::ceil","text":"da17258cfa81c7ea","pinned":{"IFC":1,"INT":1},"full":{"IFC":2,"INT":2}}
 {"file":"importopenapi/document.mbt","definition":"Conversion::new","text":"b148654636163af7","pinned":{"BODY":1,"DEL":5},"full":{"BODY":1,"IFC":2,"DEL":5}}
-{"file":"importopenapi/document.mbt","definition":"parse","text":"3fae30e03f2aae4e","pinned":{"IFC":3,"NOT":1,"BOOL":2},"full":{"IFC":5,"NOT":1,"BOOL":2}}
+{"file":"importopenapi/document.mbt","definition":"parse","text":"c7ac7242ef42a6c9","pinned":{"IFC":3,"NOT":2,"BOOL":1},"full":{"IFC":5,"NOT":2,"BOOL":1}}
 {"file":"importopenapi/document.mbt","definition":"Conversion::version","text":"6a1d143aae1575b0","pinned":{"BODY":1,"IFC":1,"DEL":8},"full":{"BODY":1,"IFC":2,"DEL":8}}
 {"file":"importopenapi/document.mbt","definition":"Conversion::info","text":"72e3eba85e0c707c","pinned":{"BODY":1,"DEL":4},"full":{"BODY":1,"DEL":4}}
 {"file":"importopenapi/document.mbt","definition":"is_digits","text":"a4c1c38a8e99d9c4","pinned":{"BODY":1,"ROR":3,"LCR":2,"INT":2},"full":{"BODY":1,"ROR":3,"LCR":2,"INT":2}}

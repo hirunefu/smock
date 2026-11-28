@@ -72,7 +72,7 @@ fn Conversion::new(
 /// `.yaml` and `.yml` as YAML 1.2, as OpenAPI recommends, with
 /// smock/yaml's mode for OpenAPI documents, and `.json` as JSON, where a
 /// repeated key is an error. Or why it cannot be parsed. The input must be
-/// UTF-8, and a leading byte order mark is skipped.
+/// UTF-8, and one leading byte order mark is skipped, and no more.
 fn parse(name : String, bytes : Bytes) -> Content {
   if !@definitions.is_json_or_yaml_name(name) {
     return Invalid(
@@ -81,7 +81,10 @@ fn parse(name : String, bytes : Bytes) -> Content {
     )
   }
   let yaml = @definitions.is_yaml_name(name)
-  let text = @utf8.decode(bytes, ignore_bom=true) catch {
+  // smock/yaml drops a byte order mark that starts its text and refuses
+  // one after it, so a YAML document keeps its mark here; the JSON parser
+  // drops none, so a JSON document's is dropped here.
+  let text = @utf8.decode(bytes, ignore_bom=!yaml) catch {
     _ => return Invalid(pointer="", message="not valid UTF-8")
   }
   if yaml {
