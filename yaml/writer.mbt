@@ -440,10 +440,12 @@ fn is_plain_safe(s : String, key~ : Bool, column_zero~ : Bool) -> Bool {
   for i in 0..<length {
     let c = s.unsafe_get(i)
     let code = c.to_int()
+    // `i + 1 < length` and `i > 0` keep the read of a neighbour inside `s`;
+    // it is checked all the same, so that a wrong bound aborts natively too.
     let printable = if is_high_surrogate(code) {
-      i + 1 < length && is_low_surrogate(s.unsafe_get(i + 1).to_int())
+      i + 1 < length && is_low_surrogate(s[i + 1].to_int())
     } else if is_low_surrogate(code) {
-      i > 0 && is_high_surrogate(s.unsafe_get(i - 1).to_int())
+      i > 0 && is_high_surrogate(s[i - 1].to_int())
     } else {
       is_printable(code)
     }
