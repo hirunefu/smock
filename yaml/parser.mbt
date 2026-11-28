@@ -161,13 +161,17 @@ const NO_SPACE_BEFORE_COMMENT : String = "a comment needs a space before its #"
 ///|
 /// Skips a comment: a `#` at the start of a line or after white space, to
 /// the end of its line. A `#` right after other text starts no comment
-/// (YAML 1.2.2, section 6.6), so it is rejected.
+/// (YAML 1.2.2, section 6.6), so it is rejected, and so is a byte order
+/// mark in a comment.
 fn Parser::skip_comment(self : Parser) -> Unit raise ParseError {
   if self.peek() == '#' {
     if self.pos > self.line_start && !(self.chars[self.pos - 1] is (' ' | '\t')) {
       self.fail(NO_SPACE_BEFORE_COMMENT)
     }
     while !(self.peek() is ('\n' | EOF)) {
+      if self.peek() == '\u{FEFF}' {
+        self.fail(BYTE_ORDER_MARK)
+      }
       self.bump()
     }
   }

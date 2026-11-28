@@ -1546,6 +1546,27 @@ test "line breaks may be CRLF or CR; a byte order mark may start the text; other
       #|"<U+FEFF>\"<U+FEFF>a\": \"<U+FEFF>\"" -> {"<U+FEFF>a":"<U+FEFF>"}
     ),
   )
+  // A comment is outside quotes too, and its text is nb-char
+  // ("c-nb-comment-text ::= c-comment nb-char*", YAML 1.2.2, production
+  // 75), which excludes the mark: a mark in a comment is rejected wherever
+  // the comment is, on the line of a value, before the document, after a
+  // block scalar's header or in a flow collection, with the same message
+  // as above, at the deepest node reached.
+  inspect(
+    visible(
+      each([
+        "a: 1 # c\u{FEFF}", "# c\u{FEFF}\na: 1", "\u{FEFF}# c\u{FEFF}\na: 1", "a: | # c\u{FEFF}\n  x\n",
+        "[a, # c\u{FEFF}\n b]",
+      ]),
+    ),
+    content=(
+      #|"a: 1 # c<U+FEFF>" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"# c<U+FEFF>\na: 1" -> error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"<U+FEFF># c<U+FEFF>\na: 1" -> error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: | # c<U+FEFF>\n  x\n" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"[a, # c<U+FEFF>\n b]" -> error /0: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+    ),
+  )
 }
 
 ///|
