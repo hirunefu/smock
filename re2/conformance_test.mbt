@@ -231,6 +231,13 @@ let rows : Array[(String, String, String, Bool)] = [
   ("x*y*", "", "0-0", true),
   ("^*a", "a", "0-1", true),
   ("\\b*a", "a", "0-1", true),
+  // A lazy ? before a character that it also matches: it may take the
+  // character or leave it to what follows
+  ("a??a", "a", "0-1", true),
+  ("a??a", "aa", "0-1", true),
+  ("a??a", "aaa", "0-1", false),
+  ("[ab]??a", "a", "0-1", true),
+  ("a??[ab]", "a", "0-1", true),
   // Repeating a subexpression that can match empty keeps RE2's preferences
   ("(|a)*", "aa", "0-0", true),
   ("(|a)+", "aa", "0-0", true),
