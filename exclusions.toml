@@ -2584,3 +2584,172 @@ reason = "In Writer::string, `} else if code <= 0xFF {`, which writes a characte
 compiler_output = "differs"
 adversarial = { context = "a separate agent context of #275's step 3, on 2026-11-26, which wrote neither this entry nor any of yaml's tests", tests = ["read YAML 1.2.2 section 5.7 (\"All non-printable characters must be escaped\"; `\\x` and two hexadecimal digits, production 59, and `\\u` and four, production 60, with no preference between them) and production 1 (c-printable), and `write`'s doc comment (inside double quotes, control characters, U+2028, U+2029, U+FEFF, U+FFFE and U+FFFF are escapes, such as `\\x01` and `\\uFEFF`), then looked for a character that reaches the choice between `\\x` and `\\u` and that the bound `code <= 0xFE`, which moves U+00FF, sends the other way. The choice is reached only by a character with no escape of its own that is_printable refuses, the surrogates having raised first: U+0001 to U+0006, U+000E to U+001A, U+001C to U+001F, U+007F to U+0084, U+0086 to U+009F, U+FEFF, U+FFFE and U+FFFF (U+2028 and U+2029 are `\\L` and `\\P`). Every character from U+00A0 to U+FEFE is printable or has an escape, so any bound from 0x9F to 0xFEFE writes the same bytes. Each character is written alone, nothing carried to the next, so it differs nowhere, a white-box call of Writer::string included. Tried: every code point but the surrogates inside double quotes, as an item and as a key; each of U+0000 to U+02FF, U+2000 to U+20FF and U+FE00 to U+FFFF alone, as a document, an item and a key; and string called on U+0001, U+009F, U+00A0, U+00FE, U+00FF, U+0100, U+0101, U+FEFE, U+FEFF, U+FFFE and U+FFFF as a key and a value, at column zero and not", "a scratch white-box test of yaml, not committed: a copy of writer.mbt's Writer with each of #402's eight EQUIVALENT mutations and controls behind a number, compared with the real `write` (its bytes, or its error's pointer and message) on 2,000 random trees, each written eight ways (no item comments, without and with a header; every item; a third of the items; a third and a pointer that names no item, first or last in the map; the first item of each sequence; that pointer alone; every item and every member: 16,000 writes, 4,958 of them errors), 310 hand cases (`write`'s example, pointers with `~0`, `~1`, the empty key's `/`, `00`, `-`, one past a sequence's end, no leading `/`, the root's `\"\"`, each kind of root with comments on its first items, trees 1022 to 1025 deep with a comment at the bottom), every code point but the surrogates inside double quotes, 256 at a time, as an item and as a key (8,704 writes), each of U+0000 to U+02FF, U+2000 to U+20FF and U+FE00 to U+FFFF alone, as a document, an item and a key (4,608), and every surrogate code unit alone, first, last, inside and beside another half, and valid pairs, in four places (65,556). The copy of the code and each of the eight mutants give the real writer's result on every input. The controls each change it: the root's pointer always `None` (2,128 of the random writes), the check after the root never made (4,358) or one short (3,942), item_pointer's index plus one (2,156) or its guard turned round (2,128), the top mapping at indent 2 (1,445), a member's mapping or sequence written inline (1,080; 1,290), the top sequence's item 0 without its comment when inline (1,210, and `[1]` with a comment on `/0`), the `\\x` bound at 0x9E (U+009F becomes `\\u009F`), at 0xFEFF (U+FEFF becomes `\\xFF`) and at 0x7F (U+0080 to U+009F but U+0085), and is_plain_safe's pair test at `i + 2` (12,304). Then each mutant applied by hand to writer.mbt: yaml's 55 tests and the harness pass, the harness's five digests of the real writer's results being the code's, on wasm-gc and natively (arm64; the digests are the same on both); white-box calls of the private functions (document on Writer literals and twice on one Writer, item_pointer with `None` and i of 0, 1, -1 and both ends of Int32, root on a buffer that already holds text, string on the code points around each bound) print the code's results. Six controls applied the same way fail 1 to 7 of yaml's tests"] }
 reviewer = ""
+
+# re2/dfa.mbt (#417, part 2 of 9 of re2's triage for #326): survivors of
+# the first weekly run (44423781036) in the DFA's constant OTHER and in
+# Dfa::new that no input can tell from the code. The DFA is the engine of
+# Regex::full_match, which builds it on its first call and runs it while
+# its budget holds; Regex::search and the step counts run the Pike VM. Each
+# argument is in its reason; the compiler's output differs for each but
+# OTHER's, which it does not compare. None of these definitions uses an
+# unchecked access, so wasm-gc decides. Five move or drop the clamp of a
+# class's start below 0, and one the test that its end is 0 or more: no
+# code point is negative, so both decide nothing and are candidates for
+# deletion, for the maintainer (Dfa::new runs on a regex's first
+# full_match, on the request path). Four let a class that starts at U+0080
+# or ends at U+007F mark the 129th entry of `starts`, which nothing reads;
+# four more give an array an entry that nothing reads or a fill value
+# that the next loop writes over; one starts the stamp at 1; one gives
+# OTHER another value than the three it is compared with. The implementer
+# folded into two digests what full_match answers, the DFA's size or its
+# drop after each pattern, and Dfa::new's byte classes, for 1,122 patterns
+# at the ends of ASCII and of its word ranges, each against up to 12,720
+# inputs: with each mutant applied by hand both digests were the code's, on
+# wasm-gc, while seven of #417's killed mutants and three variants changed
+# them, and three variants that leave `starts` or `seen` short of an entry
+# the corpus reaches aborted (a scratch test, not committed). The
+# adversarial attempt is pending.
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,OTHER,INT,3,4,0"
+text = "2a9c4b8a05ddcd5c"
+category = "EQUIVALENT"
+reason = "OTHER, the context the DFA gives a character that is neither `\\n` nor an ASCII word character, is 4 instead of 3. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. A context is the last Int of a state's key, after the sorted instructions (Dfa::step pushes it after `key.sort()`), and holds_between compares it only with EDGE, NEWLINE and WORD, 0, 1 and 2, from which 4 differs as 3 does. So the same inputs reach states that are told apart and joined as before, with the same number of Ints, and every answer and every drop of the DFA is the same. It differs only in that Int of a state's key, which a white-box reading of `states` would see."
+compiler_output = "not compared"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of re2, not committed, that folds into two digests what Regex::full_match answers and, after each pattern, the DFA's size or its drop, and Dfa::new's byte classes, for 1,122 patterns: each of 26 code points (U+0000, U+0001, tab, `\\n`, U+000B, `/`, `0`, `9`, `:`, `@`, `A`, `Z`, `[`, `^`, `_`, backquote, `a`, `z`, `{`, `}`, `~`, U+007F, U+0080, U+0081, U+00FF, U+10FFFF) followed by `+` and by `\\b`, every range of two of them in a class with `+`, negated with `*` and repeated after `\\b` before `\\B`, and 18 patterns with assertions, flags, `.*`, `.*aaaa` and the README's pattern that outgrows its budget; each pattern compiled once and matched against every input of up to three of 23 symbols (U+0000, U+0001, `\\n`, `/`, `0`, `9`, `:`, `@`, `A`, `Z`, `[`, `^`, `_`, backquote, `a`, `z`, `{`, `~`, U+007F, U+0080, U+00E9, U+20AC and the byte 0xFF), or, for the longer patterns, of up to two and each pair with its first symbol doubled (1,982,112 calls), and the README's pattern also against 300 random inputs of `a` and `b`. With each of #417's 16 entries' mutants applied by hand both digests are the code's, on wasm-gc; seven of #417's mutants that tests kill (the deletion of the split at [A-Z], `hi >= 1`, `lo < 127`, `hi < 126`, `starts[1]`, every byte a class, `class = 0`), OTHER made NEWLINE's 1, a range that starts at 0 also starting a class at 1, and the stamp starting at -1 change them; `starts` of 128 entries with `lo <= 128` or `hi <= 127` aborts, as does `seen` one entry shorter than the program; `starts` of 128 entries alone and `seen` of exactly the program's length give the code's digests"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,129,130,0"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "`starts`, where Dfa::new marks each byte at which a byte class starts, gets 130 entries instead of 129. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. split writes `starts[lo]` only for `lo < 128` and `starts[hi + 1]` only for `hi < 127`, and the loop that numbers the classes reads entries 0 to 127, so the added entry is never written or read. The byte classes, and so the DFA, are the same. It differs nowhere, a white-box call of Dfa::new with any program included: `starts` is local to it."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,0,-1,1"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "In Dfa::new's local `split`, `hi >= 0` becomes `hi >= -1`. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. split gets a Char instruction's code point as both ends, a class's ranges, which are ranges of code points with the start at or before the end (CharSet::of keeps them so, and parse_class refuses a range whose end comes before its start), and the fixed ranges of the characters assertions read. No code point is negative, so `hi` is 0 or more and both tests hold on every call. The byte classes, and so the DFA, are the same. It differs only for a white-box call of Dfa::new with a program that holds a range ending at -1 after a start of 0 or more, which compile never makes and CharSet's doc comment rules out; where both ends are negative, the mutant only marks entry 0 of `starts`, which is marked already. The test decides nothing: a deletion candidate (#417's report)."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,128,129,0"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "In Dfa::new's local `split`, `lo < 128` becomes `lo < 129`: a range that starts at U+0080, as in a class of the characters from U+0080 up, now marks entry 128 of `starts` too, and nothing more, since its end is 128 or more. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. The loop that numbers the byte classes reads entries 0 to 127 only, so the classes, and so the DFA, are the same. It differs only for a white-box call of Dfa::new with a class range that starts at U+0080 and ends before it, which compile never makes and CharSet's doc comment rules out."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,ROR,<,<=,0"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "In Dfa::new's local `split`, `lo < 128` becomes `lo <= 128`: a range that starts at U+0080, as in a class of the characters from U+0080 up, now marks entry 128 of `starts` too, and nothing more, since its end is 128 or more. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. The loop that numbers the byte classes reads entries 0 to 127 only, so the classes, and so the DFA, are the same. It differs only for a white-box call of Dfa::new with a class range that starts at U+0080 and ends before it, which compile never makes and CharSet's doc comment rules out."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,IFC,lo < 0,false,0"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "In Dfa::new's local `split`, `starts[if lo < 0 { 0 } else { lo }]` always takes `lo`. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. split gets a Char instruction's code point, the starts of a class's ranges of code points and the fixed ranges of the characters assertions read; no code point is negative, so the clamp never acts and the byte classes, and so the DFA, are the same. It differs only for a white-box call of Dfa::new with a program whose character or class starts below 0, which compile never makes: the mutant then marks a negative index and aborts. The clamp decides nothing: a deletion candidate (#417's report)."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,0,-1,2"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "In Dfa::new's local `split`, the clamp `if lo < 0 { 0 } else { lo }` becomes `lo < -1`. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. split gets a Char instruction's code point, the starts of a class's ranges of code points and the fixed ranges of the characters assertions read; no code point is negative, so neither clamp acts and the byte classes, and so the DFA, are the same. It differs only for a white-box call of Dfa::new with a program whose character or class starts at -1, which compile never makes: the mutant then marks index -1 and aborts. The clamp decides nothing: a deletion candidate (#417's report)."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,0,1,2"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "In Dfa::new's local `split`, the clamp `if lo < 0 { 0 } else { lo }` becomes `lo < 1`, which also takes 0 for a start of 0: the same index. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. So `starts`, the byte classes and the DFA are the same for every call. It differs nowhere, a white-box call of Dfa::new with any program included. The clamp itself decides nothing, since no code point is negative: a deletion candidate (#417's report)."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,0,1,3"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "In Dfa::new's local `split`, the clamp `if lo < 0 { 0 } else { lo }` gives 1 instead of 0 for a start below 0. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. split gets a Char instruction's code point, the starts of a class's ranges of code points and the fixed ranges of the characters assertions read; no code point is negative, so the clamp never acts and the byte classes, and so the DFA, are the same. It differs only for a white-box call of Dfa::new with a program whose character or class starts below 0, which compile never makes: a class then also starts at byte 1. The clamp decides nothing: a deletion candidate (#417's report)."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,ROR,<,<=,1"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "In Dfa::new's local `split`, the clamp `if lo < 0 { 0 } else { lo }` becomes `lo <= 0`, which also takes 0 for a start of 0: the same index. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. So `starts`, the byte classes and the DFA are the same for every call. It differs nowhere, a white-box call of Dfa::new with any program included. The clamp itself decides nothing, since no code point is negative: a deletion candidate (#417's report)."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,127,128,0"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "In Dfa::new's local `split`, `if hi < 127 { starts[hi + 1] = true }` becomes `hi < 128`: a range that ends at U+007F, as in a class of the characters up to U+007F, now marks entry 128 of `starts` too. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. The loop that numbers the byte classes reads entries 0 to 127 only, so the classes, and so the DFA, are the same. It differs nowhere, a white-box call of Dfa::new included: the entry is never read."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,ROR,<,<=,2"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "In Dfa::new's local `split`, `if hi < 127 { starts[hi + 1] = true }` becomes `hi <= 127`: a range that ends at U+007F, as in a class of the characters up to U+007F, now marks entry 128 of `starts` too. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. The loop that numbers the byte classes reads entries 0 to 127 only, so the classes, and so the DFA, are the same. It differs nowhere, a white-box call of Dfa::new included: the entry is never read."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,0,1,5"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "`byte_class` is made with 1 in each of its 128 entries instead of 0. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. The loop right after it writes every entry, from 0 to 127, before anything reads one, so the byte classes, and so the DFA, are the same. It differs nowhere, a white-box call of Dfa::new included."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,128,129,1"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "`byte_class` gets 129 entries instead of 128. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. Dfa::new writes entries 0 to 127, and Dfa::full_match reads `byte_class[b]` only for a byte `b` below 0x80, so the added entry (0) is never read, and the answers, the states and the Ints counted against the budget are the same (the count is of states and table cells, not of `byte_class`). It differs only in the length of `byte_class`, which a white-box reading of the DFA would see."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,1,2,4"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "`seen` gets the program's length plus 2 entries instead of plus 1. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. Dfa::follow indexes it by an instruction, and Dfa::step by the instruction after one that consumes a character, which is never the last, since compile_node ends every program with Match. So no index reaches the program's length, and neither the code's last entry nor the added one is used: the answers and the states are the same. It differs only in the length of `seen`, which a white-box reading would see; for a white-box program that ends with a Char, the mutant has room wherever the code has."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/dfa.mbt,Dfa::new,INT,0,1,9"
+text = "46dcadcfb4ceee06"
+category = "EQUIVALENT"
+reason = "The DFA's stamp starts at 1 instead of 0. The DFA is the engine of Regex::full_match while its budget holds; Regex::search and the step counts run the Pike VM, which this does not touch. `seen` starts with 0 in every entry, and Dfa::follow and Dfa::step add 1 to the stamp before they mark or compare an entry with it, so the stamps run 2, 3, ... instead of 1, 2, ...: never 0, each new, and each call finds the same entries marked. Each step's result is kept, as a cell of the table or an entry of the map, or the DFA is dropped, and Dfa::accepts_at_end follows once a state, so the budget keeps the stamp below 100,000, far from where it would wrap. Every answer and every state is the same. It differs only in the stamp's value, which a white-box reading would see."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #417's implementer", tests = ["none yet; the implementer's own check, the digests of OTHER's entry, the first of this block: the same with this mutant applied, on wasm-gc"] }
+reviewer = ""
