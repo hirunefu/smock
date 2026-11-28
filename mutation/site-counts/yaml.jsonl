@@ -46,12 +46,12 @@
 {"file":"yaml/parser.mbt","definition":"Parser::flow_mapping","text":"c84607e8ae051338","pinned":{"BODY":1,"IFC":6,"NOT":1,"DEL":16,"BOOL":1,"AOR":1,"INT":1,"STR":5},"full":{"BODY":1,"IFC":12,"NOT":1,"DEL":16,"BOOL":1,"AOR":1,"INT":2,"STR":10}}
 {"file":"yaml/parser.mbt","definition":"is_blank_or_eof","text":"8ee3dab24a5e5d96","pinned":{"BODY":1},"full":{"BODY":1}}
 {"file":"yaml/parser.mbt","definition":"child","text":"479951c5c1125588","pinned":{"BODY":1,"STR":5},"full":{"BODY":1,"STR":10}}
-{"file":"yaml/scalar.mbt","definition":"resolve","text":"25c6bcff5ec64fe4","pinned":{"IFC":3,"BOOL":2,"STR":8},"full":{"IFC":6,"BOOL":2,"STR":16}}
+{"file":"yaml/scalar.mbt","definition":"resolve","text":"692f0a2c43f1da3b","pinned":{"IFC":3,"BOOL":2,"STR":8},"full":{"IFC":6,"BOOL":2,"STR":16}}
 {"file":"yaml/scalar.mbt","definition":"MAX_SAFE_INTEGER","text":"0f2658ea77ae0b4a","pinned":{"INT":1},"full":{"INT":3}}
 {"file":"yaml/scalar.mbt","definition":"resolve_core","text":"1836af689293fe31","pinned":{"BODY":1,"ROR":3,"IFC":8,"NOT":1,"DEL":1,"BOOL":2,"AOR":7,"INT":10,"STR":6},"full":{"BODY":1,"ROR":3,"IFC":15,"NOT":1,"DEL":1,"BOOL":2,"AOR":7,"INT":22,"STR":12}}
 {"file":"yaml/scalar.mbt","definition":"core_decimal","text":"478e457ab752ebd9","pinned":{"BODY":1,"ROR":4,"IFC":9,"LCR":2,"NOT":2,"DEL":4,"INT":8},"full":{"BODY":1,"ROR":4,"IFC":18,"LCR":2,"NOT":2,"DEL":4,"INT":8}}
 {"file":"yaml/scalar.mbt","definition":"is_json_number","text":"40436e3e9fa4f11b","pinned":{"BODY":1,"IFC":4,"LCR":5,"NOT":2,"BOOL":3,"INT":4},"full":{"BODY":1,"IFC":8,"LCR":5,"NOT":2,"BOOL":3,"INT":4}}
-{"file":"yaml/scalar.mbt","definition":"is_yaml_number","text":"fa6b0f9b15760f8c","pinned":{"BODY":1,"ROR":11,"IFC":4,"LCR":42,"NOT":7,"BOOL":2,"INT":26,"STR":5},"full":{"BODY":1,"ROR":11,"IFC":8,"LCR":42,"NOT":7,"BOOL":2,"INT":26,"STR":10}}
+{"file":"yaml/scalar.mbt","definition":"is_yaml_number","text":"3fbd7be619c9921d","pinned":{"BODY":1,"ROR":11,"IFC":4,"LCR":42,"NOT":7,"BOOL":2,"INT":26,"STR":5},"full":{"BODY":1,"ROR":11,"IFC":8,"LCR":42,"NOT":7,"BOOL":2,"INT":26,"STR":10}}
 {"file":"yaml/scalar.mbt","definition":"is_timestamp","text":"07cbb4be74eff442","pinned":{"BODY":1,"ROR":1,"IFC":2,"LCR":24,"NOT":2,"BOOL":3,"INT":18},"full":{"BODY":1,"ROR":1,"IFC":4,"LCR":24,"NOT":2,"BOOL":3,"INT":47}}
 {"file":"yaml/scalar.mbt","definition":"Scan::Scan","text":"3ec7c3b804c78f21","pinned":{"INT":1},"full":{"INT":2}}
 {"file":"yaml/scalar.mbt","definition":"Scan::char","text":"d6b588e8a4723fd2","pinned":{"BODY":1},"full":{"BODY":1}}
@@ -88,7 +88,7 @@
 {"file":"yaml/writer.mbt","definition":"number_text","text":"8d4da34b06e5bb31","pinned":{"BODY":1,"IFC":2,"LCR":1,"STR":4},"full":{"BODY":1,"IFC":4,"LCR":1,"STR":6}}
 {"file":"yaml/writer.mbt","definition":"Writer::string","text":"48b857b32d4e3cff","pinned":{"BODY":1,"ROR":3,"IFC":5,"LCR":1,"DEL":5,"INT":9,"STR":20},"full":{"BODY":1,"ROR":3,"IFC":10,"LCR":1,"DEL":5,"INT":18,"STR":37}}
 {"file":"yaml/writer.mbt","definition":"Writer::hex","text":"ae9c8b6af56c95d1","pinned":{"BODY":1,"ROR":2,"IFC":2,"DEL":1,"AOR":6,"INT":9},"full":{"BODY":1,"ROR":2,"IFC":4,"DEL":1,"AOR":6,"INT":18}}
-{"file":"yaml/writer.mbt","definition":"is_plain_safe","text":"1520a37ffef3f9c3","pinned":{"BODY":1,"ROR":2,"IFC":8,"LCR":6,"NOT":1,"BOOL":7,"AOR":6,"INT":16,"STR":2},"full":{"BODY":1,"ROR":2,"IFC":16,"LCR":6,"NOT":1,"BOOL":7,"AOR":6,"INT":25,"STR":4}}
+{"file":"yaml/writer.mbt","definition":"is_plain_safe","text":"6fdfd81d6627eb29","pinned":{"BODY":1,"ROR":2,"IFC":8,"LCR":6,"NOT":1,"BOOL":7,"AOR":6,"INT":18,"STR":2},"full":{"BODY":1,"ROR":2,"IFC":16,"LCR":6,"NOT":1,"BOOL":7,"AOR":6,"INT":25,"STR":4}}
 {"file":"yaml/writer.mbt","definition":"following","text":"f5eeb11eb168a507","pinned":{"BODY":1,"ROR":1,"IFC":2},"full":{"BODY":1,"ROR":1,"IFC":4}}
 {"file":"yaml/writer.mbt","definition":"is_blank_unit","text":"4314b33278dfbf36","pinned":{"BODY":1},"full":{"BODY":1}}
 {"file":"yaml/writer.mbt","definition":"is_printable","text":"3235c5cb0b3ba772","pinned":{"BODY":1,"ROR":5,"LCR":9,"NOT":1,"INT":20},"full":{"BODY":1,"ROR":5,"LCR":9,"NOT":1,"INT":30}}
