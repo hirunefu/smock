@@ -223,8 +223,9 @@ UTC ([Bulk runs on Actions](../CONTRIBUTING.md#bulk-runs-on-actions)),
 or when GitHub starts it, which may be hours later. GitHub started the
 second weekly run, the first that its schedule started, at 01:36 UTC on
 Saturday 2026-11-21, 5 h 13 min after its time, and it ended at 05:05
-UTC. A release that waits for Friday's run should not expect it before
-Saturday morning UTC.
+UTC; it started the third at 02:49 UTC on Saturday 2026-11-28, 6 h 26 min
+after its time, and that one ended at 05:26 UTC. A release that waits for
+Friday's run should not expect it before Saturday morning UTC.
 
 The release's check of the weekly run (`scripts/check-weekly-run.py`)
 reads only weekly runs on the tagged commit or on an ancestor of it on
@@ -267,7 +268,7 @@ A release on `main`'s head after Friday's run waits for nothing more when
 each change since went through the branch checks or touches no source of
 a package at L4. The release commit touches none. Otherwise, start a
 weekly run on the release commit, and push the tag once it has passed,
-about three and a half hours later. The second weekly run
+two and a half to three and a half hours later. The second weekly run
 ([run 44851160701](https://github.com/hirunefu/smock/actions/runs/44851160701),
 on `main` at 65831e4e) had 18,403 mutants in 20 shards at once, planned
 at 16 s a mutant. Its report gives 3 h 28 min 41 s from its first job's
@@ -278,6 +279,15 @@ started 36 minutes late: the canary's job, for 39 minutes, and two short
 ones take three of the account's 20 jobs as the run starts, so three
 shards wait for free jobs
 ([Bulk runs on Actions](../CONTRIBUTING.md#bulk-runs-on-actions)).
+The third
+([run 46099911582](https://github.com/hirunefu/smock/actions/runs/46099911582),
+on `main` at 65831e4e, with the same mutants) and the fourth
+([run 46113518423](https://github.com/hirunefu/smock/actions/runs/46113518423),
+started by hand on `main` at 893484b5, with 18,363 mutants) give 2 h
+37 min 17 s and 2 h 35 min 47 s from their first job's start to their
+last job's end, 2 h 36 min 15 s and 2 h 34 min 46 s for their longest
+shard's run, and 32 h 17 min and 34 h 42 min of runner time over their
+25 jobs.
 The first weekly run, started by hand on `main` on 2026-11-19
 ([run 44423781036](https://github.com/hirunefu/smock/actions/runs/44423781036)),
 had the same mutants in 40 shards, two waves of 20, and its report gives
@@ -322,8 +332,8 @@ of the release workflow needs plan, so none of them runs.
   source of a package at L4 and no branch's changed-lines report covers
   that change, as for a change pushed straight to `main`. A weekly run on
   the tag covers the commit with no later change. Start one, or wait for
-  the one still running, and once it has passed, about three and a half
-  hours after it started
+  the one still running, and once it has passed, two and a half to three
+  and a half hours after it started
   ([The weekly mutation run](#the-weekly-mutation-run)), re-run the tag's
   release run, which reads the weekly runs again.
 

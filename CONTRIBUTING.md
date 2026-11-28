@@ -2776,15 +2776,19 @@ UTC. When the 1st is a Friday, the monthly run's time is two hours and
 twenty minutes after the weekly one's. The weekly run took 2 h 9 min the
 first time, in 40 shards
 ([run 44423781036](https://github.com/hirunefu/smock/actions/runs/44423781036)),
-and 3 h 28 min the second, in 20 shards planned at 16 s a mutant
+3 h 28 min the second, in 20 shards planned at 16 s a mutant
 ([run 44851160701](https://github.com/hirunefu/smock/actions/runs/44851160701)),
+and 2 h 37 min and 2 h 36 min the third and the fourth, in 20 shards too
+([run 46099911582](https://github.com/hirunefu/smock/actions/runs/46099911582)
+and [run 46113518423](https://github.com/hirunefu/smock/actions/runs/46113518423)),
 from its first job's start to its last job's end. Two hours and twenty
 minutes after the second started, two of its shards, `engine`'s and
 `protobuf`'s, still held their jobs, for 40 and 69 minutes more, so two
 of a monthly run's first 20 shards started then would wait for them
 that long. GitHub starts a scheduled run when it can, which may be hours
 after its time: it started the second weekly run, the first that its
-schedule started, at 01:36 UTC on Saturday, 5 h 13 min after its time.
+schedule started, at 01:36 UTC on Saturday, 5 h 13 min after its time,
+and the third at 02:49 UTC on Saturday, 6 h 26 min after its time.
 So how the two runs meet depends on GitHub too. A push during either
 waits for free jobs.
 `bulk.py`'s `SCHEDULES` maps each schedule to its run, and the workflow's
@@ -2852,13 +2856,19 @@ holds everything `run.py` does) and how it exited. A shard that stopped,
 or ran no mutant, says nothing of a mutant's time. The record holds the
 baseline's 43 shards, the 40 of the first weekly run
 ([run 44423781036](https://github.com/hirunefu/smock/actions/runs/44423781036),
-the pinned set on `main` at 7eac627b, planned at 20 s a mutant) and the
-20 of the second
+the pinned set on `main` at 7eac627b, planned at 20 s a mutant), the 20
+of the second
 ([run 44851160701](https://github.com/hirunefu/smock/actions/runs/44851160701),
-the same mutants on `main` at 65831e4e, planned at 16 s). A mutant took
-7.0 s of runner time on average over the baseline's sample, 6.3 s over
-the first weekly run and 6.1 s over the second, but the slowest shards
-took twice as long a mutant or more. In the baseline they were
+the same mutants on `main` at 65831e4e, planned at 16 s), and the 20 each
+of the third
+([run 46099911582](https://github.com/hirunefu/smock/actions/runs/46099911582),
+the same mutants on 65831e4e again) and the fourth
+([run 46113518423](https://github.com/hirunefu/smock/actions/runs/46113518423),
+18,363 mutants on `main` at 893484b5), both planned at 16 s. A mutant
+took 7.0 s of runner time on average over the baseline's sample, 6.3 s
+over the first weekly run, 6.1 s over the second, 6.2 s over the third
+and 6.6 s over the fourth, but the slowest shards took one and a half
+times as long a mutant or more. In the baseline they were
 `engine`'s: the BODY pass's shard 5-of-20 took 16 min 10 s for 68
 mutants, 14.27 s each. In the first weekly run it was `protobuf`'s shard
 20-of-40, whose 460 mutants, half of them at an unchecked access and so
@@ -2867,14 +2877,17 @@ was `engine`'s shard 3-of-20, 920 mutants in 2 h 59 min 21 s, 11.70 s
 each. Its runner was slower than the others: it took 2.19 s to run
 `engine`'s tests without a mutant, where the three other runners that ran
 `engine` took 1.46 to 1.63 s, and each step of its mutants took 1.2 to
-1.4 times as long as in the first weekly run. So bulk runs plan 16 s a
-mutant (`bulk.py`'s `SECONDS_PER_MUTANT`); before the baseline they
-planned 20 s, from #275's cost model. The rule takes the slowest shard,
-not the average, because a shard holds a stretch of the run's order,
-mostly one or two packages, and the costly stretches are not spread over
-the shards; nor are the slower runners. At the average's 7 s, the
-monthly run's shards would hold 1,331 mutants each: 5.6 hours at
-15.19 s a mutant.
+1.4 times as long as in the first weekly run. In the third it was
+`engine`'s shard 4-of-20, 920 mutants in 2 h 36 min 15 s, 10.19 s each,
+and in the fourth shard 1-of-20, `definitions`' with `buildinfo`'s and
+`cookies`', 918 mutants in 2 h 34 min 46 s, 10.12 s each. So bulk runs
+plan 16 s a mutant (`bulk.py`'s `SECONDS_PER_MUTANT`); before the
+baseline they planned 20 s, from #275's cost model. The rule takes the
+slowest shard, not the average, because a shard holds a stretch of the
+run's order, mostly one or two packages, and the costly stretches are
+not spread over the shards; nor are the slower runners. At the average's
+7 s, the monthly run's shards would hold 1,331 mutants each: 5.6 hours
+at 15.19 s a mutant.
 
 At 16 s, on 7eac627b's tree, the weekly run's 18,403 mutants go in 20
 shards of 920 or 921, all at once, where 20 s cut them into 40 shards in
@@ -2890,7 +2903,12 @@ and `protobuf`'s 10-of-20 ended last. The canary's job, the coverage from
 the e2e tests and the properties with random seeds take three of the
 account's 20 jobs as the run starts, so three shards wait for free jobs.
 `protobuf`'s was one of them: it started 36 minutes late, when the
-shortest shard ended, and then ran for 2 h 51 min. The
+shortest shard ended, and then ran for 2 h 51 min. The third weekly run
+ran the same mutants: its shards took 35 minutes to 2 h 36 min 15 s, and
+the run 2 h 37 min 17 s, with 32 h 17 min of runner time. The fourth, on
+893484b5, ran 18,363 mutants in 20 shards of 918 or 919: they took 36
+minutes to 2 h 34 min 46 s, and the run 2 h 35 min 47 s, with 34 h 42 min
+of runner time. The
 monthly run's 26,619 mutants go in 40 shards of 665 or 666, as at 20 s,
 in two waves of 20: at most 2.8 hours a shard at the slowest pace. With
 each mutant at the pace of the first weekly run's shard that held its
