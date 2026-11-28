@@ -642,10 +642,10 @@ test "every input the OpenAPI mode accepts here, the safe subset rejects, or rea
   // an integer, by the base-16 form `[-+]?0x[0-9a-fA-F_]+`
   // (yaml.org/type/int.html), and docs/definition-files.md says "Any other
   // plain scalar that YAML 1.1 or 1.2 would type, such as `yes`, `on`, `~`,
-  // `True`, `0x1F`, `007`, `1_000`, `.inf` or `2001-12-14`, is rejected
-  // with "quote this value"". The words "may be read as a number; quote
-  // this value" are the code's, which the maintainer confirmed on
-  // 2026-11-17 (#275).
+  // `True`, `0x1F`, `007`, `1_000`, `685.230_15e+03`, `.inf` or
+  // `2001-12-14`, is rejected with "quote this value"". The words "may be
+  // read as a number; quote this value" are the code's, which the
+  // maintainer confirmed on 2026-11-17 (#275).
   // `a: .` and `a: .e3` hold points with no digit, strings in both modes
   // (docs/definition-files.md, "Points with no digit are strings too").
   inspect(
