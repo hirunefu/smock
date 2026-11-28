@@ -88,6 +88,20 @@ let rows : Array[(String, String, String, Bool)] = [
   ("[.]", ".", "0-1", true),
   ("[[:alpha]", "p", "0-1", true),
   ("[[:alpha]", "b", "none", false),
+  ("[a-zc]", "x", "0-1", true),
+  ("[a-zc]", "{", "none", false),
+  ("[ca-z]", "x", "0-1", true),
+  ("[^a-zc]", "x", "none", false),
+  ("[^a-zc]", "{", "0-1", true),
+  ("[^a]", "\u{00}", "0-1", true),
+  ("[^\u{01}]", "\u{00}", "0-1", true),
+  ("[^\u{00}]", "\u{00}", "none", false),
+  ("[^\u{00}]", "\u{01}", "0-1", true),
+  ("[^a]", "\u{10FFFF}", "0-4", true),
+  ("[^\u{10FFFE}]", "\u{10FFFF}", "0-4", true),
+  ("[^\u{10FFFE}]", "\u{10FFFE}", "none", false),
+  ("[^\u{10FFFF}]", "\u{10FFFF}", "none", false),
+  ("[^\u{10FFFF}]", "\u{10FFFE}", "0-4", true),
   // A POSIX class starts with [ and : together and ends at the first :
   // followed by ]: otherwise [ and : are literals
   ("[[a:]]", "a]", "0-2", true),
@@ -127,6 +141,9 @@ let rows : Array[(String, String, String, Bool)] = [
   ("[\\d-z]", "-", "0-1", true),
   ("[\\d-z]", "y", "none", false),
   ("[\\w-]", "-", "0-1", true),
+  ("\\D", "\u{00}", "0-1", true),
+  ("\\S", "\u{00}", "0-1", true),
+  ("\\W", "\u{00}", "0-1", true),
   // Anchors without (?m): ^ and $ match only at the ends of the input
   ("^abc", "abc", "0-3", true),
   ("^abc", "xabc", "none", false),
@@ -159,6 +176,22 @@ let rows : Array[(String, String, String, Bool)] = [
   ("\\B", "é", "0-0", false),
   ("\\bé", "aé", "1-3", false),
   ("é\\b", "éa", "0-2", false),
+  // \b is "at ASCII word boundary (\w on one side and \W, \A, or \z on the
+  // other)" and \w is [0-9A-Za-z_] (RE2's syntax): the first and last
+  // character of each range, and those just outside them.
+  ("\\b.\\b", "/", "none", false),
+  ("\\b.\\b", "0", "0-1", true),
+  ("\\b.\\b", "9", "0-1", true),
+  ("\\b.\\b", ":", "none", false),
+  ("\\b.\\b", "@", "none", false),
+  ("\\b.\\b", "A", "0-1", true),
+  ("\\b.\\b", "Z", "0-1", true),
+  ("\\b.\\b", "[", "none", false),
+  ("\\b.\\b", "^", "none", false),
+  ("\\b.\\b", "`", "none", false),
+  ("\\b.\\b", "a", "0-1", true),
+  ("\\b.\\b", "z", "0-1", true),
+  ("\\b.\\b", "{", "none", false),
   // Groups and alternation: the leftmost match, then the first alternative
   ("a|b", "b", "0-1", true),
   ("b|a", "ab", "0-1", false),

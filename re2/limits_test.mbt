@@ -78,6 +78,19 @@ test "a pattern whose compiled program is too large is a compile error" {
       content="position 0: pattern too large: it compiles to more than 100000 instructions",
     )
   }
+  // The largest program and the smallest one past it. A pattern of n
+  // characters that are not metacharacters compiles to n + 1 instructions:
+  // one per character (README, Limits) and the `Match` that ends every
+  // program (compile_node's doc comment). compile's doc comment: a program
+  // of more than 100 000 instructions raises CompileError.
+  let largest = repeat("x", 99999)
+  assert_true(@re2.compile(largest).full_match(ascii(largest)))
+  let refused = try @re2.compile(repeat("x", 100000)) catch {
+    _ => true
+  } noraise {
+    _ => false
+  }
+  assert_true(refused)
 }
 
 ///|
