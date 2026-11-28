@@ -20,3 +20,4 @@ metrics
 usage
 prng
 grpc
+xml
