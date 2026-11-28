@@ -35,6 +35,10 @@ let rows : Array[(String, String, String, Bool)] = [
   ("a\u{0}b", "ab", "none", false),
   ("[\u{0}]", "\u{0}", "0-1", true),
   ("\\\u{0}", "\u{0}", "0-1", true),
+  // A count of 10^9 or more is no count, so its { is a literal
+  ("a{1000000000}", "a{1000000000}", "0-13", true),
+  ("a{1,1000000000}", "a{1,1000000000}", "0-15", true),
+  ("a{1000000000,}", "a{1000000000,}", "0-14", true),
   // . matches one code point other than \n
   (".", "a", "0-1", true),
   (".", "", "none", false),
