@@ -52,6 +52,12 @@ test "matching goes on around bytes that are not well-formed UTF-8" {
   inspect(on_bytes("c+", b"ab\xffccd"), content="search 3-5, full false")
   inspect(on_bytes("b.c", b"ab\xffcd"), content="search none, full false")
   inspect(on_bytes("(?s).*", b"ab\xffcd"), content="search 0-2, full false")
+  // The last code point, U+10FFFF, then a byte that is never part of UTF-8:
+  // the match ends before the byte, and the input does not match as a whole.
+  inspect(
+    on_bytes("(?s).*", b"\xf4\x8f\xbf\xbf\xff"),
+    content="search 0-4, full false",
+  )
   inspect(on_bytes("(?s).+", b"\xffab\xfe"), content="search 1-3, full false")
   inspect(on_bytes("a", b"\xc3a"), content="search 1-2, full false")
   inspect(on_bytes("", b"\xff"), content="search 0-0, full false")
