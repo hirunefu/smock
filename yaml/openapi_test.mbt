@@ -77,6 +77,8 @@ test "in the OpenAPI mode, plain scalars are typed by the YAML 1.2 core schema" 
 ///|
 /// Plain scalars that the YAML 1.2 core schema reads as strings, though
 /// YAML 1.1 types some of them, and some look like numbers.
+/// `.` and `.e3` are points with no digit, which are strings in both modes
+/// (docs/definition-files.md, "Points with no digit are strings too").
 let core_strings : Array[String] = [
   "yes", "no", "on", "off", "y", "N", "Yes", "OFF", "nULL", "tRUE", "2020-01-01",
   "2001-12-14T21:59:43Z", "1_000", "1_000.5", "0b1010", "1:30", "190:20:30", "-0x1F",
@@ -124,6 +126,23 @@ test "in the OpenAPI mode, other spellings of YAML 1.1 types are strings" {
       #|= -> {"a":"="}
       #|-.nan -> {"a":"-.nan"}
       #|.infinity -> {"a":".infinity"}
+    ),
+  )
+  // Points with no digit, with or without a sign before them and an
+  // exponent after them, such as `.`, `..`, `+.`, `.e+1` or `.e3`, are
+  // strings in this mode too: YAML 1.2.2's core schema (section 10.3.2)
+  // needs a digit in a float, and docs/definition-files.md says "Points with
+  // no digit are strings too" of the safe subset, as the maintainer decided
+  // on 2026-11-26 (#275's twenty-seventh round).
+  inspect(
+    openapi_values(["..", "...", "+.", "-..", ".e+1", "-.E-5"]),
+    content=(
+      #|.. -> {"a":".."}
+      #|... -> {"a":"..."}
+      #|+. -> {"a":"+."}
+      #|-.. -> {"a":"-.."}
+      #|.e+1 -> {"a":".e+1"}
+      #|-.E-5 -> {"a":"-.E-5"}
     ),
   )
 }
@@ -627,6 +646,8 @@ test "every input the OpenAPI mode accepts here, the safe subset rejects, or rea
   // with "quote this value"". The words "may be read as a number; quote
   // this value" are the code's, which the maintainer confirmed on
   // 2026-11-17 (#275).
+  // `a: .` and `a: .e3` hold points with no digit, strings in both modes
+  // (docs/definition-files.md, "Points with no digit are strings too").
   inspect(
     safe.join("\n"),
     content=(

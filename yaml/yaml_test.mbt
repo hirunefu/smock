@@ -1672,6 +1672,8 @@ test "very long scalars and collections give a value, or an error when untermina
 
 ///|
 test "every other plain scalar is a string" {
+  // `.` is points with no digit, a string: docs/definition-files.md says
+  // "Points with no digit are strings too" (the last `inspect` below).
   inspect(
     yaml(
       (
@@ -1701,6 +1703,8 @@ test "every other plain scalar is a string" {
   // production 126: a `-` followed by a character that is safe in a plain
   // scalar may start one, and `.` is no indicator), alone or as the
   // continuation line of one at the top (production 207).
+  // `..` is points with no digit, a string (docs/definition-files.md,
+  // "Points with no digit are strings too").
   inspect(
     each(["--", "..", "a\n--", "a\n.."]),
     content=(
@@ -1708,6 +1712,27 @@ test "every other plain scalar is a string" {
       #|".." -> ".."
       #|"a\n--" -> "a --"
       #|"a\n.." -> "a .."
+    ),
+  )
+  // Points with no digit, with or without a sign before them and an
+  // exponent after them, are strings: docs/definition-files.md, "Points
+  // with no digit are strings too, with or without a sign before them and
+  // an exponent after them, such as `.`, `..`, `+.`, `.e+1` or `.e3`", as
+  // the maintainer decided on 2026-11-26 (#275's twenty-seventh round).
+  // YAML 1.1's float pattern (yaml.org/type/float.html) matches all of these
+  // but `.e3`, and YAML 1.2.2's core schema (section 10.3.2) types none, its
+  // float needing a digit.
+  inspect(
+    as_value([".", "..", "...", "+.", "-..", ".e+1", "-.E-5", ".e3"]),
+    content=(
+      #|. -> {"a":"."}
+      #|.. -> {"a":".."}
+      #|... -> {"a":"..."}
+      #|+. -> {"a":"+."}
+      #|-.. -> {"a":"-.."}
+      #|.e+1 -> {"a":".e+1"}
+      #|-.E-5 -> {"a":"-.E-5"}
+      #|.e3 -> {"a":".e3"}
     ),
   )
 }
