@@ -265,6 +265,17 @@ test "strings and keys are double-quoted unless the parser reads them back plain
   inspect(written(Json::string("...")), content="\"...\"\n")
   inspect(written(Json::string("--- x")), content="\"--- x\"\n")
   inspect(written(Json::string("---x")), content="---x\n")
+  // A YAML 1.1 float with `_` after its point, such as `685.230_15e+03`,
+  // yaml.org/type/float.html's example, is rejected by `parse` with "quote
+  // this value", as a value and as a key (#438), so it is quoted in both
+  // places.
+  inspect(
+    written(Json::object({ "685.230_15e+03": Json::string("1._5") })),
+    content=(
+      #|"685.230_15e+03": "1._5"
+      #|
+    ),
+  )
 }
 
 ///|

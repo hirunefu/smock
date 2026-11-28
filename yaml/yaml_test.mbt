@@ -928,6 +928,33 @@ test "numbers that are not in JSON syntax must be quoted" {
       #|+1.5e3 -> error /a: "+1.5e3" may be read as a number; quote this value
     ),
   )
+  // YAML 1.1's float with `_` after its point (#438). yaml.org/type/float.html
+  // gives `685.230_15e+03` as an example of `!!float` and says that any `_`
+  // in a number is ignored, though its base 10 regex has none after the
+  // point (`\.[0-9.]*`); with the `_` ignored, `._5` is `.5` and `1._.5` is
+  // `1..5`, which that regex types. PyYAML 6.0.3's float resolver
+  // (lib/yaml/resolver.py) takes `[-+]?(?:[0-9][0-9_]*)\.[0-9_]*` and
+  // `\.[0-9][0-9_]*`, each with an optional `[eE][-+][0-9]+`. So the part
+  // after the point is digits, points and `_`, as the maintainer decided on
+  // 2026-11-26 (#275's twenty-seventh round), and each is rejected with
+  // "quote this value", as above.
+  inspect(
+    as_value([
+      "685.230_15e+03", "685.230_15", "1.5_", "1._5", ".5_", "0._", "-1._5", "._5",
+      "1._.5",
+    ]),
+    content=(
+      #|685.230_15e+03 -> error /a: "685.230_15e+03" may be read as a number; quote this value
+      #|685.230_15 -> error /a: "685.230_15" may be read as a number; quote this value
+      #|1.5_ -> error /a: "1.5_" may be read as a number; quote this value
+      #|1._5 -> error /a: "1._5" may be read as a number; quote this value
+      #|.5_ -> error /a: ".5_" may be read as a number; quote this value
+      #|0._ -> error /a: "0._" may be read as a number; quote this value
+      #|-1._5 -> error /a: "-1._5" may be read as a number; quote this value
+      #|._5 -> error /a: "._5" may be read as a number; quote this value
+      #|1._.5 -> error /a: "1._.5" may be read as a number; quote this value
+    ),
+  )
 }
 
 ///|
@@ -1059,6 +1086,19 @@ test "the same values quoted are strings, and look-alikes that no YAML version t
       #|1::30 -> {"a":"1::30"}
     ),
   )
+  // `_` after a float's point is no digit (#438): with the `_` that
+  // yaml.org/type/float.html ignores left out, these are points with no
+  // digit, which docs/definition-files.md says are strings, and PyYAML
+  // 6.0.3's float resolver needs a digit before the point or right after it.
+  // YAML 1.2.2's core schema (section 10.3.2) types none of them either.
+  inspect(
+    as_value(["._", "+._", "._e+1"]),
+    content=(
+      #|._ -> {"a":"._"}
+      #|+._ -> {"a":"+._"}
+      #|._e+1 -> {"a":"._e+1"}
+    ),
+  )
 }
 
 ///|
@@ -1075,6 +1115,16 @@ test "a plain key that is not a string in every YAML version must be quoted" {
       #|"~: x" -> error /~0: "~" may be read as null; quote this key
       #|"{yes: 1}" -> error /yes: "yes" may be read as a boolean; quote this key
       #|"'on': x" -> {"on":"x"}
+    ),
+  )
+  // A YAML 1.1 float with `_` after its point, yaml.org/type/float.html's
+  // example (#438; the numbers test above), is no string in every YAML
+  // version either, as a plain key, in a block or a flow mapping.
+  inspect(
+    each(["685.230_15e+03: x", "{1._5: x}"]),
+    content=(
+      #|"685.230_15e+03: x" -> error /685.230_15e+03: "685.230_15e+03" may be read as a number; quote this key
+      #|"{1._5: x}" -> error /1._5: "1._5" may be read as a number; quote this key
     ),
   )
 }
@@ -1790,6 +1840,8 @@ test "very long scalars and collections give a value, or an error when untermina
 
 ///|
 test "every other plain scalar is a string" {
+  // `.` is points with no digit, a string: docs/definition-files.md says
+  // "Points with no digit are strings too" (the last `inspect` below).
   inspect(
     yaml(
       (
@@ -1819,6 +1871,8 @@ test "every other plain scalar is a string" {
   // production 126: a `-` followed by a character that is safe in a plain
   // scalar may start one, and `.` is no indicator), alone or as the
   // continuation line of one at the top (production 207).
+  // `..` is points with no digit, a string (docs/definition-files.md,
+  // "Points with no digit are strings too").
   inspect(
     each(["--", "..", "a\n--", "a\n.."]),
     content=(
@@ -1826,6 +1880,27 @@ test "every other plain scalar is a string" {
       #|".." -> ".."
       #|"a\n--" -> "a --"
       #|"a\n.." -> "a .."
+    ),
+  )
+  // Points with no digit, with or without a sign before them and an
+  // exponent after them, are strings: docs/definition-files.md, "Points
+  // with no digit are strings too, with or without a sign before them and
+  // an exponent after them, such as `.`, `..`, `+.`, `.e+1` or `.e3`", as
+  // the maintainer decided on 2026-11-26 (#275's twenty-seventh round).
+  // YAML 1.1's float pattern (yaml.org/type/float.html) matches all of these
+  // but `.e3`, and YAML 1.2.2's core schema (section 10.3.2) types none, its
+  // float needing a digit.
+  inspect(
+    as_value([".", "..", "...", "+.", "-..", ".e+1", "-.E-5", ".e3"]),
+    content=(
+      #|. -> {"a":"."}
+      #|.. -> {"a":".."}
+      #|... -> {"a":"..."}
+      #|+. -> {"a":"+."}
+      #|-.. -> {"a":"-.."}
+      #|.e+1 -> {"a":".e+1"}
+      #|-.E-5 -> {"a":"-.E-5"}
+      #|.e3 -> {"a":".e3"}
     ),
   )
 }
