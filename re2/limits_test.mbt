@@ -96,4 +96,17 @@ test "groups may nest 100 deep" {
     error_of("x" + repeat("(?i:", 101) + "a" + repeat(")", 101)),
     content="position 401: groups nest more than 100 deep",
   )
+  // Nesting counts the groups open at a place (the README: "groups nest at
+  // most 100 deep"), not the groups before it: 101 groups one after another
+  // compile, and a group closed before 100 nested ones leaves room for them
+  // and none more.
+  assert_true(
+    @re2.compile(repeat("(a)", 101)).full_match(ascii(repeat("a", 101))),
+  )
+  let after_one = "(a)" + repeat("(", 100) + "a" + repeat(")", 100)
+  assert_true(@re2.compile(after_one).full_match(ascii("aa")))
+  inspect(
+    error_of("(a)" + repeat("(", 101) + "a" + repeat(")", 101)),
+    content="position 103: groups nest more than 100 deep",
+  )
 }
