@@ -78,9 +78,9 @@ test "RE2 syntax left out of the subset is rejected as not supported in it" {
   // class after it.
   inspect(
     errors([
-      "[[:alnum:]]", "[[:ascii:]]", "[[:blank:]]", "[[:cntrl:]]", "[[:graph:]]", "[[:lower:]]",
-      "[[:print:]]", "[[:punct:]]", "[[:space:]]", "[[:upper:]]", "[[:word:]]", "[[:xdigit:]]",
-      "[[:alpha:]x]",
+      "[[:alnum:]]", "[[:ascii:]]", "[[:blank:]]", "[[:cntrl:]]", "[[:graph:]]",
+      "[[:lower:]]", "[[:print:]]", "[[:punct:]]", "[[:space:]]", "[[:upper:]]",
+      "[[:word:]]", "[[:xdigit:]]", "[[:alpha:]x]",
     ]),
     content=(
       #|[[:alnum:]] => position 1: POSIX class [:alnum:] is not supported in smock's RE2 subset
