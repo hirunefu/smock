@@ -56,6 +56,14 @@ fn Parser::Parser(text : StringView, openapi~ : Bool) -> Parser {
 }
 
 ///|
+/// What a byte order mark (U+FEFF) is rejected with where the parser would
+/// read it as text outside a quoted scalar: in a plain scalar or key, a
+/// comment or a block scalar's content. `Parser` drops one that is the
+/// first character of the text. YAML 1.2.2 allows one only before a
+/// document and inside quoted scalars (section 5.2).
+const BYTE_ORDER_MARK : String = "U+FEFF is a byte order mark; write it as an escape in a double-quoted value"
+
+///|
 /// What an empty value, which YAML reads as null, is rejected with in the
 /// safe subset.
 const EMPTY_VALUE : String = "empty value: write null, or \"\" for an empty string"
@@ -154,13 +162,17 @@ const NO_SPACE_BEFORE_COMMENT : String = "a comment needs a space before its #"
 ///|
 /// Skips a comment: a `#` at the start of a line or after white space, to
 /// the end of its line. A `#` right after other text starts no comment
-/// (YAML 1.2.2, section 6.6), so it is rejected.
+/// (YAML 1.2.2, section 6.6), so it is rejected, and so is a byte order
+/// mark in a comment.
 fn Parser::skip_comment(self : Parser) -> Unit raise ParseError {
   if self.peek() == '#' {
     if self.pos > self.line_start && !(self.chars[self.pos - 1] is (' ' | '\t')) {
       self.fail(NO_SPACE_BEFORE_COMMENT)
     }
     while !(self.peek() is ('\n' | EOF)) {
+      if self.peek() == '\u{FEFF}' {
+        self.fail(BYTE_ORDER_MARK)
+      }
       self.bump()
     }
   }
@@ -265,7 +277,6 @@ fn Parser::block_node(
   pointer : String,
   inline~ : Bool = false,
 ) -> Json raise ParseError {
-  self.reached = pointer
   let column = self.column()
   let start = self.pos
   if self.at_sequence_item() {
@@ -440,6 +451,9 @@ fn Parser::scalar(
   } else {
     self.check_node_start(flow~)
     let (text, multiline) = self.plain(parent, flow~)
+    if text.contains_char('\u{FEFF}') {
+      self.fail(BYTE_ORDER_MARK)
+    }
     { text, quoted: false, multiline, }
   }
 }
@@ -745,7 +759,6 @@ fn Parser::block_scalar(self : Parser, parent : Int32) -> Json raise ParseError 
     self.bump()
     let line_start = self.pos
     if self.document_marker_at(line_start) {
-      self.pos = line_start
       break
     }
     let mut spaces = 0
@@ -822,6 +835,9 @@ fn Parser::block_scalar(self : Parser, parent : Int32) -> Json raise ParseError 
     read_content = true
     empty = 0
     while !(self.peek() is ('\n' | EOF)) {
+      if self.peek() == '\u{FEFF}' {
+        self.fail(BYTE_ORDER_MARK)
+      }
       out.write_char(self.peek())
       self.bump()
     }

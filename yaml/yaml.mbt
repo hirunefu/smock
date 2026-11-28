@@ -114,6 +114,12 @@ pub impl Show for ParseError with fn output(self, logger) {
 ///   scalar, it is part of the scalar, as in `path: /a#b`; anywhere else,
 ///   such as right after a quoted value or a flow collection, it is
 ///   rejected with "a comment needs a space before its #".
+/// - A byte order mark (U+FEFF) is dropped as the first character of the
+///   text. Anywhere else, it is text inside a quoted scalar, as YAML 1.2.2
+///   allows (section 5.2), and rejected outside one. A second mark at the
+///   start of the text, and a mark in a plain scalar or key, a comment or a
+///   block scalar's content, are rejected with "U+FEFF is a byte order
+///   mark; write it as an escape in a double-quoted value".
 /// - A block scalar whose last line ends the text without a line break
 ///   gets no line break added, as YAML 1.2.2 says (section 8.1.1.2), with
 ///   each chomping indicator: a text that ends with `a: |` and then `  x`,

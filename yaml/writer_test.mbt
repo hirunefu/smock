@@ -563,6 +563,10 @@ fn nested(depth : Int32, inner : Json, objects~ : Bool = false) -> Json {
 ///|
 test "a tree nested deeper than the parser accepts is an error, never written" {
   // The parser accepts 1024 nested collections, empty ones included.
+  // The message's words are the parser's for the same limit, "nesting is
+  // deeper than 1024 levels", which no document states; the maintainer
+  // confirmed them as the code has them on 2026-11-26 (the twenty-seventh
+  // round of #275's answers, #323).
   for objects in [false, true] {
     for inner in [Json::number(1), Json::array([]), Json::object({})] {
       let tree = nested(1023, inner, objects~)

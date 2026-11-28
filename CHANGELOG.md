@@ -830,6 +830,20 @@ of each GitHub release include its section
   2^30 bytes of an earlier request still held, took the parser's position
   past what an Int32 holds: smock took the request with an empty body, or
   aborted ([smock#433](https://github.com/hirunefu/smock/issues/433)).
+- In YAML, a byte order mark (U+FEFF) outside quotes is now rejected,
+  unless it is the first character of the text. A mark inside a document
+  is not YAML, and YAML parsers read a second mark at the start of a file
+  differently. smock read both as text: two marks at the start of a
+  Definition file put the second into the first key, and a mark inside a
+  plain value stayed in the value, where it cannot be seen. A Definition
+  file that holds such a mark in a plain value or key, a comment or a
+  block scalar's content loaded, and is now rejected with "U+FEFF is a
+  byte order mark; write it as an escape in a double-quoted value". So is
+  an OpenAPI document that holds one there inside the document.
+  `smock import-openapi` drops one more mark at the start of an OpenAPI
+  document, as before, so two marks there still import. Inside a quoted
+  value, the mark is text, as before
+  ([smock#437](https://github.com/hirunefu/smock/issues/437)).
 
 ## [0.4.0] - 2026-11-01
 

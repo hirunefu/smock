@@ -187,8 +187,8 @@ test "a double-quoted scalar has the escapes of JSON and YAML" {
   // one comes "is in error" (section 2.2, step 3): here another high
   // surrogate, U+E000 just past the low ones, and an escape other than
   // `\u`. The rows show the code points read, or the pointer of the value
-  // that is rejected, as `ParseError` documents; the message of a rejected
-  // pair is put to the maintainer (#398).
+  // that is rejected, as `ParseError` documents; the rows after them show
+  // the message of a rejected pair.
   let code_points = (text : String) => {
     let result = try @yaml.parse(text) catch {
       @yaml.ParseError(pointer~, ..) => "error \{pointer}"
@@ -218,6 +218,21 @@ test "a double-quoted scalar has the escapes of JSON and YAML" {
       #|"a: \"\\uD800\\uDBFF\"" -> error /a
       #|"a: \"\\uD800\\uE000\"" -> error /a
       #|"a: \"\\uD800\\xDC00\"" -> error /a
+    ),
+  )
+  // The message of each rejected pair: a high surrogate followed by a `\u`
+  // escape outside the low surrogates (the first two), or by no `\u`
+  // escape at all (the last). No document states its words; the
+  // maintainer confirmed them as the code has them on 2026-11-26 (the
+  // twenty-seventh round of #275's answers, #323).
+  inspect(
+    each([
+      "a: \"\\uD800\\uDBFF\"", "a: \"\\uD800\\uE000\"", "a: \"\\uD800\\xDC00\"",
+    ]),
+    content=(
+      #|"a: \"\\uD800\\uDBFF\"" -> error /a: invalid escape: a high surrogate must be followed by a low surrogate
+      #|"a: \"\\uD800\\uE000\"" -> error /a: invalid escape: a high surrogate must be followed by a low surrogate
+      #|"a: \"\\uD800\\xDC00\"" -> error /a: invalid escape: a high surrogate must be followed by a low surrogate
     ),
   )
 }
@@ -718,6 +733,9 @@ test "one document may start with --- and end with ..." {
   // its key gives (the test of malformed indentation); no node is reached
   // above the root, so the pointer is `""`. A flow collection may start
   // there (s-l+flow-in-block, production 197), as the last case shows.
+  // No document states the words of these two messages; the maintainer
+  // confirmed them as the code has them on 2026-11-26 (the twenty-seventh
+  // round of #275's answers, #323).
   inspect(
     each(["--- a: 1", "--- - a", "--- \"a\": 1", "--- [a]\n"]),
     content=(
@@ -935,6 +953,9 @@ test "timestamps and the YAML 1.1 merge and value keys must be quoted" {
 
 ///|
 test "the same values quoted are strings, and look-alikes that no YAML version types are strings too" {
+  // No document states the words of "a block sequence must start on its own
+  // line", which `-` gets; the maintainer confirmed them as the code has them
+  // on 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   inspect(
     as_value([
       "'yes'", "\"0x1F\"", "'2001-12-14'", "\"~\"", "yes!", "0X1F", "0xG", ".infinity",
@@ -1060,6 +1081,11 @@ test "a plain key that is not a string in every YAML version must be quoted" {
 
 ///|
 test "malformed indentation gives an error at the deepest node reached, or a value when YAML reads one" {
+  // No document states the words of "unexpected ':' after a value; a nested
+  // mapping must start on its own line", "a block sequence must start on its
+  // own line" and "a leading empty line of a block scalar has more spaces
+  // than its first line"; the maintainer confirmed them as the code has them
+  // on 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   inspect(
     each([
       "a:\n  b: 1\n c: 2", "a:\n    b: 1\n  c: 2", "stubs:\n  - id: a\n     mock: m",
@@ -1134,6 +1160,10 @@ test "malformed indentation gives an error at the deepest node reached, or a val
 
 ///|
 test "tabs in indentation give an error; tabs elsewhere are white space" {
+  // No document states the words of "tabs are not allowed in indentation" and
+  // "a leading empty line of a block scalar has more spaces than its first
+  // line"; the maintainer confirmed them as the code has them on 2026-11-26
+  // (the twenty-seventh round of #275's answers, #323).
   inspect(
     each([
       "a:\n\tb: 1", "a:\n  \tb: 1", "- a\n\t- b", "a: |\n\tx", "a:\tb", "a: [1,\t2]",
@@ -1349,10 +1379,28 @@ test "unterminated quotes and flow collections give an error at the deepest node
       #|"a: {\"x\" 1}" -> error /a/x: expected ':' after a key
     ),
   )
+  // A `\` that ends the text inside a double-quoted value leaves the value
+  // unterminated too: an escape needs a character after its `\`
+  // ("c-ns-esc-char ::= c-escape ( ns-esc-null | ... )", YAML 1.2.2,
+  // production 62), and the value its closing quote (production 109). The
+  // message is the one the first rows give for an unterminated
+  // double-quoted value. No document states its words; the maintainer
+  // confirmed them as the code has them on 2026-11-26 (the twenty-seventh
+  // round of #275's answers, #323), for this case and the first rows.
+  inspect(
+    each(["a: \"x\\"]),
+    content=(
+      #|"a: \"x\\" -> error /a: unterminated double-quoted value
+    ),
+  )
 }
 
 ///|
 test "empty values, empty documents and stray indicators give an error" {
+  // No document states the words of "a key must be a plain or quoted scalar"
+  // and "invalid escape: a high surrogate must be followed by a low
+  // surrogate"; the maintainer confirmed them as the code has them on
+  // 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   inspect(
     each([
       "", "# only a comment\n", "---\n", "a:", "a:\nb: 1", "- ", "-\n- b", "{a: }",
@@ -1412,10 +1460,39 @@ test "empty values, empty documents and stray indicators give an error" {
       #|"{a: 1}\t: b" -> error /a: a key must be a plain or quoted scalar
     ),
   )
+  // The same for a later key of a block mapping, and for a key of a flow
+  // mapping, first or later: a collection is rejected there too, in both
+  // modes, with the message above, at the deepest node reached (the member
+  // before it, or the whole document for a flow mapping's first key). No
+  // document states the message's words; the maintainer confirmed them as
+  // the code has them on 2026-11-26 (the twenty-seventh round of #275's
+  // answers, #323), in these places and in the rows above.
+  inspect(
+    both(["a: 1\n[b]: 2", "a: 1\n{b: 1}: 2", "{[a]: 1}", "{a: 1, {b: 1}: 2}"]),
+    content=(
+      #|"a: 1\n[b]: 2"
+      #|  safe: error /a: a key must be a plain or quoted scalar
+      #|  openapi: error /a: a key must be a plain or quoted scalar
+      #|"a: 1\n{b: 1}: 2"
+      #|  safe: error /a: a key must be a plain or quoted scalar
+      #|  openapi: error /a: a key must be a plain or quoted scalar
+      #|"{[a]: 1}"
+      #|  safe: error : a key must be a plain or quoted scalar
+      #|  openapi: error : a key must be a plain or quoted scalar
+      #|"{a: 1, {b: 1}: 2}"
+      #|  safe: error /a: a key must be a plain or quoted scalar
+      #|  openapi: error /a: a key must be a plain or quoted scalar
+    ),
+  )
 }
 
 ///|
 test "line breaks may be CRLF or CR; a byte order mark may start the text; other control characters are rejected" {
+  // No document states the words of "U+<hex> is a control character; write it
+  // as an escape in a double-quoted value", which U+FFFE and U+FFFF get too,
+  // and "U+<hex> is a line break in YAML 1.1 only; write it as an escape in a
+  // double-quoted value"; the maintainer confirmed them as the code has them
+  // on 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   let cases = [
     ("CRLF", "a: 1\r\nb: |\r\n  x\r\n"),
     ("CR", "a: 1\rb: 2"),
@@ -1505,6 +1582,91 @@ test "line breaks may be CRLF or CR; a byte order mark may start the text; other
       #|U+10FFFF -> read as written
     ),
   )
+  // A byte order mark (U+FEFF, shown here as <U+FEFF>) is dropped only as
+  // the text's first character. YAML 1.2.2 allows one before a document
+  // ("l-document-prefix ::= c-byte-order-mark? l-comment*", production
+  // 202) and inside quoted scalars ("byte order marks are also allowed
+  // inside quoted scalars", section 5.2), and nowhere else: "A BOM must not
+  // appear inside a document" (Example 5.2), and a plain scalar is made of
+  // nb-char, which excludes it (production 27). Two marks at the start are
+  // two document prefixes in YAML 1.2.2 (production 211), and PyYAML reads
+  // the second as text. So that the safe subset reads no text that parsers
+  // read differently, the maintainer decided on 2026-11-26 (#437, the
+  // twenty-seventh round of #275's answers) that a mark outside quotes that
+  // is not the text's first character is rejected: a second mark at the
+  // start, and a mark inside a document. The pointer is the deepest node
+  // reached, as `ParseError` documents; the message is put to the
+  // maintainer (#437). Inside quotes, the mark is text.
+  let visible = (text : String) => {
+    text.replace_all(old="\u{FEFF}", new="<U+FEFF>")
+  }
+  inspect(
+    visible(
+      each([
+        "\u{FEFF}\u{FEFF}a: 1", "a: x\u{FEFF}y", "- \u{FEFF}a", "a\u{FEFF}: 1", "a: 1\nb\u{FEFF}: 2",
+        "[a, \u{FEFF}b]", "{a: 1, \u{FEFF}b: 2}", "a: x\n  \u{FEFF}y", "a: \"x\u{FEFF}y\"",
+        "a: 'x\u{FEFF}y'", "\"a\u{FEFF}\": 1", "\u{FEFF}\"\u{FEFF}a\": \"\u{FEFF}\"",
+      ]),
+    ),
+    content=(
+      #|"<U+FEFF><U+FEFF>a: 1" -> error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: x<U+FEFF>y" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"- <U+FEFF>a" -> error /0: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a<U+FEFF>: 1" -> error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: 1\nb<U+FEFF>: 2" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"[a, <U+FEFF>b]" -> error /1: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"{a: 1, <U+FEFF>b: 2}" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: x\n  <U+FEFF>y" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: \"x<U+FEFF>y\"" -> {"a":"x<U+FEFF>y"}
+      #|"a: 'x<U+FEFF>y'" -> {"a":"x<U+FEFF>y"}
+      #|"\"a<U+FEFF>\": 1" -> {"a<U+FEFF>":1}
+      #|"<U+FEFF>\"<U+FEFF>a\": \"<U+FEFF>\"" -> {"<U+FEFF>a":"<U+FEFF>"}
+    ),
+  )
+  // A comment is outside quotes too, and its text is nb-char
+  // ("c-nb-comment-text ::= c-comment nb-char*", YAML 1.2.2, production
+  // 75), which excludes the mark: a mark in a comment is rejected wherever
+  // the comment is, on the line of a value, before the document, after a
+  // block scalar's header or in a flow collection, with the same message
+  // as above, at the deepest node reached.
+  inspect(
+    visible(
+      each([
+        "a: 1 # c\u{FEFF}", "# c\u{FEFF}\na: 1", "\u{FEFF}# c\u{FEFF}\na: 1", "a: | # c\u{FEFF}\n  x\n",
+        "[a, # c\u{FEFF}\n b]",
+      ]),
+    ),
+    content=(
+      #|"a: 1 # c<U+FEFF>" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"# c<U+FEFF>\na: 1" -> error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"<U+FEFF># c<U+FEFF>\na: 1" -> error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: | # c<U+FEFF>\n  x\n" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"[a, # c<U+FEFF>\n b]" -> error /0: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+    ),
+  )
+  // So is a block scalar's content: its lines are nb-char after the
+  // indentation ("l-nb-literal-text(n) ::= l-empty(n,BLOCK-IN)* s-indent(n)
+  // nb-char+", YAML 1.2.2, production 171; "s-nb-folded-text(n) ::=
+  // s-indent(n) ns-char nb-char*", production 175), and "there is no way to
+  // escape characters inside literal scalars" (section 8.1.2). A mark in a
+  // literal or folded scalar is rejected, on its first line or a later one,
+  // alone or among other text, with the same message as above, at the
+  // deepest node reached.
+  inspect(
+    visible(
+      each([
+        "a: |\n  x\u{FEFF}y\n", "a: >\n  \u{FEFF}\n", "a: |\n  x\n  \u{FEFF}\n",
+        "- |-\n \u{FEFF}", "|\n\u{FEFF}",
+      ]),
+    ),
+    content=(
+      #|"a: |\n  x<U+FEFF>y\n" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: >\n  <U+FEFF>\n" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: |\n  x\n  <U+FEFF>\n" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"- |-\n <U+FEFF>" -> error /0: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"|\n<U+FEFF>" -> error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+    ),
+  )
 }
 
 ///|
@@ -1519,6 +1681,9 @@ fn message(text : String) -> String {
 
 ///|
 test "nesting as deep as the JSON parser allows gives a value; deeper nesting gives an error" {
+  // No document states the words of "nesting is deeper than 1024 levels"; the
+  // maintainer confirmed them as the code has them on 2026-11-26 (the
+  // twenty-seventh round of #275's answers, #323).
   // The JSON parser allows 1024 nested collections.
   let flow = (depth : Int32) => "[".repeat(depth) + "]".repeat(depth)
   assert_eq(@yaml.parse(flow(1024)), @json.parse(flow(1024)))
@@ -1587,6 +1752,9 @@ test "nesting as deep as the JSON parser allows gives a value; deeper nesting gi
 
 ///|
 test "very long scalars and collections give a value, or an error when unterminated" {
+  // No document states the words of "unterminated double-quoted value"; the
+  // maintainer confirmed them as the code has them on 2026-11-26 (the
+  // twenty-seventh round of #275's answers, #323).
   let long = "x".repeat(1_000_000)
   let length = (text : String) => {
     match @yaml.parse(text) {

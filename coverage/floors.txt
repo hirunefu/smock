@@ -42,5 +42,5 @@ unicode 1
 usage 0
 watch 4
 xml 0
-yaml 21
+yaml 1
 yaml-test-suite 15
