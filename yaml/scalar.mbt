@@ -18,7 +18,12 @@ fn resolve(text : String) -> Plain {
     _ => ()
   }
   if is_json_number(text) {
-    return Value(@json.parse(text)) catch { _ => Ambiguous("a number") }
+    // A decimal integer beyond 2^53 keeps its digits as `repr`, and a
+    // number beyond a Double's range keeps its text, so the JSON parser
+    // reads every number in JSON syntax.
+    return Value(@json.parse(text)) catch {
+      _ => abort("is_json_number accepts only numbers in JSON syntax")
+    }
   }
   match text.to_lower() {
     "y" | "n" | "yes" | "no" | "on" | "off" | "true" | "false" =>

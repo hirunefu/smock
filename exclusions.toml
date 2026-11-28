@@ -295,6 +295,19 @@ category = "UNREACHABLE"
 reason = "An abort arm, which an invariant guards; its message: \"core_decimal gives a number in JSON syntax\"."
 reviewer = "the maintainer, 2026-11-18"
 
+# The abort arm that #275's twenty-seventh round put in place of resolve's
+# kind "a number" after `@json.parse(text)`, which no text reaches, as #280
+# did for resolve_core's arm above (UNREACHABLE).
+
+[[exclusion]]
+file = "yaml/scalar.mbt"
+definition = "resolve"
+position = "13:12"
+text = "692f0a2c43f1da3b"
+category = "UNREACHABLE"
+reason = "An abort arm, which an invariant guards; its message: \"is_json_number accepts only numbers in JSON syntax\"."
+reviewer = ""
+
 # The default of --journal, which follows the engine's (#320): UNREACHABLE,
 # with a written argument, which the maintainer accepted on 2026-11-18.
 
