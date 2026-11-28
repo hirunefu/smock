@@ -187,8 +187,8 @@ test "a double-quoted scalar has the escapes of JSON and YAML" {
   // one comes "is in error" (section 2.2, step 3): here another high
   // surrogate, U+E000 just past the low ones, and an escape other than
   // `\u`. The rows show the code points read, or the pointer of the value
-  // that is rejected, as `ParseError` documents; the message of a rejected
-  // pair is put to the maintainer (#398).
+  // that is rejected, as `ParseError` documents; the rows after them show
+  // the message of a rejected pair.
   let code_points = (text : String) => {
     let result = try @yaml.parse(text) catch {
       @yaml.ParseError(pointer~, ..) => "error \{pointer}"
@@ -218,6 +218,21 @@ test "a double-quoted scalar has the escapes of JSON and YAML" {
       #|"a: \"\\uD800\\uDBFF\"" -> error /a
       #|"a: \"\\uD800\\uE000\"" -> error /a
       #|"a: \"\\uD800\\xDC00\"" -> error /a
+    ),
+  )
+  // The message of each rejected pair: a high surrogate followed by a `\u`
+  // escape outside the low surrogates (the first two), or by no `\u`
+  // escape at all (the last). No document states its words; the
+  // maintainer confirmed them as the code has them on 2026-11-26 (the
+  // twenty-seventh round of #275's answers, #323).
+  inspect(
+    each([
+      "a: \"\\uD800\\uDBFF\"", "a: \"\\uD800\\uE000\"", "a: \"\\uD800\\xDC00\"",
+    ]),
+    content=(
+      #|"a: \"\\uD800\\uDBFF\"" -> error /a: invalid escape: a high surrogate must be followed by a low surrogate
+      #|"a: \"\\uD800\\uE000\"" -> error /a: invalid escape: a high surrogate must be followed by a low surrogate
+      #|"a: \"\\uD800\\xDC00\"" -> error /a: invalid escape: a high surrogate must be followed by a low surrogate
     ),
   )
 }
@@ -1347,6 +1362,20 @@ test "unterminated quotes and flow collections give an error at the deepest node
       #|"a: [1}" -> error /a/0: expected , or ] in a flow sequence
       #|"a: {x: 1]" -> error /a/x: expected , or } in a flow mapping
       #|"a: {\"x\" 1}" -> error /a/x: expected ':' after a key
+    ),
+  )
+  // A `\` that ends the text inside a double-quoted value leaves the value
+  // unterminated too: an escape needs a character after its `\`
+  // ("c-ns-esc-char ::= c-escape ( ns-esc-null | ... )", YAML 1.2.2,
+  // production 62), and the value its closing quote (production 109). The
+  // message is the one the first rows give for an unterminated
+  // double-quoted value. No document states its words; the maintainer
+  // confirmed them as the code has them on 2026-11-26 (the twenty-seventh
+  // round of #275's answers, #323), for this case and the first rows.
+  inspect(
+    each(["a: \"x\\"]),
+    content=(
+      #|"a: \"x\\" -> error /a: unterminated double-quoted value
     ),
   )
 }
