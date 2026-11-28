@@ -53,6 +53,14 @@ test "classes and . consume one code point of any length" {
   inspect(on("^.$", "\u{FFFFF}"), content="search 0-4, full true")
   inspect(on("^.$", "\u{100000}"), content="search 0-4, full true")
   inspect(on("^.$", "\u{10FFFF}"), content="search 0-4, full true")
+  // Each is the code point its four bytes encode, so a literal of it matches
+  // it. The same results as RE2.
+  inspect(on("\u{10000}", "\u{10000}"), content="search 0-4, full true")
+  inspect(on("\u{3FFFF}", "\u{3FFFF}"), content="search 0-4, full true")
+  inspect(on("\u{40000}", "\u{40000}"), content="search 0-4, full true")
+  inspect(on("\u{FFFFF}", "\u{FFFFF}"), content="search 0-4, full true")
+  inspect(on("\u{100000}", "\u{100000}"), content="search 0-4, full true")
+  inspect(on("\u{10FFFF}", "\u{10FFFF}"), content="search 0-4, full true")
 }
 
 ///|
