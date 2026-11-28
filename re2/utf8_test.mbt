@@ -60,6 +60,16 @@ test "bytes that are not well-formed UTF-8 match nothing that consumes a charact
   inspect(on_bytes(".", b"\xe2\x84"), content="search none, full false")
   inspect(on_bytes("(?s).", b"\xc0\x80"), content="search none, full false")
   inspect(on_bytes("\u{FFFD}", b"\xff"), content="search none, full false")
+  // One byte off a well-formed sequence of RFC 3629, section 4: C1, just
+  // below UTF8-2's first lead byte C2, and C0, just above the range a byte
+  // after a lead byte may take (A0 to BF after E0, 80 to BF otherwise), as
+  // the second byte of a sequence of two and of three bytes and as the third
+  // byte of three. The same results as RE2.
+  inspect(on_bytes("(?s).", b"\xc1\xbf"), content="search none, full false")
+  inspect(on_bytes("(?s).", b"\xc2\xc0"), content="search none, full false")
+  inspect(on_bytes("(?s).", b"\xe0\xc0\x80"), content="search none, full false")
+  inspect(on_bytes("(?s).", b"\xe1\xc0\x80"), content="search none, full false")
+  inspect(on_bytes("(?s).", b"\xe1\x80\xc0"), content="search none, full false")
 }
 
 ///|
