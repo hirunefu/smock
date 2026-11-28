@@ -602,4 +602,40 @@ test "a regex whose DFA would outgrow its budget drops it and gets the same resu
   }
   debug_inspect(differ, content="[]")
   assert_true(re.dfa is TooLarge)
+  // However a bracket class is written, it is one set of characters, which
+  // CharSet keeps as "sorted, non-overlapping, non-adjacent ranges" (its doc
+  // comment), so every spelling of `[a-f]` below compiles to the same
+  // program: written whole, as two ranges that adjoin, as two that share
+  // `d`, in the other order, and with an item inside a range and one after
+  // it. The DFA is built from the program (the README's "Linear time"), and
+  // Dfa::new starts a byte class "at each byte where some instruction or
+  // assertion may tell it from the byte before": no instruction tells `d`
+  // from `c`, nor `e` from `d`, nor `f` from `e`. So each spelling's states
+  // take as much of the budget, and each drops its DFA at the same input,
+  // with the Pike VM's answers before and after.
+  let spellings = ["[a-f]", "[a-cd-f]", "[a-dd-f]", "[d-fa-c]", "[fa-ed]"]
+  let regexes = spellings.map(class => compile("\{class}*a\{class}{14}"))
+  let rand = @random.Rand::chacha8(seed=b"smock re2 dfa over its budget!!!")
+  let differ = []
+  for i in 0..<300 {
+    let input = @buffer.Buffer()
+    for _ in 0..<(15 + rand.int(limit=40)) {
+      input.write_byte(if rand.int(limit=2) == 0 { b'a' } else { b'b' })
+    }
+    let input = input.to_bytes()
+    let expected = run(regexes[0].insts, input[:], Full).0 is Some(_)
+    let answers = regexes.map(re => re.full_match(input[:]))
+    for j, re in regexes {
+      if answers[j] != expected {
+        differ.push("input \{i}: \{spellings[j]} answers otherwise")
+      }
+      if (re.dfa is Built(_)) != (regexes[0].dfa is Built(_)) {
+        differ.push(
+          "input \{i}: \{spellings[j]} drops its DFA at another input",
+        )
+      }
+    }
+  }
+  debug_inspect(differ, content="[]")
+  assert_true(regexes.iter().all(re => re.dfa is TooLarge))
 }

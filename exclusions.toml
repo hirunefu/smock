@@ -2594,12 +2594,16 @@ reviewer = ""
 # re2's engines: `full_match` runs the DFA, or the Pike VM once the DFA is
 # over its budget, and `search` runs the Pike VM; a caller chooses by the
 # method it calls. One mutant moves the largest code point past U+10FFFF,
-# where no pattern and no UTF-8 input reaches; three keep adjacent or
-# touching ranges apart (CharSet::of's merge only saves cost: the sets hold
-# the same code points); two change nothing at all; one lets
-# CharSet::negate push an empty range, which CharSet::of and contains
-# happen to read as no code point. None is a deletion candidate: each check
-# is needed, or keeps the ranges as CharSet's doc comment states them. The
+# where no pattern and no UTF-8 input reaches; two change nothing at all;
+# one lets CharSet::negate push an empty range, which CharSet::of and
+# contains happen to read as no code point. None is a deletion candidate:
+# each check is needed, or keeps the ranges as CharSet's doc comment states
+# them. Three more were proposed here, CharSet::of's merge with `- 1`,
+# `+ 0` and `<` (adjacent or touching ranges kept apart, the same code
+# points); the separate context killed them with the DFA's budget test in
+# full_match_wbtest.mbt, which holds every spelling of `[a-f]` to drop its
+# DFA at the same input (a range kept apart starts a byte class of its own,
+# so each state takes more of the budget), and removed their entries. The
 # implementer folded into digests what the sets answer for every list of up
 # to three ranges over twelve code points at both ends (480,715 lists, each
 # set, its complement, the complement's complement and their union read at
@@ -2615,7 +2619,7 @@ reviewer = ""
 # changed them; the three mutants that keep ranges apart made the first of
 # those regexes drop its DFA sooner (at its 112th input, not its 128th),
 # with the same answers (a scratch test, not committed). By key, the seven
-# survive re2's 30 tests and the importers' 1,195. The adversarial attempt
+# survived re2's 30 tests and the importers' 1,195. The adversarial attempt
 # is pending. The maintainer reads every entry, since re2 is a protocol
 # package.
 
@@ -2629,39 +2633,12 @@ adversarial = { context = "pending: a separate agent context, after #416's imple
 reviewer = ""
 
 [[exclusion]]
-mutant = "re2/class.mbt,CharSet::of,AOR,+,-,0"
-text = "e4f6ae5fb68e10af"
-category = "EQUIVALENT"
-reason = "CharSet::of merges a range into the last one it kept when `lo <= out[n - 1] + 1`; the mutant's `lo <= out[n - 1] - 1` merges only a range that starts before the last one's end, so a range that starts at that end (sharing one code point) or right after it (adjacent) is kept apart. The ranges are sorted by their start, so every range kept still starts at or after the end of every earlier one, and the set holds the same code points: contains, which looks for the last range that starts at or before the code point and then checks its end, finds a shared point in the later range and every other point where the code finds it, for every code point and for -1; CharSet::negate reads such a pair as one range (its gap test `r[i] > next` fails between them) and makes the same complement. So neither engine answers otherwise: the sets are read by the DFA (`full_match`) and by the Pike VM (`search`, and `full_match` once its DFA is over budget). It differs in the set's ranges, which a white-box test could read, and in cost: a binary search over more ranges, and, where two such ranges meet below 128, a byte class or two more in the DFA (Dfa::new starts a class at each range's start and after its end), so that each state takes as many more Ints of the DFA's 128 KiB budget and a large DFA gives way to the Pike VM sooner, with the same answers (README, Linear time; full_match_wbtest.mbt's property holds the two engines equal). Time stays linear in the input. Merging touching and adjacent ranges only saves cost, so it is no deletion candidate."
-compiler_output = "differs"
-adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand, the digests of what the sets, full_match and search answer are the code's on wasm-gc; the digests of the sets' ranges and of the DFA's number of byte classes differ, and the first of the four large regexes drops its DFA at its 112th input, not its 128th"] }
-reviewer = ""
-
-[[exclusion]]
 mutant = "re2/class.mbt,CharSet::of,INT,0,1,0"
 text = "e4f6ae5fb68e10af"
 category = "EQUIVALENT"
 reason = "CharSet::of's guard `n > 0 &&` before it reads the last range kept, `out[n - 1]`, becomes `n > 1`. `n` is `out.length()`, and `out` grows by two at a time (a range's start and end), so `n` is 0 or at least 2, and `n > 1` holds exactly when `n > 0` does. It differs nowhere, a white-box call of CharSet::of included, in both engines, which read the same sets. The guard keeps `out[n - 1]` from reading index -1 when nothing is kept yet, so it is no deletion candidate."
 compiler_output = "differs"
 adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand every digest is the code's on wasm-gc, the sets' ranges and the DFA's byte classes included"] }
-reviewer = ""
-
-[[exclusion]]
-mutant = "re2/class.mbt,CharSet::of,INT,1,0,1"
-text = "e4f6ae5fb68e10af"
-category = "EQUIVALENT"
-reason = "CharSet::of merges a range into the last one it kept when `lo <= out[n - 1] + 1`; the mutant's `lo <= out[n - 1] + 0` does not merge a range that starts right after the last one's end (adjacent), while ranges that overlap, by one code point or more, still merge. The ranges stay sorted and apart, and the set holds the same code points: contains finds each point in the range that holds it, for every code point and for -1, and CharSet::negate makes the same complement, since its gap test `r[i] > next` fails between two adjacent ranges. So neither engine answers otherwise: the sets are read by the DFA (`full_match`) and by the Pike VM (`search`, and `full_match` once its DFA is over budget). It differs in the set's ranges, which a white-box test could read, and in cost: a binary search over more ranges, and, where two adjacent ranges meet below 128, one more byte class in the DFA, so that each state takes one more Int of its 128 KiB budget and a large DFA gives way to the Pike VM sooner, with the same answers (README, Linear time; full_match_wbtest.mbt's property holds the two engines equal). Time stays linear in the input. Merging adjacent ranges only saves cost, so it is no deletion candidate. The mutant is the same function as `lo < out[n - 1] + 1` (ROR,<=,<,0)."
-compiler_output = "differs"
-adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand, the digests of what the sets, full_match and search answer are the code's on wasm-gc; the digests of the sets' ranges and of the DFA's number of byte classes differ, and the first of the four large regexes drops its DFA at its 112th input, not its 128th"] }
-reviewer = ""
-
-[[exclusion]]
-mutant = "re2/class.mbt,CharSet::of,ROR,<=,<,0"
-text = "e4f6ae5fb68e10af"
-category = "EQUIVALENT"
-reason = "CharSet::of merges a range into the last one it kept when `lo <= out[n - 1] + 1`; the mutant's `lo < out[n - 1] + 1` does not merge a range that starts right after the last one's end (adjacent), while ranges that overlap, by one code point or more, still merge. The ranges stay sorted and apart, and the set holds the same code points: contains finds each point in the range that holds it, for every code point and for -1, and CharSet::negate makes the same complement, since its gap test `r[i] > next` fails between two adjacent ranges. So neither engine answers otherwise: the sets are read by the DFA (`full_match`) and by the Pike VM (`search`, and `full_match` once its DFA is over budget). It differs in the set's ranges, which a white-box test could read, and in cost: a binary search over more ranges, and, where two adjacent ranges meet below 128, one more byte class in the DFA, so that each state takes one more Int of its 128 KiB budget and a large DFA gives way to the Pike VM sooner, with the same answers (README, Linear time; full_match_wbtest.mbt's property holds the two engines equal). Time stays linear in the input. Merging adjacent ranges only saves cost, so it is no deletion candidate. The mutant is the same function as `lo <= out[n - 1] + 0` (INT,1,0,1)."
-compiler_output = "differs"
-adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand, the digests of what the sets, full_match and search answer are the code's on wasm-gc; the digests of the sets' ranges and of the DFA's number of byte classes differ, and the first of the four large regexes drops its DFA at its 112th input, not its 128th"] }
 reviewer = ""
 
 [[exclusion]]
