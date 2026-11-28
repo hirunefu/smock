@@ -55,6 +55,14 @@ test "RE2 syntax left out of the subset is rejected as not supported in it" {
     error_of("(?P<\u{80}>x)"),
     content="position 0: non-ASCII capture group name (?P<\u{80}> is not supported in smock's RE2 subset",
   )
+  // 7, the last octal digit, after 1 makes an octal escape (RE2's syntax
+  // page: "\123 octal character code (up to three digits)"; RE2 2024-07-02
+  // through google-re2 1.1.20240702 matches \17 on U+000F), which the README
+  // lists as left out.
+  inspect(
+    error_of("\\17"),
+    content="position 0: octal escape \\17 is not supported in smock's RE2 subset",
+  )
 }
 
 ///|
@@ -119,6 +127,14 @@ test "syntax RE2 does not have is rejected as not RE2 syntax" {
   inspect(
     error_of("\\\u{80}"),
     content="position 0: escape \\\u{80} is not RE2 syntax",
+  )
+  // 8 is no octal digit, so \1 before it is the backreference \1 (RE2's
+  // syntax page: "\1 backreference (NOT SUPPORTED)"; RE2 2024-07-02:
+  // "invalid escape sequence: \1" for \18), with the message the README's
+  // example gives for \1.
+  inspect(
+    error_of("\\18"),
+    content="position 0: backreference \\1 is not RE2 syntax",
   )
 }
 
