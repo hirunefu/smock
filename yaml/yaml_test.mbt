@@ -28,6 +28,21 @@ test "a block mapping of plain scalars is an object of strings, nested by indent
       #|{"name":"users","request":{"method":"GET","path":"/users/1"},"response":{"headers":{"Content-Type":"application/json"},"body":"hello world"}}
     ),
   )
+  // White space may come between a key and its `:`: "ns-s-implicit-yaml-key(c)
+  // ::= ns-flow-yaml-node(0,c) s-separate-in-line?" and
+  // "c-s-implicit-json-key(c) ::= c-flow-json-node(0,c) s-separate-in-line?"
+  // (YAML 1.2.2, productions 154 and 155), for the first key of a mapping
+  // as for the others.
+  inspect(
+    each(["a : b", "\"a\"\t: b", "'a' : b", "a : 1\nb\t: 2", "x:\n  a  : b"]),
+    content=(
+      #|"a : b" -> {"a":"b"}
+      #|"\"a\"\t: b" -> {"a":"b"}
+      #|"'a' : b" -> {"a":"b"}
+      #|"a : 1\nb\t: 2" -> {"a":1,"b":2}
+      #|"x:\n  a  : b" -> {"x":{"a":"b"}}
+    ),
+  )
 }
 
 ///|
@@ -159,6 +174,52 @@ test "a double-quoted scalar has the escapes of JSON and YAML" {
     @yaml.parse(separators),
     Json::string("N\u{85} _\u{a0} L\u{2028} P\u{2029}"),
   )
+  // "Each escape sequence must be parsed into the appropriate Unicode
+  // character" (YAML 1.2.2, section 5.7), and `parse` reads "the escapes of
+  // YAML 1.2 (which include those of JSON)". JSON writes a character beyond
+  // U+FFFF as "a 12-character sequence, encoding the UTF-16 surrogate pair"
+  // (RFC 8259, section 7, whose example is U+1D11E as `\uD834\uDD1E`), and
+  // RFC 2781, section 2.2, decodes a pair: a high surrogate, 0xD800 to
+  // 0xDBFF, then a low one, 0xDC00 to 0xDFFF; the 10 low bits of each, plus
+  // 0x10000. So the first pair and the last give U+10000 and U+10FFFF, and
+  // U+D7FF, the code point just below the surrogates, is a character of its
+  // own (c-printable, production 1). A high surrogate after which no low
+  // one comes "is in error" (section 2.2, step 3): here another high
+  // surrogate, U+E000 just past the low ones, and an escape other than
+  // `\u`. The rows show the code points read, or the pointer of the value
+  // that is rejected, as `ParseError` documents; the message of a rejected
+  // pair is put to the maintainer (#398).
+  let code_points = (text : String) => {
+    let result = try @yaml.parse(text) catch {
+      @yaml.ParseError(pointer~, ..) => "error \{pointer}"
+    } noraise {
+      Object(members) if members.get("a") is Some(String(value)) =>
+        value
+        .iter()
+        .map(c => "U+\{c.to_int().to_string(radix=16).to_upper()}")
+        .collect()
+        .join(" ")
+      tree => tree.stringify()
+    }
+    "\{text.escape()} -> \{result}"
+  }
+  inspect(
+    [
+      "a: \"\\uD7FF\"", "a: \"\\uD800\\uDC00\"", "a: \"\\uD834\\uDD1E\"", "a: \"\\uDBFF\\uDFFF\"",
+      "a: \"\\uD800\\uDBFF\"", "a: \"\\uD800\\uE000\"", "a: \"\\uD800\\xDC00\"",
+    ]
+    .map(code_points)
+    .join("\n"),
+    content=(
+      #|"a: \"\\uD7FF\"" -> U+D7FF
+      #|"a: \"\\uD800\\uDC00\"" -> U+10000
+      #|"a: \"\\uD834\\uDD1E\"" -> U+1D11E
+      #|"a: \"\\uDBFF\\uDFFF\"" -> U+10FFFF
+      #|"a: \"\\uD800\\uDBFF\"" -> error /a
+      #|"a: \"\\uD800\\uE000\"" -> error /a
+      #|"a: \"\\uD800\\xDC00\"" -> error /a
+    ),
+  )
 }
 
 ///|
@@ -181,6 +242,49 @@ test "quoted scalars fold line breaks: one becomes a space, each empty line a ne
     ),
     content=(
       #|{"single":"a b\nc","double":"a b\n\nc de"}
+    ),
+  )
+  // The examples of YAML 1.2.2 for folding in quoted scalars, each a whole
+  // document, read as the specification gives them: Example 6.8 (section
+  // 6.5), Examples 7.5 and 7.6 (section 7.3.1) and Example 7.9 (section
+  // 7.3.2). "All leading and trailing white space characters on each line
+  // are excluded from the content" (7.3.1), a tab after a line's spaces
+  // included (s-flow-line-prefix, production 69), but the white space
+  // before an escaped line break is kept. A document's root continues on
+  // lines at column 0 (production 207), as their last lines do.
+  inspect(
+    each([
+      "\"\n  foo \n \n  \t bar\n\n  baz\n\"", "\"folded \nto a space,\t\n \nto a line feed, or \t\\\n \\ \tnon-content\"",
+      "\" 1st non-empty\n\n 2nd non-empty \n\t3rd non-empty \"", "' 1st non-empty\n\n 2nd non-empty \n\t3rd non-empty '",
+    ]),
+    content=(
+      #|"\"\n  foo \n \n  \t bar\n\n  baz\n\"" -> " foo\nbar\nbaz "
+      #|"\"folded \nto a space,\t\n \nto a line feed, or \t\\\n \\ \tnon-content\"" -> "folded to a space,\nto a line feed, or \t \tnon-content"
+      #|"\" 1st non-empty\n\n 2nd non-empty \n\t3rd non-empty \"" -> " 1st non-empty\n2nd non-empty 3rd non-empty "
+      #|"' 1st non-empty\n\n 2nd non-empty \n\t3rd non-empty '" -> " 1st non-empty\n2nd non-empty 3rd non-empty "
+    ),
+  )
+  // Empty lines after an escaped line break are line feeds:
+  // "s-double-escaped(n) ::= s-white* c-escape b-non-content
+  // l-empty(n,FLOW-IN)* s-flow-line-prefix(n)" (YAML 1.2.2, production
+  // 112), and each l-empty ends with b-as-line-feed (production 70). The
+  // escaped line break itself is excluded from the content (section 7.3.1).
+  inspect(
+    each(["a: \"x\\\n\n  y\"", "a: \"x\\\n\n\n  y\""]),
+    content=(
+      #|"a: \"x\\\n\n  y\"" -> {"a":"x\ny"}
+      #|"a: \"x\\\n\n\n  y\"" -> {"a":"x\n\ny"}
+    ),
+  )
+  // `---` and `...` mark a document only at the start of a line
+  // ("c-forbidden ::= <start-of-line> ( c-directives-end | c-document-end )
+  // ...", YAML 1.2.2, production 206); on a continuation line of a quoted
+  // scalar, after its indentation, they are text.
+  inspect(
+    each(["k: \"a\n  --- b\"", "k: 'a\n  ... b'"]),
+    content=(
+      #|"k: \"a\n  --- b\"" -> {"k":"a --- b"}
+      #|"k: 'a\n  ... b'" -> {"k":"a ... b"}
     ),
   )
 }
@@ -250,6 +354,20 @@ test "comments run from a # after white space to the end of the line" {
       #|"[a#b, c]" -> ["a#b","c"]
     ),
   )
+  // A comment may also follow a sequence's `-`, with the item's node on a
+  // later line. The node of a block sequence entry may be an
+  // s-l+block-node (YAML 1.2.2, productions 184 and 185): a flow node
+  // after s-separate, whose s-separate-lines may hold a comment and the
+  // line break after it (productions 197, 81 and 79), or a block
+  // collection after s-l-comments (production 200). Example 8.15 starts
+  // with such an item, which is empty (`- # Empty`).
+  inspect(
+    each(["- # a comment\n  x", "- # a comment\n  a: 1"]),
+    content=(
+      #|"- # a comment\n  x" -> ["x"]
+      #|"- # a comment\n  a: 1" -> [{"a":1}]
+    ),
+  )
 }
 
 ///|
@@ -270,6 +388,37 @@ test "a plain scalar continues on more indented lines, folded like a quoted one"
     ),
     content=(
       #|{"folded":"first second\nthird","list":["a b","c","d"]}
+    ),
+  )
+  // YAML 1.2.2's Example 7.12 (section 7.3.3), a whole document, reads as
+  // the specification gives it: "All leading and trailing white space
+  // characters are excluded from the content", a tab after a line's spaces
+  // included (s-flow-line-prefix, production 69), and the root continues
+  // on lines at column 0 (production 207). `---` and `...` mark a document
+  // only at the start of a line (production 206), so after the indentation
+  // of a continuation line they are text.
+  inspect(
+    each([
+      "1st non-empty\n\n 2nd non-empty \n\t3rd non-empty", "k: a\n  --- b", "k: a\n  ... b",
+    ]),
+    content=(
+      #|"1st non-empty\n\n 2nd non-empty \n\t3rd non-empty" -> "1st non-empty\n2nd non-empty 3rd non-empty"
+      #|"k: a\n  --- b" -> {"k":"a --- b"}
+      #|"k: a\n  ... b" -> {"k":"a ... b"}
+    ),
+  )
+  // The same at the end of the text: "a plain scalar must not be empty or
+  // contain leading or trailing white space characters" (YAML 1.2.2,
+  // section 7.3.3), and white space may end a line at the end of the input
+  // ("b-comment ::= b-non-content | <end-of-input>", production 76, after
+  // s-separate-in-line in s-b-comment, production 77).
+  inspect(
+    each(["a: b ", "a: b\t", "- x  ", "x \t"]),
+    content=(
+      #|"a: b " -> {"a":"b"}
+      #|"a: b\t" -> {"a":"b"}
+      #|"- x  " -> ["x"]
+      #|"x \t" -> "x"
     ),
   )
 }
@@ -353,6 +502,45 @@ test "a literal block scalar keeps its lines; chomping decides the final line br
       #|"- |+\n   \n" -> ["\n"]
     ),
   )
+  // "If a block scalar consists only of empty lines, then these lines are
+  // considered as trailing lines and hence are affected by chomping"
+  // (YAML 1.2.2, section 8.1.1.2), as Example 8.6 shows with its value.
+  // Such a scalar has no first line of text, so none of its empty lines has
+  // more spaces than one ("If there is no non-empty line then the content
+  // indentation level is equal to the number of spaces on the longest
+  // line", section 8.1.1.1), and a last line of fewer spaces with no line
+  // break after it is no empty line, as above.
+  inspect(
+    each(["strip: >-\n\nclip: >\n\nkeep: |+\n\n", "- |+\n   \n ", "- |\n   \n "]),
+    content=(
+      #|"strip: >-\n\nclip: >\n\nkeep: |+\n\n" -> {"strip":"","clip":"","keep":"\n"}
+      #|"- |+\n   \n " -> ["\n"]
+      #|"- |\n   \n " -> [""]
+    ),
+  )
+  // A line of as many spaces as the indentation is an empty line when a
+  // line break ends it (`l-empty`, section 6.4), and holds no text at the
+  // end of the input either: a line of text is the indentation and then at
+  // least one character ("l-nb-literal-text(n) ::= l-empty(n,BLOCK-IN)*
+  // s-indent(n) nb-char+", production 171). So chomping alone decides the
+  // final line breaks: "the final line break and any trailing empty lines
+  // are excluded" with `-`, the final line break is kept without an
+  // indicator and with `+` (section 8.1.1.2), and a folded scalar folds
+  // nothing into that line. Example 8.5, whose first scalar is followed by
+  // such an empty line and each scalar by comment lines, reads as the
+  // specification gives it.
+  inspect(
+    each([
+      "a: |-\n  x\n  ", "a: |\n  x\n  ", "a: |+\n  x\n  ", "a: >\n  x\n  ", "# Strip\n  # Comments:\nstrip: |-\n  # text\n  \n # Clip\n  # comments:\n\nclip: |\n  # text\n \n # Keep\n  # comments:\n\nkeep: |+\n  # text\n\n # Trail\n  # comments.",
+    ]),
+    content=(
+      #|"a: |-\n  x\n  " -> {"a":"x"}
+      #|"a: |\n  x\n  " -> {"a":"x\n"}
+      #|"a: |+\n  x\n  " -> {"a":"x\n"}
+      #|"a: >\n  x\n  " -> {"a":"x\n"}
+      #|"# Strip\n  # Comments:\nstrip: |-\n  # text\n  \n # Clip\n  # comments:\n\nclip: |\n  # text\n \n # Keep\n  # comments:\n\nkeep: |+\n  # text\n\n # Trail\n  # comments." -> {"strip":"# text","clip":"# text\n","keep":"# text\n\n"}
+    ),
+  )
 }
 
 ///|
@@ -379,6 +567,18 @@ test "a folded block scalar joins lines with a space, except around empty and mo
     ),
     content=(
       #|{"folded":"one two\nthree\n  more indented\nfour\n","strip":"a b","keep":"a\n\n","end":"x"}
+    ),
+  )
+  // YAML 1.2.2's Example 6.6 (section 6.5), a whole document, reads as the
+  // specification gives it: "If a line break is followed by an empty line,
+  // it is trimmed; the first line break is discarded and the rest are
+  // retained as content." Its three empty lines hold as many spaces as the
+  // indentation, fewer, and none (`l-empty`, section 6.4), and each is one
+  // line feed.
+  inspect(
+    each([">-\n  trimmed\n  \n \n\n  as\n  space"]),
+    content=(
+      #|">-\n  trimmed\n  \n \n\n  as\n  space" -> "trimmed\n\n\nas space"
     ),
   )
 }
@@ -411,6 +611,20 @@ test "flow collections are arrays and objects, and may span lines" {
   )
   inspect(yaml("[1, two]"), content="[1,\"two\"]")
   inspect(yaml("{a: b}\n"), content="{\"a\":\"b\"}")
+  // White space may come between a key of a flow mapping and its `:`:
+  // "ns-flow-map-yaml-key-entry(n,c) ::= ns-flow-yaml-node(n,c) ( (
+  // s-separate(n,c)? c-ns-flow-map-separate-value(n,c) ) | e-node )", and
+  // the same for a JSON-like key (YAML 1.2.2, productions 145 and 148), as
+  // the first entry of Example 7.17 shows, for the first key as for later
+  // ones.
+  inspect(
+    each(["{unquoted : \"separate\"}", "{\"a\"\t: 1}", "{'a' : b, c : d}"]),
+    content=(
+      #|"{unquoted : \"separate\"}" -> {"unquoted":"separate"}
+      #|"{\"a\"\t: 1}" -> {"a":1}
+      #|"{'a' : b, c : d}" -> {"a":"b","c":"d"}
+    ),
+  )
 }
 
 ///|
@@ -480,6 +694,74 @@ test "one document may start with --- and end with ..." {
       #|"--- [1]" -> [1]
       #|"--- |\n  text\n" -> "text\n"
       #|"--- \"text\"\n..." -> "text"
+    ),
+  )
+  // White space and a comment may follow `...` on its line:
+  // "l-document-suffix ::= c-document-end s-l-comments" (YAML 1.2.2,
+  // production 205), and s-l-comments starts with white space and an
+  // optional comment (productions 79 and 77).
+  inspect(
+    each(["a: 1\n... # the end\n", "a: 1\n...\t\n", "a: 1\n...  "]),
+    content=(
+      #|"a: 1\n... # the end\n" -> {"a":1}
+      #|"a: 1\n...\t\n" -> {"a":1}
+      #|"a: 1\n...  " -> {"a":1}
+    ),
+  )
+  // A block collection cannot start on the line of `---`: before its first
+  // entry comes s-l-comments, a line break or the start of a line
+  // ("s-l+block-collection(n,c) ::= ( s-separate(n+1,c)
+  // c-ns-properties(n+1,c) )? s-l-comments ( seq-space(n,c) |
+  // l+block-mapping(n) )", YAML 1.2.2, production 200). yaml-test-suite
+  // marks 9KBC, `--- key1: value1` and a second key, as an error. The
+  // messages are those that a nested mapping or sequence on the line of
+  // its key gives (the test of malformed indentation); no node is reached
+  // above the root, so the pointer is `""`. A flow collection may start
+  // there (s-l+flow-in-block, production 197), as the last case shows.
+  inspect(
+    each(["--- a: 1", "--- - a", "--- \"a\": 1", "--- [a]\n"]),
+    content=(
+      #|"--- a: 1" -> error : unexpected ':' after a value; a nested mapping must start on its own line
+      #|"--- - a" -> error : a block sequence must start on its own line
+      #|"--- \"a\": 1" -> error : unexpected ':' after a value; a nested mapping must start on its own line
+      #|"--- [a]\n" -> ["a"]
+    ),
+  )
+  // A bare document's root node is "s-l+block-node(-1,BLOCK-IN)" (YAML
+  // 1.2.2, production 207): its lines are indented by more than -1 spaces,
+  // so a scalar at the top continues on lines that start at column 0, and a
+  // block scalar at the top may have its content there. These are the two
+  // documents of Example 9.3 (section 9.1.3), each alone. The first reads
+  // "Bare document", the example's value. In the second, the `%` is not at
+  // the start of the document, so it starts no directive, and "inside
+  // literal scalars, all (indented) characters are considered to be
+  // content, including white space characters" (section 8.1.2), the `#`
+  // too: yaml-test-suite's M7A3, the same example, reads "%!PS-Adobe-2.0 #
+  // Not the first line\n" (the example prints only "%!PS-Adobe-2.0\n").
+  inspect(
+    each(["Bare\ndocument\n...\n", "|\n%!PS-Adobe-2.0 # Not the first line\n"]),
+    content=(
+      #|"Bare\ndocument\n...\n" -> "Bare document"
+      #|"|\n%!PS-Adobe-2.0 # Not the first line\n" -> "%!PS-Adobe-2.0 # Not the first line\n"
+    ),
+  )
+  // Such a block scalar ends at a `...` at the start of a line: "the actual
+  // content lines are therefore forbidden to begin with either of these
+  // markers" (YAML 1.2.2, c-forbidden, production 206), which a document's
+  // content excludes (production 207). The first row is the first document
+  // of Example 9.5 (section 9.1.5) without its directive, which the safe
+  // subset rejects, and its value is the example's. The content's
+  // indentation "is equal to the number of leading spaces on the first
+  // non-empty line" (section 8.1.1.1), 0 here, so every later line is
+  // content, at column 0 or after spaces, which are content too: "all
+  // (indented) characters are considered to be content, including white
+  // space characters" (section 8.1.2).
+  inspect(
+    each(["--- |\n%!PS-Adobe-2.0\n...\n", "|\na\nb\n", "|\na\n b\n"]),
+    content=(
+      #|"--- |\n%!PS-Adobe-2.0\n...\n" -> "%!PS-Adobe-2.0\n"
+      #|"|\na\nb\n" -> "a\nb\n"
+      #|"|\na\n b\n" -> "a\n b\n"
     ),
   )
 }
@@ -707,6 +989,36 @@ test "malformed indentation gives an error at the deepest node reached, or a val
       #|"a\n b: 1" -> error /a b: a key must be on a single line
     ),
   )
+  // The same for a quoted key: "Double-quoted scalars are restricted to a
+  // single line when contained inside an implicit key" (YAML 1.2.2,
+  // section 7.3.1; production 110 gives nb-double-one-line in BLOCK-KEY),
+  // and single-quoted ones too (section 7.3.2), whether the line break is
+  // folded or escaped. The pointer names the member by its folded key, as
+  // `ParseError` documents: a line break folds into a space, and an escaped
+  // one is "excluded from the content" (section 7.3.1).
+  inspect(
+    each(["\"a\n b\": 1", "'a\n b': 1", "\"a\\\n  b\": 1"]),
+    content=(
+      #|"\"a\n b\": 1" -> error /a b: a key must be on a single line
+      #|"'a\n b': 1" -> error /a b: a key must be on a single line
+      #|"\"a\\\n  b\": 1" -> error /ab: a key must be on a single line
+    ),
+  )
+  // "It is an error for any of the leading empty lines to contain more
+  // spaces than the first non-empty line" (YAML 1.2.2, section 8.1.1.1):
+  // the first item of Example 8.3, an error, and the same with a later
+  // leading empty line of fewer spaces, or of none, before the first line
+  // of text, which leaves the first empty line in error. The message is the
+  // one above for that; the pointer is the scalar, the deepest node
+  // reached.
+  inspect(
+    each(["- |\n  \n text", "- |\n  \n \n text", "- |\n  \n\n text"]),
+    content=(
+      #|"- |\n  \n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
+      #|"- |\n  \n \n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
+      #|"- |\n  \n\n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
+    ),
+  )
 }
 
 ///|
@@ -846,6 +1158,50 @@ test "tabs in indentation give an error; tabs elsewhere are white space" {
       #|"a: |\n  x\n# end\n \t\n" -> {"a":"x\n"}
     ),
   )
+  // "Both the "-" indicator and the following spaces are considered to be
+  // part of the indentation of the nested collection" (YAML 1.2.2, section
+  // 8.2.1), all of that white space, so a tab anywhere in it is a tab in
+  // indentation (section 6.1), not only one right before the collection:
+  // here a space comes between the tab and the nested mapping or sequence.
+  // The messages and pointers are those of the cases above.
+  inspect(
+    each([
+      "-\t a: 1", "-\t - x", "- -\t a: 1", "stubs:\n-\t  id: a\n    mock: m",
+    ]),
+    content=(
+      #|"-\t a: 1" -> error /0: tabs are not allowed in indentation
+      #|"-\t - x" -> error /0: tabs are not allowed in indentation
+      #|"- -\t a: 1" -> error /0/0: tabs are not allowed in indentation
+      #|"stubs:\n-\t  id: a\n    mock: m" -> error /stubs/0: tabs are not allowed in indentation
+    ),
+  )
+  // A tab in the white space at the start of the first line is rejected
+  // too ("a tab in the white space at the start of a line", among the valid
+  // YAML that `parse` rejects on purpose). No node has been reached there,
+  // so the error names the whole document: "For a syntax error, it names
+  // the deepest node the parser reached. It is `""` for the whole
+  // document" (`ParseError`), the empty pointer of RFC 6901, section 5.
+  inspect(
+    each(["\ta: 1", " \ta: 1", "---\n\ta: 1"]),
+    content=(
+      #|"\ta: 1" -> error : tabs are not allowed in indentation
+      #|" \ta: 1" -> error : tabs are not allowed in indentation
+      #|"---\n\ta: 1" -> error : tabs are not allowed in indentation
+    ),
+  )
+  // The same tab on the line after a `-` with nothing else on its line: the
+  // parser has reached that item, whose node is to come, so the error names
+  // the item ("For a syntax error, it names the deepest node the parser
+  // reached", `ParseError`), as it names the member after `a:` in the first
+  // case of this test. In the second input, the first item is a node read
+  // whole before it.
+  inspect(
+    each(["-\n\tx", "- a\n-\n\tb"]),
+    content=(
+      #|"-\n\tx" -> error /0: tabs are not allowed in indentation
+      #|"- a\n-\n\tb" -> error /1: tabs are not allowed in indentation
+    ),
+  )
 }
 
 ///|
@@ -933,6 +1289,18 @@ test "empty values, empty documents and stray indicators give an error" {
       #|"[- a]" -> error /0: a block sequence cannot be inside a flow collection
     ),
   )
+  // A key that is a collection is rejected on purpose (`parse`: "a key that
+  // is a collection, such as `[a, b]: 1`"), also with white space before its
+  // `:`, which an implicit key may have ("c-s-implicit-json-key(c) ::=
+  // c-flow-json-node(0,c) s-separate-in-line?", YAML 1.2.2, production
+  // 155): the same errors as `[a]: b` and `{a: 1}: b` above.
+  inspect(
+    each(["[a] : b", "{a: 1}\t: b"]),
+    content=(
+      #|"[a] : b" -> error /0: a key must be a plain or quoted scalar
+      #|"{a: 1}\t: b" -> error /a: a key must be a plain or quoted scalar
+    ),
+  )
 }
 
 ///|
@@ -960,6 +1328,70 @@ test "line breaks may be CRLF or CR; a byte order mark may start the text; other
       #|U+FFFE -> error : U+FFFE is a control character; write it as an escape in a double-quoted value
       #|NEL -> error : U+0085 is a line break in YAML 1.1 only; write it as an escape in a double-quoted value
       #|LINE SEPARATOR quoted -> error : U+2028 is a line break in YAML 1.1 only; write it as an escape in a double-quoted value
+    ),
+  )
+  // The first and last character of each range of YAML 1.2.2's character
+  // set, and the characters just outside them: "c-printable ::= x09 | x0A
+  // | x0D | [x20-x7E] | x85 | [xA0-xD7FF] | [xE000-xFFFD] |
+  // [x010000-x10FFFF]" (section 5.1, production 1). "The allowed character
+  // range explicitly excludes the C0 control block [x00-x1F] (except for
+  // TAB x09, LF x0A, and CR x0D which are allowed), DEL x7F, the C1 control
+  // block [x80-x9F] (except for NEL x85 which is allowed), the surrogate
+  // block [xD800-xDFFF], xFFFE, and xFFFF" (same section); `parse` rejects
+  // control characters ("Rejected, each with a message naming it: ...
+  // control characters"). U+2028 and U+2029 are line breaks in YAML 1.1
+  // (its `b-char`, section 5.4 of YAML 1.1), and YAML 1.2 reads them, and
+  // NEL, as other characters (YAML 1.2.2, section 5.4), so they would mean
+  // something else in each version: the subset "keeps a document's meaning
+  // the same in every YAML version" (`parse`), and the messages are the
+  // ones the cases above give. Each character stands between `x` and `y`
+  // in a plain value.
+  let edges = [
+    0x1F, 0x20, 0x7E, 0x80, 0x84, 0x86, 0x9F, 0xA0, 0x2027, 0x2029, 0x202A, 0xD7FF,
+    0xE000, 0xFFFD, 0xFFFF, 0x10000, 0x10FFFF,
+  ]
+  inspect(
+    edges
+    .map(code => {
+      let c = code.to_char().unwrap()
+      let hex = code.to_string(radix=16).to_upper()
+      let label = if hex.length() < 4 {
+        "U+" + "0".repeat(4 - hex.length()) + hex
+      } else {
+        "U+" + hex
+      }
+      let text = "a: x\{c}y"
+      let result = try @yaml.parse(text) catch {
+        @yaml.ParseError(pointer~, message~) => "error \{pointer}: \{message}"
+      } noraise {
+        tree =>
+          if tree == Json::object({ "a": Json::string("x\{c}y") }) {
+            "read as written"
+          } else {
+            tree.stringify()
+          }
+      }
+      "\{label} -> \{result}"
+    })
+    .join("\n"),
+    content=(
+      #|U+001F -> error : U+001F is a control character; write it as an escape in a double-quoted value
+      #|U+0020 -> read as written
+      #|U+007E -> read as written
+      #|U+0080 -> error : U+0080 is a control character; write it as an escape in a double-quoted value
+      #|U+0084 -> error : U+0084 is a control character; write it as an escape in a double-quoted value
+      #|U+0086 -> error : U+0086 is a control character; write it as an escape in a double-quoted value
+      #|U+009F -> error : U+009F is a control character; write it as an escape in a double-quoted value
+      #|U+00A0 -> read as written
+      #|U+2027 -> read as written
+      #|U+2029 -> error : U+2029 is a line break in YAML 1.1 only; write it as an escape in a double-quoted value
+      #|U+202A -> read as written
+      #|U+D7FF -> read as written
+      #|U+E000 -> read as written
+      #|U+FFFD -> read as written
+      #|U+FFFF -> error : U+FFFF is a control character; write it as an escape in a double-quoted value
+      #|U+10000 -> read as written
+      #|U+10FFFF -> read as written
     ),
   )
 }
@@ -1007,6 +1439,39 @@ test "nesting as deep as the JSON parser allows gives a value; deeper nesting gi
   }
   guard @yaml.parse(indented(1024)) is Object(_) else { fail("not an object") }
   inspect(message(indented(1025)), content="nesting is deeper than 1024 levels")
+  // A collection that has ended encloses nothing after it, in YAML as in
+  // JSON, so "nesting deeper than 1024 collections" (`parse`) counts only
+  // the collections around a node. After a member whose value is a block
+  // sequence, a block mapping, a flow sequence or a flow mapping, the next
+  // member may hold 1023 nested collections, 1024 with the top mapping,
+  // and reads as the JSON parser reads the same document; 1024 of them are
+  // one too many, with the message above.
+  let siblings = [
+    ("block sequence", "\n- x", "[\"x\"]"),
+    ("block mapping", "\n  x: 1", "{\"x\": 1}"),
+    ("flow sequence", " [x]", "[\"x\"]"),
+    ("flow mapping", " {x: 1}", "{\"x\": 1}"),
+  ]
+  let after = []
+  for sibling in siblings {
+    let (kind, first, json) = sibling
+    let text = (depth : Int32) => "a:\{first}\nb: \{flow(depth)}"
+    assert_eq(
+      @yaml.parse(text(1023)),
+      @json.parse("{\"a\": \{json}, \"b\": \{flow(1023)}}"),
+      msg=kind,
+    )
+    after.push("\{kind}: \{message(text(1023))}; \{message(text(1024))}")
+  }
+  inspect(
+    after.join("\n"),
+    content=(
+      #|block sequence: no error; nesting is deeper than 1024 levels
+      #|block mapping: no error; nesting is deeper than 1024 levels
+      #|flow sequence: no error; nesting is deeper than 1024 levels
+      #|flow mapping: no error; nesting is deeper than 1024 levels
+    ),
+  )
 }
 
 ///|
@@ -1067,6 +1532,21 @@ test "every other plain scalar is a string" {
     ),
     content=(
       #|["GET","/users/1?x=y","http://a.example:8080/x","a#b","a:b","truex","nullable","1.2.3-rc","1e","-a",".","0x","12:30 pm","v1"]
+    ),
+  )
+  // A document marker is three characters, `---` or `...` (YAML 1.2.2,
+  // productions 203 and 204), so two of them at the start of a line, at the
+  // end of the text, mark nothing: they are a plain scalar (ns-plain-first,
+  // production 126: a `-` followed by a character that is safe in a plain
+  // scalar may start one, and `.` is no indicator), alone or as the
+  // continuation line of one at the top (production 207).
+  inspect(
+    each(["--", "..", "a\n--", "a\n.."]),
+    content=(
+      #|"--" -> "--"
+      #|".." -> ".."
+      #|"a\n--" -> "a --"
+      #|"a\n.." -> "a .."
     ),
   )
 }
