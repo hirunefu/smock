@@ -2584,3 +2584,86 @@ reason = "In Writer::string, `} else if code <= 0xFF {`, which writes a characte
 compiler_output = "differs"
 adversarial = { context = "a separate agent context of #275's step 3, on 2026-11-26, which wrote neither this entry nor any of yaml's tests", tests = ["read YAML 1.2.2 section 5.7 (\"All non-printable characters must be escaped\"; `\\x` and two hexadecimal digits, production 59, and `\\u` and four, production 60, with no preference between them) and production 1 (c-printable), and `write`'s doc comment (inside double quotes, control characters, U+2028, U+2029, U+FEFF, U+FFFE and U+FFFF are escapes, such as `\\x01` and `\\uFEFF`), then looked for a character that reaches the choice between `\\x` and `\\u` and that the bound `code <= 0xFE`, which moves U+00FF, sends the other way. The choice is reached only by a character with no escape of its own that is_printable refuses, the surrogates having raised first: U+0001 to U+0006, U+000E to U+001A, U+001C to U+001F, U+007F to U+0084, U+0086 to U+009F, U+FEFF, U+FFFE and U+FFFF (U+2028 and U+2029 are `\\L` and `\\P`). Every character from U+00A0 to U+FEFE is printable or has an escape, so any bound from 0x9F to 0xFEFE writes the same bytes. Each character is written alone, nothing carried to the next, so it differs nowhere, a white-box call of Writer::string included. Tried: every code point but the surrogates inside double quotes, as an item and as a key; each of U+0000 to U+02FF, U+2000 to U+20FF and U+FE00 to U+FFFF alone, as a document, an item and a key; and string called on U+0001, U+009F, U+00A0, U+00FE, U+00FF, U+0100, U+0101, U+FEFE, U+FEFF, U+FFFE and U+FFFF as a key and a value, at column zero and not", "a scratch white-box test of yaml, not committed: a copy of writer.mbt's Writer with each of #402's eight EQUIVALENT mutations and controls behind a number, compared with the real `write` (its bytes, or its error's pointer and message) on 2,000 random trees, each written eight ways (no item comments, without and with a header; every item; a third of the items; a third and a pointer that names no item, first or last in the map; the first item of each sequence; that pointer alone; every item and every member: 16,000 writes, 4,958 of them errors), 310 hand cases (`write`'s example, pointers with `~0`, `~1`, the empty key's `/`, `00`, `-`, one past a sequence's end, no leading `/`, the root's `\"\"`, each kind of root with comments on its first items, trees 1022 to 1025 deep with a comment at the bottom), every code point but the surrogates inside double quotes, 256 at a time, as an item and as a key (8,704 writes), each of U+0000 to U+02FF, U+2000 to U+20FF and U+FE00 to U+FFFF alone, as a document, an item and a key (4,608), and every surrogate code unit alone, first, last, inside and beside another half, and valid pairs, in four places (65,556). The copy of the code and each of the eight mutants give the real writer's result on every input. The controls each change it: the root's pointer always `None` (2,128 of the random writes), the check after the root never made (4,358) or one short (3,942), item_pointer's index plus one (2,156) or its guard turned round (2,128), the top mapping at indent 2 (1,445), a member's mapping or sequence written inline (1,080; 1,290), the top sequence's item 0 without its comment when inline (1,210, and `[1]` with a comment on `/0`), the `\\x` bound at 0x9E (U+009F becomes `\\u009F`), at 0xFEFF (U+FEFF becomes `\\xFF`) and at 0x7F (U+0080 to U+009F but U+0085), and is_plain_safe's pair test at `i + 2` (12,304). Then each mutant applied by hand to writer.mbt: yaml's 55 tests and the harness pass, the harness's five digests of the real writer's results being the code's, on wasm-gc and natively (arm64; the digests are the same on both); white-box calls of the private functions (document on Writer literals and twice on one Writer, item_pointer with `None` and i of 0, 1, -1 and both ends of Int32, root on a buffer that already holds text, string on the code points around each bound) print the code's results. Six controls applied the same way fail 1 to 7 of yaml's tests"] }
 reviewer = ""
+
+# re2/parse.mbt, its first part (#419, part 4 of 9 of re2's triage for
+# #326): survivors of the first weekly run (44423781036) in the parser that
+# no pattern and no input can tell from the code. Each argument is in its
+# reason; the compiler's output differs for each. None of these definitions
+# uses an unchecked access (Parser::text's `Int32::unsafe_to_char` reads no
+# element, and none of these survivors is in it), so wasm-gc decides. The
+# parser runs in `compile`, when a Definition file loads; matching runs the
+# program it builds: full_match, on the request path, through the DFA, or
+# through the Pike VM once the DFA is over its budget, and search through
+# the Pike VM. Two only save work, so they are no candidates for deletion: a
+# single alternative is not wrapped in an alternation, and a literal under
+# (?i) that folding leaves alone stays one code point rather than a class
+# of one. Two decide nothing and are candidates for the maintainer: peek's
+# `pos >= 0`, since no position is negative, and parse_concat's test for a
+# counted repetition, since `*`, `+` and `?` count 1 either way. The
+# implementer folded into digests what compile raises and, for 30 inputs,
+# search's span, full_match's answer, search_steps and full_match_steps,
+# over every pattern of up to four of 22 characters, every one of up to
+# three behind eight prefixes (`(?i)`, `(?:`, `[`, `x(?P<` and others) and
+# 150,000 random patterns of groups, flags, counts, classes and assertions
+# (484,651 patterns); and the answers on 11 inputs of 166,698 patterns that
+# repeat a group holding two repetitions of a character, a class, an
+# alternation or a sequence. With each of these mutants applied by hand the
+# digests and the answers were the code's on wasm-gc, step counts included,
+# while controls that are not equivalent changed them; four of info's
+# survivors first thought equivalent changed the answers there and are
+# killed by tests (a scratch test, not committed). The maintainer reads
+# every entry, since re2 is a protocol package.
+
+[[exclusion]]
+mutant = "re2/parse.mbt,Parser::peek,INT,0,-1,0"
+text = "2892833600b8ef32"
+category = "EQUIVALENT"
+reason = "Parser::peek's bound `pos >= 0 && pos < self.chars.length()` becomes `pos >= -1 && ...`, so that a call with -1 would read `self.chars[-1]` and abort where the code returns END. No call passes -1: every position the parser peeks at is `self.pos`, which starts at 0 and only grows, or a position saved from it (`open`, `start`, `op_start`, `after_min`, `after_max`, `end`, `i`), or one of these plus 1, 2 or 3. Such a sum is never negative for a pattern a String can hold, and could not be -1 even if it wrapped past 2^31 - 1 (it would then be -2^31 + 2 at the most). So compile gives the same program or the same error for every pattern, and matching the same answers. It differs only for a white-box call of peek with -1. The check `pos >= 0` itself decides nothing a caller sees: a candidate for deletion, listed for the maintainer (not on the request path: parsing runs when a Definition file loads)."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #419's implementer", tests = ["none yet; the implementer's own check: digests of what compile raises and of search, full_match and their step counts on 30 inputs over 484,651 patterns (every pattern of up to four of 22 characters, every one of up to three behind eight prefixes, 150,000 random patterns), and the answers on 11 inputs of 166,698 patterns of a repeated group, with the mutant applied by hand: the code's on wasm-gc (a scratch test, not committed)"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/parse.mbt,Parser::parse_alternation,IFC,alternatives.length() == 1,false,0"
+text = "53a493af13d20f0a"
+category = "EQUIVALENT"
+reason = "parse_alternation wraps a single alternative `x` in `Alternate([x])` instead of returning `x` itself, for the whole pattern and for every group without a `|`. The compiler emits `Alternate([x])` as `x` alone: its loop over all alternatives but the last makes no split and no jump when there is one, and the last is `x`. info gives `Alternate([x])` x's own answer: it can match empty when `x` can, and its product of counts is x's, which is at least 1. So compile builds the same program, with the same errors and limits, for every pattern, and search, full_match and their step counts are the same for every input. Only time, allocation and recursion depth change: one more node per group and per pattern, and one more level for info and the compiler to walk, groups nesting at most 100 deep. The check only saves that work, so it is no candidate for deletion."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #419's implementer", tests = ["none yet; the implementer's own check: digests of what compile raises and of search, full_match and their step counts on 30 inputs over 484,651 patterns (every pattern of up to four of 22 characters, every one of up to three behind eight prefixes, 150,000 random patterns), and the answers on 11 inputs of 166,698 patterns of a repeated group, with the mutant applied by hand: the code's on wasm-gc (a scratch test, not committed)"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/parse.mbt,Parser::parse_alternation,INT,1,0,1"
+text = "53a493af13d20f0a"
+category = "EQUIVALENT"
+reason = "parse_alternation's `if alternatives.length() == 1` becomes `== 0`, which is never true, since the first alternative is always pushed; so a single alternative `x` is wrapped in `Alternate([x])`, for the whole pattern and for every group without a `|`. The compiler emits `Alternate([x])` as `x` alone: its loop over all alternatives but the last makes no split and no jump when there is one, and the last is `x`. info gives `Alternate([x])` x's own answer: it can match empty when `x` can, and its product of counts is x's, which is at least 1. So compile builds the same program, with the same errors and limits, for every pattern, and search, full_match and their step counts are the same for every input. Only time, allocation and recursion depth change: one more node per group and per pattern, and one more level for info and the compiler to walk, groups nesting at most 100 deep. The check only saves that work, so it is no candidate for deletion."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #419's implementer", tests = ["none yet; the implementer's own check: digests of what compile raises and of search, full_match and their step counts on 30 inputs over 484,651 patterns (every pattern of up to four of 22 characters, every one of up to three behind eight prefixes, 150,000 random patterns), and the answers on 11 inputs of 166,698 patterns of a repeated group, with the mutant applied by hand: the code's on wasm-gc (a scratch test, not committed)"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/parse.mbt,Parser::parse_concat,IFC,self.peek(op_start) != '{',false,0"
+text = "893554ec1bbc2c31"
+category = "EQUIVALENT"
+reason = "The count by which a repetition multiplies the product of the counts nested in it is 1 for `*`, `+` and `?` (`if self.peek(op_start) != '{' { 1 } else { max.unwrap_or(min) }`). With the condition made false, `*`, `+` and `?` take `max.unwrap_or(min)` too: 0 for `*` (no maximum, minimum 0), 1 for `+`, 1 for `?` (maximum 1); and the product is `sub_product * @cmp.maximum(count, 1)`, so each of them still multiplies by 1. So every product, every error and every program is the same, for every pattern, and matching gives the same answers. The test decides nothing a caller sees: a candidate for deletion, listed for the maintainer, who may keep it as the statement of RE2's restriction to the counting forms (RE2's syntax page: \"The counting forms x{n,m}, x{n,}, and x{n} reject forms that create a minimum or maximum repetition count above 1000\"), as the twenty-seventh round kept is_yaml_number's forms that another form subsumes. Not on the request path: parsing runs when a Definition file loads."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #419's implementer", tests = ["none yet; the implementer's own check: digests of what compile raises and of search, full_match and their step counts on 30 inputs over 484,651 patterns (every pattern of up to four of 22 characters, every one of up to three behind eight prefixes, 150,000 random patterns, with *, +, ? and counts up to 1000 inside counts), and the answers on 11 inputs of 166,698 patterns of a repeated group, with the mutant applied by hand: the code's on wasm-gc (a scratch test, not committed)"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/parse.mbt,Parser::literal,ROR,>,>=,0"
+text = "2f44bb22cf8ca0ab"
+category = "EQUIVALENT"
+reason = "Under (?i), Parser::literal's `folded.length() > 1` becomes `>= 1`, which fold_ascii always gives (it returns the range it was given, and the other case of the letters in it), so a literal whose folding adds nothing, any code point but an ASCII letter, becomes `Class` of that one code point instead of `Literal`. Without (?i) the condition is false either way. The compiler emits one instruction for either, `Class({c})` or `Char(c)`, at the same place: the Pike VM consumes exactly `c` with either (the class's search finds `c` and no other value, not_a_char included), and the DFA splits its byte classes at `c` alike for both and steps by the same test. So compile, search, full_match and their step counts are the same for every pattern and input. Only time and allocation change: a set is built, and a lookup replaces a comparison. The check only saves that work, so it is no candidate for deletion."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #419's implementer", tests = ["none yet; the implementer's own check: digests of what compile raises and of search, full_match and their step counts on 30 inputs over 484,651 patterns (every pattern of up to three of 22 characters behind `(?i)` and `(?i)[`, and random patterns with (?i) over digits, `@`, `{`, `_`, `-`, U+0000 and `é`), with the mutant applied by hand: the code's on wasm-gc (a scratch test, not committed)"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/parse.mbt,Parser::literal,INT,1,0,0"
+text = "2f44bb22cf8ca0ab"
+category = "EQUIVALENT"
+reason = "Under (?i), Parser::literal's `folded.length() > 1` becomes `> 0`, which fold_ascii always gives (it returns the range it was given, and the other case of the letters in it), so a literal whose folding adds nothing, any code point but an ASCII letter, becomes `Class` of that one code point instead of `Literal`. Without (?i) the condition is false either way. The compiler emits one instruction for either, `Class({c})` or `Char(c)`, at the same place: the Pike VM consumes exactly `c` with either (the class's search finds `c` and no other value, not_a_char included), and the DFA splits its byte classes at `c` alike for both and steps by the same test. So compile, search, full_match and their step counts are the same for every pattern and input. Only time and allocation change: a set is built, and a lookup replaces a comparison. The check only saves that work, so it is no candidate for deletion."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #419's implementer", tests = ["none yet; the implementer's own check: digests of what compile raises and of search, full_match and their step counts on 30 inputs over 484,651 patterns (every pattern of up to three of 22 characters behind `(?i)` and `(?i)[`, and random patterns with (?i) over digits, `@`, `{`, `_`, `-`, U+0000 and `é`), with the mutant applied by hand: the code's on wasm-gc (a scratch test, not committed)"] }
+reviewer = ""
