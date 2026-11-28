@@ -597,6 +597,42 @@ test "malformed text gives the same error in both modes" {
       #|  openapi: error /a: tabs are not allowed in indentation
     ),
   )
+  // A byte order mark (U+FEFF, shown here as <U+FEFF>) outside quotes that
+  // is not the text's first character: a second mark at the start, and a
+  // mark in a plain scalar, a comment or a block scalar's content. YAML
+  // 1.2.2 allows the mark only before a document and inside quoted scalars
+  // (section 5.2; productions 27, 202 and 211; "A BOM must not appear
+  // inside a document", Example 5.2), and the maintainer decided on
+  // 2026-11-26 that both modes reject it (#437, the twenty-seventh round of
+  // #275's answers), with the message yaml_test.mbt's test of control
+  // characters gives. In the last case, only the mode for OpenAPI documents
+  // reads the indentation indicator, and so reaches the mark.
+  inspect(
+    both([
+      "\u{FEFF}\u{FEFF}a: 1", "a: x\u{FEFF}y", "- \u{FEFF}a", "a: 1 # c\u{FEFF}",
+      "a: |\n  x\u{FEFF}\n", "a: |2\n   \u{FEFF}\n",
+    ]).replace_all(old="\u{FEFF}", new="<U+FEFF>"),
+    content=(
+      #|"<U+FEFF><U+FEFF>a: 1"
+      #|  safe: error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|  openapi: error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: x<U+FEFF>y"
+      #|  safe: error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|  openapi: error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"- <U+FEFF>a"
+      #|  safe: error /0: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|  openapi: error /0: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: 1 # c<U+FEFF>"
+      #|  safe: error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|  openapi: error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: |\n  x<U+FEFF>\n"
+      #|  safe: error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|  openapi: error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: |2\n   <U+FEFF>\n"
+      #|  safe: error /a: block scalar indentation indicators are not supported
+      #|  openapi: error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+    ),
+  )
 }
 
 ///|
