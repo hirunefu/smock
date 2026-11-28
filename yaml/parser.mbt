@@ -265,7 +265,6 @@ fn Parser::block_node(
   pointer : String,
   inline~ : Bool = false,
 ) -> Json raise ParseError {
-  self.reached = pointer
   let column = self.column()
   let start = self.pos
   if self.at_sequence_item() {

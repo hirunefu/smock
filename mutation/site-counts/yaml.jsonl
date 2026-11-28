@@ -15,7 +15,7 @@
 {"file":"yaml/parser.mbt","definition":"Parser::next_content","text":"2363ef00c59aeeb3","pinned":{"BODY":1,"DEL":3,"BOOL":1,"STR":1},"full":{"BODY":1,"DEL":3,"BOOL":1,"STR":2}}
 {"file":"yaml/parser.mbt","definition":"Parser::document","text":"dd099c66eb5134f4","pinned":{"BODY":1,"IFC":9,"LCR":5,"NOT":2,"DEL":9,"BOOL":2,"AOR":2,"INT":5,"STR":12},"full":{"BODY":1,"IFC":18,"LCR":5,"NOT":2,"DEL":9,"BOOL":2,"AOR":2,"INT":10,"STR":18}}
 {"file":"yaml/parser.mbt","definition":"Parser::at_marker","text":"ba256ab8b1355d68","pinned":{"BODY":1,"LCR":2,"INT":2},"full":{"BODY":1,"LCR":2,"INT":2}}
-{"file":"yaml/parser.mbt","definition":"Parser::block_node","text":"077bed59189fb637","pinned":{"BODY":1,"IFC":7,"DEL":8,"BOOL":2,"STR":3},"full":{"BODY":1,"IFC":14,"DEL":8,"BOOL":2,"STR":6}}
+{"file":"yaml/parser.mbt","definition":"Parser::block_node","text":"fc0c11520875b2ce","pinned":{"BODY":1,"IFC":7,"DEL":7,"BOOL":2,"STR":3},"full":{"BODY":1,"IFC":14,"DEL":7,"BOOL":2,"STR":6}}
 {"file":"yaml/parser.mbt","definition":"Parser::check_indentation","text":"ba6a75c0e50f9e2a","pinned":{"BODY":1,"ROR":1,"IFC":2,"LCR":1,"DEL":2,"AOR":2,"INT":4,"STR":1},"full":{"BODY":1,"ROR":1,"IFC":4,"LCR":1,"DEL":2,"AOR":2,"INT":6,"STR":2}}
 {"file":"yaml/parser.mbt","definition":"Parser::check_node_start","text":"da62a749e93ecc7c","pinned":{"BODY":1,"IFC":4,"LCR":2,"INT":1,"STR":9},"full":{"BODY":1,"IFC":8,"LCR":2,"INT":2,"STR":17}}
 {"file":"yaml/parser.mbt","definition":"Parser::key_pointer","text":"5709a107d59835cc","pinned":{"BODY":1,"IFC":5,"LCR":2,"NOT":1,"DEL":1,"STR":8},"full":{"BODY":1,"IFC":9,"LCR":2,"NOT":1,"DEL":1,"STR":16}}
