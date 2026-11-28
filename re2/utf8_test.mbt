@@ -43,6 +43,16 @@ test "classes and . consume one code point of any length" {
   inspect(on("^.$", "\u{D7FF}"), content="search 0-3, full true")
   inspect(on("^.$", "\u{E000}"), content="search 0-3, full true")
   inspect(on("^.$", "\u{FFFF}"), content="search 0-3, full true")
+  // The first and last code point of each of the three kinds of well-formed
+  // sequence of four bytes that RFC 3629, section 4, lists in UTF8-4 (F0
+  // then 90 to BF, F1 to F3 then 80 to BF, F4 then 80 to 8F, each followed
+  // by two bytes of 80 to BF). The same results as RE2.
+  inspect(on("^.$", "\u{10000}"), content="search 0-4, full true")
+  inspect(on("^.$", "\u{3FFFF}"), content="search 0-4, full true")
+  inspect(on("^.$", "\u{40000}"), content="search 0-4, full true")
+  inspect(on("^.$", "\u{FFFFF}"), content="search 0-4, full true")
+  inspect(on("^.$", "\u{100000}"), content="search 0-4, full true")
+  inspect(on("^.$", "\u{10FFFF}"), content="search 0-4, full true")
 }
 
 ///|
