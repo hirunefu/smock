@@ -32,3 +32,28 @@ test "an input that is not UTF-8 is skipped in both modes" {
     ),
   )
 }
+
+///|
+/// smock drops one byte order mark at the start of a Definition file and of
+/// an OpenAPI document in YAML, and no more: definitions/read.mbt and
+/// importopenapi/document.mbt both give the parser the text with its mark,
+/// as the maintainer decided for `smock import-openapi` on 2026-11-28 (#437,
+/// the thirtieth round of #275's answers). `@yaml.parse`'s documentation
+/// says that the parser drops a mark that is the text's first character and
+/// rejects a second at the start with "U+FEFF is a byte order mark; write
+/// it as an escape in a double-quoted value", words the maintainer
+/// confirmed the same day; the whole text is the deepest node reached.
+test "an input may start with one byte order mark, and no more, in both modes" {
+  inspect(
+    answer("one", b"\xef\xbb\xbfa: 1"),
+    content=(
+      #|{"case":"one","safe":{"value":{"a":1}},"openapi":{"value":{"a":1}}}
+    ),
+  )
+  inspect(
+    answer("two", b"\xef\xbb\xbf\xef\xbb\xbfa: 1"),
+    content=(
+      #|{"case":"two","safe":{"error":{"pointer":"","message":"U+FEFF is a byte order mark; write it as an escape in a double-quoted value"}},"openapi":{"error":{"pointer":"","message":"U+FEFF is a byte order mark; write it as an escape in a double-quoted value"}}}
+    ),
+  )
+}

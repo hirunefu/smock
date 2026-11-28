@@ -1,4 +1,4 @@
 {"file":"yaml-test-suite/main.mbt","definition":"exit","text":"2cc16686aeb033a0","pinned":{"BODY":1},"full":{"BODY":1}}
 {"file":"yaml-test-suite/main.mbt","definition":"main","text":"217972c961b16ff8","pinned":{"ROR":1,"IFC":1,"DEL":5,"INT":8},"full":{"ROR":1,"IFC":2,"DEL":5,"INT":13}}
 {"file":"yaml-test-suite/testee.mbt","definition":"answer","text":"48df433c29a045d0","pinned":{"BODY":1,"BOOL":2},"full":{"BODY":1,"BOOL":2}}
-{"file":"yaml-test-suite/testee.mbt","definition":"reading","text":"0c59b7512ab101aa","pinned":{"BODY":1},"full":{"BODY":1}}
+{"file":"yaml-test-suite/testee.mbt","definition":"reading","text":"d4c0d530a84cc27b","pinned":{"BODY":1},"full":{"BODY":1}}
