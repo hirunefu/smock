@@ -2268,13 +2268,22 @@ reviewer = ""
 # digests of resolve and parse and fails one more of yaml's tests: the
 # corpus sees the arm's kind wherever the arm is reached. The maintainer
 # reads every entry, since yaml is a protocol package.
+#
+# The maintainer's twenty-seventh round (2026-11-26, point 3) made
+# resolve's catch arm an abort, as #280 made resolve_core's: the UNREACHABLE
+# entry with its argument went, the arm's point is accepted with
+# resolve_core's (UNREACHABLE, resolve 13:12), and the abort's message is an
+# ARID entry, as resolve_core's is. A scratch search reached the arm with no
+# text before the change, through parse in both modes and write: every
+# number in JSON syntax among the strings of up to six of `0129.eE+-`
+# (25,253) and long numbers at the edges of a Double's range, a million
+# digits included, on wasm-gc and natively.
 
 [[exclusion]]
-mutant = "yaml/scalar.mbt,resolve,STR,\"a number\",\"_ number\",0"
-text = "25c6bcff5ec64fe4"
-category = "UNREACHABLE"
-reason = "The arm that catches an error of `@json.parse(text)` in resolve (`_ => Ambiguous(\"a number\")`), whose kind \"a number\" becomes \"_ number\": no text reaches the arm, so no message shows it, a white-box call of resolve included."
-argument = "resolve calls `@json.parse(text)` only when is_json_number(text), which accepts exactly a number of JSON's grammar (RFC 8259, section 6: `-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][-+]?[0-9]+)?`, in ASCII digits) and nothing before or after it. The JSON parser of moonbitlang/core (json/lex_number.mbt) raises only on text outside that grammar: once a number is lexed, its value is read without raising, a decimal integer beyond 2^53 keeping its digits as `repr` and a number beyond a Double's range its text (yaml's tests read `1e400` back as `1e400`). So the arm runs only if a later core refuses a number in JSON syntax. The same argument removed the OpenAPI mode's message \"is not a number JSON can hold\" (#280; the use-case ledger's M07), whose deletion the maintainer approved on 2026-11-17, and #280's notes name this arm as unreachable. The implementer's check (not committed): @json.parse read every one of the 130,833 texts that is_json_number accepts among the 5,380,857 strings of up to seven of `0129.eE+-`, numbers of 400 digits, exponents of 20 digits either way and the edges of a Double's range, without raising, on wasm-gc and natively."
+mutant = "yaml/scalar.mbt,resolve,STR,\"is_json_number accepts only numbers in JSON syntax\",\"_s_json_number accepts only numbers in JSON syntax\",0"
+text = "692f0a2c43f1da3b"
+category = "ARID"
+reason = "An abort message: the message of the abort after `@json.parse(text)` in resolve, \"is_json_number accepts only numbers in JSON syntax\", becomes \"_s_json_number accepts only numbers in JSON syntax\". The arm is one that an invariant guards (is_json_number accepts only numbers in JSON syntax, which the JSON parser always reads), which this list accepts as UNREACHABLE (the point resolve 13:12). No input reaches it, and no caller reads an abort's message."
 reviewer = ""
 
 [[exclusion]]
