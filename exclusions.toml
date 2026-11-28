@@ -2610,3 +2610,29 @@ reason = "In decode, `} else if b0 >= 0xE0 && b0 <= 0xEF {`, the test for a lead
 compiler_output = "differs"
 adversarial = { context = "pending: a separate agent context, after #422's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of re2, not committed, run on wasm-gc (decode uses no unchecked access, so wasm-gc decides), that folds into one digest what decode gives, called alone at position 0, for every input of one and two bytes, every input of three bytes that starts with 0x80 or more and every input of four bytes that starts with 0xC0 or more and ends in 00, 61, 7F, 80, 8F, 90, BF, C0 or FF (46,203,136 calls), and into another what search and full_match answer for `(?s).`, `a`, `[^a]`, `(?s).+`, `\\W`, `^.$`, `(?s)..` and `\\b` on every input of one and two bytes, and on every input of three bytes that starts with 0xC0 or more and ends in 00, 61, 7F, 80, 9F, A0, BF, C0 or FF, alone and followed by `a` (2,885,632 matches). With the mutant applied by hand both digests are the code's; the control `b0 >= 0xE1` changes both; and with the branch of two bytes narrowed by hand to `b0 <= 0xDE`, so that 0xDF reaches the test, the mutant on top of that variant changes both digests from the variant's"] }
 reviewer = ""
+
+# re2/utf8.mbt (#423, part 8 of 9 of re2's triage for #326): survivors of
+# the first weekly run (44423781036) in decode's branch of four bytes that
+# no input can tell from the code. 22 of the ticket's 24 survivors are
+# killed by tests that #423 adds to re2/utf8_test.mbt, and one by a test of
+# #422; one is left, below, and its argument is in its reason; the
+# compiler's output differs. decode uses no unchecked access, so wasm-gc
+# decides. It moves the lower bound of the test for a lead byte of four
+# bytes onto 0xEF, a byte that the branch before it always takes. The
+# implementer folded into digests what decode gives, called alone, for
+# every input of one to three bytes and for four-byte inputs, and what
+# search and full_match answer for eleven patterns on every input of one
+# and two bytes and on inputs of three and four, with the mutant applied by
+# hand and without it: the same, on wasm-gc, while a control and a variant
+# that lets 0xEF reach the test changed them (a scratch test, not
+# committed). The adversarial attempt is pending. The maintainer reads every
+# entry, since re2 is a protocol package.
+
+[[exclusion]]
+mutant = "re2/utf8.mbt,decode,INT,0xF0,0xEF,0"
+text = "48796d2334cbbe02"
+category = "EQUIVALENT"
+reason = "In decode, `} else if b0 >= 0xF0 && b0 <= 0xF4 {`, the test for a lead byte of four bytes, becomes `b0 >= 0xEF`. The two differ only for the byte 0xEF, and that byte never reaches the test: the `else if` before it, `b0 >= 0xE0 && b0 <= 0xEF`, takes 0xEF as a lead byte of three bytes, and when two continuation bytes do not follow it, decode goes on to its last line, `(not_a_char, 1)`, not to the next `else if`. So decode gives the same code point and length for every input at every position, a white-box call included, and both engines see the same characters: the DFA, which full_match runs and which calls decode for each byte from 0x80 up, and the Pike VM, which search runs, and full_match too once its DFA would be over budget, and which calls decode at every position. It differs nowhere. The test is no deletion candidate: it keeps the bytes 0x80 to 0xC1 out of the branch of four bytes (the row of four bytes 80 in the test \"bytes that are not well-formed UTF-8 match nothing that consumes a character\" holds that), and only its bound is loose by the one byte that the branch before it takes."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #423's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of re2, not committed, run on wasm-gc (decode uses no unchecked access, so wasm-gc decides), that folds into one digest what decode gives, called alone at position 0, for every input of one and two bytes, every input of three bytes that starts with 0x80 or more and every input of four bytes that starts with 0xC0 or more and ends in 00, 61, 7F, 80, 8F, 90, BF, C0 or FF (46,203,136 calls), and into another what search and full_match answer for `(?s).`, `a`, `[^a]`, `(?s).+`, `\\W`, `^.$`, `(?s)..`, `\\b`, `\\B`, the class of U+F000 to U+FFFF and the literal U+40000 on every input of one and two bytes, on every input of three bytes that starts with 0xC0 or more and ends in 00, 61, 7F, 80, 9F, A0, BF, C0 or FF, alone and followed by `a`, and on every input of four bytes that starts with 0xE0 or more and whose other three bytes are each 00, 61, 7F, 80, 8F, 90, 9F, A0, BF, C0 or FF, alone, after `a` and followed by `a` (488,480 inputs, 10,746,560 matches). With the mutant applied by hand both digests are the code's; the control `b0 >= 0xF1` changes both; and with the branch of three bytes narrowed by hand to `b0 <= 0xEE`, so that 0xEF reaches the test, the mutant on top of that variant changes both digests from the variant's"] }
+reviewer = ""
