@@ -86,6 +86,11 @@ test "matching goes on around bytes that are not well-formed UTF-8" {
   inspect(on_bytes("a\\b", b"a\xff"), content="search 0-1, full false")
   inspect(on_bytes("\\b", b"\xffa"), content="search 1-1, full false")
   inspect(on_bytes("\\B", b"\xff"), content="search 0-0, full false")
+  // A lead byte of three bytes, then a character where a continuation byte
+  // must come (RFC 3629, section 4), then a continuation byte: the lead
+  // byte alone is not a character, and the character after it is found.
+  // The same result as RE2.
+  inspect(on_bytes("a", b"\xe1a\x80"), content="search 1-2, full false")
 }
 
 ///|
