@@ -153,4 +153,12 @@ test "malformed patterns are rejected where the problem is" {
       #|ab\ => position 2: trailing backslash at end of pattern
     ),
   )
+  // U+007F, the last ASCII code point, is no letter, digit or _ (the
+  // README: "names are ASCII letters, digits and _"), so a name with it is
+  // invalid, as RE2 2024-07-02 says through google-re2 1.1.20240702
+  // ("invalid named capture group: (?P<" and U+007F ">").
+  inspect(
+    error_of("(?P<\u{7f}>x)"),
+    content="position 0: invalid named capture group (?P<\u{7f}>",
+  )
 }
