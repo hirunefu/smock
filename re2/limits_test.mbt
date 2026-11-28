@@ -52,6 +52,15 @@ test "nested repetition counts may multiply to at most 1000, as in RE2" {
       #|x(?:a{2,}b{3}){334} => position 14: nested repetition counts multiply to more than 1000 at {334}
     ),
   )
+  // Only counted repetitions multiply: an empty group, an assertion, a
+  // sequence and an alternation repeated 1000 times compile, as in RE2
+  // (RE2 2024-07-02 through google-re2 1.1.20240702).
+  for
+    pattern in [
+      "(?:){1000}", "(?:^a|\\b){1000}", "(?:ab){1000}", "(?:a|b){1000}", "(?:(?:ab){10}){100}",
+    ] {
+    @re2.compile(pattern) |> ignore
+  }
 }
 
 ///|
