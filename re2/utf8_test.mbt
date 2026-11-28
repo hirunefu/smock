@@ -139,6 +139,13 @@ test "matching goes on around bytes that are not well-formed UTF-8" {
   // byte alone is not a character, and the character after it is found.
   // The same result as RE2.
   inspect(on_bytes("a", b"\xe1a\x80"), content="search 1-2, full false")
+  // The same with a lead byte of four bytes, the character as the second,
+  // third or fourth byte: no byte before the character is part of a
+  // well-formed sequence, and the character is found. The same results as
+  // RE2.
+  inspect(on_bytes("a", b"\xf1a\x80\x80"), content="search 1-2, full false")
+  inspect(on_bytes("a", b"\xf1\x80a\x80"), content="search 2-3, full false")
+  inspect(on_bytes("a", b"\xf1\x80\x80a"), content="search 3-4, full false")
 }
 
 ///|
