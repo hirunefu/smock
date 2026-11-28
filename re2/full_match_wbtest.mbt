@@ -638,4 +638,95 @@ test "a regex whose DFA would outgrow its budget drops it and gets the same resu
   }
   debug_inspect(differ, content="[]")
   assert_true(regexes.iter().all(re => re.dfa is TooLarge))
+  // At the budget and one Int past it. The budget is 32768 Ints, 128 KiB
+  // (the README's "Linear time"; DFA_BUDGET's doc comment: "The most Ints a
+  // DFA may hold in its transition table and its states together"). A state
+  // holds its key, the instructions its threads are at followed by the
+  // context (the doc comment of `states`), and its row of the table, an Int
+  // for each byte class (of `table`); an entry of the map for a character
+  // beyond ASCII counts as four Ints (Dfa::full_match). A class starts at
+  // each byte that some instruction may tell from the byte before
+  // (Dfa::new): `.` takes all but `\n`, and `a` is 0x61, so `.*aaaa` has
+  // five, from 0x00, 0x0A, 0x0B, 0x61 and 0x62. Its dead state (no
+  // instruction) and its start state (one) hold 5 + 7 Ints; `b` reaches the
+  // loop's state, one instruction past `.` (7); each new character beyond
+  // ASCII leads back there and adds an entry to the map (4); then each `a`
+  // adds a state with one instruction more (8, 9, 10 and 11).
+  let at_budget = compile(".*aaaa")
+  // 12 + 7 + 4 * 8183 + 8 + 9 = 32768, reached by a state: kept.
+  assert_false(at_budget.full_match(spread("b", 8183, "aa")[:]))
+  assert_true(at_budget.dfa is Built(_))
+  // At the budget, what the DFA has built already costs nothing more. Each
+  // set of threads is one state (the README's "Linear time"), whose next
+  // states are computed once and then looked up (the comment at the top of
+  // re2/dfa.mbt). After `\n`, which `.` does not match, no thread is left:
+  // the dead state, which Dfa::new builds. U+007F is ASCII, so the table
+  // gives its next state (the doc comments of `byte_class` and `table`), in
+  // the start state's row that `b` began. U+0100 after `b` is in the map
+  // already (of `wide`), from the input before.
+  assert_false(at_budget.full_match(b"\n"[:]))
+  assert_true(at_budget.dfa is Built(_))
+  assert_false(at_budget.full_match(b"\x7f"[:]))
+  assert_true(at_budget.dfa is Built(_))
+  assert_false(at_budget.full_match(spread("b", 1, "")[:]))
+  assert_true(at_budget.dfa is Built(_))
+  let entry_at_budget = compile(".*aaaa")
+  // 12 + 7 + 4 * 8182 + 8 + 9 + 4 = 32768, reached by an entry of the map:
+  // a character beyond ASCII after `aa` is new to the state `aa` reached.
+  // Kept.
+  assert_false(entry_at_budget.full_match(spread("b", 8182, "aa\u{100}")[:]))
+  assert_true(entry_at_budget.dfa is Built(_))
+  let past_budget = compile(".*aaaa")
+  // 12 + 7 + 4 * 8178 + 8 + 9 + 10 + 11 = 32769: dropped, and the Pike VM
+  // answers.
+  assert_true(past_budget.full_match(spread("b", 8178, "aaaa")[:]))
+  assert_true(past_budget.dfa is TooLarge)
+  // An entry of the map crosses it too. `.*` has three classes, from 0x00,
+  // 0x0A and 0x0B: its dead and start states hold 3 + 5 Ints, and `a`
+  // reaches the loop's state (5).
+  let by_entries = compile(".*")
+  // 8 + 5 + 4 * 8188 = 32765: kept.
+  assert_true(by_entries.full_match(spread("a", 8188, "")[:]))
+  assert_true(by_entries.dfa is Built(_))
+  // One new character more: 32769, dropped.
+  assert_true(by_entries.full_match(spread("a", 8189, "")[:]))
+  assert_true(by_entries.dfa is TooLarge)
+  // A set of threads that the DFA reaches again is the same state, however
+  // it is reached. `a*|.*` has five classes, from 0x00, 0x0A, 0x0B, 0x61 and
+  // 0x62: its dead and start states hold 5 + 7 Ints, `b` reaches `.*`'s loop
+  // alone (7), each new character beyond ASCII leads back there (4), `a`
+  // reaches both loops (8), and the second `a` reaches both loops again.
+  let both_loops = compile("a*|.*")
+  // 12 + 7 + 4 * 8184 + 8 = 32763: kept. A second state for the two loops
+  // would make 32771.
+  assert_true(both_loops.full_match(spread("b", 8184, "")[:]))
+  assert_true(both_loops.full_match(b"aa"[:]))
+  assert_true(both_loops.dfa is Built(_))
+  // A state that a character beyond ASCII leads to and that does not fit
+  // drops the DFA, though an entry of the map would still fit (Dfa::add and
+  // Dfa::full_match: over the budget, the Pike VM decides). `.*éé` has three
+  // classes, from 0x00, 0x0A and 0x0B: its dead and start states hold 3 + 5
+  // Ints, `b` reaches the loop's state (5), each new character beyond ASCII
+  // leads back there (4), the first `é` adds a state of the loop and that
+  // `é` (6) and an entry (4), and the second `é` needs a state of the loop
+  // and both (7).
+  let state_past = compile(".*éé")
+  // 8 + 5 + 4 * 8185 + 6 + 4 = 32763: the state would make 32770, an entry
+  // only 32767. Dropped, and the Pike VM answers.
+  assert_true(state_past.full_match(spread("b", 8185, "éé")[:]))
+  assert_true(state_past.dfa is TooLarge)
+}
+
+///|
+/// The UTF-8 bytes of `prefix`, then of the `count` characters from U+0100
+/// up, each once, then of `suffix`. `.` matches each of those characters,
+/// and each is beyond ASCII.
+fn spread(prefix : String, count : Int32, suffix : String) -> Bytes {
+  let out = @buffer.Buffer()
+  out.write_string_utf8(prefix)
+  for i in 0..<count {
+    out.write_char_utf8((0x100 + i).to_char().unwrap())
+  }
+  out.write_string_utf8(suffix)
+  out.to_bytes()
 }

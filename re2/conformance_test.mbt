@@ -44,6 +44,10 @@ let rows : Array[(String, String, String, Bool)] = [
   ("\\\u{7f}", "\u{7f}", "0-1", true),
   ("\\\u{7f}", "~", "none", false),
   ("[\\\u{7f}]", "\u{7f}", "0-1", true),
+  // U+0000, the first character, is a literal like any other: a run of it
+  // stops before the U+0001 that follows
+  ("\u{0}+", "\u{0}\u{0}\u{1}", "0-2", false),
+  ("\u{0}+", "\u{0}\u{0}\u{0}", "0-3", true),
   // . matches one code point other than \n
   (".", "a", "0-1", true),
   (".", "", "none", false),
@@ -108,6 +112,14 @@ let rows : Array[(String, String, String, Bool)] = [
   ("[[a:]]", "]", "none", false),
   ("[a::]]", ":]", "0-2", true),
   ("[[:a:x]", "x", "0-1", true),
+  // The ends of ASCII: a class without U+0000 does not match it, and U+007F,
+  // the last ASCII character, is outside the printable range ` -~`
+  ("[^\u{0}]*", "a\u{0}", "0-1", false),
+  ("[^\u{0}]*", "ab", "0-2", true),
+  ("[ -~]+", "~~\u{7f}", "0-2", false),
+  ("[ -~]+", "~~", "0-2", true),
+  ("[^ -~]+", "\u{7f}\u{7f}~", "0-2", false),
+  ("[^ -~]+", "\u{7f}\u{7f}", "0-2", true),
   // Perl classes, ASCII only, also inside brackets
   ("\\d", "7", "0-1", true),
   ("\\d", "a", "none", false),
@@ -192,6 +204,26 @@ let rows : Array[(String, String, String, Bool)] = [
   ("\\b.\\b", "a", "0-1", true),
   ("\\b.\\b", "z", "0-1", true),
   ("\\b.\\b", "{", "none", false),
+  // Each end of each run of word characters, [0-9], [A-Z], _ and [a-z],
+  // beside the character just outside it: \b at the end of the input holds
+  // after a word character only. The character before the last is doubled,
+  // so that the last is read where the one before it was read already.
+  (".*\\b", "//0", "0-3", true),
+  (".*\\b", "00/", "0-2", false),
+  (".*\\b", "::9", "0-3", true),
+  (".*\\b", "99:", "0-2", false),
+  (".*\\b", "@@A", "0-3", true),
+  (".*\\b", "AA@", "0-2", false),
+  (".*\\b", "[[Z", "0-3", true),
+  (".*\\b", "ZZ[", "0-2", false),
+  (".*\\b", "^^_", "0-3", true),
+  (".*\\b", "__^", "0-2", false),
+  (".*\\b", "``_", "0-3", true),
+  (".*\\b", "__`", "0-2", false),
+  (".*\\b", "``a", "0-3", true),
+  (".*\\b", "aa`", "0-2", false),
+  (".*\\b", "{{z", "0-3", true),
+  (".*\\b", "zz{", "0-2", false),
   // Groups and alternation: the leftmost match, then the first alternative
   ("a|b", "b", "0-1", true),
   ("b|a", "ab", "0-1", false),
@@ -257,6 +289,13 @@ let rows : Array[(String, String, String, Bool)] = [
   ("x*y*", "", "0-0", true),
   ("^*a", "a", "0-1", true),
   ("\\b*a", "a", "0-1", true),
+  // A lazy ? before a character that it also matches: it may take the
+  // character or leave it to what follows
+  ("a??a", "a", "0-1", true),
+  ("a??a", "aa", "0-1", true),
+  ("a??a", "aaa", "0-1", false),
+  ("[ab]??a", "a", "0-1", true),
+  ("a??[ab]", "a", "0-1", true),
   // Repeating a subexpression that can match empty keeps RE2's preferences
   ("(|a)*", "aa", "0-0", true),
   ("(|a)+", "aa", "0-0", true),
@@ -397,6 +436,10 @@ fn repr(s : String) -> String {
       '\r' => b.write_string("\\r")
       '"' => b.write_string("\\\"")
       '\\' => b.write_string("\\\\")
+      // Other controls, U+0000 and U+007F among them, as escapes, so that a
+      // failure shows them.
+      _ if c < ' ' || c == '\u{7f}' =>
+        b.write_string("\\u{\{c.to_int().to_string(radix=16)}}")
       _ => b.write_char(c)
     }
   }
