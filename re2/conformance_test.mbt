@@ -152,6 +152,22 @@ let rows : Array[(String, String, String, Bool)] = [
   ("\\B", "é", "0-0", false),
   ("\\bé", "aé", "1-3", false),
   ("é\\b", "éa", "0-2", false),
+  // \b is "at ASCII word boundary (\w on one side and \W, \A, or \z on the
+  // other)" and \w is [0-9A-Za-z_] (RE2's syntax): the first and last
+  // character of each range, and those just outside them.
+  ("\\b.\\b", "/", "none", false),
+  ("\\b.\\b", "0", "0-1", true),
+  ("\\b.\\b", "9", "0-1", true),
+  ("\\b.\\b", ":", "none", false),
+  ("\\b.\\b", "@", "none", false),
+  ("\\b.\\b", "A", "0-1", true),
+  ("\\b.\\b", "Z", "0-1", true),
+  ("\\b.\\b", "[", "none", false),
+  ("\\b.\\b", "^", "none", false),
+  ("\\b.\\b", "`", "none", false),
+  ("\\b.\\b", "a", "0-1", true),
+  ("\\b.\\b", "z", "0-1", true),
+  ("\\b.\\b", "{", "none", false),
   // Groups and alternation: the leftmost match, then the first alternative
   ("a|b", "b", "0-1", true),
   ("b|a", "ab", "0-1", false),
