@@ -675,7 +675,10 @@ The YAML parser also holds to these rules:
   file is rejected when one is outside quotes. A second mark at the start
   of the file, and a mark in a plain value or key, a comment or a block
   scalar's content, are rejected with "U+FEFF is a byte order mark; write
-  it as an escape in a double-quoted value".
+  it as an escape in a double-quoted value". Elsewhere, as right after a
+  quoted value or a flow collection, or in a block scalar's header, the
+  file is rejected with the message that the place gives any other
+  character.
 - A block scalar whose last line ends the file without a line break gets
   no line break added, as YAML 1.2.2 says (section 8.1.1.2), with each
   chomping indicator: a file that ends with `body: |` and then `  hello`,

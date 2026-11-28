@@ -119,7 +119,10 @@ pub impl Show for ParseError with fn output(self, logger) {
 ///   allows (section 5.2), and rejected outside one. A second mark at the
 ///   start of the text, and a mark in a plain scalar or key, a comment or a
 ///   block scalar's content, are rejected with "U+FEFF is a byte order
-///   mark; write it as an escape in a double-quoted value".
+///   mark; write it as an escape in a double-quoted value". Elsewhere, as
+///   right after a quoted scalar or a flow collection, or in a block
+///   scalar's header, it is rejected with the message that the place gives
+///   any other character.
 /// - A block scalar whose last line ends the text without a line break
 ///   gets no line break added, as YAML 1.2.2 says (section 8.1.1.2), with
 ///   each chomping indicator: a text that ends with `a: |` and then `  x`,
