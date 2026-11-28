@@ -1441,6 +1441,30 @@ test "empty values, empty documents and stray indicators give an error" {
       #|"{a: 1}\t: b" -> error /a: a key must be a plain or quoted scalar
     ),
   )
+  // The same for a later key of a block mapping, and for a key of a flow
+  // mapping, first or later: a collection is rejected there too, in both
+  // modes, with the message above, at the deepest node reached (the member
+  // before it, or the whole document for a flow mapping's first key). No
+  // document states the message's words; the maintainer confirmed them as
+  // the code has them on 2026-11-26 (the twenty-seventh round of #275's
+  // answers, #323), in these places and in the rows above.
+  inspect(
+    both(["a: 1\n[b]: 2", "a: 1\n{b: 1}: 2", "{[a]: 1}", "{a: 1, {b: 1}: 2}"]),
+    content=(
+      #|"a: 1\n[b]: 2"
+      #|  safe: error /a: a key must be a plain or quoted scalar
+      #|  openapi: error /a: a key must be a plain or quoted scalar
+      #|"a: 1\n{b: 1}: 2"
+      #|  safe: error /a: a key must be a plain or quoted scalar
+      #|  openapi: error /a: a key must be a plain or quoted scalar
+      #|"{[a]: 1}"
+      #|  safe: error : a key must be a plain or quoted scalar
+      #|  openapi: error : a key must be a plain or quoted scalar
+      #|"{a: 1, {b: 1}: 2}"
+      #|  safe: error /a: a key must be a plain or quoted scalar
+      #|  openapi: error /a: a key must be a plain or quoted scalar
+    ),
+  )
 }
 
 ///|
