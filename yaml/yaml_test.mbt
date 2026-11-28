@@ -854,6 +854,62 @@ test "numbers that are not in JSON syntax must be quoted" {
       #|190:20:30.15 -> error /a: "190:20:30.15" may be read as a number; quote this value
     ),
   )
+  // Each number form at its shortest, and forms that only one YAML version
+  // types. YAML 1.2.2's core schema (section 10.3.2): octal `0o [0-7]+`, as
+  // in its Example 10.9's `0o7`; hexadecimal `0x [0-9a-fA-F]+`; a float may
+  // start with a point and its exponent's sign is optional, so `.5e3` is
+  // one, though YAML 1.1 needs the sign. YAML 1.1 (yaml.org/type/int.html
+  // and float.html): base 2 `[-+]?0b[0-1_]+`; base 8 `[-+]?0[0-7_]+`, whose
+  // digits may be `_` alone; base 16 `[-+]?0x[0-9a-fA-F_]+`; base 10 float
+  // `[-+]?([0-9][0-9_]*)?\.[0-9.]*([eE][-+][0-9]+)?`, whose part after the
+  // point may be points alone, and whose `_` and signed exponent YAML 1.2
+  // does not have. docs/definition-files.md rejects each with "quote this
+  // value", in the words the maintainer confirmed on 2026-11-17 (#275).
+  inspect(
+    as_value([
+      "0o7", "0b1", "0xA", "0_", "0_17", "1..", "1_0.5e+3", "1_0.5E-3", ".5e3", "-.5E3",
+    ]),
+    content=(
+      #|0o7 -> error /a: "0o7" may be read as a number; quote this value
+      #|0b1 -> error /a: "0b1" may be read as a number; quote this value
+      #|0xA -> error /a: "0xA" may be read as a number; quote this value
+      #|0_ -> error /a: "0_" may be read as a number; quote this value
+      #|0_17 -> error /a: "0_17" may be read as a number; quote this value
+      #|1.. -> error /a: "1.." may be read as a number; quote this value
+      #|1_0.5e+3 -> error /a: "1_0.5e+3" may be read as a number; quote this value
+      #|1_0.5E-3 -> error /a: "1_0.5E-3" may be read as a number; quote this value
+      #|.5e3 -> error /a: ".5e3" may be read as a number; quote this value
+      #|-.5E3 -> error /a: "-.5E3" may be read as a number; quote this value
+    ),
+  )
+  // YAML 1.1's base 60, as an integer (yaml.org/type/int.html,
+  // `[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+`) and as a float (float.html,
+  // `[-+]?[0-9][0-9_]*(:[0-5]?[0-9])+\.[0-9_]*`): each group after a colon
+  // is one digit, 0 to 9, or two whose first is at most 5, 00 to 59. Rejected
+  // with "quote this value", as above.
+  inspect(
+    as_value(["1:0", "1:9", "1:00", "1:59", "1:0.5"]),
+    content=(
+      #|1:0 -> error /a: "1:0" may be read as a number; quote this value
+      #|1:9 -> error /a: "1:9" may be read as a number; quote this value
+      #|1:00 -> error /a: "1:00" may be read as a number; quote this value
+      #|1:59 -> error /a: "1:59" may be read as a number; quote this value
+      #|1:0.5 -> error /a: "1:0.5" may be read as a number; quote this value
+    ),
+  )
+  // A float with a fraction and an exponent without a sign: YAML 1.2.2's
+  // core schema reads it (section 10.3.2, `[-+]? ( \. [0-9]+ | [0-9]+ ( \.
+  // [0-9]* )? ) ( [eE] [-+]? [0-9]+ )?`), though YAML 1.1's float does not
+  // (its exponent has a sign, `[eE][-+][0-9]+`), and a leading zero or a `+`
+  // keeps it out of JSON's syntax (RFC 8259, section 6). Rejected with
+  // "quote this value", as above.
+  inspect(
+    as_value(["01.5e3", "+1.5e3"]),
+    content=(
+      #|01.5e3 -> error /a: "01.5e3" may be read as a number; quote this value
+      #|+1.5e3 -> error /a: "+1.5e3" may be read as a number; quote this value
+    ),
+  )
 }
 
 ///|
@@ -925,6 +981,61 @@ test "the same values quoted are strings, and look-alikes that no YAML version t
       #|2001-123-14 -> {"a":"2001-123-14"}
       #|2001-12-14T:59:43 -> {"a":"2001-12-14T:59:43"}
       #|2001-12-14 21:59:4x -> {"a":"2001-12-14 21:59:4x"}
+    ),
+  )
+  // More near misses of the same types: YAML 1.1's base 2 needs a digit or
+  // `_` after `0b` (`[-+]?0b[0-1_]+`); a float's digits before the point
+  // start with a digit even when there is one (`([0-9][0-9_]*)?\.`); `0_8`
+  // is no base 8 (`0[0-7_]+`), no base 10 (`0|[1-9][0-9_]*`) and no float
+  // (it has no point); an exponent needs digits. YAML 1.2.2's core schema
+  // (section 10.3.2) types none of them either, so each is a string.
+  inspect(
+    as_value(["0b", "_.5", "0_8", "1.5e"]),
+    content=(
+      #|0b -> {"a":"0b"}
+      #|_.5 -> {"a":"_.5"}
+      #|0_8 -> {"a":"0_8"}
+      #|1.5e -> {"a":"1.5e"}
+    ),
+  )
+  // Each field of a YAML 1.1 timestamp one digit longer than
+  // yaml.org/type/timestamp.html allows, in its examples `2002-12-14` and
+  // `2001-12-14t21:59:43.10-05:00`: the year has four digits, and the month,
+  // the day, the hour, the minute, the second and the time zone's hour and
+  // minute at most two (`[0-9][0-9]?` or `[0-9][0-9]`); and a date and a
+  // time with nothing between them, where the page needs `[Tt]` or white
+  // space (`([Tt]|[ \t]+)`). YAML 1.2.2's core schema (section 10.3.2) types
+  // none of them either, so each is a string.
+  inspect(
+    as_value([
+      "20021-12-14", "2002-12-143", "20011-12-14t21:59:43.10-05:00", "2001-123-14t21:59:43.10-05:00",
+      "2001-12-143t21:59:43.10-05:00", "2001-12-14t121:59:43.10-05:00", "2001-12-14t21:591:43.10-05:00",
+      "2001-12-14t21:59:431.10-05:00", "2001-12-14t21:59:43.10-005:00", "2001-12-14t21:59:43.10-05:000",
+      "2001-12-1421:59:43.10-05:00",
+    ]),
+    content=(
+      #|20021-12-14 -> {"a":"20021-12-14"}
+      #|2002-12-143 -> {"a":"2002-12-143"}
+      #|20011-12-14t21:59:43.10-05:00 -> {"a":"20011-12-14t21:59:43.10-05:00"}
+      #|2001-123-14t21:59:43.10-05:00 -> {"a":"2001-123-14t21:59:43.10-05:00"}
+      #|2001-12-143t21:59:43.10-05:00 -> {"a":"2001-12-143t21:59:43.10-05:00"}
+      #|2001-12-14t121:59:43.10-05:00 -> {"a":"2001-12-14t121:59:43.10-05:00"}
+      #|2001-12-14t21:591:43.10-05:00 -> {"a":"2001-12-14t21:591:43.10-05:00"}
+      #|2001-12-14t21:59:431.10-05:00 -> {"a":"2001-12-14t21:59:431.10-05:00"}
+      #|2001-12-14t21:59:43.10-005:00 -> {"a":"2001-12-14t21:59:43.10-005:00"}
+      #|2001-12-14t21:59:43.10-05:000 -> {"a":"2001-12-14t21:59:43.10-05:000"}
+      #|2001-12-1421:59:43.10-05:00 -> {"a":"2001-12-1421:59:43.10-05:00"}
+    ),
+  )
+  // A group of YAML 1.1's base 60 needs a digit after its colon
+  // (`:[0-5]?[0-9]`, yaml.org/type/int.html and float.html): a colon right
+  // before the point or before another colon makes no group. YAML 1.2.2's
+  // core schema types neither, so each is a string.
+  inspect(
+    as_value(["1:.5", "1::30"]),
+    content=(
+      #|1:.5 -> {"a":"1:.5"}
+      #|1::30 -> {"a":"1::30"}
     ),
   )
 }
