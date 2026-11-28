@@ -2584,3 +2584,100 @@ reason = "In Writer::string, `} else if code <= 0xFF {`, which writes a characte
 compiler_output = "differs"
 adversarial = { context = "a separate agent context of #275's step 3, on 2026-11-26, which wrote neither this entry nor any of yaml's tests", tests = ["read YAML 1.2.2 section 5.7 (\"All non-printable characters must be escaped\"; `\\x` and two hexadecimal digits, production 59, and `\\u` and four, production 60, with no preference between them) and production 1 (c-printable), and `write`'s doc comment (inside double quotes, control characters, U+2028, U+2029, U+FEFF, U+FFFE and U+FFFF are escapes, such as `\\x01` and `\\uFEFF`), then looked for a character that reaches the choice between `\\x` and `\\u` and that the bound `code <= 0xFE`, which moves U+00FF, sends the other way. The choice is reached only by a character with no escape of its own that is_printable refuses, the surrogates having raised first: U+0001 to U+0006, U+000E to U+001A, U+001C to U+001F, U+007F to U+0084, U+0086 to U+009F, U+FEFF, U+FFFE and U+FFFF (U+2028 and U+2029 are `\\L` and `\\P`). Every character from U+00A0 to U+FEFE is printable or has an escape, so any bound from 0x9F to 0xFEFE writes the same bytes. Each character is written alone, nothing carried to the next, so it differs nowhere, a white-box call of Writer::string included. Tried: every code point but the surrogates inside double quotes, as an item and as a key; each of U+0000 to U+02FF, U+2000 to U+20FF and U+FE00 to U+FFFF alone, as a document, an item and a key; and string called on U+0001, U+009F, U+00A0, U+00FE, U+00FF, U+0100, U+0101, U+FEFE, U+FEFF, U+FFFE and U+FFFF as a key and a value, at column zero and not", "a scratch white-box test of yaml, not committed: a copy of writer.mbt's Writer with each of #402's eight EQUIVALENT mutations and controls behind a number, compared with the real `write` (its bytes, or its error's pointer and message) on 2,000 random trees, each written eight ways (no item comments, without and with a header; every item; a third of the items; a third and a pointer that names no item, first or last in the map; the first item of each sequence; that pointer alone; every item and every member: 16,000 writes, 4,958 of them errors), 310 hand cases (`write`'s example, pointers with `~0`, `~1`, the empty key's `/`, `00`, `-`, one past a sequence's end, no leading `/`, the root's `\"\"`, each kind of root with comments on its first items, trees 1022 to 1025 deep with a comment at the bottom), every code point but the surrogates inside double quotes, 256 at a time, as an item and as a key (8,704 writes), each of U+0000 to U+02FF, U+2000 to U+20FF and U+FE00 to U+FFFF alone, as a document, an item and a key (4,608), and every surrogate code unit alone, first, last, inside and beside another half, and valid pairs, in four places (65,556). The copy of the code and each of the eight mutants give the real writer's result on every input. The controls each change it: the root's pointer always `None` (2,128 of the random writes), the check after the root never made (4,358) or one short (3,942), item_pointer's index plus one (2,156) or its guard turned round (2,128), the top mapping at indent 2 (1,445), a member's mapping or sequence written inline (1,080; 1,290), the top sequence's item 0 without its comment when inline (1,210, and `[1]` with a comment on `/0`), the `\\x` bound at 0x9E (U+009F becomes `\\u009F`), at 0xFEFF (U+FEFF becomes `\\xFF`) and at 0x7F (U+0080 to U+009F but U+0085), and is_plain_safe's pair test at `i + 2` (12,304). Then each mutant applied by hand to writer.mbt: yaml's 55 tests and the harness pass, the harness's five digests of the real writer's results being the code's, on wasm-gc and natively (arm64; the digests are the same on both); white-box calls of the private functions (document on Writer literals and twice on one Writer, item_pointer with `None` and i of 0, 1, -1 and both ends of Int32, root on a buffer that already holds text, string on the code points around each bound) print the code's results. Six controls applied the same way fail 1 to 7 of yaml's tests"] }
 reviewer = ""
+
+# re2/class.mbt (#416, part 1 of 9 of re2's triage for #326): survivors of
+# the first weekly run (44423781036) in re2's character sets that no input
+# can tell from the code. Each argument is in its reason; the compiler's
+# output differs for each but MAX_CHAR's, which it does not compare. Neither
+# re2/class.mbt nor re2/compile.mbt uses an unchecked access, so wasm-gc
+# decides. The sets are built when a pattern compiles and read by both of
+# re2's engines: `full_match` runs the DFA, or the Pike VM once the DFA is
+# over its budget, and `search` runs the Pike VM; a caller chooses by the
+# method it calls. One mutant moves the largest code point past U+10FFFF,
+# where no pattern and no UTF-8 input reaches; three keep adjacent or
+# touching ranges apart (CharSet::of's merge only saves cost: the sets hold
+# the same code points); two change nothing at all; one lets
+# CharSet::negate push an empty range, which CharSet::of and contains
+# happen to read as no code point. None is a deletion candidate: each check
+# is needed, or keeps the ranges as CharSet's doc comment states them. The
+# implementer folded into digests what the sets answer for every list of up
+# to three ranges over twelve code points at both ends (480,715 lists, each
+# set, its complement, the complement's complement and their union read at
+# 15 points, U+0000 to U+0006, U+10FFF9 to U+10FFFF and -1, the code point
+# the Pike VM passes for a byte that is not UTF-8), what `full_match` and
+# `search` answer for 58,370 patterns (bracket classes of up to three of 21
+# items, plain and negated, with and without (?i), `.`, (?s) and the Perl
+# classes) on 37 inputs, and what `full_match` answers for four regexes with
+# classes of adjacent and touching ranges whose DFA grows large, on 400
+# inputs each (two of them drop their DFA). With each mutant applied by
+# hand, the digests of these answers were the code's on wasm-gc, MAX_CHAR's
+# but for the point 0x110000, while ten variants that are not equivalent
+# changed them; the three mutants that keep ranges apart made the first of
+# those regexes drop its DFA sooner (at its 112th input, not its 128th),
+# with the same answers (a scratch test, not committed). By key, the seven
+# survive re2's 30 tests and the importers' 1,195. The adversarial attempt
+# is pending. The maintainer reads every entry, since re2 is a protocol
+# package.
+
+[[exclusion]]
+mutant = "re2/class.mbt,MAX_CHAR,INT,0x10FFFF,0x110000,0"
+text = "1a37af1d5ff710c3"
+category = "EQUIVALENT"
+reason = "MAX_CHAR, the largest code point, U+10FFFF, becomes 0x110000, one past it. It is the upper end of `.` (with and without (?s)) and of every complement CharSet::negate makes (`[^...]`, `\\D`, `\\S`, `\\W`), so each of those sets also holds 0x110000. Nothing a caller gives reaches that point: a pattern is a String, whose characters stop at U+10FFFF, and the input is UTF-8, which decode reads up to U+10FFFF only (F4 8F BF BF; a first byte F4 followed by 90 or more is not well-formed UTF-8, RFC 3629, and decodes as not_a_char, -1), so neither the DFA (`full_match`) nor the Pike VM (`search`, and `full_match` once its DFA is over budget) asks a set whether it holds 0x110000. For every code point up to U+10FFFF, and for -1, contains answers as the code; the DFA's byte classes read only the ranges' ends below 128, so they are the same. It differs only for a white-box call of contains with 0x110000, a value that no pattern or input can hold. The constant states the Unicode Standard's largest code point, so it is no deletion candidate."
+compiler_output = "not compared"
+adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check: a scratch white-box test of re2, not committed, that folds into digests what CharSet::of, CharSet::negate and contains answer for every list of up to three ranges over U+0000 to U+0005 and U+10FFFA to U+10FFFF (480,715 lists: the set, its complement, the complement's complement and the complement merged with the list, each read at U+0000 to U+0006, U+10FFF9 to U+10FFFF and -1, and apart at 0x110000), what full_match and search answer for 58,370 patterns (bracket classes of up to three of 21 items such as `a-c`, `b-d`, U+0000, U+10FFFE to U+10FFFF and the Perl classes, plain and negated, with and without (?i), repeated; `.`, (?s) and the Perl classes alone) on 37 inputs (single code points at both ends and around ASCII's classes, a byte that is not UTF-8, the empty input, five pairs), and what full_match answers for four regexes with classes of adjacent and touching ranges whose DFA grows large, on 400 random inputs each (two drop their DFA). With this mutant applied by hand every digest is the code's on wasm-gc but the one at 0x110000 and the one of the sets' ranges; ten variants that are not equivalent change the answers (the three killed merges of CharSet::of and its `+ 2`, negate's start at 1, its next past `+ 2`, its gap test at `next + 1`, its last test `<` or at MAX_CHAR - 1, and MAX_CHAR at U+10FFFE)"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/class.mbt,CharSet::of,AOR,+,-,0"
+text = "e4f6ae5fb68e10af"
+category = "EQUIVALENT"
+reason = "CharSet::of merges a range into the last one it kept when `lo <= out[n - 1] + 1`; the mutant's `lo <= out[n - 1] - 1` merges only a range that starts before the last one's end, so a range that starts at that end (sharing one code point) or right after it (adjacent) is kept apart. The ranges are sorted by their start, so every range kept still starts at or after the end of every earlier one, and the set holds the same code points: contains, which looks for the last range that starts at or before the code point and then checks its end, finds a shared point in the later range and every other point where the code finds it, for every code point and for -1; CharSet::negate reads such a pair as one range (its gap test `r[i] > next` fails between them) and makes the same complement. So neither engine answers otherwise: the sets are read by the DFA (`full_match`) and by the Pike VM (`search`, and `full_match` once its DFA is over budget). It differs in the set's ranges, which a white-box test could read, and in cost: a binary search over more ranges, and, where two such ranges meet below 128, a byte class or two more in the DFA (Dfa::new starts a class at each range's start and after its end), so that each state takes as many more Ints of the DFA's 128 KiB budget and a large DFA gives way to the Pike VM sooner, with the same answers (README, Linear time; full_match_wbtest.mbt's property holds the two engines equal). Time stays linear in the input. Merging touching and adjacent ranges only saves cost, so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand, the digests of what the sets, full_match and search answer are the code's on wasm-gc; the digests of the sets' ranges and of the DFA's number of byte classes differ, and the first of the four large regexes drops its DFA at its 112th input, not its 128th"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/class.mbt,CharSet::of,INT,0,1,0"
+text = "e4f6ae5fb68e10af"
+category = "EQUIVALENT"
+reason = "CharSet::of's guard `n > 0 &&` before it reads the last range kept, `out[n - 1]`, becomes `n > 1`. `n` is `out.length()`, and `out` grows by two at a time (a range's start and end), so `n` is 0 or at least 2, and `n > 1` holds exactly when `n > 0` does. It differs nowhere, a white-box call of CharSet::of included, in both engines, which read the same sets. The guard keeps `out[n - 1]` from reading index -1 when nothing is kept yet, so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand every digest is the code's on wasm-gc, the sets' ranges and the DFA's byte classes included"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/class.mbt,CharSet::of,INT,1,0,1"
+text = "e4f6ae5fb68e10af"
+category = "EQUIVALENT"
+reason = "CharSet::of merges a range into the last one it kept when `lo <= out[n - 1] + 1`; the mutant's `lo <= out[n - 1] + 0` does not merge a range that starts right after the last one's end (adjacent), while ranges that overlap, by one code point or more, still merge. The ranges stay sorted and apart, and the set holds the same code points: contains finds each point in the range that holds it, for every code point and for -1, and CharSet::negate makes the same complement, since its gap test `r[i] > next` fails between two adjacent ranges. So neither engine answers otherwise: the sets are read by the DFA (`full_match`) and by the Pike VM (`search`, and `full_match` once its DFA is over budget). It differs in the set's ranges, which a white-box test could read, and in cost: a binary search over more ranges, and, where two adjacent ranges meet below 128, one more byte class in the DFA, so that each state takes one more Int of its 128 KiB budget and a large DFA gives way to the Pike VM sooner, with the same answers (README, Linear time; full_match_wbtest.mbt's property holds the two engines equal). Time stays linear in the input. Merging adjacent ranges only saves cost, so it is no deletion candidate. The mutant is the same function as `lo < out[n - 1] + 1` (ROR,<=,<,0)."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand, the digests of what the sets, full_match and search answer are the code's on wasm-gc; the digests of the sets' ranges and of the DFA's number of byte classes differ, and the first of the four large regexes drops its DFA at its 112th input, not its 128th"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/class.mbt,CharSet::of,ROR,<=,<,0"
+text = "e4f6ae5fb68e10af"
+category = "EQUIVALENT"
+reason = "CharSet::of merges a range into the last one it kept when `lo <= out[n - 1] + 1`; the mutant's `lo < out[n - 1] + 1` does not merge a range that starts right after the last one's end (adjacent), while ranges that overlap, by one code point or more, still merge. The ranges stay sorted and apart, and the set holds the same code points: contains finds each point in the range that holds it, for every code point and for -1, and CharSet::negate makes the same complement, since its gap test `r[i] > next` fails between two adjacent ranges. So neither engine answers otherwise: the sets are read by the DFA (`full_match`) and by the Pike VM (`search`, and `full_match` once its DFA is over budget). It differs in the set's ranges, which a white-box test could read, and in cost: a binary search over more ranges, and, where two adjacent ranges meet below 128, one more byte class in the DFA, so that each state takes one more Int of its 128 KiB budget and a large DFA gives way to the Pike VM sooner, with the same answers (README, Linear time; full_match_wbtest.mbt's property holds the two engines equal). Time stays linear in the input. Merging adjacent ranges only saves cost, so it is no deletion candidate. The mutant is the same function as `lo <= out[n - 1] + 0` (INT,1,0,1)."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand, the digests of what the sets, full_match and search answer are the code's on wasm-gc; the digests of the sets' ranges and of the DFA's number of byte classes differ, and the first of the four large regexes drops its DFA at its 112th input, not its 128th"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/class.mbt,CharSet::of,ROR,>,>=,1"
+text = "e4f6ae5fb68e10af"
+category = "EQUIVALENT"
+reason = "When CharSet::of merges a range into the last one it kept, it moves that one's end to the range's end if it is later: `if hi > out[n - 1] { out[n - 1] = hi }`. The mutant's `hi >= out[n - 1]` also makes the write when both end at the same code point, which writes the value already there. It differs nowhere, a white-box call of CharSet::of included, in both engines, which read the same sets. The check keeps a range that lies inside the last one from cutting it short, so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand every digest is the code's on wasm-gc, the sets' ranges and the DFA's byte classes included"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/class.mbt,CharSet::negate,ROR,>,>=,0"
+text = "57a0d828fa0d0478"
+category = "EQUIVALENT"
+reason = "CharSet::negate pushes the gap before each range of the set, `(next, r[i] - 1)`, when `r[i] > next`; the mutant's `r[i] >= next` also pushes it when the range starts at `next`, as the empty range `(next, next - 1)`. The sets CharSet::of makes are sorted, apart and not adjacent, so every range after the first starts at least two past the end before it, past `next`; only the first can start at `next`, which is then 0. So the mutant adds `(0, -1)` to the complement of a set that holds U+0000, such as `[^\\u{00}]` with U+0000 written in the pattern, or `[^\\D]` (the Perl classes negate sets without U+0000, so `\\D`, `\\S` and `\\W` get no such range). CharSet::of keeps it first (the next range starts at 1 or later, so it does not merge), and contains reads it as no code point: a point below the next range's start finds `(0, -1)` and is not at or below -1, as the code's complement does not hold it either, and -1 (not_a_char, which the Pike VM passes for a byte that is not UTF-8 and at the input's end) is below every start. The DFA's byte classes skip a range that ends below 0. The complement of a bracket class goes into an instruction and is never negated again. So neither engine answers otherwise: the DFA (`full_match`) and the Pike VM (`search`, and `full_match` once its DFA is over budget) read the same code points. It differs in the set's ranges, one empty range more, which a white-box test could read, and a binary search over one range more. The test keeps empty ranges out of the set, whose doc comment states inclusive ranges; the mutant's set is right only because CharSet::of and contains happen to read an empty range at the front as nothing, so the test is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand, the digests of what the sets, full_match and search answer are the code's on wasm-gc, the complement of a complement and the union of a complement with other ranges included; the digest of the sets' ranges differs"] }
+reviewer = ""
