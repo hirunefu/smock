@@ -655,6 +655,30 @@ test "a regex whose DFA would outgrow its budget drops it and gets the same resu
   // One new character more: 32769, dropped.
   assert_true(by_entries.full_match(spread("a", 8189, "")[:]))
   assert_true(by_entries.dfa is TooLarge)
+  // A set of threads that the DFA reaches again is the same state, however
+  // it is reached. `a*|.*` has five classes, from 0x00, 0x0A, 0x0B, 0x61 and
+  // 0x62: its dead and start states hold 5 + 7 Ints, `b` reaches `.*`'s loop
+  // alone (7), each new character beyond ASCII leads back there (4), `a`
+  // reaches both loops (8), and the second `a` reaches both loops again.
+  let both_loops = compile("a*|.*")
+  // 12 + 7 + 4 * 8184 + 8 = 32763: kept. A second state for the two loops
+  // would make 32771.
+  assert_true(both_loops.full_match(spread("b", 8184, "")[:]))
+  assert_true(both_loops.full_match(b"aa"[:]))
+  assert_true(both_loops.dfa is Built(_))
+  // A state that a character beyond ASCII leads to and that does not fit
+  // drops the DFA, though an entry of the map would still fit (Dfa::add and
+  // Dfa::full_match: over the budget, the Pike VM decides). `.*éé` has three
+  // classes, from 0x00, 0x0A and 0x0B: its dead and start states hold 3 + 5
+  // Ints, `b` reaches the loop's state (5), each new character beyond ASCII
+  // leads back there (4), the first `é` adds a state of the loop and that
+  // `é` (6) and an entry (4), and the second `é` needs a state of the loop
+  // and both (7).
+  let state_past = compile(".*éé")
+  // 8 + 5 + 4 * 8185 + 6 + 4 = 32763: the state would make 32770, an entry
+  // only 32767. Dropped, and the Pike VM answers.
+  assert_true(state_past.full_match(spread("b", 8185, "éé")[:]))
+  assert_true(state_past.dfa is TooLarge)
 }
 
 ///|
