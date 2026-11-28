@@ -41,6 +41,11 @@ let rows : Array[(String, String, String, Bool)] = [
   ("a.c", "a😀c", "0-6", true),
   ("...", "a😀c", "0-6", true),
   ("\\.", "a", "none", false),
+  // The first and the last code point, and those on either side of \n
+  (".", "\u{0}", "0-1", true),
+  (".", "\t", "0-1", true),
+  (".", "\u{0b}", "0-1", true),
+  (".", "\u{10FFFF}", "0-4", true),
   // Bracket classes: ranges, negation, ] and - as literals
   ("[abc]", "b", "0-1", true),
   ("[abc]", "d", "none", false),
