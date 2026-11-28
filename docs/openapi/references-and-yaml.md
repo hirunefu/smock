@@ -187,8 +187,10 @@ A bundler fetches what the URLs name. smock never does.
 
 A document whose name ends in `.yaml` or `.yml` is read as YAML 1.2, the
 YAML version OpenAPI recommends. One whose name ends in `.json` is read as
-JSON. Definition files are not read this way: they keep the safe subset of
-YAML that the [Definition-file
+JSON. A JSON document may start with one byte order mark (U+FEFF), which
+is dropped; a second is an error that starts with "not valid JSON", as
+any other text outside JSON's syntax is. Definition files are not read
+this way: they keep the safe subset of YAML that the [Definition-file
 reference](../definition-files.md#writing-definition-files-in-yaml)
 describes, and the command writes its YAML output in that subset.
 
@@ -248,6 +250,14 @@ The YAML parser also holds to these rules:
   of the value, as in `url: /pets#top`; anywhere else, such as right after
   a quoted value or a flow collection, as in `type: "string"# note`, it is
   an error, "a comment needs a space before its #".
+- A byte order mark (U+FEFF) may start the file, and is dropped there:
+  one, and no more. Anywhere else, it is text inside a quoted value, as
+  YAML says, and an error outside quotes. A second mark at the start of
+  the file, and a mark in a plain value or key, a comment or a block
+  scalar's content, are an error, "U+FEFF is a byte order mark; write it
+  as an escape in a double-quoted value". Elsewhere, as right after a
+  quoted value or a flow collection, or in a block scalar's header, the
+  error is the one that place gives any other character.
 - A block scalar whose last line ends the file without a line break gets
   no line break added, as YAML 1.2.2 says (section 8.1.1.2), with each
   chomping indicator: a file that ends with `description: |` and then

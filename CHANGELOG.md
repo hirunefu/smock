@@ -840,9 +840,10 @@ of each GitHub release include its section
   block scalar's content loaded, and is now rejected with "U+FEFF is a
   byte order mark; write it as an escape in a double-quoted value". So is
   an OpenAPI document that holds one there inside the document.
-  `smock import-openapi` drops one more mark at the start of an OpenAPI
-  document, as before, so two marks there still import. Inside a quoted
-  value, the mark is text, as before
+  `smock import-openapi` dropped two marks at the start of an OpenAPI
+  document in YAML, and now drops one, so a second is rejected there too,
+  with the same message; a JSON document, as before, may start with one
+  mark and no more. Inside a quoted value, the mark is text, as before
   ([smock#437](https://github.com/hirunefu/smock/issues/437)).
 - In a YAML Definition file, a YAML 1.1 float with `_` after its point,
   such as `685.230_15e+03`, the example of yaml.org's page on floats, is
