@@ -56,10 +56,11 @@ fn Parser::Parser(text : StringView, openapi~ : Bool) -> Parser {
 }
 
 ///|
-/// What a byte order mark (U+FEFF) outside a quoted scalar is rejected
-/// with, unless it is the first character of the text, which `Parser`
-/// drops. YAML 1.2.2 allows one only before a document and inside quoted
-/// scalars (section 5.2).
+/// What a byte order mark (U+FEFF) is rejected with where the parser would
+/// read it as text outside a quoted scalar: in a plain scalar or key, a
+/// comment or a block scalar's content. `Parser` drops one that is the
+/// first character of the text. YAML 1.2.2 allows one only before a
+/// document and inside quoted scalars (section 5.2).
 const BYTE_ORDER_MARK : String = "U+FEFF is a byte order mark; write it as an escape in a double-quoted value"
 
 ///|
