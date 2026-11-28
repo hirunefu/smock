@@ -71,6 +71,33 @@ test "RE2 syntax left out of the subset is rejected as not supported in it" {
     error_of("\\pLu"),
     content="position 0: Unicode class \\pL is not supported in smock's RE2 subset",
   )
+  // Every POSIX class RE2 has (its syntax page lists alnum, alpha, ascii,
+  // blank, cntrl, digit, graph, lower, print, punct, space, upper, word and
+  // xdigit, and RE2 2024-07-02 compiles each) is one the README lists as left
+  // out ("POSIX classes such as [[:alpha:]]"), also with more of the bracket
+  // class after it.
+  inspect(
+    errors([
+      "[[:alnum:]]", "[[:ascii:]]", "[[:blank:]]", "[[:cntrl:]]", "[[:graph:]]", "[[:lower:]]",
+      "[[:print:]]", "[[:punct:]]", "[[:space:]]", "[[:upper:]]", "[[:word:]]", "[[:xdigit:]]",
+      "[[:alpha:]x]",
+    ]),
+    content=(
+      #|[[:alnum:]] => position 1: POSIX class [:alnum:] is not supported in smock's RE2 subset
+      #|[[:ascii:]] => position 1: POSIX class [:ascii:] is not supported in smock's RE2 subset
+      #|[[:blank:]] => position 1: POSIX class [:blank:] is not supported in smock's RE2 subset
+      #|[[:cntrl:]] => position 1: POSIX class [:cntrl:] is not supported in smock's RE2 subset
+      #|[[:graph:]] => position 1: POSIX class [:graph:] is not supported in smock's RE2 subset
+      #|[[:lower:]] => position 1: POSIX class [:lower:] is not supported in smock's RE2 subset
+      #|[[:print:]] => position 1: POSIX class [:print:] is not supported in smock's RE2 subset
+      #|[[:punct:]] => position 1: POSIX class [:punct:] is not supported in smock's RE2 subset
+      #|[[:space:]] => position 1: POSIX class [:space:] is not supported in smock's RE2 subset
+      #|[[:upper:]] => position 1: POSIX class [:upper:] is not supported in smock's RE2 subset
+      #|[[:word:]] => position 1: POSIX class [:word:] is not supported in smock's RE2 subset
+      #|[[:xdigit:]] => position 1: POSIX class [:xdigit:] is not supported in smock's RE2 subset
+      #|[[:alpha:]x] => position 1: POSIX class [:alpha:] is not supported in smock's RE2 subset
+    ),
+  )
 }
 
 ///|
