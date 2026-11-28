@@ -30,7 +30,7 @@
 {"file":"yaml/parser.mbt","definition":"Parser::escape","text":"c021cf10d816b5c8","pinned":{"BODY":1,"ROR":4,"IFC":4,"LCR":4,"NOT":1,"DEL":8,"AOR":4,"INT":17,"STR":5},"full":{"BODY":1,"ROR":4,"IFC":7,"LCR":4,"NOT":1,"DEL":8,"AOR":4,"INT":38,"STR":10}}
 {"file":"yaml/parser.mbt","definition":"Parser::hex","text":"84a9792bd34ddacf","pinned":{"BODY":1,"DEL":2,"AOR":7,"INT":5,"STR":1},"full":{"BODY":1,"DEL":2,"AOR":7,"INT":13,"STR":2}}
 {"file":"yaml/parser.mbt","definition":"Parser::chomping","text":"64cca5efde688611","pinned":{"DEL":2},"full":{"DEL":2}}
-{"file":"yaml/parser.mbt","definition":"Parser::block_scalar","text":"7cec1f48c109cf32","pinned":{"BODY":1,"ROR":12,"IFC":27,"LCR":12,"NOT":4,"DEL":31,"BOOL":6,"AOR":9,"INT":31,"STR":4},"full":{"BODY":1,"ROR":12,"IFC":54,"LCR":12,"NOT":4,"DEL":31,"BOOL":6,"AOR":9,"INT":50,"STR":8}}
+{"file":"yaml/parser.mbt","definition":"Parser::block_scalar","text":"19d290c8f460a380","pinned":{"BODY":1,"ROR":12,"IFC":27,"LCR":12,"NOT":4,"DEL":30,"BOOL":6,"AOR":9,"INT":31,"STR":4},"full":{"BODY":1,"ROR":12,"IFC":54,"LCR":12,"NOT":4,"DEL":30,"BOOL":6,"AOR":9,"INT":50,"STR":8}}
 {"file":"yaml/parser.mbt","definition":"Parser::at_sequence_item","text":"9bc0da266c8b68af","pinned":{"BODY":1,"LCR":1,"INT":1},"full":{"BODY":1,"LCR":1,"INT":2}}
 {"file":"yaml/parser.mbt","definition":"Parser::block_sequence","text":"dd877aa9296b7ee6","pinned":{"BODY":1,"ROR":1,"IFC":2,"LCR":3,"NOT":3,"DEL":7,"AOR":1,"INT":1},"full":{"BODY":1,"ROR":1,"IFC":4,"LCR":3,"NOT":3,"DEL":7,"AOR":1,"INT":2}}
 {"file":"yaml/parser.mbt","definition":"Parser::continues_block","text":"776edcca06810eb9","pinned":{"BODY":1,"ROR":2,"IFC":2,"LCR":3,"DEL":1,"BOOL":2,"STR":1},"full":{"BODY":1,"ROR":2,"IFC":4,"LCR":3,"DEL":1,"BOOL":2,"STR":2}}

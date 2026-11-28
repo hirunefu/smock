@@ -744,7 +744,6 @@ fn Parser::block_scalar(self : Parser, parent : Int32) -> Json raise ParseError 
     self.bump()
     let line_start = self.pos
     if self.document_marker_at(line_start) {
-      self.pos = line_start
       break
     }
     let mut spaces = 0
