@@ -167,6 +167,16 @@ test "the document must be UTF-8 JSON, an object without a repeated key; a leadi
     b"{ \"openapi\": \"3.1.0\", ",
     b"[]",
     b"{ \"openapi\": \"3.1.0\", \"paths\": { \"/a\": {}, \"/a\": {} } }",
+    // Only one leading byte order mark is skipped, as for a YAML document
+    // (#437, the maintainer's decision of 2026-11-28 in the thirtieth round
+    // of #275's answers): RFC 8259 lets a parser ignore a byte order mark
+    // (section 8.1), and its white space is a space, a tab, a line feed or
+    // a carriage return (section 2), so a second mark is text that is not
+    // JSON, refused with the JSON parser's own words, as the incomplete
+    // document above is. The parser counts columns from 0, as for the first
+    // character of YAML text read as JSON in yaml_input_test.mbt's test of
+    // the extensions.
+    b"\xef\xbb\xbf\xef\xbb\xbf" + document,
   ]
   let options = @importopenapi.Options(
     root="api.json",
@@ -200,6 +210,7 @@ test "the document must be UTF-8 JSON, an object without a repeated key; a leadi
       #|docs/api.json: not valid JSON: Unexpected end of file
       #|docs/api.json: must be an object
       #|docs/api.json: /paths/~1a: duplicate key
+      #|docs/api.json: not valid JSON: Invalid character '\u{feff}' at line 1, column 0
     ),
   )
 }
