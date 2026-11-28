@@ -667,6 +667,12 @@ The YAML parser also holds to these rules:
   of the value, as in `path: /a#b`; anywhere else, such as right after a
   quoted value or a flow collection, as in `body: "x"# note`, it is
   rejected with "a comment needs a space before its #".
+- A byte order mark (U+FEFF) may start the file, and is dropped there.
+  Anywhere else, it is text inside a quoted value, as YAML says, and the
+  file is rejected when one is outside quotes. A second mark at the start
+  of the file, and a mark in a plain value or key, a comment or a block
+  scalar, are rejected with "U+FEFF is a byte order mark; write it as an
+  escape in a double-quoted value".
 - A block scalar whose last line ends the file without a line break gets
   no line break added, as YAML 1.2.2 says (section 8.1.1.2), with each
   chomping indicator: a file that ends with `body: |` and then `  hello`,
