@@ -74,6 +74,10 @@ let rows : Array[(String, String, String, Bool)] = [
   ("[ca-z]", "x", "0-1", true),
   ("[^a-zc]", "x", "none", false),
   ("[^a-zc]", "{", "0-1", true),
+  ("[^a]", "\u{00}", "0-1", true),
+  ("[^\u{01}]", "\u{00}", "0-1", true),
+  ("[^\u{00}]", "\u{00}", "none", false),
+  ("[^\u{00}]", "\u{01}", "0-1", true),
   // Perl classes, ASCII only, also inside brackets
   ("\\d", "7", "0-1", true),
   ("\\d", "a", "none", false),
@@ -107,6 +111,9 @@ let rows : Array[(String, String, String, Bool)] = [
   ("[\\d-z]", "-", "0-1", true),
   ("[\\d-z]", "y", "none", false),
   ("[\\w-]", "-", "0-1", true),
+  ("\\D", "\u{00}", "0-1", true),
+  ("\\S", "\u{00}", "0-1", true),
+  ("\\W", "\u{00}", "0-1", true),
   // Anchors without (?m): ^ and $ match only at the ends of the input
   ("^abc", "abc", "0-3", true),
   ("^abc", "xabc", "none", false),
