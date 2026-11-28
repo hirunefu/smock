@@ -237,6 +237,12 @@ let rows : Array[(String, String, String, Bool)] = [
   ("(a??b??)*", "ab", "0-0", true),
   ("(?:(?:|a)(?:|b))*", "ab", "0-0", true),
   ("(?:a*?b*?)*c", "abc", "0-3", true),
+  // Inside such a group, a repetition of a character, a class, an
+  // alternation or a sequence that cannot match empty
+  ("(?:b*?a*)*", "abba", "0-2", true),
+  ("(?:[ab]*?a*)*", "abba", "0-2", true),
+  ("(?:(?:a|b)*?a*)*", "abba", "0-2", true),
+  ("(?:(?:a?b)*?a*)*", "abba", "0-2", true),
   // A class can be empty
   ("[^\\D\\d]", "a", "none", false),
   ("a[^\\D\\d]|b", "ab", "1-2", false),
