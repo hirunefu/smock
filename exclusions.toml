@@ -2667,3 +2667,31 @@ reason = "Under (?i), Parser::literal's `folded.length() > 1` becomes `> 0`, whi
 compiler_output = "differs"
 adversarial = { context = "pending: a separate agent context, after #419's implementer", tests = ["none yet; the implementer's own check: digests of what compile raises and of search, full_match and their step counts on 30 inputs over 484,651 patterns (every pattern of up to three of 22 characters behind `(?i)` and `(?i)[`, and random patterns with (?i) over digits, `@`, `{`, `_`, `-`, U+0000 and `é`), with the mutant applied by hand: the code's on wasm-gc (a scratch test, not committed)"] }
 reviewer = ""
+
+# re2/parse.mbt, its second part (#420, part 5 of 9 of re2's triage for
+# #326): a survivor of the first weekly run (44423781036) in the parser that
+# no pattern and no input can tell from the code. Its argument is in its
+# reason; the compiler's output differs. reject_posix_class uses no
+# unchecked access (Parser::text's `Int32::unsafe_to_char`, which it calls,
+# reads no element), so wasm-gc decides. The parser runs in `compile`, when
+# a Definition file loads; matching runs the program it builds, which the
+# mutant leaves alone. The flag only saves parsing time, so it is no
+# candidate for deletion. The implementer folded into digests what compile
+# raises and, for 16 inputs, search's span and full_match's answer, over
+# every pattern of up to eight of `[`, `]`, `:`, `^`, `a`, `\`, `-` and `x`
+# (19,173,961 patterns) and every pattern of up to four of 18 pieces of
+# bracket and POSIX classes, alone, in a class and behind a class that sets
+# the flag (234,652 patterns). With the mutant applied by hand the digests
+# were the code's on wasm-gc, while reject_posix_class's four other
+# survivors, applied the same way, changed both (a scratch test, not
+# committed). The maintainer reads every entry, since re2 is a protocol
+# package.
+
+[[exclusion]]
+mutant = "re2/parse.mbt,Parser::reject_posix_class,BOOL,true,false,0"
+text = "d18f4a8e6738487b"
+category = "EQUIVALENT"
+reason = "reject_posix_class sets `no_posix_end` when its search for the `:]` that ends a POSIX class, from a `[:` inside a bracket class, reaches the end of the pattern; while the flag is set, every later call returns at once (the field's doc comment: so that looking for POSIX classes stays linear in the pattern length). With `= false` the flag is never set, so every later `[:` searches again. Each later search starts further on than the one that reached the end (the parser has moved past the `[` that search was called at), so it reads only positions that search read, where it found no `:` followed by `]`; it finds none either and returns, as the set flag would have made it return. So compile gives the same program or the same error for every pattern, and search, full_match and their step counts are the same for every input. What it costs is parsing time: a pattern with k such `[:` after its last `:]` is searched to its end k times, so the time grows with the square of the pattern's length. `[` followed by 20,000 `[:a` and `]` (60,002 characters) took 2.3 s to compile with the mutant, 40,000 of them (120,002 characters) 9.0 s, against about 0.1 s with the code (wasm-gc, arm64). No limit of the README bounds it: the compiled program is one class. Matching is untouched (it runs the same program, in time linear in the input), and parsing runs when a Definition file loads, not on the request path. The flag only saves that time, so it is no candidate for deletion."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #420's implementer", tests = ["none yet; the implementer's own check: digests of what compile raises and of search and full_match on 16 inputs over every pattern of up to eight of `[`, `]`, `:`, `^`, `a`, `\\`, `-` and `x` (19,173,961 patterns) and every pattern of up to four of 18 pieces of bracket and POSIX classes, alone, in a class and behind a class that sets the flag (234,652 patterns), with the mutant applied by hand: the code's on wasm-gc, while reject_posix_class's four other survivors changed them (a scratch test, not committed)"] }
+reviewer = ""
