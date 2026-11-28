@@ -2681,3 +2681,98 @@ reason = "CharSet::negate pushes the gap before each range of the set, `(next, r
 compiler_output = "differs"
 adversarial = { context = "pending: a separate agent context, after #416's implementer", tests = ["none yet; the implementer's own check, described in MAX_CHAR's entry: with this mutant applied by hand, the digests of what the sets, full_match and search answer are the code's on wasm-gc, the complement of a complement and the union of a complement with other ranges included; the digest of the sets' ranges differs"] }
 reviewer = ""
+
+# re2/vm.mbt (#424, part 9 of 9 of re2's triage for #326): survivors of the
+# first weekly run (44423781036) in re2's Pike VM that no input can tell
+# from the code. Each argument is in its reason; the compiler's output
+# differs for each. re2/vm.mbt uses no unchecked access, so wasm-gc decides.
+# The Pike VM is `run`: `search`, `search_steps` and `full_match_steps` run
+# it, and `full_match` runs it once its DFA is over budget (it runs the DFA
+# before that); a caller chooses an engine by the method it calls, and the
+# pattern decides when `full_match`'s DFA is over budget. Three mutants
+# change the fill values of a thread list's arrays, which are never read
+# or, for `sparse`, read only where the sparse set's check makes any value
+# answer the same; three take away the loop's stop once no thread is left,
+# which only saves decoding the rest of the input; one changes the width
+# of the end of the input, which is never read. None is a deletion
+# candidate: a fill value and a width must be given, and the stop only
+# saves cost. The implementer folded into two digests what `run` answers in
+# both modes (the match or none) and the steps it counts, for 31,878
+# patterns (one or two of 126 small forms, one after the other and as
+# alternatives) on every input of up to four of six pieces (`a`, `b`, `-`,
+# `é`, the byte FF, a line feed), for 10,000 random patterns of
+# full_match_wbtest.mbt's generator with their 60 inputs each, and for 19
+# pathological patterns on runs of `a` up to 64 long: 100,365,280 runs.
+# With each mutant applied by hand both digests were the code's on wasm-gc,
+# while variants that are not equivalent changed them or stopped the test
+# (`sparse` filled with -1, which makes Threads::contains read `dense[-1]`;
+# contains' `i <= self.size`; the stop at `clist.size <= 1`; U+0000 with
+# width 0 or 1 at the end of the input, which changes the steps or reads
+# past the input), and the five mutants of the step count changed the
+# steps' digest alone (a scratch test, not committed). By key, the seven
+# survive re2's tests and the importers' 1,195. The adversarial attempt is
+# pending. The maintainer reads every entry, since re2 is a protocol
+# package.
+
+[[exclusion]]
+mutant = "re2/vm.mbt,Threads::Threads,INT,0,1,0"
+text = "3f660ce74d3b46f0"
+category = "EQUIVALENT"
+reason = "Threads::Threads fills a thread list's `dense` array with 1 instead of 0. `dense` holds, at each index below `size`, the instruction of the thread inserted there: Threads::insert writes `dense[size]` before `size` grows past it, and every reader reads it only below `size` (Threads::contains after its `i < self.size`, and run's loop over `0..<clist.size`). So no element is read before it is written, and the fill value is never read: the threads, their order and their starts are the same, and so are the matches and the step counts of the Pike VM, which `search`, `search_steps` and `full_match_steps` run, and `full_match` once its DFA is over budget. It differs nowhere a caller can see, a white-box call of run included; only the array's unused elements hold 1. FixedArray::make needs a fill value, so this is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #424's implementer", tests = ["none yet; the implementer's own check, described in the block's header: with this mutant applied by hand, the digests of what run answers and of the steps it counts are the code's on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/vm.mbt,Threads::Threads,INT,0,1,1"
+text = "3f660ce74d3b46f0"
+category = "EQUIVALENT"
+reason = "Threads::Threads fills a thread list's `sparse` array with 1 instead of 0. `sparse[pc]` is the index in `dense` of the thread at instruction `pc`; Threads::contains reads it for an instruction that may not be on the list, and answers true only when that index is below `size` and `dense` holds `pc` there. Every index below `size` holds an instruction inserted since the list was last emptied, each at most once, so a value that Threads::insert did not write since then, the fill or one left from an earlier position after the lists are swapped, answers false whatever it is, as long as it is not negative: this is the sparse set's check, which run relies on for the stale values every position leaves. With 1 the check reads `dense[1]` only when `size` is 2 or more, and `dense[1]` is then another instruction; for a program of one instruction (`Match` alone, the empty pattern) 1 is past `dense`, but `1 < size` fails first, since `size` is at most the program's length. So contains answers the same, and the threads, the matches and the step counts of the Pike VM are the same: it runs for `search`, `search_steps` and `full_match_steps`, and for `full_match` once its DFA is over budget. It differs nowhere a caller can see, a white-box call of run included. A fill of -1 would make contains read `dense[-1]`, so the value matters only by its sign; FixedArray::make needs one, so this is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #424's implementer", tests = ["none yet; the implementer's own check, described in the block's header: with this mutant applied by hand, the digests of what run answers and of the steps it counts are the code's on wasm-gc; a fill of -1 stops the test on an index out of bounds"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/vm.mbt,Threads::Threads,INT,0,1,2"
+text = "3f660ce74d3b46f0"
+category = "EQUIVALENT"
+reason = "Threads::Threads fills a thread list's `starts` array with 1 instead of 0. `starts` holds, at each index below `size`, the input position where the thread inserted there started: Threads::insert writes `starts[size]` before `size` grows past it, and run's loop reads `clist.starts[i]` only for `i` below `clist.size`. So the fill value is never read: the matches' starts, the matches and the step counts of the Pike VM are the same, which `search`, `search_steps` and `full_match_steps` run, and `full_match` once its DFA is over budget. It differs nowhere a caller can see, a white-box call of run included; only the array's unused elements hold 1. FixedArray::make needs a fill value, so this is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #424's implementer", tests = ["none yet; the implementer's own check, described in the block's header: with this mutant applied by hand, the digests of what run answers and of the steps it counts are the code's on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/vm.mbt,run,IFC,clist.size == 0 && (matched is Some(_) || mode == Full),false,0"
+text = "039590dd9ec30911"
+category = "EQUIVALENT"
+reason = "The Pike VM's stop, `if clist.size == 0 && (matched is Some(_) || mode == Full) { break }`, becomes `if false`: the loop no longer stops when no thread is left, and goes on to the end of the input. Where the stop would act, the list stays empty to the end: the top of the loop adds a thread only at position 0, where the list then holds one, or in Search mode while nothing has matched, where the stop does not act, and the next list is filled only by the threads of this one. Each further position then decodes its character and visits no instruction, so no step is counted, and the loop ends at the input's end with the same `matched` (Search) or `None` (Full) that the stop returned. So `search`, `search_steps` and `full_match_steps`, which run the Pike VM, and `full_match`, which runs it once its DFA is over budget, answer the same for every input. It costs time only: the rest of the input is decoded, one character at a time, after the match a search returns or after the character where a full match fails, which is still linear in the length of the input (README, Linear time) and adds no step. The test of linear_test.mbt that says full_match gives up as soon as no thread is left reads the steps, which this does not change. The stop only saves cost, so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #424's implementer", tests = ["none yet; the implementer's own check, described in the block's header: with this mutant applied by hand, the digests of what run answers and of the steps it counts are the code's on wasm-gc; the stop at `clist.size <= 1` changes both"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/vm.mbt,run,INT,0,-1,4"
+text = "039590dd9ec30911"
+category = "EQUIVALENT"
+reason = "The Pike VM's stop, `if clist.size == 0 && (matched is Some(_) || mode == Full) { break }`, becomes `clist.size == -1 && ...`, which never holds, since a list's size counts the threads on it and is never negative: the same as `if false` (the IFC mutant of this condition). The loop then goes on to the end of the input once no thread is left. The list stays empty from there (no thread is added in Full mode past position 0, nor in Search mode after a match), so each further position decodes its character and visits no instruction, and the loop ends with the same `matched` (Search) or `None` (Full) and the same steps. So `search`, `search_steps` and `full_match_steps`, which run the Pike VM, and `full_match`, which runs it once its DFA is over budget, answer the same for every input. It costs time only: decoding the rest of the input, which is still linear in its length (README, Linear time) and adds no step. The stop only saves cost, so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #424's implementer", tests = ["none yet; the implementer's own check, described in the block's header: with this mutant applied by hand, the digests of what run answers and of the steps it counts are the code's on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/vm.mbt,run,LCR,||,&&,1"
+text = "039590dd9ec30911"
+category = "EQUIVALENT"
+reason = "The Pike VM's stop, `if clist.size == 0 && (matched is Some(_) || mode == Full) { break }`, becomes `clist.size == 0 && (matched is Some(_) && mode == Full)`. run sets `matched` only in Search mode (in Full mode a thread at `Match` returns at once at the input's end, and is passed over before it), so the new condition never holds, the same as `if false` (the IFC mutant of this condition): the loop goes on to the end of the input once no thread is left. The list stays empty from there (no thread is added in Full mode past position 0, nor in Search mode after a match), so each further position decodes its character and visits no instruction, and the loop ends with the same `matched` (Search) or `None` (Full) and the same steps. So `search`, `search_steps` and `full_match_steps`, which run the Pike VM, and `full_match`, which runs it once its DFA is over budget, answer the same for every input. It costs time only: decoding the rest of the input, which is still linear in its length (README, Linear time) and adds no step. The stop only saves cost, so it is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #424's implementer", tests = ["none yet; the implementer's own check, described in the block's header: with this mutant applied by hand, the digests of what run answers and of the steps it counts are the code's on wasm-gc"] }
+reviewer = ""
+
+[[exclusion]]
+mutant = "re2/vm.mbt,run,INT,0,1,5"
+text = "039590dd9ec30911"
+category = "EQUIVALENT"
+reason = "At the end of the input the Pike VM takes `(not_a_char, 0)` as the character and its width; the mutant's width is 1. The width is read in two places only: when an instruction consumes the character (`add(nlist, pc + 1, start, pos + width)`), and when the loop moves on (`pos += width`). At the end of the input no instruction consumes not_a_char, -1: a `Char` holds a code point of the pattern, 0 or more, and every range of a `Class` starts at 0 or more, so CharSet::contains finds no range for -1; and the loop stops at `pos >= len` before it moves on. So the width is never read there, and the matches and the step counts are the same, for `search`, `search_steps` and `full_match_steps`, which run the Pike VM, and for `full_match` once its DFA is over budget. It differs nowhere, a white-box call of run included. The pair needs a width beside the character, so this is no deletion candidate."
+compiler_output = "differs"
+adversarial = { context = "pending: a separate agent context, after #424's implementer", tests = ["none yet; the implementer's own check, described in the block's header: with this mutant applied by hand, the digests of what run answers and of the steps it counts are the code's on wasm-gc; U+0000 with width 0 at the end changes the steps' digest, and with width 1 the test stops reading past the input"] }
+reviewer = ""
