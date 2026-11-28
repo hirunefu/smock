@@ -834,6 +834,9 @@ fn Parser::block_scalar(self : Parser, parent : Int32) -> Json raise ParseError 
     read_content = true
     empty = 0
     while !(self.peek() is ('\n' | EOF)) {
+      if self.peek() == '\u{FEFF}' {
+        self.fail(BYTE_ORDER_MARK)
+      }
       out.write_char(self.peek())
       self.bump()
     }

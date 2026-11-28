@@ -1567,6 +1567,29 @@ test "line breaks may be CRLF or CR; a byte order mark may start the text; other
       #|"[a, # c<U+FEFF>\n b]" -> error /0: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
     ),
   )
+  // So is a block scalar's content: its lines are nb-char after the
+  // indentation ("l-nb-literal-text(n) ::= l-empty(n,BLOCK-IN)* s-indent(n)
+  // nb-char+", YAML 1.2.2, production 171; "s-nb-folded-text(n) ::=
+  // s-indent(n) ns-char nb-char*", production 175), and "there is no way to
+  // escape characters inside literal scalars" (section 8.1.2). A mark in a
+  // literal or folded scalar is rejected, on its first line or a later one,
+  // alone or among other text, with the same message as above, at the
+  // deepest node reached.
+  inspect(
+    visible(
+      each([
+        "a: |\n  x\u{FEFF}y\n", "a: >\n  \u{FEFF}\n", "a: |\n  x\n  \u{FEFF}\n",
+        "- |-\n \u{FEFF}", "|\n\u{FEFF}",
+      ]),
+    ),
+    content=(
+      #|"a: |\n  x<U+FEFF>y\n" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: >\n  <U+FEFF>\n" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: |\n  x\n  <U+FEFF>\n" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"- |-\n <U+FEFF>" -> error /0: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"|\n<U+FEFF>" -> error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+    ),
+  )
 }
 
 ///|
