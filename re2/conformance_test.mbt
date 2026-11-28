@@ -41,6 +41,7 @@ let rows : Array[(String, String, String, Bool)] = [
   ("a.c", "a😀c", "0-6", true),
   ("...", "a😀c", "0-6", true),
   ("\\.", "a", "none", false),
+  (".", "\u{10FFFF}", "0-4", true),
   // Bracket classes: ranges, negation, ] and - as literals
   ("[abc]", "b", "0-1", true),
   ("[abc]", "d", "none", false),
@@ -78,6 +79,11 @@ let rows : Array[(String, String, String, Bool)] = [
   ("[^\u{01}]", "\u{00}", "0-1", true),
   ("[^\u{00}]", "\u{00}", "none", false),
   ("[^\u{00}]", "\u{01}", "0-1", true),
+  ("[^a]", "\u{10FFFF}", "0-4", true),
+  ("[^\u{10FFFE}]", "\u{10FFFF}", "0-4", true),
+  ("[^\u{10FFFE}]", "\u{10FFFE}", "none", false),
+  ("[^\u{10FFFF}]", "\u{10FFFF}", "none", false),
+  ("[^\u{10FFFF}]", "\u{10FFFE}", "0-4", true),
   // Perl classes, ASCII only, also inside brackets
   ("\\d", "7", "0-1", true),
   ("\\d", "a", "none", false),
