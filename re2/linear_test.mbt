@@ -76,4 +76,14 @@ test "steps count the work of the match they describe" {
   assert_true(
     re.full_match_steps(@utf8.encode("x" + repeat("a", 1000))[:]) < 10,
   )
+  // While a thread is left, it goes on. A step is one visit of one
+  // instruction (full_match_steps' doc comment; README, Linear time: "one
+  // per instruction visited"), and the Pike VM consumes each character at
+  // a visit of an instruction that matches it. `a+b` full-matches 1000 `a`
+  // and a `b` (RE2 1.1.20240702 says so), so a thread consumes all 1001
+  // characters: at least 1001 steps.
+  let input = @utf8.encode(repeat("a", 1000) + "b")
+  assert_true(re.full_match(input[:]))
+  let steps = re.full_match_steps(input[:])
+  assert_true(steps >= 1001, msg="\{steps} steps")
 }
