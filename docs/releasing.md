@@ -22,7 +22,8 @@ from `scripts/release-notes.sh`. It never runs on pull requests. Started
 by hand from the Actions tab, it builds and smoke-tests everything and
 keeps the binaries, images, chart and notes as workflow artifacts, but
 publishes nothing. `scripts/check-release-workflow.sh`, run in CI, checks
-those rules.
+those rules, and that the release's check of the weekly mutation run
+knows each job of that run by the name `mutation-runs.yml` gives it.
 
 The tag names the version. Keep the `version` in `moon.mod` the same. A
 pre-release tag adds a suffix to that version: `v0.4.0-rc.1` was tagged
@@ -39,8 +40,9 @@ For a pushed tag, plan also checks the latest weekly mutation run over
 the pinned set (`scripts/check-weekly-run.py`; decision 7,
 [ADR 0006](adr/0006-tests-are-judged-by-four-ledgers.md#what-l4-and-a-release-read)).
 For each package that `mutation/l4-packages.txt` names on the tagged
-commit, that run must show no unexplained survivor, stale-covered ones
-included, and it must cover the commit. It covers it when it ran on the
+commit, every job of that run that decides a verdict must have passed,
+the run must show no unexplained survivor, stale-covered ones included,
+and it must cover the commit. It covers it when it ran on the
 tagged commit, or on an ancestor of it on `main` and each later change
 to `main` meets one of two conditions. Either it touches no non-test
 source of a package at L4, as a release commit does, or it merged a
@@ -217,14 +219,41 @@ public, so nothing else needs doing in their settings.
 ### The weekly mutation run
 
 The weekly run over the pinned set runs on `main` every Friday at 20:23
-UTC ([Bulk runs on Actions](../CONTRIBUTING.md#bulk-runs-on-actions)).
-The release's check of it (`scripts/check-weekly-run.py`) reads only
-weekly runs on the tagged commit or on an ancestor of it on `main`,
-wherever they were started; of those, the latest that has ended decides.
+UTC ([Bulk runs on Actions](../CONTRIBUTING.md#bulk-runs-on-actions)),
+or when GitHub starts it, which may be hours later. GitHub started the
+second weekly run, the first that its schedule started, at 01:36 UTC on
+Saturday 2026-11-21, 5 h 13 min after its time, and it ended at 05:05
+UTC. A release that waits for Friday's run should not expect it before
+Saturday morning UTC.
+
+The release's check of the weekly run (`scripts/check-weekly-run.py`)
+reads only weekly runs on the tagged commit or on an ancestor of it on
+`main`, wherever they were started; of those, the latest that has ended
+decides.
+It reads the jobs of that run's latest attempt, and not the run's
+conclusion. Each job that decides a verdict must be there and have
+passed:
+
+- the plan, which also checks the site counts and lists the stale
+  entries of the exclusion list;
+- every shard, from `shard 1-of-<n>` to `shard <n>-of-<n>`;
+- the canary's job;
+- the properties with random seeds;
+- the finish, which merges the shards into the report the check reads.
+
+The coverage from the e2e tests only reports, and the job of the stale
+entries opens or updates an issue: when either fails, the run's
+conclusion is a failure, but the release goes ahead, and the check says
+which job did not succeed. When it refuses, it names each job that
+failed or that the run lacks. A job that the weekly run gains goes into
+the check's list of jobs (`JOBS` in `scripts/check-weekly-run.py`), as
+one that decides a verdict or one that does not: until it is there,
+`scripts/check-release-workflow.sh` fails in CI.
+
 It needs:
 
-- that run's report, the artifact `mutation-report`, which GitHub keeps
-  for 90 days;
+- that run's jobs, and its report, the artifact `mutation-report`, which
+  GitHub keeps for 90 days;
 - for each change to `main` after the run that changes non-test source of
   a package at L4, a run of the branch checks on the branch it merged,
   whose artifact `changed-lines` is kept for 90 days too: the report that
@@ -237,17 +266,26 @@ It needs:
 A release on `main`'s head after Friday's run waits for nothing more when
 each change since went through the branch checks or touches no source of
 a package at L4. The release commit touches none. Otherwise, start a
-weekly run on the release commit, and push the tag once it has passed.
-A weekly run of the pinned set holds the account's 20 jobs for about
-three hours. The first, started by hand on `main` on 2026-11-19
+weekly run on the release commit, and push the tag once it has passed,
+about three and a half hours later. The second weekly run
+([run 44851160701](https://github.com/hirunefu/smock/actions/runs/44851160701),
+on `main` at 65831e4e) had 18,403 mutants in 20 shards at once, planned
+at 16 s a mutant. Its report gives 3 h 28 min 41 s from its first job's
+start to its last job's end, 2 h 59 min 21 s for its longest shard's
+run, and 31 h 46 min of runner time over its 25 jobs. Its longest shard
+ran on a runner slower than the others, and another, nearly as long,
+started 36 minutes late: the canary's job, for 39 minutes, and two short
+ones take three of the account's 20 jobs as the run starts, so three
+shards wait for free jobs
+([Bulk runs on Actions](../CONTRIBUTING.md#bulk-runs-on-actions)).
+The first weekly run, started by hand on `main` on 2026-11-19
 ([run 44423781036](https://github.com/hirunefu/smock/actions/runs/44423781036)),
-had 18,403 mutants in 40 shards, two waves of 20, and its report gives
+had the same mutants in 40 shards, two waves of 20, and its report gives
 2 h 9 min from its first job's start to its last job's end, and 32 h
-44 min of runner time over its 44 jobs. Bulk runs now plan 16 s a
-mutant, which puts those mutants in 20 shards at once, and such a run is
-expected to take about 2 hours 50 minutes (*estimate*,
-[Bulk runs on Actions](../CONTRIBUTING.md#bulk-runs-on-actions)). A push
-meanwhile waits for free jobs.
+44 min of runner time over its 44 jobs. A weekly run holds all of the
+account's 20 jobs for its first 40 minutes or so, and fewer as its
+shards end: the second held half of them after an hour and a half, and
+two from 2 h 16 min on. A push meanwhile waits for free jobs.
 
 ```sh
 gh workflow run mutation-runs.yml -R hirunefu/smock --ref main -f mode=weekly     # while main is at the release commit
@@ -278,12 +316,14 @@ of the release workflow needs plan, so none of them runs.
 
 - **No weekly run covers the tagged commit yet.** The job plan fails with
   `check-weekly-run: <commit> may not be released:` and the reason: no
-  weekly run on the commit or an ancestor of it on `main` has ended, or
-  the latest one failed, or a change to `main` after it changed non-test
+  weekly run on the commit or an ancestor of it on `main` has ended, or a
+  job of the latest one that decides a verdict failed or is missing (the
+  reason names it), or a change to `main` after it changed non-test
   source of a package at L4 and no branch's changed-lines report covers
   that change, as for a change pushed straight to `main`. A weekly run on
   the tag covers the commit with no later change. Start one, or wait for
-  the one still running, and once it has passed, about three hours later
+  the one still running, and once it has passed, about three and a half
+  hours after it started
   ([The weekly mutation run](#the-weekly-mutation-run)), re-run the tag's
   release run, which reads the weekly runs again.
 

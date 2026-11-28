@@ -14,15 +14,34 @@ test "process CPU: utime and stime of /proc/<pid>/stat, in seconds, after a comm
       @usage.cpu_seconds(
         "1 (smock) R 0 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 5 0 0 0\n",
       ),
+      // A line that ends at field 15, stime, still holds both counts, which
+      // are the only fields read (`cpu_seconds`: "fields 14 (`utime`) and
+      // 15 (`stime`)"), though the kernel writes 52. The first of the lines
+      // below, one field shorter, ends at utime.
+      // That a line which ends at stime is read, the maintainer confirmed on
+      // 2026-11-21 (#328): "a /proc/<pid>/stat line that ends at field 15
+      // (stime) is read".
+      @usage.cpu_seconds("1 (smock) R 0 1 1 0 -1 0 0 0 0 0 7 3\n"),
       // Too few fields, a field that is not a number, and no line.
       @usage.cpu_seconds("1 (smock) R 0 1 1 0 -1 0 0 0 0 0 7\n"),
       @usage.cpu_seconds(
         "1 (smock) R 0 1 1 0 -1 0 0 0 0 0 -7 3 0 0 20 0 1 0 5 0 0 0\n",
       ),
+      // The same line without the space between the command's `)` and the
+      // state is no stat line either, however its fields are counted:
+      // taking the `R` as the state, which proc_pid_stat(5) puts right after
+      // the command in parentheses, utime (field 14, `%lu`) is still -7;
+      // passing over the `R`, field 3 would be `0`, none of the states the
+      // manual lists. `cpu_seconds`: "`None` when it is not such a line",
+      // and admin-api.md: a metric whose file smock cannot understand at a
+      // scrape keeps the value it last read.
+      @usage.cpu_seconds(
+        "1 (smock)R 0 1 1 0 -1 0 0 0 0 0 -7 3 0 0 20 0 1 0 5 0 0 0\n",
+      ),
       @usage.cpu_seconds(""),
     ],
     content=(
-      #|[Some(12.9), Some(0.1), Some(0), None, None, None]
+      #|[Some(12.9), Some(0.1), Some(0), Some(0.1), None, None, None, None]
     ),
   )
 }
@@ -259,6 +278,11 @@ test "steal: the eighth count of the cpu line of /proc/stat, the whole machine's
       ),
       // Bare metal: no steal.
       @usage.cpu_steal_seconds("cpu  56507 6 13025 902483 799 3381 893 0 0 0\n"),
+      // A kernel that counts steal but not guest: the manual of /proc/stat
+      // (proc(5), now proc_stat(5)) gives steal "(since Linux 2.6.11)" and
+      // guest "(since Linux 2.6.24)", so from 2.6.11 to 2.6.23 steal is the
+      // last of eight counts.
+      @usage.cpu_steal_seconds("cpu  56507 6 13025 902483 799 3381 893 1234\n"),
       // A kernel before steal was counted, a line that is not the machine's,
       // and no line.
       @usage.cpu_steal_seconds("cpu  56507 6 13025 902483 799 3381 893\n"),
@@ -266,7 +290,7 @@ test "steal: the eighth count of the cpu line of /proc/stat, the whole machine's
       @usage.cpu_steal_seconds(""),
     ],
     content=(
-      #|[Some(12.34), Some(0), None, None, None]
+      #|[Some(12.34), Some(0), Some(12.34), None, None, None]
     ),
   )
 }

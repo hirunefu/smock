@@ -5,7 +5,8 @@ import {
 
 import {
   "moonbitlang/core/buffer",
-  "moonbitlang/core/random",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/quickcheck",
 } for "test"
 
 import {

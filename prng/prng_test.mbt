@@ -58,4 +58,28 @@ test "below draws uniformly below a count, drawing again for the outputs that wo
     content="3321214725393783200 then 17057574109182124193",
   )
   inspect(@prng.Generator(42).below(1UL), content="0")
+  // At the bound itself. For 2^63 + 1, the outputs kept are those from
+  // 2^63 - 1 up: 2^63 + 1 of them, one for each value, which is what makes
+  // every value equally likely. 2^63 - 1 is the only output that gives the
+  // value 2^63 - 1, so it is kept, and 2^63 - 2, just below the bound, is
+  // drawn again. Seed 5527295704097554033's first output is 2^63 - 1, and
+  // seed 11534342769042786949's is 2^63 - 2, then 17842481637524831588:
+  // found, and checked, with a separate implementation of SplitMix64 and
+  // xoshiro256** written from the published algorithms, by inverting their
+  // output functions.
+  let kept = @prng.Generator(5527295704097554033UL)
+  let redrawn = @prng.Generator(11534342769042786949UL)
+  inspect(
+    "\{kept.uint64()} \{redrawn.uint64()} then \{redrawn.uint64()}",
+    content="9223372036854775807 9223372036854775806 then 17842481637524831588",
+  )
+  inspect(
+    @prng.Generator(5527295704097554033UL).below(9223372036854775809UL),
+    content="9223372036854775807",
+  )
+  // 17842481637524831588 - (2^63 + 1).
+  inspect(
+    @prng.Generator(11534342769042786949UL).below(9223372036854775809UL),
+    content="8619109600670055779",
+  )
 }

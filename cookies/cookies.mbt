@@ -43,9 +43,9 @@ pub fn find(field : String, name : String, from~ : Int32 = 0) -> Int32 {
     let end = part_end(field, start)
     let first = name_start(field, start, end)
     let equals = equals_at(field, first, end)
-    if equals >= 0 &&
-      equals - first == name.length() &&
-      same_name(field, first, name) {
+    // equals is -1 when the part has no `=`, and then equals - first is
+    // below 0, so it is no name's length.
+    if equals - first == name.length() && same_name(field, first, name) {
       return equals + 1
     }
     continue end + 1

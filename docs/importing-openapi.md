@@ -272,8 +272,9 @@ The arguments:
   paths. It is not taken from the document's title, which changes between
   versions.
 - `--hosts <h1,h2>`: the Mock's Hosts, separated by commas, such as
-  `petstore.test,pets.internal:8080`. None by default. The document's
-  `servers` never become Hosts
+  `petstore.test,pets.internal:8080`. None by default. With
+  `--declare-mock on`, an empty `--hosts ""` gives none too, as leaving it
+  out does. The document's `servers` never become Hosts
   ([The Mock and its Hosts](#the-mock-and-its-hosts)).
 - `--declare-mock on|off`: whether the file declares the Mock. It is `on`
   by default. With `off`, the file holds only Stubs, for a Mock declared
@@ -366,7 +367,10 @@ Each Host must be one a Definition file can declare, as `smock check`
 checks it: a host name or an IP address, with a port of digits if any,
 and no wildcard. A Host that is not one, or that is the same as another
 once compared as smock compares Hosts (in lower case, without the port
-and a trailing dot), is a usage error, so it never reaches the file.
+and a trailing dot), is a usage error, so it never reaches the file. An
+IPv6 address without brackets is the same Host as the bracketed one, so
+`--hosts "[::1],::1"` is refused too ([Hosts and the Default
+Mock](definition-files.md#hosts-and-the-default-mock)).
 
 The command does not read the rest of the definitions directory. So run
 `smock check` on the directory after importing: a Mock declared twice, a

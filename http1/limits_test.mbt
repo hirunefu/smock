@@ -180,6 +180,19 @@ test "a declared Content-Length over the body limit gets 413 once the head has a
       limited(@http1.Parser(body_limit=16), post("Content-Length: 17, 17\r\n")),
       limited(@http1.Parser(body_limit=0), post("Content-Length: 0\r\n")),
       limited(@http1.Parser(body_limit=0), post("Content-Length: 1\r\n")),
+      // The largest body limit an Int32 holds, 2147483647: a body within it
+      // is read, and a length past it, 2^31, gets 413. Parser::Parser's
+      // documentation: "`body_limit` is the longest body a request may
+      // have" and "A declared Content-Length over it gets 413 before any of
+      // the body is read" (RFC 9110, section 15.5.14).
+      limited(
+        @http1.Parser(body_limit=2147483647),
+        post("Content-Length: 5\r\n") + "hello",
+      ),
+      limited(
+        @http1.Parser(body_limit=2147483647),
+        post("Content-Length: 2147483648\r\n"),
+      ),
       limited(@http1.Parser(body_limit=-1), post("Content-Length: 0\r\n")),
       limited(@http1.Parser(body_limit=-1), post("Content-Length: 1\r\n")),
     ].join("\n"),
@@ -191,8 +204,58 @@ test "a declared Content-Length over the body limit gets 413 once the head has a
       #|invalid 413
       #|POST /p body=0, need more
       #|invalid 413
+      #|POST /p body=5, need more
+      #|invalid 413
       #|POST /p body=0, need more
       #|invalid 413
+    ),
+  )
+  // Near the top of what an Int32 holds: a declared length within the body
+  // limit whose body would end more than 2^31 - 1 bytes into what the
+  // parser holds. The parser waits for the body ("The next request is not
+  // complete yet: feed more bytes", Parsed::NeedMore's documentation), and
+  // the bytes after the head are the body's, whether they come with the
+  // head or after it, so a request sent after the head is not read on its
+  // own (RFC 9112, section 6.2: Content-Length is the body's length in
+  // octets; #433). A limit of 2147483647 is taken as 2147483646
+  // (Parser::Parser's documentation), so a length of 2147483646 is within
+  // it. The head with 2147483591 is 57 bytes long, so its body would end at
+  // 2^31.
+  let get = "GET / HTTP/1.1\r\nHost: a\r\n\r\n"
+  let at_the_top = () => @http1.Parser(body_limit=2147483647)
+  inspect(
+    [
+      limited(at_the_top(), post("Content-Length: 2147483646\r\n") + get),
+      fed_as(at_the_top, [post("Content-Length: 2147483646\r\n"), get]),
+      limited(
+        @http1.Parser(body_limit=2147483646),
+        post("Content-Length: 2147483591\r\n"),
+      ),
+    ].join("\n"),
+    content=(
+      #|need more
+      #|need more
+      #|need more
+    ),
+  )
+  // The same where the body starts after a request already taken out: the
+  // 27 bytes of a GET, then one piece of 4,070 bytes, and one of 4,069,
+  // that begins with a 56-byte head whose Content-Length is 2147483580. The
+  // parser's first buffer holds 4,096 bytes, so it moves the second piece
+  // to the front of the buffer, or appends it after the GET where it just
+  // fits; either way the parser takes out the GET and waits for the body
+  // (Parser's documentation: "However the bytes are split into pieces, it
+  // takes out the same requests"). Found by reading the parser, for the
+  // twenty-second round of #275's answers (#433).
+  let post_after_get = (size : Int32) => {
+    let head = "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 2147483580\r\n\r\n"
+    fed_as(at_the_top, [get, head + "b".repeat(size - head.length())])
+  }
+  inspect(
+    [post_after_get(4070), post_after_get(4069)].join("\n"),
+    content=(
+      #|GET / body=0, need more
+      #|GET / body=0, need more
     ),
   )
 }
@@ -218,12 +281,38 @@ test "a chunked body gets 413 as soon as a chunk size takes it past the body lim
         @http1.Parser(body_limit=16),
         chunked + "a\r\n\{"b".repeat(10)}\r\n7\r\n",
       ),
+      // The digit 7 alone, with its line not yet ended, waits for more,
+      // though every size it can still become takes the body past 16:
+      // Parser::Parser's documentation, "A chunk size is read when the LF
+      // that ends its line arrives, after any chunk extensions, so its
+      // digits alone wait for more, even when every size they can still
+      // become is past the limit."
       limited(
         @http1.Parser(body_limit=16),
         chunked + "a\r\n\{"b".repeat(10)}\r\n7",
       ),
       limited(@http1.Parser(), chunked + "a00000\r\n"),
       limited(@http1.Parser(), chunked + "a00001\r\n"),
+      // The largest body limit an Int32 holds, 2147483647: a body within it
+      // is read, and a chunk size of 2^31, past it and past what an Int32
+      // holds, gets 413. Parser::Parser's documentation: "a chunked body
+      // gets 413 as soon as a chunk size, once read, would take it past the
+      // limit, before that chunk's data"; RFC 9112, section 7.1:
+      // "recipients MUST anticipate potentially large hexadecimal numerals
+      // and prevent parsing errors due to integer conversion overflows".
+      limited(
+        @http1.Parser(body_limit=2147483647),
+        chunked + "5\r\nhello\r\n0\r\n\r\n",
+      ),
+      limited(@http1.Parser(body_limit=2147483647), chunked + "80000000\r\n"),
+      // The parser takes a body limit of 2147483647 as 2147483646
+      // (Parser::Parser's documentation: "A limit of 2^31 - 1, the largest
+      // an Int32 holds, is taken as 2^31 - 2", which the maintainer
+      // confirmed on 2026-11-21, #324; the boundary ledger's L52). So a
+      // chunk size of 2147483646 is within it, and the parser waits for the
+      // chunk's data; a chunk size of 2147483647 is past it, and gets 413.
+      limited(@http1.Parser(body_limit=2147483647), chunked + "7ffffffe\r\n"),
+      limited(@http1.Parser(body_limit=2147483647), chunked + "7fffffff\r\n"),
       limited(@http1.Parser(body_limit=0), chunked + "0\r\n\r\n"),
       limited(@http1.Parser(body_limit=0), chunked + "1\r\n"),
       limited(@http1.Parser(body_limit=-1), chunked + "0\r\n\r\n"),
@@ -237,9 +326,27 @@ test "a chunked body gets 413 as soon as a chunk size takes it past the body lim
       #|need more
       #|need more
       #|invalid 413
+      #|POST /p body=5, need more
+      #|invalid 413
+      #|need more
+      #|invalid 413
       #|POST /p body=0, need more
       #|invalid 413
       #|POST /p body=0, need more
+      #|invalid 413
+    ),
+  )
+  // The same near the top of what the body limit, an Int32, holds: at a
+  // limit of 2^31 - 2 bytes, a chunk size of eight hexadecimal digits equal
+  // to the limit (RFC 9112, section 7.1: chunk-size = 1*HEXDIG) is read
+  // exactly, and the parser waits for its data; one more gets 413.
+  inspect(
+    [
+      limited(@http1.Parser(body_limit=2147483646), chunked + "7ffffffe\r\n"),
+      limited(@http1.Parser(body_limit=2147483646), chunked + "7fffffff\r\n"),
+    ].join("\n"),
+    content=(
+      #|need more
       #|invalid 413
     ),
   )
@@ -356,6 +463,28 @@ test "endless chunk framing around a small body is decoded without counting towa
 }
 
 ///|
+/// What a parser made by `make` takes out of `pieces` fed one after
+/// another, shown as `fed_in_pieces` shows it.
+fn fed_as(make : () -> @http1.Parser, pieces : Array[String]) -> String {
+  let parser = make()
+  let out = []
+  for piece in pieces {
+    parser.feed(@utf8.encode(piece))
+    let taken = drain(parser)
+    for parsed in taken {
+      if !(parsed is NeedMore) {
+        out.push(brief(parsed))
+      }
+    }
+    if taken.last() is Some(Invalid(..)) {
+      return out.join(", ")
+    }
+  }
+  out.push("need more")
+  out.join(", ")
+}
+
+///|
 test "requests at and over the limits give the same outcome however they are split" {
   let make = () => {
     @http1.Parser(header_size_limit=80, header_count_limit=3, body_limit=16)
@@ -392,4 +521,24 @@ test "requests at and over the limits give the same outcome however they are spl
       #|POST /p body=16, invalid 413
     ),
   )
+  // In three pieces: a head at the header size limit and empty lines,
+  // 4,096 bytes in all; then a head, and a head at the header count limit,
+  // cut in two at every byte. The parser's first buffer holds 4,096 bytes,
+  // so the second piece does not fit beside the first: the parser moves the
+  // bytes it still needs, and bytes of the first piece stay behind them.
+  // However the rest is cut, the requests come out as when fed whole
+  // (Parser's documentation: "However the bytes are split into pieces, it
+  // takes out the same requests"), and the empty lines before a request
+  // line are ignored (RFC 9112, section 2.2).
+  let first = head_of_size(80) + "\r\n".repeat(2008)
+  let rest = head_with_fields(1) + head_with_fields(3)
+  let whole = fed_as(make, [first + rest])
+  let cuts = (0)
+    .until(rest.length(), inclusive=true)
+    .filter(i => {
+      fed_as(make, [first, rest[:i].to_owned(), rest[i:].to_owned()]) != whole
+    })
+    .collect()
+  debug_inspect(cuts, content="[]")
+  inspect(whole, content="GET / body=0, GET / body=0, GET / body=0, need more")
 }

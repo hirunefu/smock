@@ -819,8 +819,7 @@ fn seed_reason() -> String {
 /// The seed `text` gives: a decimal integer from 0 to 2^53 - 1, without a
 /// sign, prefix or separator. `None` when it is not one.
 pub fn parse_seed(text : String) -> UInt64? {
-  // Sixteen digits hold every seed.
-  match decimal(text, max_digits=16) {
+  match decimal(text) {
     Some(n) if n <= max_seed => Some(n)
     _ => None
   }
@@ -833,8 +832,7 @@ pub fn parse_seed(text : String) -> UInt64? {
 /// prefix or separator. `None` when it is not one. Whether the Stub has a
 /// response at that index is the rendering's to say.
 pub fn parse_response_index(text : String) -> Int32? {
-  // Two digits hold every index below max_responses (100).
-  match decimal(text, max_digits=2) {
+  match decimal(text) {
     Some(n) if n < @definitions.max_responses.to_uint64() => Some(n.to_int())
     _ => None
   }
@@ -858,17 +856,21 @@ pub fn random_seed() -> UInt64 {
 }
 
 ///|
-/// The number `text` writes in at most `max_digits` decimal digits, without
-/// a sign, prefix or separator, or `None` when it is not one. A UInt64
-/// holds every number of up to 19 digits.
-fn decimal(text : String, max_digits~ : Int32) -> UInt64? {
-  if text == "" ||
-    text.length() > max_digits ||
-    !text.iter().all(c => c >= '0' && c <= '9') {
+/// The number `text` writes in decimal digits, without a sign, prefix or
+/// separator, or `None` when it is not one. Leading zeros add nothing, so
+/// they are not counted. Past them, at most 19 digits are read, which a
+/// UInt64 always holds: a longer number is `None`, so that it cannot wrap
+/// into a caller's range.
+fn decimal(text : String) -> UInt64? {
+  if text == "" || !text.iter().all(c => c >= '0' && c <= '9') {
+    return None
+  }
+  let digits = text.trim_start(chars="0")
+  if digits.length() > 19 {
     return None
   }
   Some(
-    text.fold(init=0UL, (n, c) => {
+    digits.fold(init=0UL, (n, c) => {
       n * 10UL + (c.to_int() - '0'.to_int()).to_uint64()
     }),
   )
@@ -1315,8 +1317,8 @@ fn int_value(
   max~ : Int32,
 ) -> Int32 raise InvalidSetting {
   let text = value(matches, name).unwrap_or("")
-  // Ten digits hold every Int.
-  match decimal(text, max_digits=10).map(n => n.reinterpret_as_int64()) {
+  // A number of 2^63 or more is negative as an Int64, and below every Int.
+  match decimal(text).map(n => n.reinterpret_as_int64()) {
     Some(n) if n >= min.to_int64() && n <= max.to_int64() => n.to_int()
     _ => raise invalid(name, text, "must be an integer from \{min} to \{max}")
   }

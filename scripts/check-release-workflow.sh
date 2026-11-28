@@ -24,13 +24,27 @@
 # - plan checks out the whole history, which scripts/check-weekly-run.py
 #   reads, and may read the Actions API, which both checks of runs ask.
 #
-# It needs yq (mikefarah/yq v4, on GitHub's Ubuntu runners) and jq.
+# And it checks that scripts/check-weekly-run.py, which reads the jobs of
+# the latest weekly run that decide a verdict by their names, knows the
+# weekly run's jobs as the bulk mutation runs' workflow
+# (.github/workflows/mutation-runs.yml) has them: each job in its table
+# (python3 scripts/check-weekly-run.py --jobs) runs in a weekly run under
+# that name and is of that kind (a job, a matrix of jobs, or a call of a
+# workflow), and each job that runs in a weekly run is in the table, which
+# says whether it decides a verdict. A job runs in a weekly run unless its
+# condition names only other modes. So a job renamed, which would stop
+# every release, and a job added, which the release would not read, fail
+# here.
 #
-# usage: scripts/check-release-workflow.sh [workflow file]
+# It needs yq (mikefarah/yq v4, on GitHub's Ubuntu runners), jq and
+# python3.
+#
+# usage: scripts/check-release-workflow.sh [workflow file [bulk mutation runs' workflow file]]
 set -eu
 cd "$(dirname "$0")/.."
 
 workflow=${1:-.github/workflows/release.yml}
+runs=${2:-.github/workflows/mutation-runs.yml}
 publish_condition="github.event_name == 'push' && github.ref_type == 'tag'"
 
 failed=0
@@ -99,7 +113,33 @@ if [ -n "$problems" ]; then
   failed=1
 fi
 
+# The weekly run's jobs, as the release's check of it knows them. The
+# ${{ ... }} is the workflow's own syntax.
+if table=$(python3 scripts/check-weekly-run.py --jobs); then
+  problems=$(yq --output-format=json "$runs" | jq -r --arg table "$table" --arg runs "$runs" '
+    def kind: if . == "workflow" then "a call of a workflow" elif . == "matrix" then "a matrix of jobs" else "a job" end;
+    def shape: if .uses then "workflow" elif .strategy.matrix then "matrix" else "job" end;
+    def weekly: [(.if // "" | tostring) | scan("outputs\\.mode == '"'"'([a-z]+)'"'"'") | .[0]] as $modes
+      | ($modes | length) == 0 or any($modes[]; . == "weekly");
+    ($table | split("\n") | map(select(length > 0) | split("\t") | {name: .[0], shape: .[1]})) as $read
+    | [.jobs | to_entries[] | select(.value | weekly) | {key, name: (.value.name // .key), shape: (.value | shape)}]
+      as $jobs
+    | ($read[] | . as $row | select(any($jobs[]; .name == $row.name and .shape == $row.shape) | not)
+       | "scripts/check-weekly-run.py knows the weekly run'"'"'s job \"\(.name)\", \(.shape | kind), but \($runs) has no such job in a weekly run"),
+      ($jobs[] | . as $job | select(any($read[]; .name == $job.name) | not)
+       | "job \(.key) (\"\(.name)\") runs in a weekly run, but scripts/check-weekly-run.py does not say whether it decides a verdict (its JOBS)")
+  ')
+  if [ -n "$problems" ]; then
+    printf '%s\n' "$problems" | while IFS= read -r problem; do
+      echo "check-release-workflow: $runs: $problem" >&2
+    done
+    failed=1
+  fi
+else
+  fail "scripts/check-weekly-run.py --jobs does not list the weekly run's jobs it knows"
+fi
+
 if [ "$failed" -ne 0 ]; then
   exit 1
 fi
-echo "check-release-workflow: $workflow publishes only for pushed version tags, after the checks of its job plan"
+echo "check-release-workflow: $workflow publishes only for pushed version tags, after the checks of its job plan, and scripts/check-weekly-run.py knows each job of $runs's weekly run"

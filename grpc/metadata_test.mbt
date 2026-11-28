@@ -92,10 +92,22 @@ test "a call's binary metadata loses the padding that ends each comma-separated 
   inspect(@grpc.unpadded_elements("AAA=, BBB="), content="AAA, BBB")
   // Only the `=` that end an element are padding; nothing is decoded.
   inspect(@grpc.unpadded_elements("AA=A"), content="AA=A")
+  // The value is split at each comma, as PROTOCOL-HTTP2 has it
+  // ("Implementations must split Binary-Headers on "," before decoding"),
+  // so the first element is `AAA= `, which ends with a space, not with `=`,
+  // and keeps its padding. HTTP's list syntax, with optional spaces around
+  // each comma (RFC 9110, section 5.6.1), is not applied. The maintainer
+  // confirmed that reading on 2026-11-21 (#327).
   inspect(@grpc.unpadded_elements("AAA= ,B"), content="AAA= ,B")
   inspect(@grpc.unpadded_elements("not base64!="), content="not base64!")
   inspect(@grpc.unpadded_elements("=,==,"), content=",,")
   inspect(@grpc.unpadded_elements(""), content="")
+  // docs/grpc/metadata-and-status.md: "A call's `-bin` value loses the `=`
+  // that end each comma-separated element, and keeps the commas." The
+  // first element ends with `=` here even when that `=` is the value's
+  // first character, and no other element has padding.
+  inspect(@grpc.unpadded_elements("="), content="")
+  inspect(@grpc.unpadded_elements("=,AA"), content=",AA")
 }
 
 ///|

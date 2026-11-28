@@ -4,18 +4,26 @@
 // flags of its own without variables (#320). `--template-env` has its own
 // tests, on the three commands. A flag without a variable is named alone in
 // a refusal, in the form `InvalidSetting::message` documents.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// What `smock render <argv>`, with the variables `env`, makes of its
 /// settings, after the Stub ID `get-user`, `--dir defs` and `--request
-/// sample.json` unless `argv` gives them: `show` of the settings when they
-/// are valid, or the message a user sees when they are not.
+/// sample.json` unless `argv` gives them or `without` names them: `show` of
+/// the settings when they are valid, or the message a user sees when they
+/// are not.
 fn render_shows(
   argv : Array[String],
   env~ : Map[String, String] = {},
+  without~ : Array[String] = [],
   show : (@settings.RenderSettings) -> String,
 ) -> String {
   let given = (flag : String) => {
+    without.contains(flag) ||
     argv.iter().any(arg => arg == flag || arg.has_prefix("\{flag}="))
   }
   let argv = [
@@ -75,6 +83,36 @@ test "render: the Stub ID is its argument, and --dir, by its flag or SMOCK_DIR, 
 }
 
 ///|
+test "render: without --dir or SMOCK_DIR, or without --request, the command line is refused as missing a required argument" {
+  // smock render --help: "Usage: smock render --dir <dir> --request
+  // <request> [options] <stub-id>", so both are required; SMOCK_DIR is
+  // --dir's variable (docs/running.md, Settings), which the test above
+  // gives alone. The words are the command-line parser's, which
+  // e2e/render_test.mbt "smock render needs the definitions directory, a
+  // Stub ID and a sample request" pins too: the maintainer decided on
+  // 2026-11-18 that the words of usage errors stay as they are (#320). The
+  // usage and the help that follow the first line are the help's own test.
+  // These words are moonbitlang/core's argparse's, not smock's: the
+  // maintainer confirmed on 2026-11-21 (#329) that the decision of
+  // 2026-11-18 covers them, as the reasons of usage errors that no document
+  // words.
+  let shown = (settings : @settings.RenderSettings) => {
+    "\{settings.dir} \{settings.request_file}"
+  }
+  let first_line = (text : String) => text.split("\n").next().unwrap_or("")
+  inspect(
+    [
+      first_line(render_shows([], without=["--dir"], shown)),
+      first_line(render_shows([], without=["--request"], shown)),
+    ].join("\n"),
+    content=(
+      #|parse: error: the following required argument was not provided: 'dir'
+      #|parse: error: the following required argument was not provided: 'request'
+    ),
+  )
+}
+
+///|
 test "render: --time takes an RFC 3339 date-time, in milliseconds since the Unix epoch, and refuses any other value" {
   // docs/commands.md, smock render: "--time (RFC 3339) and --seed fix the
   // clock and the random source of the rendering", and without it the
@@ -114,7 +152,9 @@ test "render: --seed takes 0 and 2^53 - 1, and refuses -1, 2^53 and a value that
   // docs/definition-files/templates.md, Rendering a template: --seed gives
   // what "a Stub with fault.seed: S" gets, and a Stub's seed is "from 0 to
   // 9007199254740991" (docs/definition-files/faults.md, Seeds). Without
-  // it, the rendering uses the Stub's seed or a fresh one.
+  // it, the rendering uses the Stub's seed or a fresh one. A value with
+  // leading zeros is the integer it writes (#426): 00000000000000007,
+  // seventeen characters, is 7.
   let seed = (settings : @settings.RenderSettings) => {
     match settings.seed {
       Some(seed) => seed.to_string()
@@ -129,6 +169,7 @@ test "render: --seed takes 0 and 2^53 - 1, and refuses -1, 2^53 and a value that
       render_shows(["--seed=-1"], seed),
       render_shows(["--seed=9007199254740992"], seed),
       render_shows(["--seed=0x2a"], seed),
+      render_shows(["--seed=00000000000000007"], seed),
     ].join("\n"),
     content=(
       #|none
@@ -137,6 +178,7 @@ test "render: --seed takes 0 and 2^53 - 1, and refuses -1, 2^53 and a value that
       #|invalid value "-1" for --seed: must be an integer from 0 to 9007199254740991
       #|invalid value "9007199254740992" for --seed: must be an integer from 0 to 9007199254740991
       #|invalid value "0x2a" for --seed: must be an integer from 0 to 9007199254740991
+      #|7
     ),
   )
 }
@@ -146,7 +188,9 @@ test "render: --response takes 0 and 99, and refuses -1, 100 and a value that is
   // docs/definition-files/templates.md, Rendering a template: --response
   // renders "the response at index i instead, from 0", and "a value that
   // is not an integer from 0 to 99 is refused before rendering: ... a usage
-  // error with status 2". Without it, the seed picks the response.
+  // error with status 2". Without it, the seed picks the response. A value
+  // with leading zeros is the integer it writes (#426): 007 is 7, and 0100
+  // is 100, which is refused.
   let response = (settings : @settings.RenderSettings) => {
     match settings.response_index {
       Some(index) => index.to_string()
@@ -161,6 +205,8 @@ test "render: --response takes 0 and 99, and refuses -1, 100 and a value that is
       render_shows(["--response=-1"], response),
       render_shows(["--response=100"], response),
       render_shows(["--response=x"], response),
+      render_shows(["--response=007"], response),
+      render_shows(["--response=0100"], response),
     ].join("\n"),
     content=(
       #|the seed's
@@ -169,6 +215,8 @@ test "render: --response takes 0 and 99, and refuses -1, 100 and a value that is
       #|invalid value "-1" for --response: must be an integer from 0 to 99
       #|invalid value "100" for --response: must be an integer from 0 to 99
       #|invalid value "x" for --response: must be an integer from 0 to 99
+      #|7
+      #|invalid value "0100" for --response: must be an integer from 0 to 99
     ),
   )
 }

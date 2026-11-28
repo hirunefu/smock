@@ -23,11 +23,11 @@ defdir 23
 definitions 41
 engine 78
 grpc 0
-http1 10
+http1 0
 importopenapi 39
 llm 21
 log 12
-metrics 1
+metrics 0
 openssl 24
 prng 0
 protobuf 113
@@ -41,6 +41,6 @@ testcerts 0
 unicode 1
 usage 0
 watch 4
-xml 3
+xml 0
 yaml 21
 yaml-test-suite 15

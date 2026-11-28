@@ -161,6 +161,10 @@ test "memory limit: memory.max holds a number of bytes or max" {
       @settings.MemoryLimit::parse("max\n"),
       @settings.MemoryLimit::parse("0\n"),
       @settings.MemoryLimit::parse("9223372036854771712\n"),
+      // A number of bytes is read as the limit, the largest Int64 included,
+      // and logged as the memoryLimit smock read, in bytes
+      // (docs/admin-api.md, The Journal).
+      @settings.MemoryLimit::parse("9223372036854775807\n"),
       @settings.MemoryLimit::parse(""),
       @settings.MemoryLimit::parse("-1\n"),
       @settings.MemoryLimit::parse("52Mi\n"),
@@ -172,11 +176,45 @@ test "memory limit: memory.max holds a number of bytes or max" {
       #|  Some(Unlimited),
       #|  Some(Limited(0)),
       #|  Some(Limited(9223372036854771712)),
+      #|  Some(Limited(9223372036854775807)),
       #|  None,
       #|  None,
       #|  None,
       #|  None,
       #|]
+    ),
+  )
+}
+
+///|
+/// The Journal's and the per-Session state's byte bounds, as `<journal>
+/// <state>` in bytes, that a `memory.max` holding `text` gives, as `serve`
+/// takes it: the limit `text` gives, or else a limit that cannot be read.
+fn bounds_from_memory_max(text : String) -> String {
+  let limit : @settings.MemoryLimit = match @settings.MemoryLimit::parse(text) {
+    Some(limit) => limit
+    None => Unknown("\{text.escape()} is neither a number of bytes nor max")
+  }
+  let journal = @settings.ByteBound::journal(limit)
+  let state = @settings.ByteBound::state(limit)
+  "\{journal.max_bytes} \{state.max_bytes}"
+}
+
+///|
+test "memory limit: a memory.max of 2^63 - 1 bytes or more gives both bounds 64 MiB, whether smock reads it as a limit or not" {
+  // docs/admin-api.md, The Journal: the bound is "at most 64 MiB", "from a
+  // 256Mi limit up, it is 64 MiB", and "Without a limit (`max`), or when it
+  // cannot be read", 64 MiB. docs/definition-files/variables.md, The state
+  // bound: the same for an eighth, "from a 512Mi limit up". So a number of
+  // bytes this large gives 64 MiB, however smock takes it.
+  inspect(
+    [
+      bounds_from_memory_max("9223372036854775807\n"),
+      bounds_from_memory_max("9223372036854775808\n"),
+    ].join("\n"),
+    content=(
+      #|67108864 67108864
+      #|67108864 67108864
     ),
   )
 }

@@ -242,7 +242,11 @@ test "json_string_bytes gives the length of a string as compact JSON writes it, 
 /// values, and the cookie rules of docs/definition-files/matching.md), so
 /// its first part is the cookie with the empty name and the value `x`,
 /// which `cookie['']` reads. RFC 6265's grammar has no empty cookie name,
-/// so the documents are the source here.
+/// so the documents are the source here. The field after it is one as RFC
+/// 6265 (section 4.2.1) has a user agent send it, its pairs joined by
+/// `; `, and its first value empty (`cookie-value = *cookie-octet`), so
+/// `blank` is the empty string, up to the `;` that ends its part, and `z`
+/// is the next part's value.
 test "cookie.NAME is the first value of the cookie, read from every Cookie field as sent, and missing when absent" {
   let input : @template.Input = {
     ..request,
@@ -251,6 +255,7 @@ test "cookie.NAME is the first value of the cookie, read from every Cookie field
       ("X-Cookie", "other=1"),
       ("cookie", " \ttheme=light\t; pct=a%20b"),
       ("Cookie", "=x; a=1"),
+      ("Cookie", "blank=; z=1"),
     ],
   }
   let render = (source : String) => {
@@ -279,12 +284,14 @@ test "cookie.NAME is the first value of the cookie, read from every Cookie field
       ),
       render("${cookie.none}"),
       render("[${cookie[''] ?? 'no empty name'}]"),
+      render("[${cookie.blank}] ${cookie.z}"),
     ].join("\n"),
     content=(
       #|dark "s1" b=c [] a%20b a%20b
       #|no flag, no Theme, no other
       #|error at /response/body: cookie.none is missing
       #|[x]
+      #|[] 1
     ),
   )
 }

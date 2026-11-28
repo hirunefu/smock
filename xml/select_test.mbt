@@ -37,6 +37,19 @@ test "child steps select every element of that name, in document order" {
       #|[]
     ),
   )
+  // Only the children of the elements selected so far: the item in the bag,
+  // which follows a box, is no item of a box (the README's "Paths";
+  // matching.md, "XML bodies": each further name selects the children with
+  // that name of the elements selected so far).
+  debug_inspect(
+    values(
+      "<order><box/><bag><item>b</item></bag><box><item>c</item></box></order>",
+      "/order/box/item",
+    ),
+    content=(
+      #|["c"]
+    ),
+  )
 }
 
 ///|
@@ -116,6 +129,27 @@ test "a final @name step selects that attribute of each selected element" {
       #|["", "", ""]
     ),
   )
+  // White space may come before the `/>` that ends an empty-element tag
+  // (XML 1.0 §3.1 [44]: EmptyElemTag ::= '<' Name (S Attribute)* S? '/>';
+  // [3]: S is spaces, tabs, line feeds and carriage returns), also when
+  // the tag is the root element's and ends the document: its first
+  // attribute and a later one are selected as anywhere else, and a name it
+  // lacks selects none (the README's "Paths").
+  debug_inspect(
+    [
+      ("<a x='1' />", "/a/@x"),
+      ("<a x='1'\t/>", "/a/@x"),
+      ("<a x='1'\n/>", "/a/@x"),
+      ("<a x='1'\r\n/>", "/a/@x"),
+      ("<a x='1' y='2' />", "/a/@x"),
+      ("<a x='1' y='2' />", "/a/@y"),
+      ("<a x='1' />", "/a/@y"),
+      ("<a />", "/a/@x"),
+    ].map(pair => values(pair.0, pair.1)),
+    content=(
+      #|[["1"], ["1"], ["1"], ["1"], ["1"], ["2"], [], []]
+    ),
+  )
 }
 
 ///|
@@ -124,6 +158,97 @@ test "an attribute's value is normalised: each whitespace character becomes a sp
     values("<a v=\"  one\ttwo\nthree\r\nfour\rfive  \"/>", "/a/@v"),
     content=(
       #|["  one two three four five  "]
+    ),
+  )
+  // The value's first and last characters too: a tab, a line feed, a CR LF
+  // or a lone CR there is a space (XML 1.0 §2.11 and §3.3.3), and a
+  // reference there is its character (§3.3.3: each reference is replaced).
+  debug_inspect(
+    ["\tx", "\nx", "\r\nx", "\rx", "&lt;x", "x\t", "x\n", "x\r", "x&gt;"].map(value => {
+      values("<a v='\{value}'/>", "/a/@v")
+    }),
+    content=(
+      #|[
+      #|  [" x"],
+      #|  [" x"],
+      #|  [" x"],
+      #|  [" x"],
+      #|  ["<x"],
+      #|  ["x "],
+      #|  ["x "],
+      #|  ["x "],
+      #|  ["x>"],
+      #|]
+    ),
+  )
+}
+
+///|
+/// For each node that `path` selects in `xml`, given as text and encoded as
+/// UTF-8, in document order: its value from `utf8_value`, and whether that
+/// value is a view of the input's own bytes rather than new bytes.
+fn utf8_values(xml : String, path : String) -> Array[(String, Bool)] raise {
+  let input = @utf8.encode(xml)
+  let document = @xml.parse(input)
+  let path = @xml.compile_path(path)
+  let out = []
+  let mut node = document.first_node(path)
+  while node >= 0 {
+    let value = document.utf8_value(path, node)
+    out.push((@utf8.decode(value), physical_equal(value.data(), input)))
+    node = document.next_node(path, node)
+  }
+  out
+}
+
+///|
+test "utf8_value is a view of the input when the input holds the value as it is, and new bytes otherwise" {
+  // utf8_value's documentation: the value is a view of the input when the
+  // input holds it as it is, as it does for an element that holds only
+  // text without references or carriage returns, and for an attribute
+  // without references or whitespace other than spaces; otherwise it is
+  // decoded into new bytes. The README: none of the walking functions
+  // allocates, except utf8_value for a value that needs decoding, such as
+  // text with a reference or CDATA. In an element, a line feed and a tab
+  // are text as written, and a carriage return is not: it is a line end.
+  let elements = "<r><a> x y </a><a>x\ny\tz</a><a>é😀</a><a>x&amp;y</a><a><![CDATA[x]]></a><a>x\r\ny</a><a>x<!---->y</a></r>"
+  debug_inspect(
+    utf8_values(elements, "/r/a"),
+    content=(
+      #|[
+      #|  ("x y", true),
+      #|  ("x\ny\tz", true),
+      #|  ("é😀", true),
+      #|  ("x&y", false),
+      #|  ("x", false),
+      #|  ("x\ny", false),
+      #|  ("xy", false),
+      #|]
+    ),
+  )
+  let attributes = "<a v='x y' w='x&amp;y' u='x\ty' t='x\ny'/>"
+  debug_inspect(
+    ["/a/@v", "/a/@w", "/a/@u", "/a/@t"].map(path => {
+      utf8_values(attributes, path)
+    }),
+    content=(
+      #|[
+      #|  [("x y", true)],
+      #|  [("x&y", false)],
+      #|  [("x y", false)],
+      #|  [("x y", false)],
+      #|]
+    ),
+  )
+  // White space around the `=` is not part of the value (XML 1.0 §2.3 [25]
+  // Eq ::= S? '=' S?, and §3.1 [41] Attribute ::= Name Eq AttValue), so a
+  // tab, a line feed or a CR LF before the quote leaves the value a view.
+  debug_inspect(
+    ["/a/@v", "/a/@w", "/a/@u"].map(path => {
+      utf8_values("<a v=\t'x y' w =\n\"x y\" u=\r\n'x'/>", path)
+    }),
+    content=(
+      #|[[("x y", true)], [("x y", true)], [("x", true)]]
     ),
   )
 }
@@ -146,6 +271,18 @@ test "the five predefined entities and character references are decoded" {
     values("<a v='&lt;&amp;&gt;&apos;&quot; &#65;&#x42;'/>", "/a/@v"),
     content=(
       #|["<&>'\" AB"]
+    ),
+  )
+  // A hexadecimal reference's letters are in either case (XML 1.0 §4.1 [66]
+  // CharRef: '&#x' [0-9a-fA-F]+ ';'): the first and the last letter, a and
+  // f, in both. &#xfa; and &#xFA; are U+00FA, ú.
+  debug_inspect(
+    [
+      values("<a>&#xfa;&#xFA;&#x1f600;</a>", "/a"),
+      values("<a v='&#xfa;&#xFA;'/>", "/a/@v"),
+    ],
+    content=(
+      #|[["úú😀"], ["úú"]]
     ),
   )
 }
@@ -219,6 +356,16 @@ test "an XML declaration may name UTF-8, and a byte order mark may come first" {
       #|[["1"], ["2"], ["3"], ["4"], ["5"]]
     ),
   )
+  // Any version 1.x is read as 1.0 (XML 1.0 §2.8: VersionNum ::= '1.'
+  // [0-9]+): the last digit, and more than one.
+  debug_inspect(
+    ["<?xml version='1.9'?><a>6</a>", "<?xml version='1.10'?><a>7</a>"].map(xml => {
+      values(xml, "/a")
+    }),
+    content=(
+      #|[["6"], ["7"]]
+    ),
+  )
 }
 
 ///|
@@ -266,6 +413,20 @@ test "namespace declarations are not selectable attributes" {
     values(xml, "/a/@q"),
     content=(
       #|["2"]
+    ),
+  )
+  // Only `xmlns`, and `xmlns:` with a prefix after it, declare a namespace
+  // (Namespaces in XML 1.0 §3 [1]-[3]: DefaultAttName ::= 'xmlns',
+  // PrefixedAttName ::= 'xmlns:' NCName). Names that almost match are
+  // attributes: one with its first or last character changed, one shorter,
+  // one longer, one in other case, and prefixes that almost match.
+  let almost = "<a xmlns='urn:a' _mlns='1' xmlnx='2' xmln='3' xmlnsx='4' Xmlns='5' _mlns:r='6' xmlns_:s='7'/>"
+  debug_inspect(
+    ["_mlns", "xmlnx", "xmln", "xmlnsx", "Xmlns", "r", "s"].map(name => {
+      values(almost, "/a/@" + name)
+    }),
+    content=(
+      #|[["1"], ["2"], ["3"], ["4"], ["5"], ["6"], ["7"]]
     ),
   )
 }

@@ -1,6 +1,11 @@
 // The settings of smock check: the definitions directory, its argument, and
 // the settings of smock serve that decide how the directory is loaded
 // (#320). `--template-env` has its own tests, on the three commands.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// What `smock check <argv>`, with the variables `env`, makes of its

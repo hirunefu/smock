@@ -235,3 +235,275 @@ test "the messages that have arrived whole are counted as each one's last octet 
   )
   debug_inspect(deframer.ending(), content="InMessage(length=2)")
 }
+
+///|
+/// The seed of the property that a message framed and read back by the
+/// deframer gives the message. The tests run with it on every push, in
+/// mutation runs and in kill confirmations, so a failure reproduces. Each
+/// week, `scripts/random-seeds.py` writes a random seed here in a working
+/// copy and prints it (CONTRIBUTING.md, "Seeds").
+const FRAMING_SEED : UInt64 = 10444929829213460537
+
+///|
+/// The messages of a body and where the body is cut into the pieces it
+/// arrives in: each cut is an offset into the framed body, and offsets past
+/// its end, which a smaller body may leave, cut at the end.
+priv struct Body {
+  messages : Array[Bytes]
+  cuts : Array[Int32]
+}
+
+///|
+/// A message as a failure shows it: its length, and its first 16 octets in
+/// hex, so that a message of 65,536 octets takes one line.
+fn shown(message : BytesView) -> String {
+  if message.length() <= 16 {
+    "\{message.length()} octets \{@hex.encode(message)}"
+  } else {
+    "\{message.length()} octets \{@hex.encode(message[:16])}..."
+  }
+}
+
+///|
+/// A body as a failure shows it: each message shown, then the cuts.
+impl @debug.Debug for Body with fn to_repr(self) {
+  let messages = self.messages.map(message => shown(message[:]))
+  @debug.Repr::literal(
+    "messages \{@debug.to_string(messages)}, cut at \{@debug.to_string(self.cuts)}",
+  )
+}
+
+///|
+/// The index of a random one of `n` choices.
+fn below(state : @quickcheck.RandomState, n : Int32) -> Int32 {
+  state.next_uint(limit=n.reinterpret_as_uint()).reinterpret_as_int()
+}
+
+///|
+/// A random message: empty, short, of 250 to 260 octets, around 256, the
+/// first length whose Message-Length needs a second octet, or of 65,530 to
+/// 65,540, around 65,536, the first that needs a third. The octets of the
+/// shorter ones are random, so they may look like a prefix; a long one
+/// repeats one random octet.
+fn random_message(state : @quickcheck.RandomState) -> Bytes {
+  match below(state, 8) {
+    0 | 1 => Bytes::new(0)
+    2 | 3 | 4 =>
+      Bytes::makei(1 + below(state, 16), _ => below(state, 256).to_byte())
+    5 | 6 =>
+      Bytes::makei(250 + below(state, 11), _ => below(state, 256).to_byte())
+    _ => Bytes::make(65_530 + below(state, 11), below(state, 256).to_byte())
+  }
+}
+
+///|
+/// The body: `@grpc.frame` of each message, one after another.
+fn Body::framed(self : Body) -> Bytes {
+  let out = @buffer.Buffer()
+  for message in self.messages {
+    out.write_bytes(@grpc.frame(message[:]))
+  }
+  out.to_bytes()
+}
+
+///|
+/// Up to four messages, and up to six cuts anywhere in the framed body.
+impl @quickcheck.Arbitrary for Body with fn arbitrary(_size, state) {
+  let messages = Array::makei(below(state, 5), _ => random_message(state))
+  let length = { messages, cuts: [], }.framed().length()
+  let cuts = Array::makei(below(state, 7), _ => below(state, length + 1))
+  cuts.sort()
+  { messages, cuts, }
+}
+
+///|
+/// Smaller bodies: each without one of its messages, each with a message
+/// cut to half its length or one octet shorter, or with its first octet
+/// that is not 0 made 0, and each without one of its cuts. Each has fewer
+/// messages, octets, octets that are not 0 or cuts, and no more of the
+/// others, so shrinking ends.
+impl @quickcheck.Shrink for Body with fn shrink(self) {
+  let out : Array[Body] = []
+  let messages = self.messages
+  for i in 0..<messages.length() {
+    let rest = messages.copy()
+    rest.remove(i) |> ignore
+    out.push({ ..self, messages: rest, })
+  }
+  for i, message in messages {
+    if message.length() > 1 {
+      let changed = messages.copy()
+      changed[i] = message[:message.length() / 2].to_owned()
+      out.push({ ..self, messages: changed, })
+    }
+    if message.length() > 0 {
+      let changed = messages.copy()
+      changed[i] = message[:message.length() - 1].to_owned()
+      out.push({ ..self, messages: changed, })
+    }
+    for j, octet in message {
+      if octet != b'\x00' {
+        let changed = messages.copy()
+        changed[i] = Bytes::makei(message.length(), k => {
+          if k == j {
+            b'\x00'
+          } else {
+            message[k]
+          }
+        })
+        out.push({ ..self, messages: changed, })
+        break
+      }
+    }
+  }
+  for i in 0..<self.cuts.length() {
+    let rest = self.cuts.copy()
+    rest.remove(i) |> ignore
+    out.push({ ..self, cuts: rest, })
+  }
+  out.iter()
+}
+
+///|
+/// What a reader built on the deframer makes of a body: each prefix it
+/// reads, as its flag, its message's length, the body's length through the
+/// message and the offset where the prefix ends; the message read back, the
+/// octets after that offset that the length announced; then how the body
+/// ends and how many messages are whole.
+priv struct ReadBack {
+  prefixes : Array[(Byte, UInt32, Int64, Int32)]
+  messages : Array[Bytes]
+  ending : @grpc.Ending
+  whole : Int32
+}
+
+///|
+/// Feeds the framed body to a deframer in the pieces its cuts make, and
+/// reads each message back from where its prefix ends.
+fn Body::read_back(self : Body) -> ReadBack {
+  let framed = self.framed()
+  let deframer = @grpc.Deframer()
+  let prefixes = []
+  let mut from = 0
+  for cut in [..self.cuts, framed.length()] {
+    let to = if cut < from {
+      from
+    } else if cut > framed.length() {
+      framed.length()
+    } else {
+      cut
+    }
+    let mut rest = framed[from:to]
+    while deframer.take(rest)
+          is Prefix(flag~, length~, body_length~, rest=after) {
+      prefixes.push((flag, length, body_length, after.start_offset()))
+      rest = after
+    }
+    from = to
+  }
+  let messages = prefixes.map(prefix => {
+    let (_, length, _, at) = prefix
+    let end = at.to_int64() + length.to_uint64().reinterpret_as_int64()
+    if end <= framed.length().to_int64() {
+      framed[at:end.to_int()].to_owned()
+    } else {
+      framed[at:].to_owned()
+    }
+  })
+  {
+    prefixes,
+    messages,
+    ending: deframer.ending(),
+    whole: deframer.whole_messages(),
+  }
+}
+
+///|
+/// The property, by PROTOCOL-HTTP2's Length-Prefixed-Message
+/// (Compressed-Flag, Message-Length "encoded as 4 byte unsigned integer
+/// (big endian)", Message): the deframer reads one prefix for each message,
+/// in order, with flag 0, the message's length, and the body's length
+/// through the message; the length's octets after the prefix are the
+/// message; and the body ends whole after as many messages, all of them
+/// whole.
+fn Body::holds(self : Body) -> Bool {
+  let read = self.read_back()
+  let n = self.messages.length()
+  guard read.prefixes.length() == n else { return false }
+  let mut through = 0L
+  for i, message in self.messages {
+    let (flag, length, body_length, at) = read.prefixes[i]
+    through += (@grpc.prefix_length + message.length()).to_int64()
+    guard flag == b'\x00' &&
+      length == message.length().reinterpret_as_uint() &&
+      body_length == through &&
+      at.to_int64() + length.to_uint64().reinterpret_as_int64() == through &&
+      read.messages[i] == message else {
+      return false
+    }
+  }
+  read.ending == Whole(messages=n) && read.whole == n
+}
+
+///|
+/// What the reader made of a failing body: each prefix, each message read
+/// back, shown, how the body ends and how many messages are whole.
+fn Body::describe(self : Body) -> String {
+  let read = self.read_back()
+  let messages = read.messages.map(message => shown(message[:]))
+  "prefixes (flag, length, body length, end) \{@debug.to_string(read.prefixes)}, messages read back \{@debug.to_string(messages)}, \{@debug.to_string(read.ending)}, \{read.whole} whole"
+}
+
+///|
+test "a message framed and read back by the deframer gives the message, whatever pieces the body arrives in" {
+  @quickcheck.check(
+    (body : Body) => body.holds(),
+    observe=body => {
+      // Where each prefix starts in the framed body.
+      let starts = []
+      let mut at = 0
+      for message in body.messages {
+        starts.push(at)
+        at += @grpc.prefix_length + message.length()
+      }
+      let inside = (from : Int32, to : Int32) => {
+        body.cuts.iter().any(cut => cut > from && cut < to)
+      }
+      [
+        @quickcheck.classify(body.messages.is_empty(), "no message"),
+        @quickcheck.classify(body.messages.length() > 1, "several messages"),
+        @quickcheck.classify(
+          body.messages.iter().any(message => message.length() == 0),
+          "an empty message",
+        ),
+        @quickcheck.classify(
+          body.messages.iter().any(message => message.length() >= 256),
+          "a message of 256 octets or more",
+        ),
+        @quickcheck.classify(
+          body.messages.iter().any(message => message.length() >= 65_536),
+          "a message of 65,536 octets or more",
+        ),
+        @quickcheck.classify(
+          starts.iter().any(start => inside(start, start + @grpc.prefix_length)),
+          "a piece ends inside a prefix",
+        ),
+        @quickcheck.classify(
+          body.messages
+          .iter()
+          .zip(starts.iter())
+          .any(pair => {
+            let (message, start) = pair
+            let from = start + @grpc.prefix_length
+            inside(from, from + message.length())
+          }),
+          "a piece ends inside a message",
+        ),
+      ]
+    },
+    counterexample_context=Body::describe,
+    count=1000,
+    max_shrinks=1000,
+    seed=FRAMING_SEED,
+  )
+}

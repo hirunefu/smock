@@ -129,6 +129,28 @@ test "header values are written as UTF-8" {
     encoded(200, [("X-Name", "café")], ""),
     content="HTTP/1.1 200 OK\r\nX-Name: café\r\nContent-Length: 0\r\n\r\n",
   )
+  // The first and the last character that UTF-8 writes in two, three and
+  // four octets, U+0080 and U+07FF, U+0800 and U+FFFF, U+10000 and
+  // U+10FFFF, each as the octets RFC 3629 gives it (sections 3 and 4);
+  // Python's UTF-8 codec writes the same octets. Bytes show CR LF as
+  // \x0d\x0a.
+  inspect(
+    @http1.encode_response(
+      200,
+      [
+        ("A", "\u{80}"),
+        ("B", "\u{7ff}"),
+        ("C", "\u{800}"),
+        ("D", "\u{ffff}"),
+        ("E", "\u{10000}"),
+        ("F", "\u{10ffff}"),
+      ],
+      b"",
+    ),
+    content=(
+      #|b"HTTP/1.1 200 OK\x0d\x0aA: \xc2\x80\x0d\x0aB: \xdf\xbf\x0d\x0aC: \xe0\xa0\x80\x0d\x0aD: \xef\xbf\xbf\x0d\x0aE: \xf0\x90\x80\x80\x0d\x0aF: \xf4\x8f\xbf\xbf\x0d\x0aContent-Length: 0\x0d\x0a\x0d\x0a"
+    ),
+  )
 }
 
 ///|
@@ -209,6 +231,37 @@ test "field_octets writes a surrogate that is not part of a pair as the three by
       #|b"\xed\xb8\x80\xed\xa0\xbd"
       #|b"\xf0\x9f\x98\x80"
       #|b""
+    ),
+  )
+  // A pair is a high surrogate, 0xD800 to 0xDBFF, then a low one, 0xDC00 to
+  // 0xDFFF (RFC 2781, section 2.2). Its four corners are U+10000, U+103FF,
+  // U+10FC00 and U+10FFFF, written in four octets (RFC 3629, section 3).
+  // A code unit just outside one of the four edges makes no pair: 0xD7FF
+  // and 0xE000 are characters of their own, and the surrogates are each
+  // written as the three octets of their code unit. The expected octets
+  // are Python's: the code units decoded as UTF-16 and encoded as UTF-8,
+  // both with "surrogatepass".
+  let edges = [
+    code_unit(0xD800) + code_unit(0xDC00),
+    code_unit(0xD800) + code_unit(0xDFFF),
+    code_unit(0xDBFF) + code_unit(0xDC00),
+    code_unit(0xDBFF) + code_unit(0xDFFF),
+    code_unit(0xD7FF) + code_unit(0xDC00),
+    code_unit(0xDC00) + code_unit(0xDFFF),
+    code_unit(0xD800) + code_unit(0xDBFF),
+    code_unit(0xDBFF) + code_unit(0xE000),
+  ]
+  inspect(
+    edges.map(text => "\{@http1.field_octets(text)}").join("\n"),
+    content=(
+      #|b"\xf0\x90\x80\x80"
+      #|b"\xf0\x90\x8f\xbf"
+      #|b"\xf4\x8f\xb0\x80"
+      #|b"\xf4\x8f\xbf\xbf"
+      #|b"\xed\x9f\xbf\xed\xb0\x80"
+      #|b"\xed\xb0\x80\xed\xbf\xbf"
+      #|b"\xed\xa0\x80\xed\xaf\xbf"
+      #|b"\xed\xaf\xbf\xee\x80\x80"
     ),
   )
 }

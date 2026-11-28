@@ -102,6 +102,135 @@ test "requests that follow each other on one connection come out in turn, each s
 }
 
 ///|
+/// A request with the method `meth`, the target `target` and a field named
+/// `name` after Host, then a field of 2,000 bytes.
+fn padded_request(meth : String, target : String, name : String) -> String {
+  "\{meth} \{target} HTTP/1.1\r\nHost: a.example\r\n\{name}: 1\r\nX-Pad: \{"p".repeat(2000)}\r\n\r\n"
+}
+
+///|
+test "a method, target or field name that begins as the one of the request before it, with more or fewer characters, is read as sent, however the second request is cut" {
+  // RFC 9112, section 3: a request line is the method, the request target
+  // and the version; section 5.1: a field line begins with the field name.
+  // The parser gives each as sent (the documentation of Request and Header),
+  // and the same requests however the bytes are split into pieces (Parser's
+  // documentation). Here the one before is the same text with 1 to 16
+  // characters more, or fewer. Each request carries a field of 2,000 bytes,
+  // so the two do not fit together in the 4,096 bytes the parser's first
+  // buffer holds: when the second arrives in a piece of its own, or cut
+  // within its first lines, the parser moves its bytes to the front of the
+  // buffer before it reads its head.
+  let more = "0123456789abcdef"
+  let wrong = []
+  for count in 1..<=16 {
+    let longer = more[:count].to_owned()
+    for pair in [(longer, ""), ("", longer)] {
+      let (before, after) = pair
+      let sent = [
+        ("GET" + before, "/items" + before, "X-Item" + before),
+        ("GET" + after, "/items" + after, "X-Item" + after),
+      ]
+      let expected = sent.map(request => {
+        let (meth, target, name) = request
+        "\{meth} \{target} \{name}"
+      })
+      expected.push("need more")
+      let first = padded_request(sent[0].0, sent[0].1, sent[0].2)
+      let second = padded_request(sent[1].0, sent[1].1, sent[1].2)
+      // Fed whole, then cut before the second request and at each byte of
+      // its request line, its Host field and the field named after it.
+      let lines = second.length() - 2000 - "X-Pad: \r\n\r\n".length()
+      for cut in -1..<=lines {
+        let pieces = if cut < 0 {
+          [first + second]
+        } else {
+          [first + second[:cut].to_owned(), second[cut:].to_owned()]
+        }
+        let parser = @http1.Parser()
+        let out = []
+        for piece in pieces {
+          parser.feed(@utf8.encode(piece))
+          while parser.next() is Complete(request) {
+            let name = if request.headers.length() > 1 {
+              request.headers[1].name
+            } else {
+              "(none)"
+            }
+            out.push("\{request.meth} \{request.target} \{name}")
+          }
+        }
+        out.push(render(parser.next()))
+        if out != expected {
+          wrong.push((count, before, cut, out))
+        }
+      }
+    }
+  }
+  debug_inspect(wrong, content="[]")
+}
+
+///|
+test "a request that sends again the method, the target or a header field of the request before it gets the very string or field given for that request" {
+  // Parser's documentation: "On one connection, a request's method, target
+  // and header fields that are the same as in the request before, field by
+  // field in order, are the very strings and `Header`s of that request,
+  // which `physical_equal` tells; a field with the same name in its place
+  // but another value is a new `Header` with that request's very name. A
+  // name is the same only in the same case, and a value is compared
+  // without the white space around it." The server relies on it to decode
+  // a field that a client sends with every request once per connection
+  // (DecodedHeaders::of in server/server.mbt; d66c05fa). The maintainer
+  // made it a promise of the interface on 2026-11-21 (#324).
+  let stream = "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 1\r\n\r\n" +
+    "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 1\r\n\r\n" +
+    "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: 2\r\n\r\n" +
+    "GET /a HTTP/1.1\r\nHost: a.example\r\nAccept: */*\r\nX-Id: \t 2  \r\n\r\n" +
+    "GET /b HTTP/1.1\r\nHost: a.example\r\nX-Id: 2\r\nAccept: */*\r\n\r\n" +
+    "POST /b HTTP/1.1\r\nhost: a.example\r\nX-Id: 2\r\nAccept: */*\r\n\r\n" +
+    "POST /b HTTP/1.1\r\nhost: a.example\r\n\r\n" +
+    "POST /b HTTP/1.1\r\nhost: a.example\r\nX-New: 1\r\n\r\n"
+  let parser = @http1.Parser()
+  parser.feed(@utf8.encode(stream))
+  let same_or_new = (same : Bool) => if same { "same" } else { "new" }
+  let out = []
+  let mut before : @http1.Request? = None
+  while parser.next() is Complete(request) {
+    let line = StringBuilder()
+    line.write_string("\{request.meth} \{request.target}:")
+    if before is Some(earlier) {
+      line.write_string(
+        " method \{same_or_new(physical_equal(request.meth, earlier.meth))}, target \{same_or_new(physical_equal(request.target, earlier.target))}, fields",
+      )
+      for i, field in request.headers {
+        let kind = match earlier.headers.get(i) {
+          Some(other) if physical_equal(field, other) => "same"
+          Some(other) if physical_equal(field.name, other.name) => "same name"
+          _ => "new"
+        }
+        line.write_string(" \{field.name}=\{kind}")
+      }
+    } else {
+      line.write_string(" the first")
+    }
+    out.push(line.to_string())
+    before = Some(request)
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|GET /a: the first
+      #|GET /a: method same, target same, fields Host=same Accept=same X-Id=same
+      #|GET /a: method same, target same, fields Host=same Accept=same X-Id=same name
+      #|GET /a: method same, target same, fields Host=same Accept=same X-Id=same
+      #|GET /b: method same, target new, fields Host=same X-Id=new Accept=new
+      #|POST /b: method new, target same, fields host=new X-Id=same Accept=same
+      #|POST /b: method same, target same, fields host=same
+      #|POST /b: method same, target same, fields host=same X-New=new
+    ),
+  )
+}
+
+///|
 test "requests fed one byte at a time come out as when fed whole" {
   let stream = "GET /a HTTP/1.1\r\nHost: a.example\r\n\r\nPOST /b HTTP/1.1\r\nHost: a.example\r\nContent-Length: 4\r\n\r\n\r\n\r\nGET /c HTTP/1.1\r\nHost: a.example\r\n\r\n"
   let bytes = @utf8.encode(stream)
@@ -260,6 +389,14 @@ test "a request target in one of the four forms of RFC 9112 is accepted; any oth
   ]
   let targets = [
     // origin-form, absolute-form, authority-form and asterisk-form
+    // `/a|b^c` is in none of them by RFC 9112's grammar, since a path
+    // segment holds no `|` or `^` (RFC 3986, section 3.3: pchar). It is
+    // accepted by smock's documented choice, as origin-form whose
+    // characters are checked as visible ASCII only: is_visible_ascii's
+    // documentation, "Every visible character passes, even those RFC 3986
+    // leaves out of a URI, such as `|` and `^`, since clients send them",
+    // and is_origin_or_asterisk_form's, "Only the form is checked, as by
+    // the parser: `is_visible_ascii` checks the characters".
     "/", "/users/1?x=y", "/a|b^c", "http://a.example", "http://a.example:8080/x?y",
     "urn:a", "a.example:443", "127.0.0.1:8080", "[::1]:80", "[v1.x]:80", "*", // in none of them
      "users/1", "a", "?x", "127.0.0.1", "[::1]", "[::1:80", "a/b:80", "a@b:80", "1http://a/",
@@ -303,6 +440,40 @@ test "a request target in one of the four forms of RFC 9112 is accepted; any oth
       #|/#frag -> invalid 400
       #|/a?x# -> invalid 400
       #|http://a.example/#x -> invalid 400
+    ),
+  )
+  // An absolute-form target is an absolute-URI (RFC 9112, section 3.2.2),
+  // `scheme ":" hier-part` (RFC 3986, section 4.3), and a scheme is a
+  // letter, then any letters, digits, `+`, `-` and `.` (RFC 3986, section
+  // 3.1: `scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`). So a
+  // scheme of one letter will do, and each of the others may come second;
+  // an empty scheme, one that begins with another character, or one that
+  // holds another, makes no absolute-URI, and the target is in no form.
+  let schemes = [
+    "a:x", "a1:x", "a+:x", "a-:x", "a.:x", ":x", ":/x", "1:x", "+a:x", "-a:x", ".a:x",
+    "a_:x", "a~:x", "a%2B:x",
+  ]
+  inspect(
+    schemes
+    .map(target => {
+      "\{target} -> \{first_verdict("OPTIONS \{target} HTTP/1.1\r\nHost: a\r\n\r\n")}"
+    })
+    .join("\n"),
+    content=(
+      #|a:x -> accepted
+      #|a1:x -> accepted
+      #|a+:x -> accepted
+      #|a-:x -> accepted
+      #|a.:x -> accepted
+      #|:x -> invalid 400
+      #|:/x -> invalid 400
+      #|1:x -> invalid 400
+      #|+a:x -> invalid 400
+      #|-a:x -> invalid 400
+      #|.a:x -> invalid 400
+      #|a_:x -> invalid 400
+      #|a~:x -> invalid 400
+      #|a%2B:x -> invalid 400
     ),
   )
 }
@@ -430,6 +601,45 @@ test "a chunked body is decoded, and the request after it comes out next" {
       #|
     ),
   )
+  // A chunk size is hexadecimal, `chunk-size = 1*HEXDIG` (RFC 9112, section
+  // 7.1), and HEXDIG's letters are "A" to "F" (RFC 5234, appendix B.1),
+  // which ABNF matches in either case (RFC 5234, section 2.3): A and a are
+  // 10, F and f are 15.
+  inspect(
+    parse_all([
+      "POST /a HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n" +
+      "A\r\nabcdefghij\r\na\r\nklmnopqrst\r\nF\r\nABCDEFGHIJKLMNO\r\nf\r\nPQRSTUVWXYZ0123\r\n0\r\n\r\n" +
+      "GET /b HTTP/1.1\r\nHost: a\r\n\r\n",
+    ]),
+    content=(
+      #|POST /a HTTP/1.1 | Host: a | Transfer-Encoding: chunked | body="abcdefghijklmnopqrstABCDEFGHIJKLMNOPQRSTUVWXYZ0123" | keep-alive
+      #|GET /b HTTP/1.1 | Host: a | body="" | keep-alive
+      #|need more
+      #|
+    ),
+  )
+  // The CRLF that ends the chunked body (RFC 9112, section 7.1:
+  // `chunked-body = *chunk last-chunk trailer-section CRLF`) ends it also
+  // when its LF comes first in the next piece, before a request much longer
+  // than all that came before it: however the bytes are split into pieces,
+  // the parser takes out the same requests (Parser).
+  let parser = @http1.Parser()
+  inspect(
+    [
+      limited(
+        parser,
+        post("Transfer-Encoding: chunked\r\n") + "5\r\nhello\r\n0\r\n\r",
+      ),
+      limited(
+        parser,
+        "\n" + post("Content-Length: 65536\r\n") + "b".repeat(65536),
+      ),
+    ].join("\n"),
+    content=(
+      #|need more
+      #|POST /p body=5, POST /p body=65536, need more
+    ),
+  )
 }
 
 ///|
@@ -442,6 +652,29 @@ test "chunk extensions and trailer fields are accepted and ignored" {
       "6;e=\"\"\r\n world\r\n" +
       "000;last=1\r\n" +
       "Checksum: abc\r\nX-Trailer:\t1 \r\n\r\n" +
+      "GET /b HTTP/1.1\r\nHost: a\r\n\r\n",
+    ]),
+    content=(
+      #|POST /a HTTP/1.1 | Host: a | Transfer-Encoding: chunked | body="hello, world" | keep-alive
+      #|GET /b HTTP/1.1 | Host: a | body="" | keep-alive
+      #|need more
+      #|
+    ),
+  )
+  // White space may repeat around an extension: `chunk-ext = *( BWS ";"
+  // BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )` (RFC 9112, section
+  // 7.1.1), where BWS is `*( SP / HTAB )` (RFC 9110, section 5.6.3). So
+  // several spaces and tabs may come before an extension's `;` and after
+  // its name, and a name without a value may be followed by white space and
+  // the `;` of the next extension. A recipient ignores the extensions (RFC
+  // 9112, section 7.1.1), so the body is the chunks' data.
+  inspect(
+    parse_all([
+      "POST /a HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n" +
+      "5 \t ;name\r\nhello\r\n" +
+      "1;a \t =b\r\n,\r\n" +
+      "6;c\t ;d\r\n world\r\n" +
+      "0\t\t;last\r\n\r\n" +
       "GET /b HTTP/1.1\r\nHost: a\r\n\r\n",
     ]),
     content=(
@@ -535,6 +768,25 @@ test "a bad chunk size or broken chunk framing gets 400" {
       #|"0\r\n: 1\r\n\r\n" -> invalid 400
       #|"0\r\nX: \u{7f}\r\n\r\n" -> invalid 400
       #|"0\r\nX: 1\n\r\n" -> invalid 400
+    ),
+  )
+  // Each CR and LF that ends a chunk's two lines replaced by another byte:
+  // a chunk is `chunk-size [ chunk-ext ] CRLF chunk-data CRLF` (RFC 9112,
+  // section 7.1), so each is broken chunk framing, which gets 400
+  // (Parsed::Invalid), even though the bytes after it frame a body.
+  let replaced = [
+    "5X\nhello\r\n0\r\n\r\n", "5\rXhello\r\n0\r\n\r\n", "5\r\nhelloX\n0\r\n\r\n",
+    "5\r\nhello\rX0\r\n\r\n",
+  ]
+  inspect(
+    replaced
+    .map(case => "\{shown(case)} -> \{chunked_outcome(case)}")
+    .join("\n"),
+    content=(
+      #|"5X\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5\rXhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5\r\nhelloX\n0\r\n\r\n" -> invalid 400
+      #|"5\r\nhello\rX0\r\n\r\n" -> invalid 400
     ),
   )
 }

@@ -48,7 +48,10 @@
 # Each run's name says its mode, "Mutation runs: weekly" for the weekly
 # run whether its schedule or a person started it: the release workflow's
 # check of the latest weekly run (scripts/check-weekly-run.py) finds the
-# weekly runs by their names.
+# weekly runs by their names. It reads a weekly run's jobs by their names
+# too, those that decide a verdict, and not the run's conclusion; a job
+# renamed or added here goes into its list of jobs (JOBS), which
+# scripts/check-release-workflow.sh holds to this workflow.
 name: Mutation runs
 # The mode each schedule starts, as bulk.py's SCHEDULES gives it, or the
 # input mode of a run started by hand.
@@ -270,7 +273,8 @@ jobs:
   # together, and the positions e2e covers, which step 5's run at operator
   # level mutates (#342). A workflow of its own (coverage-e2e.yml), so that
   # it can also be started alone by hand. It reports only, so the finish
-  # does not wait for it.
+  # does not wait for it, and the release's check of the weekly run does
+  # not read it.
   coverage-e2e:
     name: Coverage from e2e (weekly)
     needs: plan

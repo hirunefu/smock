@@ -3,9 +3,12 @@
 # its commit (scripts/check-ci-passed.sh), with a fake gh that answers for
 # the Actions API from a canned answer, or fails; and that the tag names the
 # version in moon.mod (scripts/check-tag-version.sh), on small moon.mod
-# files. Each test checks the exit status and what the check prints.
+# files; and that the latest weekly mutation run is clean in the packages
+# at L4 (scripts/check-weekly-run.py), with a second fake gh, canned runs,
+# jobs and reports, on small git histories. Each test checks the exit
+# status and what the check prints.
 #
-# It needs jq, and no network.
+# It needs python3, git and jq, and no network.
 #
 # usage: scripts/test-release-gates.sh
 set -eu
@@ -117,6 +120,16 @@ mentions() {
   else
     fail "$1: does not mention $2"
     sed 's/^/     /' "$tmp/$1.out"
+  fi
+}
+
+# lacks <name> <text>: the check <name> printed <text> in no line.
+lacks() {
+  if grep -qF -- "$2" "$tmp/$1.out"; then
+    fail "$1: mentions $2"
+    sed 's/^/     /' "$tmp/$1.out"
+  else
+    pass "$1: does not mention $2"
   fi
 }
 
@@ -342,15 +355,16 @@ mentions no-arguments "usage: "
 # committed, the package calc with its source, its test and a generated
 # table, the package grid, moon.mod and CHANGELOG.md. A second fake gh
 # answers for the Actions API: the runs of the mutation runs' workflow
-# from $tmp/mutation-runs.json, the runs of the branch checks on a commit
-# from $tmp/branch-checks/<commit>.json, and each run's artifacts from
-# $tmp/artifacts/<id>/<name>/.
+# from $tmp/mutation-runs.json, the jobs of a run from $tmp/jobs/<id>.json
+# (a later page from $tmp/jobs/<id>-<page>.json), the runs of the branch
+# checks on a commit from $tmp/branch-checks/<commit>.json, and each run's
+# artifacts from $tmp/artifacts/<id>/<name>/.
 export GIT_CEILING_DIRECTORIES="$tmp"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 
-mkdir "$tmp/runs-bin" "$tmp/branch-checks"
+mkdir "$tmp/runs-bin" "$tmp/branch-checks" "$tmp/jobs"
 cat >"$tmp/runs-bin/gh" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" >>"$FAKE_GH_DIR/gh.args"
@@ -361,6 +375,19 @@ fi
 case "$1 $2" in
 "api "*/workflows/mutation-runs.yml/runs*)
   cat "$FAKE_GH_DIR/mutation-runs.json"
+  ;;
+"api "*/actions/runs/*/jobs*)
+  id=${2#*/actions/runs/}
+  id=${id%%/*}
+  page=${2##*page=}
+  if [ "$page" = 1 ] && [ -f "$FAKE_GH_DIR/jobs/$id.json" ]; then
+    cat "$FAKE_GH_DIR/jobs/$id.json"
+  elif [ -f "$FAKE_GH_DIR/jobs/$id-$page.json" ]; then
+    cat "$FAKE_GH_DIR/jobs/$id-$page.json"
+  else
+    echo "gh: Not Found (HTTP 404)" >&2
+    exit 1
+  fi
   ;;
 "api "*/workflows/branch-checks.yml/runs*)
   sha=${2#*head_sha=}
@@ -476,6 +503,39 @@ mruns() {
   printf '%s\n' "$@" | jq -s '{total_count: length, workflow_runs: .}' >"$tmp/mutation-runs.json"
 }
 
+# The names of a weekly run's jobs, as the Actions API gave them for the
+# first weekly run (44423781036), and as mutation-runs.yml and the
+# workflows it calls name them: a called workflow's job is named "<the
+# caller's job> / <its own job>".
+plan_job="Plan the run"
+canary_job="Canary (weekly) / canary (the sample's 250 mutants on d953f320)"
+seeds_job="Properties with random seeds (weekly)"
+coverage_job="Coverage from e2e (weekly) / Coverage from e2e (server and cmd/smock)"
+stale_job="Open or update the issue of the stale entries (weekly)"
+finish_job="Merge the shards into one report"
+
+# mjobs <id> [<jq update>]: writes the answer that lists the jobs of the
+# run <id>, as the Actions API lists those of its latest attempt: by
+# default a weekly run of two shards whose every job passed, but the job
+# of the stale entries, skipped as none was listed; changed by the update,
+# which takes the list of jobs.
+mjobs() {
+  jq -n --arg plan "$plan_job" --arg canary "$canary_job" --arg seeds "$seeds_job" --arg coverage "$coverage_job" \
+    --arg stale "$stale_job" --arg finish "$finish_job" '
+    [$plan, "shard 1-of-2", "shard 2-of-2", $canary, $seeds, $coverage, $stale, $finish]
+    | map({name: ., status: "completed", conclusion: (if . == $stale then "skipped" else "success" end)})' |
+    jq "${2:-.}" | jq '{total_count: length, jobs: .}' >"$tmp/jobs/$1.json"
+}
+
+# ends <name> <conclusion>: the update of mjobs that ends the job <name>
+# with <conclusion>; gone <name>: the update that takes it away.
+ends() {
+  printf 'map(if .name == "%s" then .conclusion = "%s" else . end)' "$1" "$2"
+}
+gone() {
+  printf 'map(select(.name != "%s"))' "$1"
+}
+
 # weekly_report <id> [<jq update>]: writes the artifact mutation-report of
 # the run <id>, its summary.json as scripts/mutation/merge.py writes it,
 # changed by the update: by default the pinned set over calc and grid,
@@ -502,6 +562,7 @@ weekly_report() {
 # at L4, stop no release.
 mruns "$(mrun 201 "$at_run")"
 weekly_report 201
+mjobs 201
 weekly on-the-run "$at_run"
 exits on-the-run 0
 says on-the-run "check-weekly-run: $(short "$at_run") may be released: the latest weekly run over the pinned set, on the tag's commit, shows no unexplained survivor in the packages at L4 (calc): $url/201"
@@ -563,6 +624,7 @@ says no-run-at-all "check-weekly-run: $(short "$at_run") may not be released: no
 # A weekly run started by hand on the tag decides as one on main does.
 mruns "$(mrun 214 "$at_run" '.head_branch = "v0.5.0" | .event = "workflow_dispatch"')"
 weekly_report 214
+mjobs 214
 weekly on-the-tag "$at_run"
 exits on-the-tag 0
 mentions on-the-tag "may be released: the latest weekly run over the pinned set, on the tag's commit, shows no unexplained survivor in the packages at L4 (calc): $url/214"
@@ -583,20 +645,171 @@ mentions running-after-one-that-passed "may be released: the latest weekly run o
 says running-after-one-that-passed "check-weekly-run: a later weekly run, $url/216, is still running, and does not decide"
 
 # The latest that ended decides, in whatever order the API lists them: when
-# it failed, an earlier one that passed does not let the release go ahead.
+# it failed, here in its finish, an earlier one that passed does not let
+# the release go ahead.
 mruns "$(mrun 201 "$at_run")" \
   "$(mrun 217 "$at_run" '.conclusion = "failure" | .created_at = "2026-11-27T20:30:00Z"')"
 weekly_report 217
+mjobs 217 "$(ends "$finish_job" failure)"
 weekly failed "$at_run"
 exits failed 1
-says failed "check-weekly-run: $(short "$at_run") may not be released: the latest weekly run over the pinned set on the tag's commit or an ancestor of it on main failed (failure): $url/217"
+says failed "check-weekly-run: $(short "$at_run") may not be released: the latest weekly run over the pinned set on the tag's commit or an ancestor of it on main failed in a job that decides a verdict: $finish_job (failure): $url/217"
 says failed "$start_weekly"
 downloads_not failed 201
 
+# A run cancelled while a shard ran: the shard was cancelled, and the
+# finish, which does not run in a cancelled run, skipped.
 mruns "$(mrun 218 "$at_run" '.conclusion = "cancelled" | .event = "workflow_dispatch"')"
+mjobs 218 "$(ends "shard 2-of-2" cancelled) | $(ends "$finish_job" skipped)"
 weekly cancelled "$at_run"
 exits cancelled 1
-says cancelled "check-weekly-run: $(short "$at_run") may not be released: the latest weekly run over the pinned set on the tag's commit or an ancestor of it on main failed (cancelled): $url/218"
+says cancelled "check-weekly-run: $(short "$at_run") may not be released: the latest weekly run over the pinned set on the tag's commit or an ancestor of it on main failed in a job that decides a verdict: shard 2-of-2 (cancelled), $finish_job (skipped): $url/218"
+
+# --- Which jobs: those that decide a verdict ------------------------------------
+
+# The check reads the run's jobs that decide a verdict, not the run's
+# conclusion (the maintainer, 2026-11-20, on #316 with #342): the plan,
+# every shard, the canary, the properties with random seeds and the finish
+# that merges the shards (mutation-runs.yml: the plan checks the site
+# counts, a failed canary or property seed fails the weekly run, and the
+# finish writes the report the check reads). A job that only reports, as
+# the coverage from the e2e tests does (#342), may fail, and the run with
+# it: the release goes ahead, and the check says that job's state.
+failed_in="check-weekly-run: $(short "$at_run") may not be released: the latest weekly run over the pinned set on the tag's commit or an ancestor of it on main failed in a job that decides a verdict:"
+no_verdict="that decide no verdict, these did not succeed, which does not stop the release:"
+
+# jobs_case <name> <jq update>: the latest weekly run, 271, is on the tag's
+# commit, with a clean report and the jobs changed by the update, and a
+# conclusion that is a failure; the check runs.
+jobs_case() {
+  mruns "$(mrun 271 "$at_run" '.conclusion = "failure"')"
+  weekly_report 271
+  mjobs 271 "$2"
+  weekly "$1" "$at_run"
+}
+
+jobs_case coverage-failed "$(ends "$coverage_job" failure)"
+exits coverage-failed 0
+says coverage-failed "check-weekly-run: $(short "$at_run") may be released: the latest weekly run over the pinned set, on the tag's commit, shows no unexplained survivor in the packages at L4 (calc): $url/271"
+says coverage-failed "check-weekly-run: of the jobs of $url/271 $no_verdict $coverage_job (failure)"
+
+# Nor does the job of the stale entries, which opens or updates an issue,
+# nor a job the check does not know, which the weekly run may gain.
+jobs_case stale-entries-failed "$(ends "$stale_job" failure)"
+exits stale-entries-failed 0
+says stale-entries-failed "check-weekly-run: of the jobs of $url/271 $no_verdict $stale_job (failure)"
+
+jobs_case new-job-failed '. + [{name: "Something new (weekly)", status: "completed", conclusion: "failure"}]'
+exits new-job-failed 0
+says new-job-failed "check-weekly-run: of the jobs of $url/271 $no_verdict Something new (weekly) (failure)"
+
+# The jobs that pass and those skipped are not said.
+jobs_case all-passed .
+exits all-passed 0
+lacks all-passed "$no_verdict"
+
+# Each job that decides a verdict stops the release when it fails, and the
+# check names it.
+# job <word>: the name of the weekly run's job that <word> stands for.
+job() {
+  case $1 in
+  plan) echo "$plan_job" ;;
+  shard) echo "shard 1-of-2" ;;
+  canary) echo "$canary_job" ;;
+  seeds) echo "$seeds_job" ;;
+  finish) echo "$finish_job" ;;
+  esac
+}
+for word in plan shard canary seeds finish; do
+  jobs_case "failed-$word" "$(ends "$(job "$word")" failure)"
+  exits "failed-$word" 1
+  says "failed-$word" "$failed_in $(job "$word") (failure): $url/271"
+  says "failed-$word" "$start_weekly"
+  lacks "failed-$word" "$no_verdict"
+done
+
+jobs_case timed-out "$(ends "shard 2-of-2" timed_out)"
+exits timed-out 1
+says timed-out "$failed_in shard 2-of-2 (timed_out): $url/271"
+
+# A job that decides a verdict and that the run lacks stops it too: the
+# plan, the properties with random seeds, the finish; the canary when no
+# job of the workflow it calls is there; a shard when the others' names
+# count more; and the shards when none is there, as when the plan failed
+# and the matrix was skipped unmade.
+for word in plan seeds finish; do
+  jobs_case "missing-$word" "$(gone "$(job "$word")")"
+  exits "missing-$word" 1
+  says "missing-$word" "$failed_in $(job "$word") (missing): $url/271"
+done
+
+jobs_case missing-canary "$(gone "$canary_job")"
+exits missing-canary 1
+says missing-canary "$failed_in Canary (weekly) (missing): $url/271"
+
+jobs_case canary-not-called "map(if .name == \"$canary_job\" then .name = \"Canary (weekly)\" else . end)"
+exits canary-not-called 1
+says canary-not-called "$failed_in Canary (weekly) (missing): $url/271"
+
+jobs_case missing-shard "$(gone "shard 2-of-2")"
+exits missing-shard 1
+says missing-shard "$failed_in shard 2-of-2 (missing): $url/271"
+
+jobs_case missing-first-shard "$(gone "shard 1-of-2")"
+exits missing-first-shard 1
+says missing-first-shard "$failed_in shard 1-of-2 (missing): $url/271"
+
+# Shards whose names give two counts are not one plan's: the larger count
+# is taken, so that no shard of it goes unread.
+jobs_case two-counts '. + [{name: "shard 1-of-3", status: "completed", conclusion: "success"}]'
+exits two-counts 1
+says two-counts "$failed_in shard 2-of-3 (missing), shard 3-of-3 (missing): $url/271"
+
+jobs_case plan-failed "$(ends "$plan_job" failure) | $(gone "shard 1-of-2") | $(gone "shard 2-of-2")
+  | . + [{name: \"shard \${{ matrix.name }}\", status: \"completed\", conclusion: \"skipped\"}]
+  | $(ends "$canary_job" skipped) | $(ends "$seeds_job" skipped) | $(ends "$coverage_job" skipped)
+  | $(ends "$finish_job" skipped)"
+exits plan-failed 1
+says plan-failed "$failed_in $plan_job (failure), shard <k>-of-<n> (missing), $canary_job (skipped), $seeds_job (skipped), $finish_job (skipped): $url/271"
+
+# Each job is read from the run's latest attempt, page after page.
+if grep -qxF "api repos/hirunefu/smock/actions/runs/271/jobs?filter=latest&per_page=100&page=1" "$tmp/all-passed.args"; then
+  pass "all-passed: asks for the jobs of the run's latest attempt"
+else
+  fail "all-passed: asks gh: $(cat "$tmp/all-passed.args")"
+fi
+mruns "$(mrun 272 "$at_run")"
+weekly_report 272
+mjobs 272 "$(ends "$finish_job" failure)"
+jq '{total_count, jobs: .jobs[:5]}' "$tmp/jobs/272.json" >"$tmp/jobs/272-1.json"
+jq '{total_count, jobs: .jobs[5:]}' "$tmp/jobs/272.json" >"$tmp/jobs/272-2.json"
+rm "$tmp/jobs/272.json"
+weekly two-pages "$at_run"
+exits two-pages 1
+says two-pages "check-weekly-run: $(short "$at_run") may not be released: the latest weekly run over the pinned set on the tag's commit or an ancestor of it on main failed in a job that decides a verdict: $finish_job (failure): $url/272"
+if grep -qxF "api repos/hirunefu/smock/actions/runs/272/jobs?filter=latest&per_page=100&page=2" "$tmp/two-pages.args"; then
+  pass "two-pages: asks for the second page"
+else
+  fail "two-pages: asks gh: $(cat "$tmp/two-pages.args")"
+fi
+
+# The jobs must be read: when gh fails, or its answer cannot be read, the
+# release does not go ahead.
+mruns "$(mrun 273 "$at_run")"
+weekly_report 273
+weekly no-jobs "$at_run"
+exits no-jobs 1
+says no-jobs "check-weekly-run: $(short "$at_run") may not be released: gh cannot list the jobs of $url/273"
+
+echo 'not json' >"$tmp/jobs/273.json"
+weekly jobs-not-json "$at_run"
+exits jobs-not-json 1
+says jobs-not-json "check-weekly-run: $(short "$at_run") may not be released: the Actions API gave an answer that cannot be read"
+
+echo '{"message": "Not Found"}' >"$tmp/jobs/273.json"
+weekly no-jobs-list "$at_run"
+exits no-jobs-list 1
+says no-jobs-list "check-weekly-run: $(short "$at_run") may not be released: the Actions API gave an answer that cannot be read"
 
 # The monthly run over the full set is reported, never gated: a later one
 # that failed, with survivors in calc, is not read.
@@ -616,6 +829,7 @@ downloads monthly-not-read 201
 report_case() {
   mruns "$(mrun 221 "$at_run")"
   weekly_report 221 "$2"
+  mjobs 221
   weekly "$1" "$at_run"
 }
 exclusions() {
@@ -667,6 +881,7 @@ exits full-set 1
 says full-set "check-weekly-run: $(short "$at_run") may not be released: the report of the latest weekly run over the pinned set is of the full set, not the pinned set: $url/221"
 
 mruns "$(mrun 222 "$at_run")"
+mjobs 222
 weekly no-report "$at_run"
 exits no-report 1
 says no-report "check-weekly-run: $(short "$at_run") may not be released: the report of the latest weekly run over the pinned set (the artifact mutation-report, summary.json) cannot be read: $url/222"
@@ -689,6 +904,7 @@ mentions report-of-another-shape "(the artifact mutation-report, summary.json) c
 # its own that stands for main, and its head is the tag's commit.
 mruns "$(mrun 231 "$at_run")"
 weekly_report 231
+mjobs 231
 
 # on <branch>: starts the history <branch> at the run's commit.
 on() {
@@ -1112,6 +1328,30 @@ python3 scripts/check-weekly-run.py >"$tmp/no-argument.out" 2>&1 || status=$?
 echo "$status" >"$tmp/no-argument.status"
 exits no-argument 2
 mentions no-argument "usage: "
+
+# --jobs lists the weekly run's jobs it knows, by the names mutation-runs.yml
+# gives them, with what each is and whether it decides a verdict, and asks
+# nothing; scripts/check-release-workflow.sh compares the list with the
+# workflow. The coverage from the e2e tests decides none (the maintainer,
+# 2026-11-20); the finish does.
+rm -f "$tmp/gh.args"
+status=0
+env -u GITHUB_REPOSITORY PATH="$tmp/runs-bin:$PATH" python3 scripts/check-weekly-run.py --jobs \
+  >"$tmp/jobs-list.out" 2>&1 || status=$?
+echo "$status" >"$tmp/jobs-list.status"
+touch "$tmp/gh.args"
+mv "$tmp/gh.args" "$tmp/jobs-list.args"
+exits jobs-list 0
+asks_nothing jobs-list
+says jobs-list "$(printf 'Merge the shards into one report\tjob\tdecides a verdict')"
+# shellcheck disable=SC2016 # the ${{ ... }} is the workflow's own syntax
+says jobs-list "$(printf 'shard ${{ matrix.name }}\tmatrix\tdecides a verdict')"
+says jobs-list "$(printf 'Coverage from e2e (weekly)\tworkflow\tdecides no verdict')"
+if [ "$(wc -l <"$tmp/jobs-list.out")" = 7 ]; then
+  pass "jobs-list: lists the weekly run's seven jobs"
+else
+  fail "jobs-list: lists $(wc -l <"$tmp/jobs-list.out") lines"
+fi
 
 echo
 echo "test-release-gates: $passed passed, $failed failed"

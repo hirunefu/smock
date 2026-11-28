@@ -44,6 +44,13 @@ import {
   "moonbitlang/core/string",
 } for "wbtest"
 
+// The async tests run one at a time, not ten. Two of them measure the
+// resident memory of the whole test process, which any test running
+// beside them grows: the first certificate pair a process loads grows it
+// by about 5 MiB, most of it OpenSSL's libraries read in (#427).
+
+max_concurrent_tests = 1
+
 options(
   "native-stub": [ "reset.c" ],
 )

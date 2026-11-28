@@ -1,7 +1,16 @@
 // gRPC's content type through the module's public interface: which values
 // of a request's `content-type` field make it a gRPC call, and the call's
-// content subtype
-// (https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md).
+// content subtype. The sources are gRPC's HTTP/2 protocol document
+// (https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md), whose
+// Content-Type is `"application/grpc" [("+proto" / "+json" / {custom})]`,
+// and the gRPC guide (docs/grpc.md, "Ports and detection"), which decides
+// the rows that rule leaves open: a parameter after `;`, a value that only
+// begins like `application/grpc`, such as `application/grpc-web`, and the
+// case. In the guide's words, a call's content type is `application/grpc`
+// "alone or followed by `+` or `;`", "The text after `+`, up to any `;`,
+// is the call's subtype", any other "such as `application/grpc-web`" makes
+// an HTTP request, and "smock compares the content type as sent, in its
+// case, as grpc-go does".
 
 ///|
 /// What `value`, as a `content-type` field value, makes a request: `call`
@@ -95,6 +104,20 @@ test "the content type is compared as sent, in its case" {
     content=(
       #|Application/gRPC: not a call
       #|APPLICATION/GRPC+PROTO: not a call
+    ),
+  )
+  // docs/grpc.md, "smock compares the content type as sent, in its case,
+  // as grpc-go does": every octet counts, the first and the last of
+  // `application/grpc` as much as the others, so a value that differs from
+  // it in the case of one of them alone makes no call either.
+  inspect(
+    calls_of([
+      b"Application/grpc", b"application/grpC", b"Application/grpc+proto",
+    ]),
+    content=(
+      #|Application/grpc: not a call
+      #|application/grpC: not a call
+      #|Application/grpc+proto: not a call
     ),
   )
 }

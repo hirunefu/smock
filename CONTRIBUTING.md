@@ -346,10 +346,10 @@ scripts/test-check-grpcurl.sh dist/smock   # that check fails on each difference
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/test-helm-chart-on-kind.sh smock:dev   # the chart on a kind cluster (needs kind, kubectl and helm)
-scripts/check-release-workflow.sh    # the release workflow publishes only for tags, and only after its checks of the tag (needs yq and jq)
-scripts/test-check-release-workflow.sh   # that check, on copies of the workflow changed one thing at a time (needs yq and jq)
+scripts/check-release-workflow.sh    # the release workflow publishes only for tags, and only after its checks of the tag, and the check of the weekly mutation run knows each job of that run (needs yq, jq and python3)
+scripts/test-check-release-workflow.sh   # that check, on copies of the workflows changed one thing at a time (needs yq, jq and python3)
 scripts/test-release-notes.sh        # the release notes, with CHANGELOG.md's links at the release's tag
-scripts/test-release-gates.sh        # the release workflow's checks that CI passed on a tag's commit, that the tag names moon.mod's version, and that the latest weekly mutation run is clean in the packages at L4, with fake gh runs on small git histories (needs python3, git and jq)
+scripts/test-release-gates.sh        # the release workflow's checks that CI passed on a tag's commit, that the tag names moon.mod's version, and that the latest weekly mutation run passed its jobs that decide a verdict and is clean in the packages at L4, with fake gh runs on small git histories (needs python3, git and jq)
 python3 scripts/check-weekly-run.py <commit>   # whether the latest weekly mutation run lets the commit be released (needs git and gh)
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
 scripts/check-measure-costs-workflow.sh   # the workflow that measures the tests' costs runs only by hand, with no C flags (needs yq and jq)
@@ -374,7 +374,7 @@ python3 scripts/check-merge.py <branch>   # whether the branch checks on the bra
 scripts/test-check-merge.sh          # the merge check, with a fake gh and canned runs on a small git history (needs python3, git and jq)
 scripts/check-mutation-canary-workflow.sh   # the mutation canary workflow runs only by hand or when the weekly mutation run calls it, and installs its commit's toolchain before the replay (needs yq and jq)
 scripts/test-check-mutation-canary-workflow.sh   # that check, on copies of the workflow changed one thing at a time (needs yq and jq)
-scripts/check-mutation-runs-workflow.sh   # the bulk mutation runs run only on their weekly and monthly schedules and by hand, named by their mode, in shards within the width and a job's 6 hours, on amd64 (needs yq and jq)
+scripts/check-mutation-runs-workflow.sh   # the bulk mutation runs run only on their weekly and monthly schedules and by hand, named by their mode, in shards within the width and a job's 6 hours, on amd64, with the weekly run's canary, properties with random seeds and coverage from the e2e tests (needs yq and jq)
 scripts/test-check-mutation-runs-workflow.sh   # that check, on copies of the workflow changed one thing at a time (needs yq and jq)
 scripts/check-coverage-e2e-workflow.sh    # the coverage from the e2e tests runs only by hand or when the weekly mutation run calls it, on amd64, and keeps its report (needs yq and jq)
 scripts/test-check-coverage-e2e-workflow.sh   # that check, on copies of the workflow changed one thing at a time (needs yq and jq)
@@ -410,14 +410,30 @@ scripts/fetch-yaml-test-suite.sh     # the pinned release of the YAML test suite
 scripts/check-yaml-test-suite.sh     # the YAML test suite against smock/yaml in both modes, judged by yaml-test-suite/safe.txt and openapi.txt (fetches the suite first)
 scripts/check-llm-sdks.sh dist/smock # the official LLM SDKs, pinned by hash, read smock's LLM responses (needs python3 and PyPI)
 python3 -m unittest discover -s scripts/mutation -v   # the mutation runner and its site finder, on a module whose mutants are known, the exclusion list and the bulk runs' steps (needs git, moon and moonc)
-python3 scripts/mutation/exclusions.py check   # each entry of the exclusion list has a category and what it needs, and the stale ones are listed (needs moonc)
-python3 scripts/mutation/exclusions.py review --base origin/main   # the entries this branch adds or changes, and those the maintainer reads (--seed draws one in five)
+python3 scripts/mutation/exclusions.py check   # each entry of the exclusion list has a category and what it needs, no adversarial attempt is still pending, and the stale ones are listed (needs moonc)
+python3 scripts/mutation/exclusions.py check --allow-pending   # the same on a ticket branch before the separate context has made the adversarial attempts, listing the pending ones
+python3 scripts/mutation/exclusions.py review --base origin/main   # the entries this branch adds or changes, and those the maintainer reads (--seed <run ID of the packages run on the frozen tip> draws one in five)
 python3 scripts/check-e2e-helpers.py   # no e2e test file uses what another test file defines (needs moon and moonc)
 scripts/test-check-e2e-helpers.sh    # that check, on small modules (needs python3, moon and moonc)
 python3 scripts/mutation/run.py --root scripts/mutation/fixture --self-test-only calc log   # the mutation runner's self-test, on its fixture (needs git, moon and moonc)
 python3 scripts/mutation/ratchet.py write   # the site counts of each package, into mutation/site-counts/ (needs moonc)
 python3 scripts/mutation/ratchet.py check --base origin/main   # the site counts are the commit's, and no package's sites drop beyond what the change deletes or changes (needs git and moonc)
 ```
+
+To run one package's tests, name it with `-p`. The six protocol modules,
+`grpc`, `http1`, `protobuf`, `re2`, `xml` and `yaml`, are modules of their
+own in `moon.work`, so their packages are `smock/<name>`; every other
+package is `smock/smock/<directory>`:
+
+```sh
+moon test --target wasm-gc -p smock/grpc
+moon test --target native -p smock/smock/engine
+```
+
+A wrong package path runs no test and still exits with 0: moon only warns
+that the package is not found, and reports `Total tests: 0`. So
+`-p smock/smock/grpc` looks like a pass. Read the count of tests that the
+run reports.
 
 `scripts/test-helm-chart.sh` renders `charts/smock` for each delivery mode
 of the Definition files and each Admin API authentication and TLS option,
@@ -810,6 +826,16 @@ at a time. A check that must compute for longer, and needs no `smock`,
 goes in a package of its own, whose tests get a process of their own, as
 `schema` does.
 
+`server` runs its async tests one at a time instead
+(`max_concurrent_tests = 1` in its `moon.pkg`). Two of them check that the
+process's resident memory stays flat: the stopwatch's test and the test of
+stdout's lines. That memory counts what every test running beside them
+holds. The first certificate pair a process loads grows it by about 5 MiB,
+most of it OpenSSL's libraries read in, and a load that came between a
+test's two readings once made the stopwatch's test fail on CI
+([#427](https://github.com/hirunefu/smock/issues/427)). One at a time,
+`server`'s tests take about 7 s instead of about 3.
+
 A timing test that fails once in ten runs passes most single runs of CI.
 The e2e repeat workflow (`.github/workflows/e2e-repeat.yml`) runs the e2e
 tests a given number of times, one run after another, on one runner of the
@@ -1084,7 +1110,9 @@ that no test reaches; and what moon printed. The job reports only: a
 failed e2e test fails nothing, and the report names it and says that the
 e2e tests' report may then lack points. It fails only when there can be
 no report, as when a build or an in-process test fails. The weekly run's
-finish does not wait for it.
+finish does not wait for it, and when it fails, the release's check of
+the weekly run goes ahead ([The weekly mutation
+run](docs/releasing.md#the-weekly-mutation-run)).
 
 The first report's points that no test reaches in `server` and
 `cmd/smock` are cut into triage tickets for #343 when there are more than
@@ -1281,12 +1309,23 @@ version.
   listed with the reason.
 - **Unviable**: the mutant does not compile. It counts neither as killed
   nor as survived.
-- **Survived**: every test passes.
+- **Survived**: every test passes: in the first run, or, when that run
+  names no test and does not pass, in the run again (kill confirmation,
+  below).
 
 **Kill confirmation.** A kill counts only when the failing tests fail
-again with the mutant on and pass with it off. A time-out counts only
-when the mutant times out again and the run without it finishes within
-the limit; otherwise it is recorded as unconfirmed. The baseline runs
+again with the mutant on and pass with it off; when they pass in the run
+again, or fail without the mutant too, the kill is recorded as
+unconfirmed. A run that the time limit stops, or that fails without
+naming a test (the test program stopped before its end), did not pass,
+but names no test (#431). Such a run again repeats the kill, and no test
+is counted as flaky by it. When the first run was such a run, the run
+again decides: if it passes, the mutant survived, and is unexplained
+until a test kills it or an entry covers it; if it does not, the mutant
+is killed, by the tests the run again names. A time-out counts only when
+the limit stopped both runs. The run without the mutant must finish
+within the limit and name the tests that fail, or pass; otherwise the
+kill or the time-out is unconfirmed. The baseline runs
 twice before any mutant, and a test that fails in either run gives no
 kill credit in that run. The runner records each test's flake rate, and a
 test above the flake threshold, which the maintainer sets, gives no kill
@@ -1343,7 +1382,30 @@ ledger accepts are in the same list, under the same categories:
   pin it there.
 - **DEFERRED**: carries an issue number, and still counts as unresolved.
 
-Dead code is deleted, not excluded, with the maintainer's approval.
+Dead code is deleted, not excluded, with the maintainer's approval. A
+survivor that deletes a statement or makes a check always true, while
+nothing a caller can see changes, is decided by what the code is for:
+
+- Code that decides nothing, such as a check that is always true or a
+  cap that never acts, is a candidate for deletion.
+- A statement whose deletion works only by coincidence of what follows,
+  such as a step past markup that the next loop would read as plain
+  characters, stays, and its mutant is EQUIVALENT.
+
+A triage context deletes no code. It proposes an EQUIVALENT entry either
+way, and lists each candidate for the maintainer: what would go, the
+survivors that go with it, and whether it is on the request path. The
+maintainer decides a package's deletions in one round. An approved
+deletion is then a commit of its own, which removes the entries it makes
+needless; on the request path, it brings the pre-merge benchmarks
+([Before merging into main](docs/merging-into-main.md)).
+
+When a mutant does differ, but only where a caller of the package cannot
+reach, such as a private function's own result when it is called alone
+or an input outside a documented contract, the entry's reason says so in
+plain words. Such an entry is accepted at the package's public interface,
+or within the documented contract, and no white-box test is written for
+a private function's own result.
 
 An equivalence claim reaches the maintainer in three steps:
 
@@ -1353,13 +1415,30 @@ An equivalence claim reaches the maintainer in three steps:
    this before any test runs ([The compiler's
    output](#mutation-runner)).
 2. **Adversarial.** For each claim that remains, a separate agent context
-   tries to write a test that kills the mutant, from the spec.
+   tries to write a test that kills the mutant, from the spec. Who writes
+   what, and when:
+   - The context that proposes the entry writes it whole, with the
+     attempt still pending: its `adversarial` has a context that starts
+     with `pending`, and the tests it ran itself, as in
+     `adversarial = { context = "pending: a separate agent context, after <who proposed it>", tests = ["none yet; <its own check>"] }`.
+   - The separate context, one that did not propose the entry, then
+     replaces that with its own name and the tests it tried, which
+     passed, on the same ticket branch. A test that kills the mutant goes
+     in instead, and the entry goes.
+   - Nothing pending reaches the integration branch.
+     `exclusions.py check --allow-pending` passes a pending attempt on a
+     ticket branch until the separate context has run; CI's check runs
+     without it and fails on one, and a merger refuses a branch that
+     still holds one.
 3. **The maintainer.** What survives both goes to the maintainer: every
    entry in the protocol packages and in `serverparsers`, and one in five
-   of the others, as a sample. The maintainer draws the sample after the batch is frozen, so
-   that its author cannot know which entries will be read. If a sampled
-   entry is rejected, its author triages the whole batch again, and the
-   maintainer draws a new sample.
+   of the others, as a sample. The sample is drawn after the batch is
+   frozen, with a seed that no agent can know before: the run ID that
+   GitHub Actions gives the packages run of the bulk workflow on the
+   frozen tip. No one picks the seed, so the batch's author cannot know
+   which entries will be read. If a sampled entry is rejected, its author
+   triages the whole batch again, and a new sample is drawn with the ID
+   of the packages run on the batch's new frozen tip.
 
 The list is `exclusions.toml`, at the root, and
 `scripts/mutation/exclusions.py` reads it. Each entry is a table of the
@@ -1388,10 +1467,11 @@ reviewer = ""
   comparison found (`"differs"`, or `"not compared"` where the comparison
   cannot compare the mutant), and
   `adversarial = { context = "...", tests = ["..."] }`: the agent context
-  that made the attempt and the tests it tried, which passed. An
-  UNREACHABLE entry that is not a point at an abort adds `argument`, its
-  written argument. A DEFERRED entry adds `issue`, its issue's number.
-  UB-NATIVE is for a mutant only.
+  that made the attempt and the tests it tried, which passed, or a
+  context that starts with `pending` while the attempt is still to be
+  made (step 2 above). An UNREACHABLE entry that is not a point at an
+  abort adds `argument`, its written argument. A DEFERRED entry adds
+  `issue`, its issue's number. UB-NATIVE is for a mutant only.
 
 `python3 scripts/mutation/exclusions.py new <file>:<line>:<column>`, a
 point as the coverage report names it, or `new <mutant id>`, prints a new
@@ -1399,7 +1479,10 @@ entry's stanza with the definition's text, for the author to fill in.
 `python3 scripts/mutation/exclusions.py check`, in CI's job `checks`,
 fails an entry in another category, without what its category needs, with
 a field the list does not know, or a second entry for the same mutant or
-point; it lists the stale entries, and passes with them.
+point, and an EQUIVALENT entry whose adversarial attempt is still
+pending; it lists the stale entries, and passes with them.
+`check --allow-pending`, for a ticket branch before the separate context
+has run, passes the pending entries too and lists them.
 
 Both ledgers read the list. The coverage report and the coverage floors
 count only the uncovered points that no current entry other than
@@ -1416,10 +1499,18 @@ entry is triaged again.
 `python3 scripts/mutation/exclusions.py review` lists the entries that a
 branch adds or changes against its merge base with `main`, the batch, and
 which of them the maintainer reads: every one in the protocol packages
-and in `serverparsers`, and one in five of the others. Once the batch is
-frozen (the branch's last push), the maintainer draws that sample with a
-seed of the maintainer's choosing: `review --seed <seed>`. The weakening
-report lists every entry whose reviewer changed.
+and in `serverparsers`, and one in five of the others. Once a package's
+batch of entries is frozen for its review, a packages run of the bulk
+workflow (`-f mode=packages`, [Bulk runs on Actions](#bulk-runs-on-actions))
+runs on the frozen tip, the tip where that batch was frozen, and its run
+ID is the seed of the sample: `review --seed <run ID>`. GitHub Actions
+gives that number only once the run starts, so no agent can know it
+before. Later pushes of the branch, for other packages, do not draw that
+package's sample again. A later batch of the branch is drawn alone:
+`review --base <the tip where the batch before it was frozen> --seed <run ID>`
+takes only the entries added or changed since that tip, so that one in
+five is read among the new entries. The weakening report lists every
+entry whose reviewer changed.
 
 ### Rules for the work
 
@@ -1455,8 +1546,10 @@ report lists every entry whose reviewer changed.
   wasm-gc; and any change to what decides a verdict: the exclusion list,
   the operator set, the runner and its committed data, the coverage
   floors and scope, the flake threshold, the lists of packages at L4 and
-  of tests kept, the merge and release checks, and the mutation and
-  coverage workflows. The maintainer acknowledges it at the merge.
+  of tests kept with their checks, the merge and release checks, the
+  mutation and coverage workflows, the suites' lists of cases with their
+  verdicts and the installs of their tools, and the tests of those
+  scripts. The maintainer acknowledges it at the merge.
 - **The mutator is governed too.** A ratchet on each package's number of
   sites, compared per definition: a package's sites may drop by at most
   as many as the base tree had in the definitions that a change deletes
@@ -1529,7 +1622,9 @@ report lists every entry whose reviewer changed.
 - **Releases.** For the packages at L4, the latest weekly run over the
   pinned set must also show no unexplained survivor before a release, on
   the tag's commit or on an ancestor whose later changes the changed-lines
-  reports cover or touch no non-test source of a package at L4. The
+  reports cover or touch no non-test source of a package at L4, and its
+  jobs that decide a verdict must have passed: a job that only reports,
+  as the coverage from the e2e tests does, stops no release. The
   release checks it before it publishes, beside the check that CI passed
   on the tag's commit (`scripts/check-weekly-run.py`,
   [What a tag does](docs/releasing.md#what-a-tag-does)). So a release may
@@ -1545,13 +1640,49 @@ report lists every entry whose reviewer changed.
 ### Snapshot audits
 
 When a package's turn comes to climb to L4, about ten of its snapshots
-are audited. They are drawn, with a seed the maintainer picks, among the
-tests that alone kill some mutant in a kill-matrix run of the package, at
-least half of them from tests that the work added. A separate agent
-context, one that wrote none of that package's tests under these rules,
-checks each against its source. The maintainer reads only the snapshots
-that this context finds in disagreement with their source, and each of
-those becomes an issue (a bug) or a corrected test.
+are audited. They are drawn among the tests that alone kill some mutant
+in a kill-matrix run of the package (`-f mode=matrix`,
+[Bulk runs on Actions](#bulk-runs-on-actions)), at least half of them
+from the work's tests: a test is the work's when the work added it, or
+changed a line of its block that is not a comment. The seed of the draw
+is that kill-matrix run's ID, a number that GitHub Actions gives once the
+run starts, so no agent can know it before and no one picks it. A separate
+agent context, one that wrote none of that package's tests under these
+rules, checks each against its source. The maintainer reads only the
+snapshots that this context finds in disagreement with their source, and
+each of those becomes an issue (a bug) or a corrected test.
+
+`matrix.py draw` makes the draw from the run's matrices, in a checkout of
+the commit that the run ran on:
+
+```sh
+gh run download <run ID> --name mutation-report --dir mutation-report
+python3 scripts/mutation/matrix.py draw --seed <run ID> mutation-report/matrix/<package directory>.json...
+```
+
+- It draws among the tests that alone kill some mutant in the matrices
+  given ([The kill matrix](#the-kill-matrix)).
+- A test is the work's when the work added it, or changed a line of its
+  block that is not a comment, since `d953f320`, the commit of `main` at
+  which the test review began (`--base` names another). Its block runs
+  from the `///|` at or before its line to the line before the next
+  `///|`. A line whose first characters, after white space, are `//` is a
+  comment, and a blank line is none of the test's lines. The lines added
+  or changed are read from `git diff -U0 d953f320 HEAD`. A line that it
+  adds or changes counts when it is neither a comment nor blank. Where a
+  hunk changes or deletes a line that was neither, every line that the
+  hunk adds counts too, or, when it adds none, the line at which it
+  deletes. So a deletion of comments alone counts for no line.
+- It draws ten (`--size` names another number), or every one when there
+  are fewer. The tests are sorted by their names in the matrix.
+  `random.Random(<run ID>)`, with the ID as text, samples half of the
+  ten, rounded up, of the work's tests, or all of them when there are
+  fewer. The same generator then samples the rest of the ten from every
+  test not yet drawn. So the same matrices, run ID and base give the same
+  tests, in the same order.
+- It prints one JSON line per test, in the order of the draw: the test as
+  the matrix lists it, its file (`path`), whether it is the work's
+  (`work`), and the mutants it alone kills (`alone`).
 
 Step 1's tests close the gaps that the review found before it had any
 tooling. Every expected value they add is checked the same way: before
@@ -1780,21 +1911,46 @@ runs the binary of an earlier build, and it never passes `-u`.
 
 **Confirmation.** A kill and a time-out are each checked once more, as
 [Outcomes and kill credit](#outcomes-and-kill-credit) asks, by
-`scripts/mutation/confirm.py`. For a kill, the runner runs the tests
-again with the mutant on, then without it; the kill counts only if some
-of the tests that failed fail again and pass without the mutant, and the
-record then names those tests alone. For a time-out, the mutant must time
-out again, and the run without it must finish within the limit. A kill or
-a time-out that is not borne out is **unconfirmed**, and its record says
-why. Each run is the whole `moon test` of the package, as the first was,
-so properties run with their committed seeds every time; the runner sets
-no seed. A test whose failures all give no kill credit makes no kill: the
-mutant survives, and its record names those tests.
+`scripts/mutation/confirm.py`. The runner runs the tests again with the
+mutant on, then without it. A kill counts only if some of the tests that
+failed fail again and pass without the mutant, and the record then names
+those tests alone; a time-out only if the mutant times out again and the
+run without it finishes within the limit. A kill or a time-out that is
+not borne out is **unconfirmed**, and its record says why. But a run
+that the limit stops, or that fails without naming a test, did not pass,
+and names no test (#431, the maintainer's twentieth round):
+
+- a run again that ends so repeats the kill: the tests that failed in
+  the first run kill the mutant if they pass without it, and no test is
+  counted as flaky by it;
+- when the first run ended so, the run again decides: one that passes,
+  or in which only tests that give no kill credit fail, makes the mutant
+  a survivor, which its importers' tests then run as any survivor's do;
+  one that fails makes it killed, by the tests it names that pass
+  without the mutant, or by none when it names none;
+- the outcome is **timed out** only when the limit stopped both runs:
+  where one of them failed within the limit, the mutant is killed;
+- a run without the mutant that ends so shows neither that the tests
+  pass without it nor that they finish in time: the kill or the time-out
+  is unconfirmed.
+
+So only a run again that finishes with the tests that failed now passing
+makes a kill unconfirmed and counts those tests as flaky, whether the
+package's own tests or its importers' ran. Each run is the whole
+`moon test` of the package, as the first was, so properties run with
+their committed seeds every time; the runner sets no seed. Each record
+keeps how each of its runs ended (`ended`): the exit status, whether the
+limit stopped it, and how many failed tests it named. A test whose
+failures all give no kill credit makes no kill: the mutant survives, and
+its record names those tests.
 
 **Flake rates.** The runner counts each test's flaky results: a failure
 without a mutant, in the two runs before any mutant or in the run that
-confirms a kill, and a pass when a kill runs again with the mutant on.
-Every test of a package runs whenever its package's tests run without a
+confirms a kill, and a pass when a kill runs again with the mutant on. A
+run again that the limit stops, or that fails without naming a test, is
+no pass and no run of any test, nor is a run without the mutant that
+ends so a run of the package's tests. Every test of a package runs
+whenever its package's tests run without a
 mutant, so a run's record counts those runs per package, and per test its
 flaky results and its runs again with a mutant on. A test's flake rate is
 its flaky results over its runs, across the latest runs that
@@ -1844,7 +2000,9 @@ Each mutant's outcome, after both runs, is one of:
   with the reason and the mutant's diff;
 - **unviable**: the mutant does not build. It counts neither as killed
   nor as survived;
-- **survived**: every test that gives kill credit passed.
+- **survived**: every test that gives kill credit passed: in the first
+  run, or, when the limit stopped that run or it failed without naming a
+  test, in the run again (Confirmation, above).
 
 A mutant that the compiler's output shows **equivalent**, or a
 **duplicate** of another, has that outcome instead, and runs no tests
@@ -1853,7 +2011,9 @@ A mutant that the compiler's output shows **equivalent**, or a
 It writes into `_build/mutation/out/`: `mutants.jsonl`, one record per
 mutant with its site, the set that ran, its outcome, the tests that
 killed it, the importers whose tests ran it again, how its confirmation
-went, the backend and the timings; `summary.json`, the operator set's
+went, the backend, the timings, and how each run ended (`ended`: its
+run, its run again and its run without the mutant, and its importers'
+runs under `importers`); `summary.json`, the operator set's
 version and the set, the flake threshold with the tests above it and the
 tests with a flaky result in this run, and per package the counts of
 sites and positions in both sets, the sites each rule skipped, the counts
@@ -1864,9 +2024,11 @@ those on wasm-gc and those left out, the survivors their tests ran again
 and how many the tests of each importer killed, and, when BODY mutants
 ran, the **pseudo-tested functions**: those whose BODY mutant survived,
 each with its status after the exclusion list; `report.md`, the same
-counts, the time-outs, the unconfirmed mutants, the pseudo-tested
-functions, each survivor's diff with
-its whole enclosing definition, and the flaky tests, which the runner
+counts, the time-outs, the kills confirmed by a run again that ended
+otherwise than their run, the unconfirmed mutants, the pseudo-tested
+functions, each survivor's diff with its whole enclosing definition
+(and, for one whose run named no test and passed when run again, why
+that was no kill), and the flaky tests, which the runner
 also prints; and `flakes.json`, the flake records. A run of the full set counts
 the mutants at the pinned alternatives and at the other alternatives
 apart, and lists their survivors apart: L4 reads only the former.
@@ -2320,6 +2482,7 @@ python3 scripts/mutation/matrix.py alone --none _build/mutation/out
 python3 scripts/mutation/matrix.py kills --without --test '<test>' _build/mutation/out
 python3 scripts/mutation/matrix.py kills --package smock/smock/usage _build/mutation/out
 python3 scripts/mutation/matrix.py kills --without --test '<test>' --layer in-process _build/mutation/out
+python3 scripts/mutation/matrix.py draw --seed <run ID> _build/mutation/out
 ```
 
 - `alone` lists the tests that alone kill some mutant, each with those
@@ -2333,6 +2496,8 @@ python3 scripts/mutation/matrix.py kills --without --test '<test>' --layer in-pr
   holds as killed survives unless a test of the set kills it. So, with one
   test left out, the mutants that only it killed show as survivors, as
   they do in a run without that test.
+- `draw` draws the tests of a snapshot audit, with the kill-matrix run's
+  ID as the seed: the rule is in [Snapshot audits](#snapshot-audits).
 
 The tests (`scripts/mutation/test_matrix.py`) run the mode on the
 fixture's package `units`, whose mutants the tests of `units`, `meter` and
@@ -2343,7 +2508,10 @@ makes one killing test flaky, or failing without the mutant, and the run
 leaves that test out of the matrix. One run leaves `meter`'s test out and
 gets the survivors that `kills --without` gives. The tool's other tests
 read a matrix written by hand, with an e2e test, a duplicate and a
-time-out.
+time-out. The draw's tests read two matrices written by hand against a
+small git workspace laid out as smock's, with a base commit and the work
+on top, and expect the draws that the script which drew the first three
+audits gave there.
 
 ### The canary
 
@@ -2539,8 +2707,9 @@ To read a run's report:
 gh run download <run id> --name mutation-report --dir mutation-report
 ```
 
-**The weekly run**, every Friday at 20:23 UTC, runs the pinned set over
-the pure packages, the set over which L4 is defined, so it verifies L4.
+**The weekly run**, every Friday at 20:23 UTC, or when GitHub starts it,
+which may be hours later (below), runs the pinned set over the pure
+packages, the set over which L4 is defined, so it verifies L4.
 Its shards run as any run does: each package's runs without a mutant
 and its self-test first, then its own tests and its importers' tests, kill confirmation, the comparison of
 the compiler's output, the exclusion list, and the native verdicts of the
@@ -2556,7 +2725,8 @@ which the plan downloads. Beside them:
   which reports the coverage of `server` and `cmd/smock` from the e2e
   tests and the in-process tests together
   ([Coverage from the e2e tests](#coverage-from-the-e2e-tests)); it
-  reports only, and the finish does not wait for it;
+  reports only: the finish does not wait for it, and the release's check
+  does not read it;
 - the job `seeds` runs the properties with random seeds
   (`bulk.py seeds`), in a working copy of its own that no shard reads: it
   writes a random seed into each seed constant
@@ -2602,15 +2772,21 @@ native-only packages, which the runner runs wholly natively (`bulk.py`'s
 **When they run.** Both run at the full width, at a quiet hour: in the
 evening UTC, when the repository has seen the fewest commits, and days
 away from the weekly run with the latest MoonBit, on Mondays at 03:17
-UTC. When the 1st is a Friday, the monthly run starts two hours and
-twenty minutes after the weekly one. The weekly run took 2 h 9 min the
-first time, from its first job's start to its last job's end
+UTC. When the 1st is a Friday, the monthly run's time is two hours and
+twenty minutes after the weekly one's. The weekly run took 2 h 9 min the
+first time, in 40 shards
 ([run 44423781036](https://github.com/hirunefu/smock/actions/runs/44423781036)),
-in 40 shards; planned at 16 s a mutant, it takes about 2 hours 50
-minutes (*estimate*, above): two of the weekly run's shards, `engine`'s
-and `protobuf`'s, still hold their jobs then, so two of the monthly
-run's first 20 shards wait for them, up to about half an hour. A push
-during either waits for free jobs.
+and 3 h 28 min the second, in 20 shards planned at 16 s a mutant
+([run 44851160701](https://github.com/hirunefu/smock/actions/runs/44851160701)),
+from its first job's start to its last job's end. Two hours and twenty
+minutes after the second started, two of its shards, `engine`'s and
+`protobuf`'s, still held their jobs, for 40 and 69 minutes more, so two
+of a monthly run's first 20 shards started then would wait for them
+that long. GitHub starts a scheduled run when it can, which may be hours
+after its time: it started the second weekly run, the first that its
+schedule started, at 01:36 UTC on Saturday, 5 h 13 min after its time.
+So how the two runs meet depends on GitHub too. A push during either
+waits for free jobs.
 `bulk.py`'s `SCHEDULES` maps each schedule to its run, and the workflow's
 check pins both.
 
@@ -2641,9 +2817,12 @@ they block, which gains each as a native blocker; the spec's issue holds
 as many sub-issues as GitHub allows.
 
 **The account's jobs.** GitHub runs at most 20 of the repository's jobs at
-once. A run at the full width holds them all while its shards run, and a
-push meanwhile waits for free jobs: CI's jobs on that push start as
-shards end. A run started by hand while others are pushing takes a
+once. A run at the full width holds them all until its first shards
+end, and a push meanwhile waits for free jobs: CI's jobs on that push
+start as shards end. The second weekly run held all 20 for its first 40
+minutes, about half of them after an hour and a half, and from 2 h
+16 min on only its two longest shards, then one, until it ended after
+3 h 28 min. A run started by hand while others are pushing takes a
 smaller width, such as 10. It then has fewer shards, each longer, and
 leaves the other jobs to CI.
 
@@ -2671,30 +2850,47 @@ from, one JSON object per line: its run, its name, its mutants at once,
 the mutants it ran, how long its run took (`bulk.json`'s `wall_s`, which
 holds everything `run.py` does) and how it exited. A shard that stopped,
 or ran no mutant, says nothing of a mutant's time. The record holds the
-baseline's 43 shards and the 40 of the first weekly run
+baseline's 43 shards, the 40 of the first weekly run
 ([run 44423781036](https://github.com/hirunefu/smock/actions/runs/44423781036),
-the pinned set on `main` at 7eac627b, planned at 20 s a mutant). A
-mutant took 7.0 s of runner time on average over the baseline's sample,
-and 6.3 s over the weekly run, but the slowest shards took twice as long
-a mutant or more. In the baseline they were `engine`'s: the BODY pass's
-shard 5-of-20 took 16 min 10 s for 68 mutants, 14.27 s each. In the
-weekly run it was `protobuf`'s shard 20-of-40, whose 460 mutants, half of
-them at an unchecked access and so also run natively, took 1 h 56 min
-30 s, 15.19 s each. So bulk runs plan 16 s a mutant (`bulk.py`'s
-`SECONDS_PER_MUTANT`); before the baseline they planned 20 s, from #275's
-cost model. The rule takes the slowest shard, not the average, because a
-shard holds a stretch of the run's order, mostly one or two packages,
-and the costly stretches are not spread over the shards. At the
-average's 7 s, the monthly run's shards would hold 1,331 mutants each:
-5.6 hours at 15.19 s a mutant.
+the pinned set on `main` at 7eac627b, planned at 20 s a mutant) and the
+20 of the second
+([run 44851160701](https://github.com/hirunefu/smock/actions/runs/44851160701),
+the same mutants on `main` at 65831e4e, planned at 16 s). A mutant took
+7.0 s of runner time on average over the baseline's sample, 6.3 s over
+the first weekly run and 6.1 s over the second, but the slowest shards
+took twice as long a mutant or more. In the baseline they were
+`engine`'s: the BODY pass's shard 5-of-20 took 16 min 10 s for 68
+mutants, 14.27 s each. In the first weekly run it was `protobuf`'s shard
+20-of-40, whose 460 mutants, half of them at an unchecked access and so
+also run natively, took 1 h 56 min 30 s, 15.19 s each. In the second it
+was `engine`'s shard 3-of-20, 920 mutants in 2 h 59 min 21 s, 11.70 s
+each. Its runner was slower than the others: it took 2.19 s to run
+`engine`'s tests without a mutant, where the three other runners that ran
+`engine` took 1.46 to 1.63 s, and each step of its mutants took 1.2 to
+1.4 times as long as in the first weekly run. So bulk runs plan 16 s a
+mutant (`bulk.py`'s `SECONDS_PER_MUTANT`); before the baseline they
+planned 20 s, from #275's cost model. The rule takes the slowest shard,
+not the average, because a shard holds a stretch of the run's order,
+mostly one or two packages, and the costly stretches are not spread over
+the shards; nor are the slower runners. At the average's 7 s, the
+monthly run's shards would hold 1,331 mutants each: 5.6 hours at
+15.19 s a mutant.
 
 At 16 s, on 7eac627b's tree, the weekly run's 18,403 mutants go in 20
 shards of 920 or 921, all at once, where 20 s cut them into 40 shards in
 two waves. At the slowest pace a shard would take 3.9 hours. Each of the
-20 holds exactly two of the first weekly run's 40 shards, whose times add
-up to between 39 minutes and 2 hours 46 minutes, so the run is expected
-to take about 2 hours 50 minutes, its `protobuf` shard the longest
-(*estimate*), where the first weekly run took 2 hours 9 minutes. The
+20 holds exactly two of the first weekly run's 40 shards, whose times
+added up to between 39 minutes and 2 hours 46 minutes. The second weekly
+run ran them so, on 65831e4e, whose tree gives the same mutants: its
+shards took 36 minutes to 2 h 59 min 21 s, and the run 3 h 28 min 41 s
+from its first job's start to its last job's end, with 31 h 46 min of
+runner time over its 25 jobs, where the first weekly run took 2 hours 9
+minutes. Its longest shard was `engine`'s, on its slow runner (above),
+and `protobuf`'s 10-of-20 ended last. The canary's job, the coverage from
+the e2e tests and the properties with random seeds take three of the
+account's 20 jobs as the run starts, so three shards wait for free jobs.
+`protobuf`'s was one of them: it started 36 minutes late, when the
+shortest shard ended, and then ran for 2 h 51 min. The
 monthly run's 26,619 mutants go in 40 shards of 665 or 666, as at 20 s,
 in two waves of 20: at most 2.8 hours a shard at the slowest pace. With
 each mutant at the pace of the first weekly run's shard that held its
@@ -2803,28 +2999,48 @@ among the tests moved or renamed.
 `scripts/verdict-files.txt` names, by path, every file that decides a
 verdict: the mutation runner and its data, the exclusion list, the
 coverage wrapper with its floors and scope, the canary's verdicts, the
-lists of packages at L4 and of tests kept, the merge and release checks,
-the mutation and coverage workflows, the lists of cases that protobuf's
-conformance suite, h2spec and the YAML test suite may fail, and the
-scripts that run those suites and judge their results, with the tests of
-the verdicts. Most of these files do not exist yet: the list fixes the
-paths they will have, and each line names the issue that creates them. A
-change that adds a file that decides a verdict puts it at a path the list
-names, or adds its path to the list in the same change. The report reads
-the base's list and the head's, so a file still shows when the same
-change takes its path off the list. The report's tests
-(`scripts/test-weakening-report.sh`) read the verdict steps of the
-workflows, the steps that judge a suite's results against its list of
-cases and the steps that test that judgment, and fail when the list
-leaves out a script that such a step runs, or a script that one of those
-runs. A new verdict step goes into that test's list of steps.
+lists of packages at L4 and of tests kept, the checks of the keep list
+and of the ledgers, the merge and release checks, the mutation and
+coverage workflows, the lists of cases that protobuf's conformance suite,
+h2spec and the YAML test suite may fail, the scripts that run those
+suites and judge their results, and the scripts that install or build
+their tools at the versions they pin: h2spec's install, and the build of
+protobuf's conformance runner with the protoc it needs. It also names the
+own test of each script it names, such as the merge check's, the coverage
+ratchet's and the changed-lines job's, since a loosened test lets its
+script change unseen. The list fixes the paths of the files that do not
+exist yet, and each line names the issue that creates them. A change that
+adds a file that decides a verdict puts it at a path the list names, or
+adds its path to the list in the same change. The report reads the
+base's list and the head's, so a file still shows when the same change
+takes its path off the list.
+
+The report's tests (`scripts/test-weakening-report.sh`) hold the list to
+three rules, and fail when it leaves out a file that one of them names:
+
+- **The verdict steps.** The steps of the workflows that judge a suite's
+  results against its list of cases, the steps that test that judgment,
+  the release's check of the latest weekly run, and the checks of the
+  keep list and of the ledgers. The list names each script that such a
+  step runs, and each script that one of those runs.
+- **The tool steps.** The steps that install or build a verdict step's
+  tool. The list names their scripts in the same way.
+- **The own tests.** Each script the list names has its own test listed
+  too: the script beside it named `test-<name>.sh` or `test_<name>.py`,
+  `<name>` being the script's name without its extension, or, for a test
+  named otherwise, the one the test's table names, as
+  `scripts/test-release-gates.sh` is for `scripts/check-weekly-run.py`.
+
+A new verdict step or tool step goes into that test's list of steps, and
+a test named otherwise into its table.
 
 The report reads MoonBit by its lines and by `moon fmt`'s layout, not as
 the compiler does. So it may list a line that weakens nothing, such as a
 comparison in a helper's loop. A changed call of a helper that asserts is
 among the other lines, unless the call is an assertion itself; a change
 to the helper's own lines is in the helper's entry. It reads only the
-MoonBit tests: the tests of the scripts are not in it.
+MoonBit tests test by test: the test of a listed script shows whole,
+with its diff, among the files that decide a verdict.
 
 To read it for a branch before pushing it:
 

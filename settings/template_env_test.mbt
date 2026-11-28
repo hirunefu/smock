@@ -1,5 +1,10 @@
 // The `--template-env` setting of `smock serve`, `smock check` and
 // `smock render`: the environment variables templates may read.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// The names that `smock <command> <argv>` with the variables `env` lists
@@ -80,6 +85,13 @@ test "--template-env lists names separated by commas, on serve, check and render
 
 ///|
 test "a name that is not letters, digits and _ starting with a letter or _, or that starts with SMOCK_, is a usage error" {
+  // docs/definition-files/templates.md, Environment variables: names are
+  // "separated by commas"; "A listed name is ASCII letters, digits and _,
+  // starting with a letter or _. A name that starts with SMOCK_ cannot be
+  // listed ... Either mistake is a usage error"; and smock check and smock
+  // render "take the same flag and environment variable". The words of the
+  // two reasons are the code's, which the maintainer decided on 2026-11-18
+  // to keep as they are (#320).
   inspect(
     [
       listed("serve", ["--template-env", "1REGION"]),

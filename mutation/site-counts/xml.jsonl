@@ -62,13 +62,13 @@
 {"file":"xml/select.mbt","definition":"content_end","text":"05724e8fb5f419a3","pinned":{"BODY":1,"IFC":4,"DEL":4,"BOOL":1,"AOR":6,"INT":12},"full":{"BODY":1,"IFC":8,"DEL":4,"BOOL":1,"AOR":6,"INT":18}}
 {"file":"xml/select.mbt","definition":"markup_end","text":"0113ef02541f6109","pinned":{"BODY":1,"IFC":1,"AOR":6,"INT":8,"STR":3},"full":{"BODY":1,"IFC":2,"AOR":6,"INT":16,"STR":6}}
 {"file":"xml/select.mbt","definition":"text_char","text":"3fa78e39bd33b54e","pinned":{"BODY":1,"ROR":2,"IFC":5,"DEL":3,"BOOL":2,"AOR":4,"INT":7,"STR":2},"full":{"BODY":1,"ROR":2,"IFC":10,"DEL":3,"BOOL":2,"AOR":4,"INT":14,"STR":4}}
-{"file":"xml/select.mbt","definition":"line_char","text":"cce6fe98c97420a4","pinned":{"BODY":1,"ROR":1,"IFC":2,"LCR":1,"AOR":5,"INT":6},"full":{"BODY":1,"ROR":1,"IFC":4,"LCR":1,"AOR":5,"INT":9}}
+{"file":"xml/select.mbt","definition":"line_char","text":"520017226e286458","pinned":{"BODY":1,"IFC":2,"AOR":4,"INT":4},"full":{"BODY":1,"IFC":4,"AOR":4,"INT":7}}
 {"file":"xml/select.mbt","definition":"attribute_value_is","text":"7fd971b9701525ed","pinned":{"BODY":1,"ROR":2,"IFC":2,"DEL":2,"BOOL":1,"AOR":1,"INT":4},"full":{"BODY":1,"ROR":2,"IFC":4,"DEL":2,"BOOL":1,"AOR":1,"INT":6}}
 {"file":"xml/select.mbt","definition":"attribute_utf8","text":"3118399c34837291","pinned":{"BODY":1,"ROR":1,"IFC":3,"DEL":3,"BOOL":2,"AOR":4,"INT":4},"full":{"BODY":1,"ROR":1,"IFC":6,"DEL":3,"BOOL":2,"AOR":4,"INT":6}}
 {"file":"xml/select.mbt","definition":"attribute_char","text":"fb92be04c3e2e051","pinned":{"BODY":1,"IFC":1,"AOR":5,"INT":5},"full":{"BODY":1,"IFC":2,"AOR":5,"INT":9}}
 {"file":"xml/select.mbt","definition":"value_end","text":"3a14c5cdfb7878b3","pinned":{"BODY":1,"IFC":1,"DEL":1,"AOR":2,"INT":2},"full":{"BODY":1,"IFC":2,"DEL":1,"AOR":2,"INT":4}}
 {"file":"xml/select.mbt","definition":"text_continues","text":"023aea0e4351c843","pinned":{"BODY":1,"ROR":3,"IFC":3,"LCR":3,"AOR":8,"INT":16},"full":{"BODY":1,"ROR":3,"IFC":6,"LCR":3,"AOR":8,"INT":34}}
-{"file":"xml/select.mbt","definition":"looking_at","text":"1435450898072ff9","pinned":{"BODY":1,"ROR":1,"LCR":1,"AOR":2},"full":{"BODY":1,"ROR":1,"LCR":1,"AOR":2}}
+{"file":"xml/select.mbt","definition":"looking_at","text":"3c51e20224c79426","pinned":{"BODY":1,"AOR":1},"full":{"BODY":1,"AOR":1}}
 {"file":"xml/select.mbt","definition":"skip_past","text":"1359ca2a790c4452","pinned":{"BODY":1,"IFC":1,"DEL":1,"AOR":2,"INT":2},"full":{"BODY":1,"IFC":2,"DEL":1,"AOR":2,"INT":4}}
 {"file":"xml/select.mbt","definition":"skip_past_literal","text":"a9cc5bf35eb9affb","pinned":{"BODY":1,"IFC":1,"NOT":1,"DEL":1,"AOR":2,"INT":1},"full":{"BODY":1,"IFC":2,"NOT":1,"DEL":1,"AOR":2,"INT":2}}
 {"file":"xml/select.mbt","definition":"tag_end","text":"712a59805ac6a3c0","pinned":{"BODY":1,"BOOL":1,"AOR":3,"INT":3},"full":{"BODY":1,"BOOL":1,"AOR":3,"INT":6}}
@@ -76,7 +76,7 @@
 {"file":"xml/select.mbt","definition":"is_name_byte","text":"85dceb8b3510c097","pinned":{"BODY":1,"NOT":1},"full":{"BODY":1,"NOT":1}}
 {"file":"xml/select.mbt","definition":"skip_spaces","text":"e4875ed1777727eb","pinned":{"BODY":1,"ROR":1,"IFC":1,"LCR":1,"DEL":1,"AOR":1,"INT":1},"full":{"BODY":1,"ROR":1,"IFC":2,"LCR":1,"DEL":1,"AOR":1,"INT":2}}
 {"file":"xml/select.mbt","definition":"is_namespace_declaration","text":"a72fb5b23e4a5e41","pinned":{"BODY":1,"ROR":1,"LCR":2,"INT":4,"STR":2},"full":{"BODY":1,"ROR":1,"LCR":2,"INT":6,"STR":4}}
-{"file":"xml/select.mbt","definition":"reference_char","text":"eb06dea128848658","pinned":{"BODY":1,"IFC":5,"DEL":6,"AOR":17,"INT":13},"full":{"BODY":1,"IFC":10,"DEL":6,"AOR":17,"INT":31}}
+{"file":"xml/select.mbt","definition":"reference_char","text":"f8ec0dc1acd4e6ee","pinned":{"BODY":1,"IFC":5,"DEL":5,"AOR":17,"INT":12},"full":{"BODY":1,"IFC":10,"DEL":5,"AOR":17,"INT":28}}
 {"file":"xml/select.mbt","definition":"packed_char","text":"a387f091ed0a40b8","pinned":{"BODY":1,"INT":2},"full":{"BODY":1,"INT":6}}
 {"file":"xml/select.mbt","definition":"char_of","text":"3b9ff213161df053","pinned":{"BODY":1,"INT":1},"full":{"BODY":1,"INT":3}}
 {"file":"xml/select.mbt","definition":"next_of","text":"0bf852541eef9856","pinned":{"BODY":1,"INT":1},"full":{"BODY":1,"INT":3}}

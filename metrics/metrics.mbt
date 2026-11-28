@@ -269,7 +269,9 @@ fn Family::series_for(self : Family, values : Array[String]) -> Series {
 /// for each metric, in the order they were registered, its `# HELP` and
 /// `# TYPE` lines, then its samples for each series, in the order the series
 /// first appeared. A histogram has a cumulative `_bucket` sample for each
-/// bucket, labelled `le`, then `_sum` and `_count`.
+/// bucket, labelled `le`, then `_sum` and `_count`. A series' label pairs
+/// come in the order the metric's label names were given, with a bucket's
+/// `le` last.
 pub fn Registry::render(self : Registry) -> String {
   let out = StringBuilder()
   for family in self.families {

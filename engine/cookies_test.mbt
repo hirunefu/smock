@@ -6,8 +6,11 @@
 /// 4.2.1) has a user agent send them and where the cookie rules of
 /// docs/definition-files/matching.md read them ("smock reads cookies from
 /// the `Cookie` header"). `X-Cookie` is another field, and so are `Cook`,
-/// whose name is the start of `Cookie`, and `Cookie2`, RFC 2965's field,
-/// which RFC 6265 obsoletes and registers apart (section 9.3).
+/// whose name is the start of `Cookie`, `Cookie2`, RFC 2965's field,
+/// which RFC 6265 obsoletes and registers apart (section 9.3), and
+/// `Xookie`, as long as `Cookie` and different from it in its first letter
+/// alone, by more than case (field names compare case-insensitively, RFC
+/// 9110 section 5.1).
 test "a cookie condition holds when a cookie with that name has the value, wherever it sits in the Cookie field" {
   let h = stubs([
     (
@@ -25,6 +28,7 @@ test "a cookie condition holds when a cookie with that name has the value, where
       ("GET", "/", [("X-Cookie", "session=abc")], ""),
       ("GET", "/", [("Cook", "session=abc")], ""),
       ("GET", "/", [("Cookie2", "session=abc")], ""),
+      ("GET", "/", [("Xookie", "session=abc")], ""),
       ("GET", "/", [], ""),
     ]),
     content=(
@@ -35,6 +39,7 @@ test "a cookie condition holds when a cookie with that name has the value, where
       #|GET / [X-Cookie: session=abc] -> none
       #|GET / [Cook: session=abc] -> none
       #|GET / [Cookie2: session=abc] -> none
+      #|GET / [Xookie: session=abc] -> none
       #|GET / -> none
     ),
   )
@@ -116,6 +121,13 @@ test "a cookie value is compared exactly as sent: quotes are part of it, and not
 }
 
 ///|
+/// The rules of docs/definition-files/matching.md, "Cookies": "The first
+/// `=` of a part separates the name from the value" even at the very start
+/// of the field, so `=x` is the cookie with the empty name and the value
+/// `x`, which a condition on the name `""` reads. "A part without `=` is
+/// skipped", so `x` is no cookie, not one with the empty name. RFC 6265's
+/// grammar has no empty cookie name, so the documents are the source here,
+/// as for template's `cookie['']`.
 test "each part of a Cookie field is trimmed of spaces and tabs, its first = ends the name, and a part without = is skipped" {
   let h = stubs([
     (
@@ -133,6 +145,11 @@ test "each part of a Cookie field is trimmed of spaces and tabs, its first = end
       #|    "cookies": { "a ": " 1" } },
       #|  "response": { "status": 200 } }
     ),
+    (
+      #|{ "id": "unnamed", "mock": "m", "request": { "path": "/u",
+      #|    "cookies": { "": "x" } },
+      #|  "response": { "status": 200 } }
+    ),
   ])
   inspect(
     winners(h, [
@@ -144,6 +161,8 @@ test "each part of a Cookie field is trimmed of spaces and tabs, its first = end
       ("GET", "/f", [("Cookie", "flag=")], ""),
       ("GET", "/s", [("Cookie", "a = 1")], ""),
       ("GET", "/s", [("Cookie", "a=1")], ""),
+      ("GET", "/u", [("Cookie", "=x")], ""),
+      ("GET", "/u", [("Cookie", "x")], ""),
     ]),
     content=(
       #|GET /t [Cookie: a=1;b=x=y;c=] -> trimmed
@@ -154,6 +173,8 @@ test "each part of a Cookie field is trimmed of spaces and tabs, its first = end
       #|GET /f [Cookie: flag=] -> flag
       #|GET /s [Cookie: a = 1] -> spaced
       #|GET /s [Cookie: a=1] -> none
+      #|GET /u [Cookie: =x] -> unnamed
+      #|GET /u [Cookie: x] -> none
     ),
   )
 }

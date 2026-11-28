@@ -37,6 +37,8 @@ usage: python3 scripts/mutation/matrix.py alone [--none] <matrix>...
        python3 scripts/mutation/matrix.py kills [--test <test>]...
            [--package <package>]... [--without] [--layer in-process|e2e]
            <matrix>...
+       python3 scripts/mutation/matrix.py draw --seed <run ID> [--base <commit>]
+           [--size <n>] [--root <dir>] <matrix>...
 
 <matrix> is a matrix's file, or a run's output directory, whose matrix/
 holds one per package. Several may be given, and a test is the same test
@@ -55,20 +57,53 @@ in each. Each command prints JSON lines.
            ("matrix") and the tests of the set that kill it. It also
            prints, on standard error, how many of the killed mutants the
            set kills.
+  draw     the tests of a snapshot audit (CONTRIBUTING.md, "Snapshot
+           audits"): <n> (10 unless given, or all when there are fewer)
+           of the tests that alone kill some mutant, at least half of them
+           from the work's tests: a test is the work's when the work added
+           it, or changed a line of its block that is not a comment, since
+           <commit> (d953f320, where the test review began, unless given).
+           The seed is the run ID of the kill-matrix run on Actions, which
+           no agent can know before the run. A test's block runs from the
+           `///|` at or before its line to the line before the next
+           `///|`, in its file as HEAD of <dir> (the current directory
+           unless given) has it. A line whose first characters, after
+           white space, are `//` is a comment, and a blank line is none of
+           the test's lines. The lines the work added or changed are read
+           from `git diff -U0 <commit> HEAD`: a line that it adds or
+           changes counts when it is neither a comment nor blank; where a
+           hunk changes or deletes a line that was neither, every line that
+           the hunk adds counts too, or, when it adds none, the line at
+           which it deletes. So <dir> is a checkout of the commit the run
+           ran on. The draw: the tests sorted by their names in the
+           matrix; random.Random(<run ID>), with the seed as text, samples
+           half of <n>, rounded up, of the work's tests (all of them when
+           there are fewer), then, the same generator going on, the rest
+           of the <n> from every test not yet drawn. Each line, in
+           the order of the draw, is the test as the matrix lists it, with
+           its file in <dir> ("path"), whether it is the work's ("work")
+           and the mutants it alone kills ("alone"). It also prints, on
+           standard error, how many tests alone kill some mutant and how
+           many of them are the work's.
 
 A duplicate counts as the mutant it compiles as, when the same matrix
 holds that one. The tool exits with 0 when it answered, and with 1 when a
-file is no kill matrix or a test or package given is in none.
+file is no kill matrix, a test or package given is in none, or, for draw,
+a test's file or line is not in HEAD of <dir> or git cannot answer.
 """
 
 import argparse
 import json
+import math
+import posixpath
+import random
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import changed
 import compare
 
 BACKEND = "wasm-gc"
@@ -87,6 +122,18 @@ OUTLINE = re.compile(r'^\s*\d+\. (\S+) (\S+):(\d+) index=(\d+)(?: name="(.*)")?$
 LAYERS = ("in-process", "e2e")
 # The last part of the name of the package whose tests are e2e tests.
 E2E = "e2e"
+# The commit of main at which the test review began (#275): a snapshot
+# audit draws at least half of its tests from the work's, those that the
+# work added, or of whose block it changed a line that is not a comment,
+# since.
+WORK_BASE = "d953f320e0bb4fad15352224d01c365a02c0ab79"
+# How many tests a snapshot audit draws: about ten of a package's.
+AUDIT_SIZE = 10
+# A module's name in its moon.mod or moon.mod.json.
+MODULE_NAME = re.compile(r'^\s*"?name"?\s*[=:]\s*"([^"]+)"', re.MULTILINE)
+# A hunk of a diff without context: where its lines start in the new file,
+# and how many there are.
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 
 
 def layer(package):
@@ -304,8 +351,10 @@ def dumps(matrix):
 
 
 class MatrixError(Exception):
-    """What stops the tool: a file that is no kill matrix, or a test or a
-    package that the matrices do not hold."""
+    """What stops the tool: a file that is no kill matrix, a test or a
+    package that the matrices do not hold, or, for a draw, a test that the
+    checkout does not hold where the matrix says, or git that cannot
+    answer."""
 
 
 def read(paths):
@@ -349,6 +398,136 @@ def alone(mutants):
         if mutant["outcome"] == "killed" and len(mutant["killing_tests"]) == 1:
             found.setdefault(mutant["killing_tests"][0], []).append(mutant["id"])
     return found
+
+
+def alone_in(matrices):
+    """The tests that alone kill some mutant of any of the matrices, each
+    with those mutants' ids, matrix after matrix."""
+    found = {}
+    for matrix in matrices:
+        for name, mutants in alone(matrix["mutants"]).items():
+            found.setdefault(name, []).extend(mutants)
+    return found
+
+
+def modules(root):
+    """The modules of the workspace at root, by name: each one's directory
+    relative to root, from moon.work's members, or the root's own module
+    when there is no moon.work."""
+    found = {}
+    for directory in changed.members(root):
+        for file in ("moon.mod", "moon.mod.json"):
+            if (directory / file).is_file():
+                name = MODULE_NAME.search((directory / file).read_text(encoding="utf-8"))
+                if name:
+                    found[name.group(1)] = directory.relative_to(root.resolve()).as_posix()
+                break
+    return found
+
+
+def directory_of(package, found):
+    """The directory of a package, relative to the workspace, from the
+    modules found: smock/smock/<directory> in the root module, and
+    smock/<name> for a protocol module in <name>/."""
+    names = [n for n in found if package == n or package.startswith(n + "/")]
+    if not names:
+        raise MatrixError(f"no module of the workspace holds the package {package}")
+    name = max(names, key=len)
+    return posixpath.normpath(posixpath.join(found[name], package[len(name) + 1 :]))
+
+
+def git(root, *args):
+    """The output of a git command in root."""
+    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise MatrixError(f"git {' '.join(args)}: {result.stderr.strip()}")
+    return result.stdout
+
+
+def is_code(line):
+    """Whether a line of a test file is neither a comment, whose first
+    characters after white space are `//`, nor blank."""
+    text = line.strip()
+    return text != "" and not text.startswith("//")
+
+
+def changed_lines(root, base, path):
+    """The lines of HEAD's file at path at which the work added or changed
+    a line that is not a comment since base, read from `git diff -U0`:
+    each line that it adds or changes that is neither a comment nor blank,
+    and, in a hunk that changes or deletes a line that was neither, every
+    line that the hunk adds, or the line at which it deletes when it adds
+    none."""
+    out = git(root, "diff", "--no-color", "--no-ext-diff", "-U0", base, "HEAD", "--", path)
+    lines = set()
+    hunks = []
+    for text in out.split("\n"):
+        hunk = HUNK.match(text)
+        if hunk:
+            hunks.append((int(hunk.group(1)), int(hunk.group(2) or "1"), [], []))
+        elif hunks and text[:1] in ("-", "+"):
+            hunks[-1][2 if text[0] == "-" else 3].append(text[1:])
+    for start, count, deleted, added in hunks:
+        lines.update(start + i for i, line in enumerate(added) if is_code(line))
+        if any(is_code(line) for line in deleted):
+            lines.update(range(start, start + max(count, 1)))
+    return lines
+
+
+def block(lines, line):
+    """The lines, counted from 1, of the top-level block of a file's lines
+    that holds line: from the `///|` at or before it to the line before
+    the next `///|`."""
+    first = line
+    while first > 1 and not lines[first - 1].startswith("///|"):
+        first -= 1
+    last = line
+    while last < len(lines) and not lines[last].startswith("///|"):
+        last += 1
+    return range(first, last + 1)
+
+
+def drawn_tests(root, matrices, seed, base, size):
+    """The tests of a snapshot audit (CONTRIBUTING.md, "Snapshot audits"):
+    size of those that alone kill some mutant of the matrices (all, when
+    there are fewer), at least half of them from the work's tests, those
+    that the work added, or of whose block in HEAD's file it changed a line
+    that is not a comment, since base (changed_lines). Each is
+    the test as the matrices list it, with its file in the workspace
+    ("path"), whether it is the work's ("work"), and the mutants it alone
+    kills ("alone"), in the order of the draw; and how many tests alone
+    kill some mutant, and how many of them are the work's.
+
+    The draw: the tests sorted by their names in the matrix;
+    random.Random(seed), with the seed as text, samples half of size,
+    rounded up, of the work's tests (all of them, when there are fewer),
+    and then, the same generator going on, the rest of size from every test
+    not yet drawn."""
+    tests = every_test(matrices)
+    lone = alone_in(matrices)
+    found = modules(root)
+    files = {}
+    chosen = {}
+    for name in lone:
+        test = tests[name]
+        path = posixpath.join(directory_of(test["package"], found), test["file"])
+        if path not in files:
+            text = git(root, "show", f"HEAD:./{path}").split("\n")
+            files[path] = (text, changed_lines(root, base, path))
+        text, changed_here = files[path]
+        if not 1 <= test["line"] <= len(text):
+            raise MatrixError(f"HEAD's {path} has no line {test['line']}, where the matrix puts {name}: is the"
+                              " checkout the commit that the kill-matrix run ran on?")
+        work = any(n in changed_here for n in block(text, test["line"]))
+        chosen[name] = dict(test, path=path, work=work, alone=lone[name])
+    ids = sorted(chosen)
+    work = [n for n in ids if chosen[n]["work"]]
+    size = min(size, len(ids))
+    generator = random.Random(seed)
+    drawn = generator.sample(work, min(len(work), math.ceil(size / 2)))
+    rest = [n for n in ids if n not in drawn]
+    drawn += generator.sample(rest, size - len(drawn))
+    return [chosen[n] for n in drawn], len(ids), len(work)
 
 
 def every_test(matrices):
@@ -410,15 +589,30 @@ def main():
     kills.add_argument("--without", action="store_true", help="the set is every test but those given")
     kills.add_argument("--layer", choices=LAYERS, help="only the set's tests in this layer or a lower one count")
     kills.add_argument("matrices", nargs="+", help="matrix files, or runs' output directories")
+    drawing = commands.add_parser("draw", help="the tests of a snapshot audit, drawn among those that alone kill"
+                                               " some mutant")
+    drawing.add_argument("--seed", required=True,
+                         help="the run ID of the kill-matrix run on Actions, which no agent knows before the run")
+    drawing.add_argument("--base", default=WORK_BASE,
+                         help="the work's tests are those that the work added, or of whose block it changed a"
+                              " line that is not a comment, since this commit (where the test review began unless"
+                              " given)")
+    drawing.add_argument("--size", type=int, default=AUDIT_SIZE, help=f"how many to draw ({AUDIT_SIZE} unless given)")
+    drawing.add_argument("--root", default=".", help="the workspace, checked out at the commit the run ran on")
+    drawing.add_argument("matrices", nargs="+", help="matrix files, or runs' output directories")
     args = parser.parse_args()
     try:
         matrices = read(args.matrices)
         tests = every_test(matrices)
+        if args.command == "draw":
+            drawn, lone, work = drawn_tests(Path(args.root), matrices, args.seed, args.base, args.size)
+            for test in drawn:
+                print(json.dumps(test, ensure_ascii=False))
+            print(f"{lone} tests alone kill some mutant, {work} of them the work's (changed since {args.base}); drew"
+                  f" {len(drawn)} with the seed {args.seed!r}.", file=sys.stderr)
+            return
         if args.command == "alone":
-            found = {}
-            for matrix in matrices:
-                for name, mutants in alone(matrix["mutants"]).items():
-                    found.setdefault(name, []).extend(mutants)
+            found = alone_in(matrices)
             for name, test in tests.items():
                 if args.none and name not in found:
                     killing = [m["id"] for x in matrices for m in resolved(x["mutants"])

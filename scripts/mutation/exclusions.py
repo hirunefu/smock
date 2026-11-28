@@ -5,9 +5,10 @@ or an uncovered point, each entry with a category, a reason and who
 reviewed it. No attribute in the source excludes anything.
 
 usage: python3 scripts/mutation/exclusions.py [--root <dir>] [--moonc <moonc>] check
+           [--allow-pending]
        python3 scripts/mutation/exclusions.py [--root <dir>] [--moonc <moonc>] new <what>
        python3 scripts/mutation/exclusions.py [--root <dir>] review [--base <ref>]
-           [--seed <seed>]
+           [--seed <run ID>]
 
 <root> is the workspace, the current directory unless it is given. Each
 entry is a table of the array `exclusion`:
@@ -35,7 +36,10 @@ and what its category needs:
                of the compiler's output found ("differs", or "not
                compared" where it cannot compare the mutant), and
                adversarial = { context = <the agent context that made the
-               attempt>, tests = [<each test it tried, which passed>] }
+               attempt>, tests = [<each test it tried, which passed>] }.
+               Until a separate context has made the attempt, the context
+               that proposed the entry writes one whose context starts
+               with "pending" (in any case), and that context replaces it
   UNREACHABLE  a point at an abort, which an invariant guards; anything
                else carries argument, its written argument
   UB-NATIVE    a mutant only
@@ -45,7 +49,12 @@ and what its category needs:
 check  fails, with 1, on an entry in another category, without what its
        category needs, with a field the list does not know, or a second
        entry for the same mutant or point, and on a list that is not
-       TOML. It lists each stale entry, and passes with stale entries.
+       TOML. It lists each stale entry, and passes with stale entries. It
+       fails on an EQUIVALENT entry whose adversarial attempt is still
+       pending, unless --allow-pending is given: a ticket branch passes it
+       before the separate context has run; CI never does, so nothing
+       pending reaches the integration branch. With the option, it lists
+       each pending entry.
 
 new    prints the stanza of a new entry for <what>, a mutant's id or a
        point as <file>:<line>:<column> (the coverage report names points
@@ -57,10 +66,12 @@ review lists the batch: the entries that the tree adds or changes against
        a change of the reviewer alone aside. Of the batch, the maintainer
        reads every entry in the protocol packages (http1, grpc, yaml, re2,
        xml and protobuf) and in serverparsers, and one in five of the
-       others, rounded up. The maintainer draws those once the batch is
-       frozen, with a seed of the maintainer's choosing, so that the
-       author cannot know which: with --seed, it lists them; without, it
-       says how many there are to draw.
+       others, rounded up. Those are drawn once the batch is frozen, with
+       a seed that no agent can know before, so that the author cannot
+       know which: the run ID that GitHub Actions gives the packages run
+       of the bulk workflow (mutation-runs.yml) on the frozen tip. No one
+       picks the seed. With --seed, it lists them; without, it says how
+       many there are to draw.
 
 The coverage report (scripts/coverage-report.py, through points()) and
 the mutation runner (run.py and merge.py, through annotate() and counts())
@@ -92,6 +103,9 @@ POINT = ("file", "definition", "position")
 # The fields each category adds to the common ones.
 NEEDS = {"EQUIVALENT": ("compiler_output", "adversarial"), "UNREACHABLE": ("argument",), "DEFERRED": ("issue",)}
 COMPARED = ("differs", "not compared")
+# How the context of an adversarial attempt that is still to be made
+# starts, in any case: the context that proposed the entry writes it so.
+PENDING = "pending"
 PLACE = re.compile(r"^(.+):(\d+):(\d+)$")
 POSITION = re.compile(r"^(\d+):(\d+)$")
 # The packages whose every entry the maintainer reads: the protocol
@@ -281,14 +295,25 @@ def stale(entry, found):
                    for name, _, _, digest in found.get(entry.file, []))
 
 
-def check(root, moonc):
-    """Checks the list: whether it passed."""
+def pending(entry):
+    """Whether an EQUIVALENT entry's adversarial attempt is still to be
+    made: the context that proposed the entry wrote a context that starts
+    with "pending", in any case, for the separate context to replace."""
+    attempt = entry.fields.get("adversarial")
+    return (entry.category == "EQUIVALENT" and isinstance(attempt, dict) and isinstance(attempt.get("context"), str)
+            and attempt["context"].lstrip().casefold().startswith(PENDING))
+
+
+def check(root, moonc, allow_pending=False):
+    """Checks the list: whether it passed. An entry whose adversarial
+    attempt is still pending fails it, unless allow_pending, as a ticket
+    branch has it before the separate context has run."""
     entries, problems = read_list(root)
     files = {e.file for e in entries if isinstance(e.file, str)}
     found = definitions(root, files, moonc)
     sources = {f: (found[f], (root / f).read_text(encoding="utf-8")) for f in files if (root / f).is_file()}
     seen = set()
-    stale_entries = []
+    stale_entries, pending_entries = [], []
     for entry in entries:
         if entry.key in seen:
             problems.append(f"{LIST}: {entry.key}: a second entry for it")
@@ -298,11 +323,21 @@ def check(root, moonc):
             stale_entries.append(entry)
         source = None if is_stale else sources.get(entry.file)
         problems += [f"{LIST}: {problem}" for problem in problems_of(entry, source)]
+        if pending(entry):
+            pending_entries.append(entry)
+            if not allow_pending:
+                problems.append(f"{LIST}: {entry.key}: its adversarial attempt is still pending: the separate context"
+                                " replaces it with what it tried before the branch is merged (check --allow-pending"
+                                " passes it on a ticket branch until then)")
     for problem in problems:
         print(f"exclusions: {problem}", file=sys.stderr)
     for entry in stale_entries:
         print(f"exclusions: stale: {entry.key} ({entry.category}): its definition's text changed, or it is gone")
-    print(f"exclusions: {len(entries)} entries, " + (f"{len(stale_entries)} stale" if stale_entries else "none stale"))
+    if allow_pending:
+        for entry in pending_entries:
+            print(f"exclusions: pending: {entry.key} ({entry.category}): its adversarial attempt is still to be made")
+    print(f"exclusions: {len(entries)} entries, " + (f"{len(stale_entries)} stale" if stale_entries else "none stale")
+          + (f", {len(pending_entries)} pending" if pending_entries else ""))
     return not problems
 
 
@@ -480,8 +515,9 @@ def review(root, base, seed):
     lines += [f"  {e.key}  {e.category}" for e in every]
     lines.append("")
     if seed is None:
-        lines.append(f"One in five of the other {len(others)}: {drawn}, which the maintainer draws once the batch is"
-                     " frozen, with `review --seed <seed>`.")
+        lines.append(f"One in five of the other {len(others)}: {drawn}, drawn once the batch is frozen, with"
+                     " `review --seed <run ID>`: the ID of the packages run on the frozen tip, which no agent can"
+                     " know before.")
     else:
         chosen = random.Random(seed).sample(sorted(e.key for e in others), drawn)
         lines.append(f"One in five of the other {len(others)}: {drawn}, drawn with the seed {seed!r}:")
@@ -494,13 +530,17 @@ def main():
     parser.add_argument("--root", default=".", help="the workspace")
     parser.add_argument("--moonc", default="moonc", help="the compiler, whose parse tree gives the definitions")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("check", help="check the list's entries, and list the stale ones")
+    checking = commands.add_parser("check", help="check the list's entries, and list the stale ones")
+    checking.add_argument("--allow-pending", action="store_true",
+                          help="pass an EQUIVALENT entry whose adversarial attempt is still pending, as a ticket"
+                               " branch does before the separate context has run; CI never passes it")
     making = commands.add_parser("new", help="print the stanza of a new entry")
     making.add_argument("what", help="a mutant's id, or a point as <file>:<line>:<column>")
     reviewing = commands.add_parser("review", help="list the entries of the batch that the maintainer reads")
     reviewing.add_argument("--base", default="origin/main", help="the batch is what HEAD's tree changes against"
                                                                  " its merge base with this")
-    reviewing.add_argument("--seed", help="the maintainer's seed, which draws one in five of the other entries")
+    reviewing.add_argument("--seed", help="the run ID of the packages run on the frozen tip, which draws one in five"
+                                          " of the other entries")
     args = parser.parse_args()
     root = Path(args.root).resolve()
     try:
@@ -508,7 +548,7 @@ def main():
             print(new(root, args.what, args.moonc), end="")
         elif args.command == "review":
             print("\n".join(review(root, args.base, args.seed)))
-        elif not check(root, args.moonc):
+        elif not check(root, args.moonc, args.allow_pending):
             sys.exit(1)
     except ExclusionError as error:
         print(f"exclusions: {error}", file=sys.stderr)

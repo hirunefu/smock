@@ -9,6 +9,11 @@
 // an integer from <min> to <max>`. No document gives those words: they are
 // the code's, which the maintainer confirmed on 2026-11-17 (#275), and the
 // e2e settings test pins them too.
+// The frame of a refused value, `invalid value "<value>" for <setting>:
+// <reason>`, is no document's: the maintainer confirmed on 2026-11-21
+// (#329) that it stays as the code has it, with a flag that has no
+// variable, or an argument such as <document>, named alone, and a " in
+// the value written \".
 
 ///|
 /// What `smock serve <argv>` makes of its settings: `show` of the settings
@@ -77,13 +82,17 @@ test "ranges: each port, by its flag or its variable, takes 0 and 65535, and ref
   // docs/running.md, Settings: each port's flag and variable, and "0 picks
   // a free port". RFC 9293, section 3.1: a TCP header's Source Port and
   // Destination Port are 16 bits each, so a port is a number from 0 to
-  // 65535.
+  // 65535. A value with leading zeros is the integer it writes, however
+  // many zeros it has (#426): 00000008080, eleven characters, and 8080
+  // after twenty zeros are 8080.
   inspect(
     [
       each_by_flag_and_variable(
         "--port",
         "SMOCK_PORT",
-        ["0", "65535", "-1", "65536", "eighty"],
+        [
+          "0", "65535", "-1", "65536", "eighty", "00000008080", "000000000000000000008080",
+        ],
         settings => settings.port.to_string(),
       ),
       each_by_flag_and_variable(
@@ -105,6 +114,8 @@ test "ranges: each port, by its flag or its variable, takes 0 and 65535, and ref
       #|-1: invalid value "-1" for --port (SMOCK_PORT): must be an integer from 0 to 65535
       #|65536: invalid value "65536" for --port (SMOCK_PORT): must be an integer from 0 to 65535
       #|eighty: invalid value "eighty" for --port (SMOCK_PORT): must be an integer from 0 to 65535
+      #|00000008080: 8080
+      #|000000000000000000008080: 8080
       #|0: 0
       #|65535: 65535
       #|-1: invalid value "-1" for --tls-port (SMOCK_TLS_PORT): must be an integer from 0 to 65535
@@ -202,12 +213,14 @@ test "ranges: --journal-max-entries takes 1073741824 and refuses 1073741825" {
 
 ///|
 test "ranges: --replicas, by its flag or SMOCK_REPLICAS, takes 1 and 10000, and refuses 0, 10001 and a value that is not a decimal integer" {
-  // docs/running.md, Settings: --replicas takes 1 to 10000.
+  // docs/running.md, Settings: --replicas takes 1 to 10000. A larger value
+  // is refused however large it is (#426): 18446744073709551617, 2^64 + 1,
+  // is not 1, which it would be in a 64-bit integer that wraps.
   inspect(
     each_by_flag_and_variable(
       "--replicas",
       "SMOCK_REPLICAS",
-      ["1", "10000", "0", "10001", "two"],
+      ["1", "10000", "0", "10001", "two", "18446744073709551617"],
       settings => settings.replicas.to_string(),
     ),
     content=(
@@ -216,6 +229,7 @@ test "ranges: --replicas, by its flag or SMOCK_REPLICAS, takes 1 and 10000, and 
       #|0: invalid value "0" for --replicas (SMOCK_REPLICAS): must be an integer from 1 to 10000
       #|10001: invalid value "10001" for --replicas (SMOCK_REPLICAS): must be an integer from 1 to 10000
       #|two: invalid value "two" for --replicas (SMOCK_REPLICAS): must be an integer from 1 to 10000
+      #|18446744073709551617: invalid value "18446744073709551617" for --replicas (SMOCK_REPLICAS): must be an integer from 1 to 10000
     ),
   )
 }
@@ -297,12 +311,16 @@ test "ranges: --seed, by its flag or SMOCK_SEED, takes 0 and 2^53 - 1, and refus
   // docs/running.md, Settings: --seed and SMOCK_SEED set the seed of the
   // process generator, which smock otherwise picks "from 0 to
   // 9007199254740991" (2^53 - 1), as a Stub's seed takes
-  // (docs/definition-files/faults.md, Seeds).
+  // (docs/definition-files/faults.md, Seeds). A value with leading zeros is
+  // the integer it writes (#426): 00000000000000007, seventeen characters,
+  // is 7.
   inspect(
     each_by_flag_and_variable(
       "--seed",
       "SMOCK_SEED",
-      ["0", "9007199254740991", "-1", "9007199254740992", "0x2a"],
+      [
+        "0", "9007199254740991", "-1", "9007199254740992", "0x2a", "00000000000000007",
+      ],
       seed,
     ),
     content=(
@@ -311,6 +329,7 @@ test "ranges: --seed, by its flag or SMOCK_SEED, takes 0 and 2^53 - 1, and refus
       #|-1: invalid value "-1" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
       #|9007199254740992: invalid value "9007199254740992" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
       #|0x2a: invalid value "0x2a" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
+      #|00000000000000007: 7
     ),
   )
 }
@@ -327,6 +346,12 @@ test "ranges: without --seed, smock picks a seed from 0 to 2^53 - 1, one that --
     ].join(" "),
     content="true true",
   )
+  // It is a fresh seed, picked at each start ("smock picks its seed at
+  // startup and logs it. To replay a run, start smock with that seed",
+  // docs/definition-files/faults.md, Seeds; "a fresh seed",
+  // docs/definition-files/templates.md, Rendering a template): one pick
+  // from 2^53 values is 0 once in 2^53, so smock does not settle on 0.
+  inspect(picked == 0, content="false")
 }
 
 ///|

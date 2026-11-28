@@ -1,7 +1,9 @@
 # The files that decide a verdict: of the four ledgers, of the merge and
-# release checks that read them, and of the suites that run against a list
-# of cases that may fail (CONTRIBUTING.md, "The weakening report"). On
-# each push to a branch other than main, the weakening report
+# release checks that read them, of the checks of the keep list and of the
+# ledgers, and of the suites that run against a list of cases that may
+# fail, with the scripts that install or build those suites' tools, and
+# the tests of the scripts listed here (CONTRIBUTING.md, "The weakening
+# report"). On each push to a branch other than main, the weakening report
 # (scripts/weakening-report.py) lists every change to them, for the
 # maintainer to read before merging the branch.
 #
@@ -17,29 +19,45 @@
 # weakening report (scripts/test-weakening-report.sh) fail when this list
 # leaves out a script that a workflow's verdict step runs: a step that
 # judges a suite's results against its list of cases, or that tests that
-# judgment, and the scripts such a step runs, through the scripts it runs.
+# judgment, or that checks the keep list or the ledgers, and the scripts
+# such a step runs, through the scripts it runs. They fail too when it
+# leaves out a script of a step that installs or builds a verdict step's
+# tool, such as h2spec's install, or the own test of a script it names:
+# the script beside it named test-<name>.sh or test_<name>.py, <name> being
+# the script's name without its extension, or the test that their table
+# names for a script whose test is named otherwise.
 
 scripts/verdict-files.txt              the list of the files that decide a verdict
 scripts/weakening-report.py            the weakening report, which reads this list
-scripts/test-weakening-report.sh       the tests of the weakening report, which hold the check that this list names every script of the workflows' verdict steps (#395)
+scripts/test-weakening-report.sh       the tests of the weakening report, which hold the check that this list names every script of the workflows' verdict steps and of the steps that install or build their tools, and the own test of every script it names (#395)
 .github/workflows/branch-checks.yml    the branch checks workflow: the weakening report, and the mutants on the changed lines (#311)
 scripts/changed-lines.py               the changed-lines job: the shards' budget on a push, what counts as covering the whole diff, and the report of the survivors on the changed lines that the merge check reads (#311)
+scripts/test-changed-lines.sh          the tests of the changed-lines job (#395)
 exclusions.*                           the exclusion list of surviving mutants and uncovered points, with each entry's category, reason and reviewer (#302)
 mutation/l4-packages.txt               the list of packages at L4 (#312)
 mutation/kept-tests.*                  the keep list: the tests kept for reasons the kill matrix cannot see (#351)
+scripts/check-kept-tests.py            the check of the keep list, which fails when a test that the list names is no longer there (#395)
+scripts/test-check-kept-tests.sh       the tests of the check of the keep list (#395)
 mutation/site-counts/                  the site counts: each package's sites, per definition and operator, which must be the site finder's on the head, and which the site-count check compares with the merge base's (#309)
 mutation/approved-drops.txt            the drops of sites that the maintainer approved, each with its reason, which the site-count check reads (#309)
 docs/ledgers/                          the use-case and boundary ledgers, whose rows keep their tests under removal rule (C) (#286)
+scripts/check-ledgers.py               the check of the use-case and boundary ledgers, which fails when a test or a check that a row names is no longer there (#395)
+scripts/test-check-ledgers.sh          the tests of the check of the ledgers (#395)
 scripts/mutation/                      the mutation runner and its site finder (#298), operator set v1 and its alternative rule, whose version every record carries (operators.py, #299), and the fixture module with its expected sites and verdicts (#298, #299)
 mutation/                              the mutation runner's committed data: the site counts and approved drops (#309), the flake threshold, and the flake rates if they are committed (#301), and the canary's mutants, recorded verdicts and explained differences (#308)
 scripts/coverage.sh                    the coverage wrapper, which runs the tests with coverage on and reports the uncovered points (#296)
 scripts/coverage-report.py             the coverage report: the bisect parser, which reads the points and their counters (#296)
+scripts/test-coverage-report.sh        the tests of the coverage report (#395)
 scripts/coverage-tests/                the coverage report's committed reports and tree, which its test judges it by (#296)
 scripts/coverage-ratchet.py            the coverage ratchet, which holds each package's uncovered points to its floor and refuses a raised floor that no recorded raise covers (#297)
+scripts/test-coverage-ratchet.sh       the tests of the coverage ratchet (#395)
 scripts/coverage-e2e.*                 the coverage from the e2e tests: the run, and the report that decides which positions of server and cmd/smock e2e covers, which the run at operator level mutates (#346), and which points no test reaches, which #343 triages (#342)
+scripts/test-coverage-e2e.sh           the tests of the e2e coverage report (#395)
 coverage/                              the coverage ledger's committed data: the floors and approved raises (#297), and the scope's list of generated files
 scripts/check-merge.*                  the merge check (#312)
+scripts/test-check-merge.sh            the tests of the merge check (#395)
 scripts/check-weekly-run.*             the release's check of the latest weekly run (#316)
+scripts/test-release-gates.sh          the tests of the release workflow's checks of a tag, the check of the latest weekly run among them (#395)
 .github/workflows/mutation*.yml        a mutation workflow: the canary (#308), the bulk runs (#313), the weekly and monthly runs (#314), and server and cmd/smock through e2e (#344, #346)
 .github/workflows/coverage*.yml        a coverage workflow beside CI's coverage job, such as e2e's (#342)
 .github/workflows/ci.yml               the workflow that runs on every push, which holds the coverage job (#297)
@@ -48,8 +66,11 @@ scripts/check-weekly-run.*             the release's check of the latest weekly 
 docs/adr/0006-*                        ADR 0006, which pins operator set v1 and its alternative rule (#277)
 protobuf-conformance/failure_list.txt  the cases of protobuf's conformance suite that may fail
 scripts/check-conformance.sh           the run of protobuf's conformance suite, which fails on a case that differs from the list of the cases that may fail (#395)
+scripts/build-conformance-runner.sh    the build of protobuf's conformance runner, the tool that the run judges with, from the pinned protobuf release (#395)
+scripts/install-protoc.sh              the install of the pinned protoc, which generates the conformance runner's code in its build (#395)
 scripts/h2spec/                        the cases of h2spec that may fail or be skipped on each port
 scripts/check-h2spec.sh                the runs of h2spec against the plain port and the TLS port, each judged against the port's list of cases (#395)
+scripts/install-h2spec.sh              the install of the pinned h2spec, the tool that the runs of h2spec judge with (#395)
 scripts/h2spec-verdict.py              h2spec's verdict: which cases of a run pass, against the port's list of cases (#395)
 scripts/test-h2spec-verdict.sh         the tests of h2spec's verdict (#395)
 yaml-test-suite/safe.txt               the cases of the YAML test suite that may fail or be skipped in the safe subset

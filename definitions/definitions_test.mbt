@@ -522,6 +522,10 @@ test "a Host must be one a request can carry: a port is digits, a bracketed IP l
 
 ///|
 test "two Mocks that claim the same Host after normalisation are rejected at the later claim, naming the earlier one" {
+  // `::1` claims `[::1]`: docs/definition-files.md, Hosts and the Default
+  // Mock, "An IPv6 address without a port may also be written without
+  // brackets, and is then the same Host as the bracketed one" (the
+  // maintainer, 2026-11-21, #329).
   inspect(
     problems([
       (

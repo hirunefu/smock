@@ -116,7 +116,7 @@ variable:
 |---|---|
 | `--mock <name>` | Required: the name of the Mock the file declares. Every Stub ID starts with it. |
 | `--output <file>` | Required: the Definition file to write. `.yaml` or `.yml` writes YAML, with comments that map each Stub back to the document, and `.json` writes JSON. Its directory must exist. |
-| `--hosts <h1,h2>` | The Mock's Hosts, separated by commas. None by default: the only Mock of a definitions directory is the Default Mock and needs none. The document's `servers` never become Hosts. |
+| `--hosts <h1,h2>` | The Mock's Hosts, separated by commas. None by default: the only Mock of a definitions directory is the Default Mock and needs none. With `--declare-mock on`, an empty `--hosts ""` gives none too, as leaving it out does. The document's `servers` never become Hosts. |
 | `--declare-mock on\|off` | `on` by default. `off` writes only the Stubs, for a Mock declared by hand in another file. |
 | `--base-path <path>` | A path to put in front of every path, such as `/mock/petstore`, in place of the path of the document's server. |
 | `--ref-dir <dir>` | The directory that references to other files are followed in, by default the document's own. A reference that leads outside it is an error. |

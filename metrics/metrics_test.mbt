@@ -1,5 +1,17 @@
 ///|
 test "a counter renders its help, its type and one sample per label set, in the order the sets first appeared" {
+  // The order of these lines is smock's own choice, which the text format
+  // 0.0.4 leaves free: its "Grouping and sorting" asks only that a metric's
+  // lines come as one group, "with the optional `HELP` and `TYPE` lines
+  // first (in no particular order)", and finds sorting "preferred but not
+  // required". smock writes `# HELP` before `# TYPE`, the series in the
+  // order they first appeared, `users` before `orders` here, and each
+  // series' label pairs in the order of the label names.
+  // `Registry::render`'s doc comment states the order of the metrics, of
+  // their `# HELP` and `# TYPE` lines, of their series and of each series'
+  // label pairs. The maintainer confirmed on 2026-11-21 (#328) that the doc
+  // comment is the source and that the order is not a promise to users, so
+  // no document states it.
   let registry = @metrics.Registry()
   let requests = registry.counter(
     "smock_requests_total",
@@ -108,6 +120,27 @@ test "a metric with labels renders nothing but its help and type before its firs
 
 ///|
 test "a histogram renders cumulative buckets up to +Inf, then the sum and the count, for each label set" {
+  // The text format 0.0.4 fixes one order here, the buckets', "in
+  // increasing numerical order of their label values". The rest is smock's
+  // own choice, which the format leaves free ("Grouping and sorting"): the
+  // series in the order they first appeared, so all of `users`' lines
+  // before those of `orders`; `_sum` and `_count` after each series'
+  // buckets; `# HELP` before `# TYPE`; and each series' label pairs in the
+  // order of the label names, `le` last. `Registry::render`'s doc comment
+  // states the order of the metrics, of their `# HELP` and `# TYPE` lines,
+  // of their series, of a histogram's buckets, `_sum` and `_count`, and of
+  // each series' label pairs, `le` last. The maintainer confirmed on
+  // 2026-11-21 (#328) that the doc comment is the source and that the order
+  // is not a promise to users, so no document states it.
+  // The counts and sums come from the text format's "Histograms and
+  // summaries": a histogram `x` has a sample `x_bucket` with `{le="y"}` for
+  // each bucket, "where `y` is the upper bound of the bucket", one with
+  // `{le="+Inf"}` whose value "_must_ be identical to the value of
+  // `x_count`", and the samples `x_sum` and `x_count`. Prometheus's metric
+  // types page, "Histogram", makes the buckets "cumulative counters",
+  // `<basename>_bucket{le="<upper inclusive bound>"}`, so 0.1 counts in the
+  // bucket of 0.1, and `_sum` "the total sum of all observed values": for
+  // `users`, 0.004 + 0.1 + 0.25 + 3, which is 3.354 as doubles too.
   let registry = @metrics.Registry()
   let latency = registry.histogram(
     "smock_request_duration_seconds",
@@ -233,9 +266,18 @@ test "a metric name is a Prometheus metric name: one with a colon, a capital Z o
   // by exporters or direct instrumentation." Each gauge renders a sample of
   // 0 at once, as Prometheus's guidelines for client libraries ask: "Gauges
   // MUST start at 0" and "Metrics without labels MUST always be
-  // initialized".
+  // initialized". `a0` has its digit as early as the regex allows one, as
+  // the second character.
+  // The four groups come in the order the gauges were registered, each with
+  // `# HELP` before `# TYPE`: smock's own choice, which the text format
+  // 0.0.4 leaves free ("Grouping and sorting": the `HELP` and `TYPE` lines
+  // come first "in no particular order", and sorting is "preferred but not
+  // required"). `Registry::render`'s doc comment states that order. The
+  // maintainer confirmed on 2026-11-21 (#328) that the doc comment is the
+  // source and that the order is not a promise to users, so no document
+  // states it.
   let registry = @metrics.Registry()
-  for name in ["job:smock_requests:sum", "smock_A_Z", "smock_0_9"] {
+  for name in ["job:smock_requests:sum", "smock_A_Z", "smock_0_9", "a0"] {
     let _ = registry.gauge(name, help="A name.")
   }
   inspect(
@@ -250,6 +292,9 @@ test "a metric name is a Prometheus metric name: one with a colon, a capital Z o
       #|# HELP smock_0_9 A name.
       #|# TYPE smock_0_9 gauge
       #|smock_0_9 0
+      #|# HELP a0 A name.
+      #|# TYPE a0 gauge
+      #|a0 0
       #|
     ),
   )
@@ -259,6 +304,14 @@ test "a metric name is a Prometheus metric name: one with a colon, a capital Z o
 // wrong is a mistake in smock's code, not in its input, so it aborts.
 
 ///|
+/// Prometheus's guidelines for client libraries: `labels()` "takes either
+/// a list of the label values or a map from label name to label value",
+/// and "Client libraries SHOULD NOT allow users to have different label
+/// names for the same metric"; `Counter::labels` takes its values "one for
+/// each label name, in order". One value for the label names `mock` and
+/// `stub` would give the series other label names than the metric's, so it
+/// is refused. client_golang refuses it too: its `WithLabelValues` panics
+/// with "expected %d label values but got %d".
 test "panic: a series needs one value for each label name" {
   let registry = @metrics.Registry()
   let requests = registry.counter("smock_requests_total", help="Requests.", labels=[
@@ -280,9 +333,41 @@ test "panic: a metric name is a Prometheus metric name" {
 }
 
 ///|
+/// The text format 0.0.4 writes a metric name unquoted, with "the usual
+/// Prometheus expression language restrictions": the data model's
+/// `[a-zA-Z_:][a-zA-Z0-9_:]*`, one character at least.
+test "panic: a metric name is not empty" {
+  let _ = @metrics.Registry().counter("", help="Requests.")
+}
+
+///|
+/// The data model's `[a-zA-Z_:][a-zA-Z0-9_:]*`: a digit only after the
+/// first character.
+/// That regex alone no longer decides it: since Prometheus 3.0 the data
+/// model says "Metric names MAY use any UTF-8 characters", and only that
+/// they "SHOULD match the regex". The text format 0.0.4, which smock serves
+/// (`text/plain; version=0.0.4`), decides it: smock writes a name unquoted,
+/// as its `metric_name = identifier`, and an `identifier` "carries the
+/// usual Prometheus expression language restrictions", those of the regex,
+/// so it does not start with a digit.
+test "panic: a metric name does not start with a digit" {
+  let _ = @metrics.Registry().counter("2xx_requests_total", help="Requests.")
+}
+
+///|
 test "panic: a label name is a Prometheus label name" {
   let _ = @metrics.Registry().counter("smock_requests", help="Requests.", labels=[
     "stub id",
+  ])
+}
+
+///|
+/// The text format 0.0.4 writes a label name unquoted, with "the usual
+/// Prometheus expression language restrictions": the data model's
+/// `[a-zA-Z_][a-zA-Z0-9_]*`, which has no `:`, unlike a metric name's.
+test "panic: a label name has no colon, which only a metric name may have" {
+  let _ = @metrics.Registry().counter("smock_requests", help="Requests.", labels=[
+    "mock:stub",
   ])
 }
 
@@ -300,6 +385,40 @@ test "panic: le is the bucket label of a histogram" {
 test "panic: bucket bounds increase" {
   let _ = @metrics.Registry().histogram("smock_size_bytes", help="A size.", buckets=[
     10, 1,
+  ])
+}
+
+///|
+/// The text format 0.0.4: "The buckets of a histogram ... must appear in
+/// increasing numerical order of their label values", and two equal bounds
+/// would be two buckets with the same `le`.
+/// The rule that decides it is the format's "Each line must have a unique
+/// combination of a metric name and labels", which two lines
+/// `smock_size_bytes_bucket{le="1"}` would break: "increasing" alone could
+/// be read to allow equal bounds. client_golang agrees: its bounds "must be
+/// sorted in strictly increasing order".
+test "panic: bucket bounds increase strictly: two equal bounds abort" {
+  let _ = @metrics.Registry().histogram("smock_size_bytes", help="A size.", buckets=[
+    1, 1,
+  ])
+}
+
+///|
+/// The text format 0.0.4: "A histogram _must_ have a bucket with
+/// `{le="+Inf"}`", which `Registry::histogram` adds last, so a bound of
+/// `+Inf` would be a second one, not in increasing order.
+test "panic: a bucket bound is not +Inf, the bucket every histogram has last" {
+  let _ = @metrics.Registry().histogram("smock_size_bytes", help="A size.", buckets=[
+    @double.infinity,
+  ])
+}
+
+///|
+/// NaN is neither below nor above any bound (IEEE 754), so no order of the
+/// text format's "increasing numerical order" holds for a bucket of it.
+test "panic: a bucket bound is not NaN" {
+  let _ = @metrics.Registry().histogram("smock_size_bytes", help="A size.", buckets=[
+    @double.not_a_number,
   ])
 }
 

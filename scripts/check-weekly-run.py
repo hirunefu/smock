@@ -7,10 +7,15 @@ publishes, beside its check that CI passed on the tag's commit
 (scripts/check-ci-passed.sh).
 
 usage: python3 scripts/check-weekly-run.py [--repo <dir>] [--repository <owner/repo>] <commit sha>
+       python3 scripts/check-weekly-run.py --jobs
 
 <commit sha> is the full id of the tag's commit; <dir> is the checkout,
 with the whole history, this one unless given; <owner/repo> is
-GITHUB_REPOSITORY unless given.
+GITHUB_REPOSITORY unless given. With --jobs, it prints the jobs of a
+weekly run that it knows (JOBS below), one a line: the name that
+mutation-runs.yml gives the job, what the job is there (job, matrix or
+workflow), and whether it decides a verdict, separated by tabs.
+scripts/check-release-workflow.sh compares them with the workflow.
 
 The packages at L4 are those that mutation/l4-packages.txt names on the
 tag's commit. With none, the check reads nothing and passes, and says so.
@@ -30,8 +35,15 @@ run's link, when
 
   - no weekly run on the tag's commit or an ancestor of it on main has
     ended: there is none, or one is still running;
-  - the latest that ended did not succeed (a failed canary, self-test or
-    property seed fails a weekly run, as a shard does);
+  - a job of the latest that ended that decides a verdict did not
+    succeed, or the run lacks it (JOBS below): the plan, which checks the
+    site counts; each shard, from 1 to the count the shards' names give;
+    the canary; the properties with random seeds; and the finish, which
+    merges the shards into the report. It reads the jobs of the run's
+    latest attempt, not the run's conclusion: a job that only reports, as
+    the coverage from the e2e tests does, or that opens the issue of the
+    stale entries, may fail and the run with it, and the check says so
+    and goes on;
   - its report (the artifact mutation-report, summary.json) cannot be
     read, is not of the pinned set, did not run a package at L4, or shows
     an unexplained survivor in one: stale-covered survivors and those that
@@ -90,6 +102,27 @@ RUNS = "mutation-runs.yml"
 WEEKLY = "Mutation runs: weekly"
 # The commits whose weekly runs decide: on main's line up to the tag's.
 HELD = "the tag's commit or an ancestor of it on main"
+# The jobs of a weekly run, by the names mutation-runs.yml gives them, what
+# each is there, and whether it decides a verdict. A job is one job of the
+# Actions API by that name; the matrix of the shards is a job named
+# "shard <k>-of-<n>" for each of its n shards (bulk.py plan names them);
+# a call of a workflow is the called workflow's jobs, each named "<name> /
+# <its own name>". The plan checks the site counts and lists the stale
+# entries; the canary replays its mutants; the finish merges the shards
+# into the report that the check reads. The coverage from the e2e tests
+# only reports (#342), and the job of the stale entries opens or updates
+# an issue: neither decides a verdict. scripts/check-release-workflow.sh
+# holds this table to the workflow's jobs.
+JOBS = (
+    ("Plan the run", "job", True),
+    ("shard ${{ matrix.name }}", "matrix", True),
+    ("Canary (weekly)", "workflow", True),
+    ("Properties with random seeds (weekly)", "job", True),
+    ("Merge the shards into one report", "job", True),
+    ("Coverage from e2e (weekly)", "workflow", False),
+    ("Open or update the issue of the stale entries (weekly)", "job", False),
+)
+SHARD = re.compile(r"(\d+)-of-(\d+)")
 
 
 class Refused(Exception):
@@ -168,15 +201,81 @@ def latest_weekly(repo, repository, sha):
         raise Refused(f"no weekly run over the pinned set on {HELD} has ended, and {held[0]['html_url']} is still"
                       " running", "run the release workflow again once it has passed")
     run = ended[0]
-    if run["conclusion"] != "success":
-        raise Refused(f"the latest weekly run over the pinned set on {HELD} failed ({run['conclusion']}):"
-                      f" {run['html_url']}", start_weekly(repository))
+    jobs_passed(repository, run)
     if held[0] is not run:
         print(f"check-weekly-run: a later weekly run, {held[0]['html_url']}, is still running, and does not decide")
     if weekly[0] is not held[0]:
         print(f"check-weekly-run: a later weekly run, {weekly[0]['html_url']}, ran on {weekly[0]['head_sha'][:12]},"
               f" which is not {HELD}, and does not decide")
     return run
+
+
+def jobs_of(repository, run):
+    """The jobs of the run's latest attempt, as the Actions API lists them,
+    page after page."""
+    jobs, page = [], 1
+    while True:
+        answer = gh("api", f"repos/{repository}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100&page={page}")
+        if answer is None:
+            raise Refused(f"gh cannot list the jobs of {run['html_url']}")
+        try:
+            listed = json.loads(answer)
+            found, total = listed["jobs"], listed["total_count"]
+            if not isinstance(found, list) or not all(isinstance(j["name"], str) for j in found):
+                raise TypeError("the jobs are not a list of named jobs")
+        except (ValueError, KeyError, TypeError) as problem:
+            raise Refused("the Actions API gave an answer that cannot be read") from problem
+        jobs += found
+        if not found or len(jobs) >= total:
+            return jobs
+        page += 1
+
+
+def state(job):
+    """How a job ended, as the Actions API says it."""
+    return job.get("conclusion") or job.get("status")
+
+
+def of_row(jobs, name, shape):
+    """The run's jobs that a row of JOBS stands for, and the names of those
+    the run should have and lacks: every shard, from 1 to the count that
+    the shards' names give."""
+    if shape == "job":
+        mine = [j for j in jobs if j["name"] == name]
+        return mine, [] if mine else [name]
+    if shape == "workflow":
+        mine = [j for j in jobs if j["name"].startswith(f"{name} / ")]
+        return mine, [] if mine else [name]
+    prefix = name.split("${{", 1)[0]
+    shards = {j["name"]: SHARD.fullmatch(j["name"][len(prefix):]) for j in jobs if j["name"].startswith(prefix)}
+    mine = [j for j in jobs if shards.get(j["name"])]
+    held = {(int(found[1]), int(found[2])) for found in shards.values() if found}
+    count = max((n for _, n in held), default=0)
+    if not count:
+        return mine, [f"{prefix}<k>-of-<n>"]
+    return mine, [f"{prefix}{k}-of-{count}" for k in range(1, count + 1) if (k, count) not in held]
+
+
+def jobs_passed(repository, run):
+    """Refuses unless every job of the run that decides a verdict is there
+    and succeeded, whatever the run's conclusion; says each other job that
+    did not succeed."""
+    jobs = jobs_of(repository, run)
+    problems, deciding = [], []
+    for name, shape, decides in JOBS:
+        mine, missing = of_row(jobs, name, shape)
+        if decides:
+            deciding += mine
+            problems += [f"{j['name']} ({state(j)})" for j in mine if state(j) != "success"]
+            problems += [f"{m} (missing)" for m in missing]
+    others = [f"{j['name']} ({state(j)})" for j in jobs
+              if not any(j is d for d in deciding) and state(j) not in ("success", "skipped")]
+    if others:
+        print(f"check-weekly-run: of the jobs of {run['html_url']} that decide no verdict, these did not succeed,"
+              f" which does not stop the release: {', '.join(others)}")
+    if problems:
+        raise Refused(f"the latest weekly run over the pinned set on {HELD} failed in a job that decides a verdict:"
+                      f" {', '.join(problems)}: {run['html_url']}", start_weekly(repository))
 
 
 def unexplained(package):
@@ -397,8 +496,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("--repo", default=".", help="the checkout")
     parser.add_argument("--repository", help="owner/repo on GitHub (GITHUB_REPOSITORY unless given)")
-    parser.add_argument("commit", help="the full id of the tag's commit")
+    parser.add_argument("--jobs", action="store_true", help="print the jobs of a weekly run it knows, and exit")
+    parser.add_argument("commit", nargs="?", help="the full id of the tag's commit")
     args = parser.parse_args()
+    if args.jobs:
+        for name, shape, decides in JOBS:
+            print(f"{name}\t{shape}\t{'decides a verdict' if decides else 'decides no verdict'}")
+        return 0
+    if args.commit is None:
+        parser.error("the commit is required")
     repo = Path(args.repo)
     try:
         if not SHA.fullmatch(args.commit):
