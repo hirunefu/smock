@@ -238,4 +238,11 @@ test "malformed patterns are rejected where the problem is" {
       #|[[:words:]] => position 1: invalid POSIX class [:words:]
     ),
   )
+  // A bracket class that the pattern leaves open after an escape RE2 does not
+  // define fails on that escape, not on the missing ], as RE2 2024-07-02
+  // does ("invalid escape sequence: \b" for [\b).
+  inspect(
+    error_of("[\\b"),
+    content="position 1: escape \\b inside a character class is not RE2 syntax",
+  )
 }
