@@ -733,6 +733,9 @@ test "one document may start with --- and end with ..." {
   // its key gives (the test of malformed indentation); no node is reached
   // above the root, so the pointer is `""`. A flow collection may start
   // there (s-l+flow-in-block, production 197), as the last case shows.
+  // No document states the words of these two messages; the maintainer
+  // confirmed them as the code has them on 2026-11-26 (the twenty-seventh
+  // round of #275's answers, #323).
   inspect(
     each(["--- a: 1", "--- - a", "--- \"a\": 1", "--- [a]\n"]),
     content=(
@@ -950,6 +953,9 @@ test "timestamps and the YAML 1.1 merge and value keys must be quoted" {
 
 ///|
 test "the same values quoted are strings, and look-alikes that no YAML version types are strings too" {
+  // No document states the words of "a block sequence must start on its own
+  // line", which `-` gets; the maintainer confirmed them as the code has them
+  // on 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   inspect(
     as_value([
       "'yes'", "\"0x1F\"", "'2001-12-14'", "\"~\"", "yes!", "0X1F", "0xG", ".infinity",
@@ -1075,6 +1081,11 @@ test "a plain key that is not a string in every YAML version must be quoted" {
 
 ///|
 test "malformed indentation gives an error at the deepest node reached, or a value when YAML reads one" {
+  // No document states the words of "unexpected ':' after a value; a nested
+  // mapping must start on its own line", "a block sequence must start on its
+  // own line" and "a leading empty line of a block scalar has more spaces
+  // than its first line"; the maintainer confirmed them as the code has them
+  // on 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   inspect(
     each([
       "a:\n  b: 1\n c: 2", "a:\n    b: 1\n  c: 2", "stubs:\n  - id: a\n     mock: m",
@@ -1149,6 +1160,10 @@ test "malformed indentation gives an error at the deepest node reached, or a val
 
 ///|
 test "tabs in indentation give an error; tabs elsewhere are white space" {
+  // No document states the words of "tabs are not allowed in indentation" and
+  // "a leading empty line of a block scalar has more spaces than its first
+  // line"; the maintainer confirmed them as the code has them on 2026-11-26
+  // (the twenty-seventh round of #275's answers, #323).
   inspect(
     each([
       "a:\n\tb: 1", "a:\n  \tb: 1", "- a\n\t- b", "a: |\n\tx", "a:\tb", "a: [1,\t2]",
@@ -1382,6 +1397,10 @@ test "unterminated quotes and flow collections give an error at the deepest node
 
 ///|
 test "empty values, empty documents and stray indicators give an error" {
+  // No document states the words of "a key must be a plain or quoted scalar"
+  // and "invalid escape: a high surrogate must be followed by a low
+  // surrogate"; the maintainer confirmed them as the code has them on
+  // 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   inspect(
     each([
       "", "# only a comment\n", "---\n", "a:", "a:\nb: 1", "- ", "-\n- b", "{a: }",
@@ -1469,6 +1488,11 @@ test "empty values, empty documents and stray indicators give an error" {
 
 ///|
 test "line breaks may be CRLF or CR; a byte order mark may start the text; other control characters are rejected" {
+  // No document states the words of "U+<hex> is a control character; write it
+  // as an escape in a double-quoted value", which U+FFFE and U+FFFF get too,
+  // and "U+<hex> is a line break in YAML 1.1 only; write it as an escape in a
+  // double-quoted value"; the maintainer confirmed them as the code has them
+  // on 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   let cases = [
     ("CRLF", "a: 1\r\nb: |\r\n  x\r\n"),
     ("CR", "a: 1\rb: 2"),
@@ -1657,6 +1681,9 @@ fn message(text : String) -> String {
 
 ///|
 test "nesting as deep as the JSON parser allows gives a value; deeper nesting gives an error" {
+  // No document states the words of "nesting is deeper than 1024 levels"; the
+  // maintainer confirmed them as the code has them on 2026-11-26 (the
+  // twenty-seventh round of #275's answers, #323).
   // The JSON parser allows 1024 nested collections.
   let flow = (depth : Int32) => "[".repeat(depth) + "]".repeat(depth)
   assert_eq(@yaml.parse(flow(1024)), @json.parse(flow(1024)))
@@ -1725,6 +1752,9 @@ test "nesting as deep as the JSON parser allows gives a value; deeper nesting gi
 
 ///|
 test "very long scalars and collections give a value, or an error when unterminated" {
+  // No document states the words of "unterminated double-quoted value"; the
+  // maintainer confirmed them as the code has them on 2026-11-26 (the
+  // twenty-seventh round of #275's answers, #323).
   let long = "x".repeat(1_000_000)
   let length = (text : String) => {
     match @yaml.parse(text) {

@@ -324,6 +324,9 @@ let indentation_indicators : Array[String] = [
 
 ///|
 test "in the OpenAPI mode, indentation indicators set a block scalar's indentation, with each chomping indicator" {
+  // No document states the words of "tabs are not allowed in indentation",
+  // which the last case gets; the maintainer confirmed them as the code has
+  // them on 2026-11-26 (the twenty-seventh round of #275's answers, #323).
   inspect(
     openapi_each(indentation_indicators),
     content=(
@@ -456,6 +459,11 @@ test "anchors, aliases, tags, merge keys, duplicate keys, several documents, dir
 
 ///|
 test "malformed text gives the same error in both modes" {
+  // No document states the words of "tabs are not allowed in indentation",
+  // "U+<hex> is a control character; write it as an escape in a double-quoted
+  // value" and "unterminated double-quoted value"; the maintainer confirmed
+  // them as the code has them on 2026-11-26 (the twenty-seventh round of
+  // #275's answers, #323).
   inspect(
     both([
       "", "a:\n\tb: 1", "a: \u{7}", "a: \"abc", "a: [1, 2", "[a, , b]", ": x", "a: |0\n  x",
