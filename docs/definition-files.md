@@ -629,8 +629,8 @@ only a safe subset of YAML (`yaml/`):
 - Plain `true`, `false`, `null` and JSON-syntax numbers are typed; quoted
   scalars are always strings. Any other plain scalar that YAML 1.1 or 1.2
   would type, such as `yes`, `on`, `~`, `True`, `0x1F`, `007`, `1_000`,
-  `.inf` or `2001-12-14`, is rejected with "quote this value". Every other
-  plain scalar is a string.
+  `685.230_15e+03`, `.inf` or `2001-12-14`, is rejected with "quote this
+  value". Every other plain scalar is a string.
 - Anchors, aliases, tags, merge keys, duplicate keys, multiple documents
   and tabs in indentation are rejected. A mapping or a sequence that
   starts on the line of a `-` is indented by the `-` and the white space

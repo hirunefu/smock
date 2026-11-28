@@ -830,6 +830,15 @@ of each GitHub release include its section
   2^30 bytes of an earlier request still held, took the parser's position
   past what an Int32 holds: smock took the request with an empty body, or
   aborted ([smock#433](https://github.com/hirunefu/smock/issues/433)).
+- In a YAML Definition file, a YAML 1.1 float with `_` after its point,
+  such as `685.230_15e+03`, the example of yaml.org's page on floats, is
+  now rejected with "quote this value", as the documents say of every
+  plain value that YAML 1.1 would type: YAML 1.1 tools such as PyYAML read
+  it as a number. smock read it as a string, so a file that loads today
+  may be refused: quote the value. As a key it is rejected with "quote
+  this key", and `smock import-openapi` now quotes such a string. OpenAPI
+  documents are read as before
+  ([smock#438](https://github.com/hirunefu/smock/issues/438)).
 
 ## [0.4.0] - 2026-11-01
 
