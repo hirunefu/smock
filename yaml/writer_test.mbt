@@ -14,6 +14,18 @@ fn written(
 }
 
 ///|
+/// The pointer of the error `write` raises for `value`, or `None` when it
+/// writes `value`. The message is left out: `write`'s doc names each error
+/// and says it comes with the pointer of the value, but words no message.
+fn error_pointer(value : Json) -> String? {
+  try @yaml.write(value) catch {
+    @yaml.WriteError(pointer~, ..) => Some(pointer)
+  } noraise {
+    _ => None
+  }
+}
+
+///|
 test "a tree is written in block style, two spaces per level, quoting only what needs it" {
   let stub = @json.parse(
     (
@@ -336,6 +348,44 @@ test "inside double quotes, quotes, backslashes, line breaks, tabs and other con
   // Keys too.
   let tree = Json::object(Map::from_array(strings.map(s => (s, Json::null()))))
   assert_eq(@yaml.parse(written(tree)), tree)
+  // Every C0 control character, then DEL and every C1 control character:
+  // none is in YAML 1.2.2's c-printable (production 1), and "all
+  // non-printable characters must be escaped" (section 5.7). Each is the
+  // escape of section 5.7's table where it has one (`\0`, `\a`, `\b`, `\t`,
+  // `\n`, `\v`, `\f`, `\r`, `\e`, `\N`), else `\x` and two hexadecimal
+  // digits (production 59), in upper case as `write`'s doc writes `\x01`
+  // and `\uFEFF`.
+  let c0 = StringBuilder()
+  for code in 0x00..<0x20 {
+    c0.write_char(code.unsafe_to_char())
+  }
+  let c1 = StringBuilder()
+  for code in 0x7F..<0xA0 {
+    c1.write_char(code.unsafe_to_char())
+  }
+  let tree = Json::array([
+    Json::string(c0.to_string()),
+    Json::string(c1.to_string()),
+  ])
+  let text = written(tree)
+  inspect(
+    text,
+    content=(
+      #|- "\0\x01\x02\x03\x04\x05\x06\a\b\t\n\v\f\r\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\e\x1C\x1D\x1E\x1F"
+      #|- "\x7F\x80\x81\x82\x83\x84\N\x86\x87\x88\x89\x8A\x8B\x8C\x8D\x8E\x8F\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9A\x9B\x9C\x9D\x9E\x9F"
+      #|
+    ),
+  )
+  assert_eq(@yaml.parse(text), tree)
+  // The first and the last character of each range of c-printable above
+  // U+009F, U+00A0 to U+D7FF, U+E000 to U+FFFD and U+10000 to U+10FFFF,
+  // are written as themselves ("every other character", in `write`'s doc).
+  // The leading space puts the string in double quotes.
+  let edges = " \u{A0}\u{D7FF}\u{E000}\u{FFFD}\u{10000}\u{10FFFF}"
+  let tree = Json::array([Json::string(edges)])
+  let text = written(tree)
+  assert_eq(text, "- \"\{edges}\"\n")
+  assert_eq(@yaml.parse(text), tree)
 }
 
 ///|
@@ -419,6 +469,81 @@ test "a string with an unpaired surrogate is an error at its pointer" {
       $|error /k/\{lone}: U+DC00 is half of a surrogate pair; UTF-8 cannot hold it alone
     ),
   )
+  // U+D800 and U+DFFF, the first and the last code unit of the surrogate
+  // range, are halves of a pair too (YAML 1.2.2's c-printable, production
+  // 1, skips U+D800 to U+DFFF), in a value or a key, alone or at the end of
+  // a string. U+D7FF and U+E000 around the range are characters, written
+  // as themselves (the test of escapes inside double quotes).
+  for unit in [0xD800, 0xDFFF] {
+    let lone = StringBuilder()
+    lone.write_char(unit.unsafe_to_char())
+    let lone = lone.to_string()
+    let tree = Json::array([Json::string("a"), Json::string(lone)])
+    assert_eq(error_pointer(tree), Some("/1"))
+    let tree = Json::object(Map::from_array([("a" + lone, Json::null())]))
+    assert_eq(error_pointer(tree), Some("/a\{lone}"))
+  }
+  // Code units at the edges of the surrogate ranges, after `a`: U+D7FF, the
+  // last unit before them; U+D800 and U+DBFF, the first and the last high
+  // half; U+DC00 and U+DFFF, the first and the last low half; U+E000, the
+  // first unit after them. In UTF-16 a high half followed by a low half is
+  // one character, U+10000 + (high - U+D800) * 0x400 + (low - U+DC00), and
+  // any other half is in error (RFC 2781, section 2.2, steps 2 to 5). Such a
+  // character, and U+D7FF and U+E000, are in YAML 1.2.2's c-printable
+  // (production 1), so they are an ns-char (production 34), which a plain
+  // scalar holds (productions 126 and 130). `write` writes them plain ("plain
+  // when `parse` reads it back, in that place, as the same string", its
+  // doc), in a value and in a key. A half alone is the error, at the pointer
+  // of the value or of the key (`write`'s doc: "a string or key with half of
+  // a surrogate pair, which UTF-8 cannot hold").
+  let cases : Array[(Array[Int32], String?)] = [
+    ([0xD7FF, 0xDBFF], None),
+    ([0xD7FF, 0xDC00], None),
+    ([0xD7FF, 0xDFFF], None),
+    ([0xD7FF, 0xE000], Some("a\u{D7FF}\u{E000}")),
+    ([0xD800, 0xDBFF], None),
+    ([0xD800, 0xDC00], Some("a\u{10000}")),
+    ([0xD800, 0xDFFF], Some("a\u{103FF}")),
+    ([0xD800, 0xE000], None),
+    ([0xDBFF, 0xDBFF], None),
+    ([0xDBFF, 0xDC00], Some("a\u{10FC00}")),
+    ([0xDBFF, 0xDFFF], Some("a\u{10FFFF}")),
+    ([0xDBFF, 0xE000], None),
+    ([0xDC00, 0xDBFF], None),
+    ([0xDC00, 0xDC00], None),
+    ([0xDC00, 0xDFFF], None),
+    ([0xDC00, 0xE000], None),
+    // A high half before a pair that starts with a high half, and a low half
+    // after a pair: alone each time.
+    ([0xD800, 0xDBFF, 0xDC00], None),
+    ([0xDBFF, 0xDBFF, 0xDFFF], None),
+    ([0xD800, 0xDC00, 0xDC00], None),
+  ]
+  for row in cases {
+    let (codes, expected) = row
+    let s = StringBuilder()
+    s.write_char('a')
+    for code in codes {
+      s.write_char(code.unsafe_to_char())
+    }
+    let s = s.to_string()
+    let label = codes
+      .map(code => "U+" + code.to_string(radix=16).to_upper())
+      .join(" ")
+    let value = Json::object({ "k": Json::string(s) })
+    let key = Json::object(Map::from_array([(s, Json::number(1))]))
+    match expected {
+      Some(text) => {
+        assert_eq(s, text)
+        assert_eq(written(value), "k: \{text}\n", msg=label)
+        assert_eq(written(key), "\{text}: 1\n", msg=label)
+      }
+      None => {
+        assert_eq(error_pointer(value), Some("/k"), msg=label)
+        assert_eq(error_pointer(key), Some("/\{s}"), msg=label)
+      }
+    }
+  }
 }
 
 ///|
@@ -462,6 +587,23 @@ test "a tree nested deeper than the parser accepts is an error, never written" {
     "error \{segments("0", 1024)}: nesting is deeper than 1024 levels",
     content="true",
   )
+  // Leaving a collection gives its level back (`write`'s doc: the limit is
+  // 1024 nested collections, empty ones included, the limit of `parse`).
+  // After a mapping, a sequence, `{}` or `[]`, the next item nests as deep
+  // as the first could: 1024 collections with the sequence around both,
+  // and the 1025th is the error, at its pointer.
+  for
+    before in [
+      Json::object({ "a": Json::number(1) }),
+      Json::array([Json::number(1)]),
+      Json::object({}),
+      Json::array([]),
+    ] {
+    let tree = Json::array([before, nested(1023, Json::number(1))])
+    assert_eq(@yaml.parse(written(tree)), tree)
+    let tree = Json::array([before, nested(1024, Json::number(1))])
+    assert_eq(error_pointer(tree), Some("/1\{segments("0", 1023)}"))
+  }
 }
 
 ///|
@@ -607,6 +749,27 @@ test "in a comment, control characters and the line breaks of YAML 1.1 become sp
       #|
     ),
   )
+  assert_eq(@yaml.parse(text), Json::array([Json::number(1)]))
+  // A half of a surrogate pair alone is no character YAML allows (YAML
+  // 1.2.2's c-printable, production 1, skips U+D800 to U+DFFF), so it
+  // becomes a space, as `write`'s doc says of "the other characters that
+  // YAML does not allow": U+D800 and U+DBFF, the first and the last high
+  // half, and U+DC00 and U+DFFF, the first and the last low half, each
+  // before a `|`. The first and the last character of each range of
+  // c-printable above U+009F, U+00A0 to U+D7FF, U+E000 to U+FFFD and U+10000
+  // to U+10FFFF, are characters YAML allows in a comment (nb-char,
+  // production 27, in c-nb-comment-text, production 75), and stay.
+  let halves = StringBuilder()
+  for code in [0xD800, 0xDBFF, 0xDC00, 0xDFFF] {
+    halves.write_char(code.unsafe_to_char())
+    halves.write_char('|')
+  }
+  let edges = "\u{A0}\u{D7FF}\u{E000}\u{FFFD}\u{10000}\u{10FFFF}|"
+  let text = written(Json::array([Json::number(1)]), comment=[
+    halves.to_string(),
+    edges,
+  ])
+  assert_eq(text, "#  | | | |\n# \{edges}\n- 1\n")
   assert_eq(@yaml.parse(text), Json::array([Json::number(1)]))
 }
 
