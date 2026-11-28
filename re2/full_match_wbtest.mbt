@@ -620,6 +620,20 @@ test "a regex whose DFA would outgrow its budget drops it and gets the same resu
   // 12 + 7 + 4 * 8183 + 8 + 9 = 32768, reached by a state: kept.
   assert_false(at_budget.full_match(spread("b", 8183, "aa")[:]))
   assert_true(at_budget.dfa is Built(_))
+  // At the budget, what the DFA has built already costs nothing more. Each
+  // set of threads is one state (the README's "Linear time"), whose next
+  // states are computed once and then looked up (the comment at the top of
+  // re2/dfa.mbt). After `\n`, which `.` does not match, no thread is left:
+  // the dead state, which Dfa::new builds. U+007F is ASCII, so the table
+  // gives its next state (the doc comments of `byte_class` and `table`), in
+  // the start state's row that `b` began. U+0100 after `b` is in the map
+  // already (of `wide`), from the input before.
+  assert_false(at_budget.full_match(b"\n"[:]))
+  assert_true(at_budget.dfa is Built(_))
+  assert_false(at_budget.full_match(b"\x7f"[:]))
+  assert_true(at_budget.dfa is Built(_))
+  assert_false(at_budget.full_match(spread("b", 1, "")[:]))
+  assert_true(at_budget.dfa is Built(_))
   let entry_at_budget = compile(".*aaaa")
   // 12 + 7 + 4 * 8182 + 8 + 9 + 4 = 32768, reached by an entry of the map:
   // a character beyond ASCII after `aa` is new to the state `aa` reached.
