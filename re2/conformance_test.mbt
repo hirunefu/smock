@@ -30,6 +30,10 @@ let rows : Array[(String, String, String, Bool)] = [
   ("a{1, 2}", "a{1, 2}", "0-7", true),
   ("}", "}", "0-1", true),
   ("]", "]", "0-1", true),
+  // U+0000, the first character, is a literal like any other: a run of it
+  // stops before the U+0001 that follows
+  ("\u{0}+", "\u{0}\u{0}\u{1}", "0-2", false),
+  ("\u{0}+", "\u{0}\u{0}\u{0}", "0-3", true),
   // . matches one code point other than \n
   (".", "a", "0-1", true),
   (".", "", "none", false),
@@ -69,6 +73,14 @@ let rows : Array[(String, String, String, Bool)] = [
   ("[.]", ".", "0-1", true),
   ("[[:alpha]", "p", "0-1", true),
   ("[[:alpha]", "b", "none", false),
+  // The ends of ASCII: a class without U+0000 does not match it, and U+007F,
+  // the last ASCII character, is outside the printable range ` -~`
+  ("[^\u{0}]*", "a\u{0}", "0-1", false),
+  ("[^\u{0}]*", "ab", "0-2", true),
+  ("[ -~]+", "~~\u{7f}", "0-2", false),
+  ("[ -~]+", "~~", "0-2", true),
+  ("[^ -~]+", "\u{7f}\u{7f}~", "0-2", false),
+  ("[^ -~]+", "\u{7f}\u{7f}", "0-2", true),
   // Perl classes, ASCII only, also inside brackets
   ("\\d", "7", "0-1", true),
   ("\\d", "a", "none", false),
@@ -333,6 +345,10 @@ fn repr(s : String) -> String {
       '\r' => b.write_string("\\r")
       '"' => b.write_string("\\\"")
       '\\' => b.write_string("\\\\")
+      // Other controls, U+0000 and U+007F among them, as escapes, so that a
+      // failure shows them.
+      _ if c < ' ' || c == '\u{7f}' =>
+        b.write_string("\\u{\{c.to_int().to_string(radix=16)}}")
       _ => b.write_char(c)
     }
   }
