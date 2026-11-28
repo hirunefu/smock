@@ -630,10 +630,14 @@ only a safe subset of YAML (`yaml/`):
   scalars are always strings. Any other plain scalar that YAML 1.1 or 1.2
   would type, such as `yes`, `on`, `~`, `True`, `0x1F`, `007`, `1_000`,
   `685.230_15e+03`, `.inf` or `2001-12-14`, is rejected with "quote this
-  value". Every other plain scalar is a string. Points with no digit are
-  strings too, with or without a sign before them and an exponent after
-  them, such as `.`, `..`, `+.`, `.e+1` or `.e3`: they hold no number,
-  though YAML 1.1's pattern for floats matches some of them.
+  value". So is one with `_` after its point, such as `._5` or `1._.5`,
+  that yaml.org's pattern for YAML 1.1 floats matches once the `_` between
+  its point and any exponent are left out, as that page says they are,
+  and that has a digit outside its exponent, though PyYAML reads some of
+  these as strings. Every other plain scalar is a string. Points with no
+  digit are strings too, with or without a sign before them and an
+  exponent after them, such as `.`, `..`, `+.`, `.e+1` or `.e3`: they hold
+  no number, though YAML 1.1's pattern for floats matches some of them.
 - Anchors, aliases, tags, merge keys, duplicate keys, multiple documents
   and tabs in indentation are rejected. A mapping or a sequence that
   starts on the line of a `-` is indented by the `-` and the white space

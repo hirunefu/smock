@@ -203,6 +203,10 @@ Values without quotes are typed by the YAML 1.2 core schema:
 | `007`, `+1`, `.5`, `0x1F`, `0o17` | a number: 7, 1, 0.5, 31 and 15 |
 | `yes`, `no`, `on`, `off`, `2020-01-01`, `1_000` | a string |
 
+Points with no digit, with or without a sign before them and an exponent
+after them, such as `.`, `..`, `+.` or `.e3`, are strings too: a number of
+the core schema has a digit.
+
 Every key is a string, as OpenAPI asks, so an unquoted `200:` is the
 response key `"200"`. This document imports as if it were written in JSON
 with the key `"200"`:

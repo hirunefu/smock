@@ -46,10 +46,19 @@ pub impl Show for ParseError with fn output(self, logger) {
 /// plain scalar that YAML 1.1 or 1.2 would type is rejected with "quote
 /// this value": `yes`, `no`, `on`, `off`, `y` and `n` in any case, `~`,
 /// other spellings of `true`, `false` and `null` such as `True` or `NULL`,
-/// numbers such as `0x1F`, `0o17`, `007`, `1_000`, `+1`, `.5`, `.inf`,
-/// `.nan` and `1:30`, and timestamps such as `2001-12-14`. Every other plain
-/// scalar is a string. Mapping keys are strings, so a plain key that is not
-/// a string in every YAML version is rejected with "quote this key".
+/// numbers such as `0x1F`, `0o17`, `007`, `1_000`, `+1`, `.5`,
+/// `685.230_15e+03`, `.inf`, `.nan` and `1:30`, and timestamps such as
+/// `2001-12-14`. So is a plain scalar with `_` after its point, such as
+/// `._5` or `1._.5`, that yaml.org's pattern for YAML 1.1 floats
+/// (`[-+]?([0-9][0-9_]*)?\.[0-9.]*([eE][-+][0-9]+)?`) matches once the `_`
+/// between its point and any exponent are left out, as that page says they
+/// are, and that has a digit outside its exponent, though PyYAML reads some
+/// of these as strings. Every other plain scalar is a string, and so are
+/// points with no digit, with or without a sign before them and an exponent
+/// after them, such as `.`, `..`, `+.` or `.e3`, though YAML 1.1's pattern
+/// for floats matches some of them. Mapping keys are strings, so a plain key
+/// that is not a string in every YAML version is rejected with "quote this
+/// key".
 ///
 /// Rejected, each with a message naming it: anchors, aliases, tags, merge
 /// keys (`<<`), duplicate keys, multiple documents, directives, explicit
