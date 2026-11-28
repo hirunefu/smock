@@ -146,6 +146,21 @@ test "matching goes on around bytes that are not well-formed UTF-8" {
   inspect(on_bytes("a", b"\xf1a\x80\x80"), content="search 1-2, full false")
   inspect(on_bytes("a", b"\xf1\x80a\x80"), content="search 2-3, full false")
   inspect(on_bytes("a", b"\xf1\x80\x80a"), content="search 3-4, full false")
+  // An empty match right after a byte that is not part of well-formed UTF-8,
+  // which search's doc comment allows ("a match may end just before it or
+  // start just after it"): F5 is never a lead byte, and F4 is none before
+  // 90 (RFC 3629, section 4), so neither starts a character with the bytes
+  // after it, and `\B` holds between it and the next byte. RE2 gives the
+  // same, though it reads F4 90 80 80 as one character (the README's
+  // "Differences from RE2"), since it finds empty matches between any bytes.
+  inspect(
+    on_bytes("\\B", b"a\xf5\x80\x80\x80"),
+    content="search 2-2, full false",
+  )
+  inspect(
+    on_bytes("\\B", b"a\xf4\x90\x80\x80"),
+    content="search 2-2, full false",
+  )
 }
 
 ///|
