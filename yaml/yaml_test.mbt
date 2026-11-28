@@ -1206,6 +1206,31 @@ test "malformed indentation gives an error at the deepest node reached, or a val
       #|"- |\n  \n\n text" -> error /0: a leading empty line of a block scalar has more spaces than its first line
     ),
   )
+  // A block scalar at the top of the document ends at the first line of
+  // text with fewer spaces than its content: "The content indentation
+  // level is equal to the number of leading spaces on the first non-empty
+  // line" (YAML 1.2.2, section 8.1.1.1), here one, and a line of text is
+  // that many spaces and then any characters (`s-indent(n) nb-char+`,
+  // section 8.1.2). `b` then follows the document's one node, and a bare
+  // document can be followed only after `...` or by a `---` (`l-yaml-stream`,
+  // production 211), so the text is an error, at the whole document, the
+  // deepest node reached (`ParseError`); PyYAML 6.0.3 refuses both texts
+  // too. No document states the message, so only the pointer is shown.
+  let pointer = (text : String) => {
+    try @yaml.parse(text) catch {
+      @yaml.ParseError(pointer~, ..) =>
+        "\{text.escape()} -> error at \"\{pointer}\""
+    } noraise {
+      tree => "\{text.escape()} -> \{tree.stringify()}"
+    }
+  }
+  inspect(
+    ["|\n a\nb\n", "--- >\n a\nb\n"].map(pointer).join("\n"),
+    content=(
+      #|"|\n a\nb\n" -> error at ""
+      #|"--- >\n a\nb\n" -> error at ""
+    ),
+  )
 }
 
 ///|
@@ -1347,6 +1372,16 @@ test "tabs in indentation give an error; tabs elsewhere are white space" {
       #|"a:\n  b: |\n    x\n  \t\n" -> error /a/b: tabs are not allowed in indentation
       #|"a: |\n  x\n \n" -> {"a":"x\n"}
       #|"a: |\n  x\n# end\n \t\n" -> {"a":"x\n"}
+    ),
+  )
+  // The same at the top of the document, where the scalar has no parent
+  // and its content is indented by one space: the tab comes before that
+  // space, so it is in the indentation, and the error names the whole
+  // document, the deepest node reached (`ParseError`).
+  inspect(
+    each(["|\n a\n\t\n"]),
+    content=(
+      #|"|\n a\n\t\n" -> error : tabs are not allowed in indentation
     ),
   )
   // "Both the "-" indicator and the following spaces are considered to be
