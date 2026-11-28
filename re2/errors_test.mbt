@@ -112,6 +112,14 @@ test "syntax RE2 does not have is rejected as not RE2 syntax" {
       #|[\C] => position 1: escape \C inside a character class is not RE2 syntax
     ),
   )
+  // U+0080, the first code point past ASCII, escaped is no escape RE2
+  // defines (RE2 2024-07-02 through google-re2 1.1.20240702: "invalid escape
+  // sequence"), while U+007F escaped stands for itself (the conformance
+  // table).
+  inspect(
+    error_of("\\\u{80}"),
+    content="position 0: escape \\\u{80} is not RE2 syntax",
+  )
 }
 
 ///|
