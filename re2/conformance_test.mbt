@@ -88,6 +88,12 @@ let rows : Array[(String, String, String, Bool)] = [
   ("[.]", ".", "0-1", true),
   ("[[:alpha]", "p", "0-1", true),
   ("[[:alpha]", "b", "none", false),
+  // A POSIX class starts with [ and : together and ends at the first :
+  // followed by ]: otherwise [ and : are literals
+  ("[[a:]]", "a]", "0-2", true),
+  ("[[a:]]", "]", "none", false),
+  ("[a::]]", ":]", "0-2", true),
+  ("[[:a:x]", "x", "0-1", true),
   // Perl classes, ASCII only, also inside brackets
   ("\\d", "7", "0-1", true),
   ("\\d", "a", "none", false),
