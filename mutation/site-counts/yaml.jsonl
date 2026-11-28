@@ -1,6 +1,7 @@
 {"file":"yaml/parser.mbt","definition":"MAX_DEPTH","text":"ab285eb1ff1071f9","pinned":{"INT":1},"full":{"INT":3}}
 {"file":"yaml/parser.mbt","definition":"Parser::enter","text":"05963af869473f3b","pinned":{"BODY":1,"ROR":1,"IFC":1,"DEL":2,"AOR":1,"INT":1,"STR":1},"full":{"BODY":1,"ROR":1,"IFC":2,"DEL":2,"AOR":1,"INT":2,"STR":2}}
 {"file":"yaml/parser.mbt","definition":"Parser::Parser","text":"caa1cf5d9463d63c","pinned":{"IFC":2,"LCR":1,"DEL":1,"INT":5,"STR":1},"full":{"IFC":4,"LCR":1,"DEL":1,"INT":8,"STR":1}}
+{"file":"yaml/parser.mbt","definition":"BYTE_ORDER_MARK","text":"51e6db1fe2c5f658","pinned":{"STR":1},"full":{"STR":2}}
 {"file":"yaml/parser.mbt","definition":"EMPTY_VALUE","text":"0a33b196dd5e5809","pinned":{"STR":1},"full":{"STR":2}}
 {"file":"yaml/parser.mbt","definition":"Parser::empty_value","text":"526aea5352730683","pinned":{"BODY":1,"IFC":1,"NOT":1,"DEL":1},"full":{"BODY":1,"IFC":2,"NOT":1,"DEL":1}}
 {"file":"yaml/parser.mbt","definition":"Parser::check_characters","text":"c1d5c0fbf4329181","pinned":{"BODY":1,"ROR":3,"IFC":3,"LCR":7,"NOT":1,"DEL":1,"AOR":2,"INT":18,"STR":5},"full":{"BODY":1,"ROR":3,"IFC":5,"LCR":7,"NOT":1,"DEL":1,"AOR":2,"INT":30,"STR":9}}
@@ -21,7 +22,7 @@
 {"file":"yaml/parser.mbt","definition":"Parser::key_pointer","text":"5709a107d59835cc","pinned":{"BODY":1,"IFC":5,"LCR":2,"NOT":1,"DEL":1,"STR":8},"full":{"BODY":1,"IFC":9,"LCR":2,"NOT":1,"DEL":1,"STR":16}}
 {"file":"yaml/parser.mbt","definition":"Parser::plain_value","text":"56d3f57e91c76d9e","pinned":{"BODY":1,"IFC":1,"STR":2},"full":{"BODY":1,"IFC":2,"STR":4}}
 {"file":"yaml/parser.mbt","definition":"Parser::at_key_indicator","text":"4333b90455df1154","pinned":{"BODY":1,"LCR":1,"INT":1},"full":{"BODY":1,"LCR":1,"INT":2}}
-{"file":"yaml/parser.mbt","definition":"Parser::scalar","text":"054fdcbbf93f701e","pinned":{"IFC":1,"DEL":1,"BOOL":2},"full":{"IFC":2,"DEL":1,"BOOL":2}}
+{"file":"yaml/parser.mbt","definition":"Parser::scalar","text":"8dceda11b81cfac3","pinned":{"IFC":2,"DEL":2,"BOOL":2},"full":{"IFC":4,"DEL":2,"BOOL":2}}
 {"file":"yaml/parser.mbt","definition":"Parser::scalar_value","text":"ad78ec89b445dd9a","pinned":{"BODY":1,"IFC":1},"full":{"BODY":1,"IFC":2}}
 {"file":"yaml/parser.mbt","definition":"Parser::quoted","text":"53cf93e48f5d8248","pinned":{"BODY":1,"ROR":2,"IFC":8,"LCR":2,"DEL":14,"BOOL":3,"INT":11,"STR":3},"full":{"BODY":1,"ROR":2,"IFC":16,"LCR":2,"DEL":14,"BOOL":3,"INT":16,"STR":6}}
 {"file":"yaml/parser.mbt","definition":"Parser::next_quoted_line","text":"6da3ab23a11da297","pinned":{"BODY":1,"AOR":1,"INT":2,"STR":1},"full":{"BODY":1,"AOR":1,"INT":4,"STR":2}}

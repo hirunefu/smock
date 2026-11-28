@@ -1505,6 +1505,47 @@ test "line breaks may be CRLF or CR; a byte order mark may start the text; other
       #|U+10FFFF -> read as written
     ),
   )
+  // A byte order mark (U+FEFF, shown here as <U+FEFF>) is dropped only as
+  // the text's first character. YAML 1.2.2 allows one before a document
+  // ("l-document-prefix ::= c-byte-order-mark? l-comment*", production
+  // 202) and inside quoted scalars ("byte order marks are also allowed
+  // inside quoted scalars", section 5.2), and nowhere else: "A BOM must not
+  // appear inside a document" (Example 5.2), and a plain scalar is made of
+  // nb-char, which excludes it (production 27). Two marks at the start are
+  // two document prefixes in YAML 1.2.2 (production 211), and PyYAML reads
+  // the second as text. So that the safe subset reads no text that parsers
+  // read differently, the maintainer decided on 2026-11-26 (#437, the
+  // twenty-seventh round of #275's answers) that a mark outside quotes that
+  // is not the text's first character is rejected: a second mark at the
+  // start, and a mark inside a document. The pointer is the deepest node
+  // reached, as `ParseError` documents; the message is put to the
+  // maintainer (#437). Inside quotes, the mark is text.
+  let visible = (text : String) => {
+    text.replace_all(old="\u{FEFF}", new="<U+FEFF>")
+  }
+  inspect(
+    visible(
+      each([
+        "\u{FEFF}\u{FEFF}a: 1", "a: x\u{FEFF}y", "- \u{FEFF}a", "a\u{FEFF}: 1", "a: 1\nb\u{FEFF}: 2",
+        "[a, \u{FEFF}b]", "{a: 1, \u{FEFF}b: 2}", "a: x\n  \u{FEFF}y", "a: \"x\u{FEFF}y\"",
+        "a: 'x\u{FEFF}y'", "\"a\u{FEFF}\": 1", "\u{FEFF}\"\u{FEFF}a\": \"\u{FEFF}\"",
+      ]),
+    ),
+    content=(
+      #|"<U+FEFF><U+FEFF>a: 1" -> error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: x<U+FEFF>y" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"- <U+FEFF>a" -> error /0: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a<U+FEFF>: 1" -> error : U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: 1\nb<U+FEFF>: 2" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"[a, <U+FEFF>b]" -> error /1: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"{a: 1, <U+FEFF>b: 2}" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: x\n  <U+FEFF>y" -> error /a: U+FEFF is a byte order mark; write it as an escape in a double-quoted value
+      #|"a: \"x<U+FEFF>y\"" -> {"a":"x<U+FEFF>y"}
+      #|"a: 'x<U+FEFF>y'" -> {"a":"x<U+FEFF>y"}
+      #|"\"a<U+FEFF>\": 1" -> {"a<U+FEFF>":1}
+      #|"<U+FEFF>\"<U+FEFF>a\": \"<U+FEFF>\"" -> {"<U+FEFF>a":"<U+FEFF>"}
+    ),
+  )
 }
 
 ///|

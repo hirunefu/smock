@@ -56,6 +56,13 @@ fn Parser::Parser(text : StringView, openapi~ : Bool) -> Parser {
 }
 
 ///|
+/// What a byte order mark (U+FEFF) outside a quoted scalar is rejected
+/// with, unless it is the first character of the text, which `Parser`
+/// drops. YAML 1.2.2 allows one only before a document and inside quoted
+/// scalars (section 5.2).
+const BYTE_ORDER_MARK : String = "U+FEFF is a byte order mark; write it as an escape in a double-quoted value"
+
+///|
 /// What an empty value, which YAML reads as null, is rejected with in the
 /// safe subset.
 const EMPTY_VALUE : String = "empty value: write null, or \"\" for an empty string"
@@ -439,6 +446,9 @@ fn Parser::scalar(
   } else {
     self.check_node_start(flow~)
     let (text, multiline) = self.plain(parent, flow~)
+    if text.contains_char('\u{FEFF}') {
+      self.fail(BYTE_ORDER_MARK)
+    }
     { text, quoted: false, multiline, }
   }
 }
