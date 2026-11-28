@@ -27,6 +27,40 @@ test "classes and . consume one code point of any length" {
   inspect(on("\\W+", "a€😀b"), content="search 1-8, full false")
   inspect(on("€", "a€b"), content="search 1-4, full false")
   inspect(on("[€-€]", "€"), content="search 0-3, full true")
+  // The first and last code point of each kind of well-formed sequence of
+  // one to three bytes that RFC 3629, section 4, lists (UTF8-1, UTF8-2 and
+  // the four kinds of UTF8-3, around the surrogates U+D800 to U+DFFF, which
+  // UTF-8 does not encode). The same results as RE2.
+  inspect(on("^.$", "\u{0}"), content="search 0-1, full true")
+  inspect(on("^.$", "\u{7F}"), content="search 0-1, full true")
+  inspect(on("^.$", "\u{80}"), content="search 0-2, full true")
+  inspect(on("^.$", "\u{7FF}"), content="search 0-2, full true")
+  inspect(on("^.$", "\u{800}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{FFF}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{1000}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{CFFF}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{D000}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{D7FF}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{E000}"), content="search 0-3, full true")
+  inspect(on("^.$", "\u{FFFF}"), content="search 0-3, full true")
+  // The first and last code point of each of the three kinds of well-formed
+  // sequence of four bytes that RFC 3629, section 4, lists in UTF8-4 (F0
+  // then 90 to BF, F1 to F3 then 80 to BF, F4 then 80 to 8F, each followed
+  // by two bytes of 80 to BF). The same results as RE2.
+  inspect(on("^.$", "\u{10000}"), content="search 0-4, full true")
+  inspect(on("^.$", "\u{3FFFF}"), content="search 0-4, full true")
+  inspect(on("^.$", "\u{40000}"), content="search 0-4, full true")
+  inspect(on("^.$", "\u{FFFFF}"), content="search 0-4, full true")
+  inspect(on("^.$", "\u{100000}"), content="search 0-4, full true")
+  inspect(on("^.$", "\u{10FFFF}"), content="search 0-4, full true")
+  // Each is the code point its four bytes encode, so a literal of it matches
+  // it. The same results as RE2.
+  inspect(on("\u{10000}", "\u{10000}"), content="search 0-4, full true")
+  inspect(on("\u{3FFFF}", "\u{3FFFF}"), content="search 0-4, full true")
+  inspect(on("\u{40000}", "\u{40000}"), content="search 0-4, full true")
+  inspect(on("\u{FFFFF}", "\u{FFFFF}"), content="search 0-4, full true")
+  inspect(on("\u{100000}", "\u{100000}"), content="search 0-4, full true")
+  inspect(on("\u{10FFFF}", "\u{10FFFF}"), content="search 0-4, full true")
 }
 
 ///|
@@ -44,6 +78,46 @@ test "bytes that are not well-formed UTF-8 match nothing that consumes a charact
   inspect(on_bytes(".", b"\xe2\x84"), content="search none, full false")
   inspect(on_bytes("(?s).", b"\xc0\x80"), content="search none, full false")
   inspect(on_bytes("\u{FFFD}", b"\xff"), content="search none, full false")
+  // One byte off a well-formed sequence of RFC 3629, section 4: C1, just
+  // below UTF8-2's first lead byte C2, and C0, just above the range a byte
+  // after a lead byte may take (A0 to BF after E0, 80 to BF otherwise), as
+  // the second byte of a sequence of two and of three bytes and as the third
+  // byte of three. The same results as RE2.
+  inspect(on_bytes("(?s).", b"\xc1\xbf"), content="search none, full false")
+  inspect(on_bytes("(?s).", b"\xc2\xc0"), content="search none, full false")
+  inspect(on_bytes("(?s).", b"\xe0\xc0\x80"), content="search none, full false")
+  inspect(on_bytes("(?s).", b"\xe1\xc0\x80"), content="search none, full false")
+  inspect(on_bytes("(?s).", b"\xe1\x80\xc0"), content="search none, full false")
+  // One byte off a well-formed sequence of four bytes of RFC 3629, section
+  // 4: C0, just above the range a byte after a lead byte may take (90 to BF
+  // after F0, 80 to BF after F1 to F3), as the second byte after F0 and F1
+  // and as the third and fourth byte; F5, just above UTF8-4's last lead
+  // byte F4; and four bytes 80, which only follow a lead byte. The same
+  // results as RE2.
+  inspect(
+    on_bytes("(?s).", b"\xf0\xc0\x80\x80"),
+    content="search none, full false",
+  )
+  inspect(
+    on_bytes("(?s).", b"\xf1\xc0\x80\x80"),
+    content="search none, full false",
+  )
+  inspect(
+    on_bytes("(?s).", b"\xf1\x80\xc0\x80"),
+    content="search none, full false",
+  )
+  inspect(
+    on_bytes("(?s).", b"\xf1\x80\x80\xc0"),
+    content="search none, full false",
+  )
+  inspect(
+    on_bytes("(?s).", b"\xf5\x80\x80\x80"),
+    content="search none, full false",
+  )
+  inspect(
+    on_bytes("(?s).", b"\x80\x80\x80\x80"),
+    content="search none, full false",
+  )
 }
 
 ///|
@@ -60,6 +134,33 @@ test "matching goes on around bytes that are not well-formed UTF-8" {
   inspect(on_bytes("a\\b", b"a\xff"), content="search 0-1, full false")
   inspect(on_bytes("\\b", b"\xffa"), content="search 1-1, full false")
   inspect(on_bytes("\\B", b"\xff"), content="search 0-0, full false")
+  // A lead byte of three bytes, then a character where a continuation byte
+  // must come (RFC 3629, section 4), then a continuation byte: the lead
+  // byte alone is not a character, and the character after it is found.
+  // The same result as RE2.
+  inspect(on_bytes("a", b"\xe1a\x80"), content="search 1-2, full false")
+  // The same with a lead byte of four bytes, the character as the second,
+  // third or fourth byte: no byte before the character is part of a
+  // well-formed sequence, and the character is found. The same results as
+  // RE2.
+  inspect(on_bytes("a", b"\xf1a\x80\x80"), content="search 1-2, full false")
+  inspect(on_bytes("a", b"\xf1\x80a\x80"), content="search 2-3, full false")
+  inspect(on_bytes("a", b"\xf1\x80\x80a"), content="search 3-4, full false")
+  // An empty match right after a byte that is not part of well-formed UTF-8,
+  // which search's doc comment allows ("a match may end just before it or
+  // start just after it"): F5 is never a lead byte, and F4 is none before
+  // 90 (RFC 3629, section 4), so neither starts a character with the bytes
+  // after it, and `\B` holds between it and the next byte. RE2 gives the
+  // same, though it reads F4 90 80 80 as one character (the README's
+  // "Differences from RE2"), since it finds empty matches between any bytes.
+  inspect(
+    on_bytes("\\B", b"a\xf5\x80\x80\x80"),
+    content="search 2-2, full false",
+  )
+  inspect(
+    on_bytes("\\B", b"a\xf4\x90\x80\x80"),
+    content="search 2-2, full false",
+  )
 }
 
 ///|
