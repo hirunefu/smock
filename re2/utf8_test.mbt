@@ -88,6 +88,36 @@ test "bytes that are not well-formed UTF-8 match nothing that consumes a charact
   inspect(on_bytes("(?s).", b"\xe0\xc0\x80"), content="search none, full false")
   inspect(on_bytes("(?s).", b"\xe1\xc0\x80"), content="search none, full false")
   inspect(on_bytes("(?s).", b"\xe1\x80\xc0"), content="search none, full false")
+  // One byte off a well-formed sequence of four bytes of RFC 3629, section
+  // 4: C0, just above the range a byte after a lead byte may take (90 to BF
+  // after F0, 80 to BF after F1 to F3), as the second byte after F0 and F1
+  // and as the third and fourth byte; F5, just above UTF8-4's last lead
+  // byte F4; and four bytes 80, which only follow a lead byte. The same
+  // results as RE2.
+  inspect(
+    on_bytes("(?s).", b"\xf0\xc0\x80\x80"),
+    content="search none, full false",
+  )
+  inspect(
+    on_bytes("(?s).", b"\xf1\xc0\x80\x80"),
+    content="search none, full false",
+  )
+  inspect(
+    on_bytes("(?s).", b"\xf1\x80\xc0\x80"),
+    content="search none, full false",
+  )
+  inspect(
+    on_bytes("(?s).", b"\xf1\x80\x80\xc0"),
+    content="search none, full false",
+  )
+  inspect(
+    on_bytes("(?s).", b"\xf5\x80\x80\x80"),
+    content="search none, full false",
+  )
+  inspect(
+    on_bytes("(?s).", b"\x80\x80\x80\x80"),
+    content="search none, full false",
+  )
 }
 
 ///|
