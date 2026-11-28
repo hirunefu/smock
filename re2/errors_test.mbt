@@ -226,4 +226,16 @@ test "malformed patterns are rejected where the problem is" {
     error_of("(?P<\u{7f}>x)"),
     content="position 0: invalid named capture group (?P<\u{7f}>",
   )
+  // A POSIX class's name is one of RE2's, between [: and :]. An empty name,
+  // or one that differs from RE2's in case or length, makes an invalid
+  // class, as RE2 2024-07-02 says ("invalid character class range: [::]",
+  // and so for [:Word:] and [:words:]).
+  inspect(
+    errors(["[[::]]", "[[:Word:]]", "[[:words:]]"]),
+    content=(
+      #|[[::]] => position 1: invalid POSIX class [::]
+      #|[[:Word:]] => position 1: invalid POSIX class [:Word:]
+      #|[[:words:]] => position 1: invalid POSIX class [:words:]
+    ),
+  )
 }
