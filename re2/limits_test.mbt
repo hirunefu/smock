@@ -52,6 +52,15 @@ test "nested repetition counts may multiply to at most 1000, as in RE2" {
       #|x(?:a{2,}b{3}){334} => position 14: nested repetition counts multiply to more than 1000 at {334}
     ),
   )
+  // Only counted repetitions multiply: an empty group, an assertion, a
+  // sequence and an alternation repeated 1000 times compile, as in RE2
+  // (RE2 2024-07-02 through google-re2 1.1.20240702).
+  for
+    pattern in [
+      "(?:){1000}", "(?:^a|\\b){1000}", "(?:ab){1000}", "(?:a|b){1000}", "(?:(?:ab){10}){100}",
+    ] {
+    @re2.compile(pattern) |> ignore
+  }
 }
 
 ///|
@@ -86,5 +95,18 @@ test "groups may nest 100 deep" {
   inspect(
     error_of("x" + repeat("(?i:", 101) + "a" + repeat(")", 101)),
     content="position 401: groups nest more than 100 deep",
+  )
+  // Nesting counts the groups open at a place (the README: "groups nest at
+  // most 100 deep"), not the groups before it: 101 groups one after another
+  // compile, and a group closed before 100 nested ones leaves room for them
+  // and none more.
+  assert_true(
+    @re2.compile(repeat("(a)", 101)).full_match(ascii(repeat("a", 101))),
+  )
+  let after_one = "(a)" + repeat("(", 100) + "a" + repeat(")", 100)
+  assert_true(@re2.compile(after_one).full_match(ascii("aa")))
+  inspect(
+    error_of("(a)" + repeat("(", 101) + "a" + repeat(")", 101)),
+    content="position 103: groups nest more than 100 deep",
   )
 }

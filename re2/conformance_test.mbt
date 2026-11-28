@@ -30,6 +30,20 @@ let rows : Array[(String, String, String, Bool)] = [
   ("a{1, 2}", "a{1, 2}", "0-7", true),
   ("}", "}", "0-1", true),
   ("]", "]", "0-1", true),
+  // U+0000 is a character like any other: alone, in a class, escaped
+  ("a\u{0}b", "a\u{0}b", "0-3", true),
+  ("a\u{0}b", "ab", "none", false),
+  ("[\u{0}]", "\u{0}", "0-1", true),
+  ("\\\u{0}", "\u{0}", "0-1", true),
+  // A count of 10^9 or more is no count, so its { is a literal
+  ("a{1000000000}", "a{1000000000}", "0-13", true),
+  ("a{1,1000000000}", "a{1,1000000000}", "0-15", true),
+  ("a{1000000000,}", "a{1000000000,}", "0-14", true),
+  // U+007F, the last ASCII code point, escaped stands for itself, alone and
+  // in a class
+  ("\\\u{7f}", "\u{7f}", "0-1", true),
+  ("\\\u{7f}", "~", "none", false),
+  ("[\\\u{7f}]", "\u{7f}", "0-1", true),
   // . matches one code point other than \n
   (".", "a", "0-1", true),
   (".", "", "none", false),
@@ -41,6 +55,11 @@ let rows : Array[(String, String, String, Bool)] = [
   ("a.c", "a😀c", "0-6", true),
   ("...", "a😀c", "0-6", true),
   ("\\.", "a", "none", false),
+  // The first and the last code point, and those on either side of \n
+  (".", "\u{0}", "0-1", true),
+  (".", "\t", "0-1", true),
+  (".", "\u{0b}", "0-1", true),
+  (".", "\u{10FFFF}", "0-4", true),
   // Bracket classes: ranges, negation, ] and - as literals
   ("[abc]", "b", "0-1", true),
   ("[abc]", "d", "none", false),
@@ -69,6 +88,12 @@ let rows : Array[(String, String, String, Bool)] = [
   ("[.]", ".", "0-1", true),
   ("[[:alpha]", "p", "0-1", true),
   ("[[:alpha]", "b", "none", false),
+  // A POSIX class starts with [ and : together and ends at the first :
+  // followed by ]: otherwise [ and : are literals
+  ("[[a:]]", "a]", "0-2", true),
+  ("[[a:]]", "]", "none", false),
+  ("[a::]]", ":]", "0-2", true),
+  ("[[:a:x]", "x", "0-1", true),
   // Perl classes, ASCII only, also inside brackets
   ("\\d", "7", "0-1", true),
   ("\\d", "a", "none", false),
@@ -218,6 +243,17 @@ let rows : Array[(String, String, String, Bool)] = [
   ("(?:$)*a", "a", "0-1", true),
   ("(?:^)+a", "ba", "none", false),
   ("(?:\\b)*a", "a", "0-1", true),
+  // A sequence can match empty when each of its parts can
+  ("(?:a*?b*?)*", "ab", "0-0", true),
+  ("(a??b??)*", "ab", "0-0", true),
+  ("(?:(?:|a)(?:|b))*", "ab", "0-0", true),
+  ("(?:a*?b*?)*c", "abc", "0-3", true),
+  // Inside such a group, a repetition of a character, a class, an
+  // alternation or a sequence that cannot match empty
+  ("(?:b*?a*)*", "abba", "0-2", true),
+  ("(?:[ab]*?a*)*", "abba", "0-2", true),
+  ("(?:(?:a|b)*?a*)*", "abba", "0-2", true),
+  ("(?:(?:a?b)*?a*)*", "abba", "0-2", true),
   // A class can be empty
   ("[^\\D\\d]", "a", "none", false),
   ("a[^\\D\\d]|b", "ab", "1-2", false),
@@ -247,6 +283,21 @@ let rows : Array[(String, String, String, Bool)] = [
   ("(?ii)a", "A", "0-1", true),
   ("(?)a", "a", "0-1", true),
   ("a(?i)*", "aaa", "0-3", true),
+  // The first and last letter of each case, and the characters next to them
+  ("(?i)[a-z]", "A", "0-1", true),
+  ("(?i)[a-z]", "Z", "0-1", true),
+  ("(?i)[a-z]", "@", "none", false),
+  ("(?i)[a-z]", "[", "none", false),
+  ("(?i)[a-z]", "`", "none", false),
+  ("(?i)[a-z]", "{", "none", false),
+  ("(?i)[A-Z]", "a", "0-1", true),
+  ("(?i)[A-Z]", "z", "0-1", true),
+  ("(?i)[A-Z]", "@", "none", false),
+  ("(?i)[A-Z]", "[", "none", false),
+  ("(?i)[A-Z]", "`", "none", false),
+  ("(?i)[A-Z]", "{", "none", false),
+  ("(?i)a", "@", "none", false),
+  ("(?i)Z", "{", "none", false),
   // (?s): . also matches \n
   ("(?s).", "\n", "0-1", true),
   ("(?s)a.c", "a\nc", "0-3", true),

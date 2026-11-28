@@ -49,6 +49,55 @@ test "RE2 syntax left out of the subset is rejected as not supported in it" {
       #|(?P<é>x) => position 0: non-ASCII capture group name (?P<é> is not supported in smock's RE2 subset
     ),
   )
+  // U+0080, the first code point past ASCII, makes a non-ASCII group name,
+  // which the README lists as not in the subset ("non-ASCII group names").
+  inspect(
+    error_of("(?P<\u{80}>x)"),
+    content="position 0: non-ASCII capture group name (?P<\u{80}> is not supported in smock's RE2 subset",
+  )
+  // 7, the last octal digit, after 1 makes an octal escape (RE2's syntax
+  // page: "\123 octal character code (up to three digits)"; RE2 2024-07-02
+  // through google-re2 1.1.20240702 matches \17 on U+000F), which the README
+  // lists as left out.
+  inspect(
+    error_of("\\17"),
+    content="position 0: octal escape \\17 is not supported in smock's RE2 subset",
+  )
+  // Without braces a Unicode class's name is one letter (RE2's syntax page:
+  // "\pN Unicode character class (one-letter name)"), so \pLu is \pL, then u
+  // (RE2 2024-07-02 matches \pLu on "Au", not on "AU"); the README lists \pL
+  // as left out, and its example words the message.
+  inspect(
+    error_of("\\pLu"),
+    content="position 0: Unicode class \\pL is not supported in smock's RE2 subset",
+  )
+  // Every POSIX class RE2 has (its syntax page lists alnum, alpha, ascii,
+  // blank, cntrl, digit, graph, lower, print, punct, space, upper, word and
+  // xdigit, and RE2 2024-07-02 compiles each) is one the README lists as left
+  // out ("POSIX classes such as [[:alpha:]]"), also with more of the bracket
+  // class after it.
+  inspect(
+    errors([
+      "[[:alnum:]]", "[[:ascii:]]", "[[:blank:]]", "[[:cntrl:]]", "[[:graph:]]",
+      "[[:lower:]]", "[[:print:]]", "[[:punct:]]", "[[:space:]]", "[[:upper:]]",
+      "[[:word:]]", "[[:xdigit:]]", "[[:alpha:]x]",
+    ]),
+    content=(
+      #|[[:alnum:]] => position 1: POSIX class [:alnum:] is not supported in smock's RE2 subset
+      #|[[:ascii:]] => position 1: POSIX class [:ascii:] is not supported in smock's RE2 subset
+      #|[[:blank:]] => position 1: POSIX class [:blank:] is not supported in smock's RE2 subset
+      #|[[:cntrl:]] => position 1: POSIX class [:cntrl:] is not supported in smock's RE2 subset
+      #|[[:graph:]] => position 1: POSIX class [:graph:] is not supported in smock's RE2 subset
+      #|[[:lower:]] => position 1: POSIX class [:lower:] is not supported in smock's RE2 subset
+      #|[[:print:]] => position 1: POSIX class [:print:] is not supported in smock's RE2 subset
+      #|[[:punct:]] => position 1: POSIX class [:punct:] is not supported in smock's RE2 subset
+      #|[[:space:]] => position 1: POSIX class [:space:] is not supported in smock's RE2 subset
+      #|[[:upper:]] => position 1: POSIX class [:upper:] is not supported in smock's RE2 subset
+      #|[[:word:]] => position 1: POSIX class [:word:] is not supported in smock's RE2 subset
+      #|[[:xdigit:]] => position 1: POSIX class [:xdigit:] is not supported in smock's RE2 subset
+      #|[[:alpha:]x] => position 1: POSIX class [:alpha:] is not supported in smock's RE2 subset
+    ),
+  )
 }
 
 ///|
@@ -106,6 +155,22 @@ test "syntax RE2 does not have is rejected as not RE2 syntax" {
       #|[\C] => position 1: escape \C inside a character class is not RE2 syntax
     ),
   )
+  // U+0080, the first code point past ASCII, escaped is no escape RE2
+  // defines (RE2 2024-07-02 through google-re2 1.1.20240702: "invalid escape
+  // sequence"), while U+007F escaped stands for itself (the conformance
+  // table).
+  inspect(
+    error_of("\\\u{80}"),
+    content="position 0: escape \\\u{80} is not RE2 syntax",
+  )
+  // 8 is no octal digit, so \1 before it is the backreference \1 (RE2's
+  // syntax page: "\1 backreference (NOT SUPPORTED)"; RE2 2024-07-02:
+  // "invalid escape sequence: \1" for \18), with the message the README's
+  // example gives for \1.
+  inspect(
+    error_of("\\18"),
+    content="position 0: backreference \\1 is not RE2 syntax",
+  )
 }
 
 ///|
@@ -152,5 +217,32 @@ test "malformed patterns are rejected where the problem is" {
       #|(?i$) => position 0: invalid flags (?i$
       #|ab\ => position 2: trailing backslash at end of pattern
     ),
+  )
+  // U+007F, the last ASCII code point, is no letter, digit or _ (the
+  // README: "names are ASCII letters, digits and _"), so a name with it is
+  // invalid, as RE2 2024-07-02 says through google-re2 1.1.20240702
+  // ("invalid named capture group: (?P<" and U+007F ">").
+  inspect(
+    error_of("(?P<\u{7f}>x)"),
+    content="position 0: invalid named capture group (?P<\u{7f}>",
+  )
+  // A POSIX class's name is one of RE2's, between [: and :]. An empty name,
+  // or one that differs from RE2's in case or length, makes an invalid
+  // class, as RE2 2024-07-02 says ("invalid character class range: [::]",
+  // and so for [:Word:] and [:words:]).
+  inspect(
+    errors(["[[::]]", "[[:Word:]]", "[[:words:]]"]),
+    content=(
+      #|[[::]] => position 1: invalid POSIX class [::]
+      #|[[:Word:]] => position 1: invalid POSIX class [:Word:]
+      #|[[:words:]] => position 1: invalid POSIX class [:words:]
+    ),
+  )
+  // A bracket class that the pattern leaves open after an escape RE2 does not
+  // define fails on that escape, not on the missing ], as RE2 2024-07-02
+  // does ("invalid escape sequence: \b" for [\b).
+  inspect(
+    error_of("[\\b"),
+    content="position 1: escape \\b inside a character class is not RE2 syntax",
   )
 }
